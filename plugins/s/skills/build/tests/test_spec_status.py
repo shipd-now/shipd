@@ -1809,6 +1809,21 @@ class LocateTest(SpecStatusTestBase):
         self.assertIn("no-such-change", r.stderr)
         self.assertIn(os.path.abspath(self.root), r.stderr)
 
+    def test_omitted_argument_falls_back_to_selection(self):
+        self.make_change("dark-mode", status="active")
+        self.cli("use", "dark-mode")
+        r = self.cli("locate")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["change"], "dark-mode")
+        self.assertEqual(blocks[0]["status"], "active")
+
+    def test_no_argument_no_selection_errors(self):
+        r = self.cli("locate")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no change given and no spec selected", r.stderr)
+
 
 class WorkspaceSyncTest(SpecStatusTestBase):
     """The ``workspace-sync`` verb (spec-status workspace-sync-verb): keyed
