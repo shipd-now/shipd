@@ -4,3 +4,4 @@ __pycache__/
 .shipd/state.json
 .shipd/autopilot/
 .venv/
+.worktrees/
