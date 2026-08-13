@@ -1,5 +1,6 @@
 """Tests for tools/port.py, the automikk -> shipd port tool."""
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -91,6 +92,32 @@ class PlanAndErrorsTests(PortToolTestCase):
         self.assertEqual(result.returncode, 1)
         self.assertTrue(result.stderr.startswith("Error: "), result.stderr)
 
+    def test_source_that_is_a_subdirectory_of_a_repo_exits_one(self):
+        # `rev-parse --is-inside-work-tree` succeeds for any directory inside
+        # a work tree, so a `--source` off by one segment must be rejected
+        # explicitly rather than silently porting an empty tree.
+        source = self.make_source_repo({"pkg/notes.txt": "hello\n"})
+        dest = self.make_dest_dir()
+
+        result = run_port(
+            "plan",
+            "--source", str(Path(source) / "pkg"),
+            "--ref", "HEAD",
+            "--dest", dest,
+        )
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertTrue(result.stderr.startswith("Error: "), result.stderr)
+
+    def test_verify_on_missing_destination_exits_one(self):
+        # A mistyped `--dest` must be an error, never a silent clean scan.
+        dest = self.make_dest_dir()
+
+        result = run_port("verify", "--dest", str(Path(dest) / "nope"))
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertTrue(result.stderr.startswith("Error: "), result.stderr)
+
 
 class SourceReadingTests(PortToolTestCase):
     def test_dirty_working_tree_does_not_affect_port(self):
@@ -118,6 +145,83 @@ class SourceReadingTests(PortToolTestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((Path(dest) / "untracked.txt").exists())
+
+    def test_staged_addition_is_not_ported(self):
+        # A `git add`-ed but uncommitted file is in the index and not in
+        # HEAD. Enumerating the index would list it and then fail to read it.
+        source = self.make_source_repo({"notes.txt": "committed\n"})
+        (Path(source) / "staged.txt").write_text("staged\n")
+        _run_git(source, "add", "staged.txt")
+        dest = self.make_dest_dir()
+
+        result = run_port(
+            "apply", "--source", source, "--ref", "HEAD", "--dest", dest,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((Path(dest) / "staged.txt").exists())
+        self.assertEqual((Path(dest) / "notes.txt").read_text(), "committed\n")
+
+    def test_port_at_an_earlier_ref_uses_that_ref_tree(self):
+        source = self.make_source_repo({"first.txt": "one\n"})
+        first_ref = subprocess.run(
+            ["git", "-C", source, "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        (Path(source) / "second.txt").write_text("two\n")
+        _run_git(source, "add", "-A")
+        _run_git(source, "commit", "-q", "-m", "second")
+        dest = self.make_dest_dir()
+
+        result = run_port(
+            "apply", "--source", source, "--ref", first_ref, "--dest", dest,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((Path(dest) / "first.txt").read_text(), "one\n")
+        self.assertFalse((Path(dest) / "second.txt").exists())
+
+    def test_failed_run_leaves_destination_untouched(self):
+        # Every blob is read before the first write, so an aborted run does
+        # not leave a half-ported destination behind. A bad ref is the
+        # reachable trigger; the guarantee also covers a read that fails
+        # after enumeration succeeded, which is not constructible here.
+        source = self.make_source_repo({"notes.txt": "committed\n"})
+        dest = self.make_dest_dir()
+
+        result = run_port(
+            "apply", "--source", source, "--ref", "no-such-ref", "--dest", dest,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(list(Path(dest).iterdir()), [])
+
+
+class FileModeTests(PortToolTestCase):
+    def test_executable_source_file_ports_executable(self):
+        source = self.make_source_repo(
+            {
+                "plugins/am/skills/build/scripts/worktree.sh": "#!/bin/sh\n",
+                "plugins/am/skills/build/scripts/spec_lint.py": "print(1)\n",
+            }
+        )
+        _run_git(
+            source,
+            "update-index", "--chmod=+x",
+            "plugins/am/skills/build/scripts/worktree.sh",
+        )
+        _run_git(source, "commit", "-q", "-m", "make worktree.sh executable")
+        dest = self.make_dest_dir()
+
+        result = run_port(
+            "apply", "--source", source, "--ref", "HEAD", "--dest", dest,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        ported = Path(dest) / "plugins/s/skills/build/scripts/worktree.sh"
+        self.assertTrue(ported.stat().st_mode & 0o111, "exec bit was dropped")
+        plain = Path(dest) / "plugins/s/skills/build/scripts/spec_lint.py"
+        self.assertFalse(plain.stat().st_mode & 0o111, "exec bit was invented")
 
 
 class CapabilityEnumerationTests(PortToolTestCase):
@@ -339,6 +443,25 @@ class IncludeFilterTests(PortToolTestCase):
         self.assertFalse((Path(dest) / ".shipd").exists())
         self.assertFalse((Path(dest) / "README.md").exists())
 
+    def test_include_matches_whole_path_segments_only(self):
+        source = self.make_source_repo(
+            {
+                "plugins/am/x.py": "hello\n",
+                "plugins/amx/y.py": "sibling\n",
+            }
+        )
+        dest = self.make_dest_dir()
+
+        # No trailing slash: must still not pull in the `amx` sibling.
+        result = run_port(
+            "apply", "--source", source, "--ref", "HEAD", "--dest", dest,
+            "--include", "plugins/am",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((Path(dest) / "plugins" / "s" / "x.py").exists())
+        self.assertFalse((Path(dest) / "plugins" / "amx").exists())
+
     def test_no_include_ports_everything_non_excluded(self):
         source = self.make_source_repo(
             {
@@ -413,6 +536,34 @@ class ResidualScanTests(PortToolTestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(
             (Path(dest) / "binary.dat").read_bytes(), binary_content
+        )
+
+
+class EncodingTests(PortToolTestCase):
+    def test_non_ascii_content_ports_as_utf8_under_a_c_locale(self):
+        # Reads decode UTF-8 explicitly; writes must too, or a non-UTF-8
+        # ambient locale corrupts every non-ASCII file the port touches.
+        source = self.make_source_repo({"notes.md": "café automikk\n"})
+        dest = self.make_dest_dir()
+
+        env = dict(os.environ)
+        env.update({"LC_ALL": "C", "LANG": "C"})
+        env.pop("PYTHONUTF8", None)
+        env.pop("PYTHONIOENCODING", None)
+        result = subprocess.run(
+            [
+                sys.executable, "-X", "utf8=0", str(PORT_PY),
+                "apply", "--source", source, "--ref", "HEAD", "--dest", dest,
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            (Path(dest) / "notes.md").read_bytes(),
+            "café shipd\n".encode("utf-8"),
         )
 
 

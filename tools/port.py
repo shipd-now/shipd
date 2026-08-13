@@ -42,13 +42,45 @@ def _run_git(args, cwd=None, binary=False):
 
 
 def _check_source_is_git_repo(source):
-    _run_git(["-C", source, "rev-parse", "--is-inside-work-tree"])
+    """Raise unless `source` is the root of a git work tree.
+
+    `rev-parse --is-inside-work-tree` succeeds for any directory *inside* a
+    repository, so a `--source` off by one path segment would pass it and
+    then enumerate nothing. Comparing the top level to the source itself
+    rejects that silently-empty port.
+    """
+    toplevel = _run_git(["-C", source, "rev-parse", "--show-toplevel"]).strip()
+    if Path(toplevel).resolve() != Path(source).resolve():
+        raise PortError(
+            f"source is not the root of a git repository: {source} "
+            f"(its repository root is {toplevel})"
+        )
+
+
+def _list_source_entries(source, ref):
+    """Return `(mode, path)` for every blob in `ref`'s tree.
+
+    Read from `git ls-tree`, which reports the tree at `ref` and nothing
+    else. `git ls-files --with-tree` would report the *index* instead — so a
+    staged-but-uncommitted addition, or any `--ref` behind the checkout,
+    would yield paths that do not exist at `ref`.
+    """
+    output = _run_git(["-C", source, "ls-tree", "-r", "-z", ref])
+    entries = []
+    for record in output.split("\0"):
+        if not record:
+            continue
+        meta, _, path = record.partition("\t")
+        mode, kind, _sha = meta.split(" ", 2)
+        if kind != "blob":
+            continue
+        entries.append((mode, path))
+    return entries
 
 
 def _list_source_files(source, ref):
-    """Return the paths tracked at `ref`, as reported by `git ls-files`."""
-    output = _run_git(["-C", source, "ls-files", f"--with-tree={ref}"])
-    return [line for line in output.splitlines() if line]
+    """Return the paths tracked at `ref`."""
+    return [path for _mode, path in _list_source_entries(source, ref)]
 
 
 def _read_source_file(source, ref, path):
@@ -60,23 +92,34 @@ def _read_source_file(source, ref, path):
 _EXCLUDED_PREFIXES = ("openspec/", ".automikk/")
 
 
-def _select_source_paths(source, ref, includes=None):
-    """Return the tracked paths at `ref`, minus the excluded trees.
+def _matches_include(path, prefix):
+    """True when `path` is `prefix` itself or lies under it.
 
-    When `includes` is given (a list of prefixes), only paths starting with
-    one of them are returned; otherwise the whole non-excluded tree is
-    returned.
+    Matching is on whole path segments, so `--include plugins/am` selects
+    `plugins/am/...` but never a sibling `plugins/amx/...`.
     """
-    paths = [
-        path
-        for path in _list_source_files(source, ref)
+    prefix = prefix.rstrip("/")
+    return path == prefix or path.startswith(prefix + "/")
+
+
+def _select_source_entries(source, ref, includes=None):
+    """Return the `(mode, path)` entries at `ref`, minus the excluded trees.
+
+    When `includes` is given (a list of prefixes), only paths at or under one
+    of them are returned; otherwise the whole non-excluded tree is returned.
+    """
+    entries = [
+        (mode, path)
+        for mode, path in _list_source_entries(source, ref)
         if not path.startswith(_EXCLUDED_PREFIXES)
     ]
     if includes:
-        paths = [
-            path for path in paths if any(path.startswith(p) for p in includes)
+        entries = [
+            (mode, path)
+            for mode, path in entries
+            if any(_matches_include(path, p) for p in includes)
         ]
-    return paths
+    return entries
 
 
 _CAPABILITY_VERIFIED_PREFIX = ".am/verified/"
@@ -204,11 +247,15 @@ def _report_findings(findings):
     return 2 if findings else 0
 
 
+# Git's mode for an executable blob; everything else ports as 0o644.
+_EXECUTABLE_MODE = "100755"
+
+
 def cmd_plan(args):
     _check_source_is_git_repo(args.source)
     rules = build_rules(args.source, args.ref)
-    paths = _select_source_paths(args.source, args.ref, args.include)
-    for path in paths:
+    entries = _select_source_entries(args.source, args.ref, args.include)
+    for _mode, path in entries:
         dest_rel = apply_rules(path, rules)
         print(f"PORT {path} -> {dest_rel}")
     return 0
@@ -217,11 +264,18 @@ def cmd_plan(args):
 def cmd_apply(args):
     _check_source_is_git_repo(args.source)
     rules = build_rules(args.source, args.ref)
-    paths = _select_source_paths(args.source, args.ref, args.include)
+    entries = _select_source_entries(args.source, args.ref, args.include)
+
+    # Read every source blob before writing anything, so a read that fails
+    # aborts with the destination untouched rather than half-ported.
+    reads = [
+        (mode, path, _read_source_file(args.source, args.ref, path))
+        for mode, path in entries
+    ]
+
     dest_root = Path(args.dest)
     findings = []
-    for path in paths:
-        content = _read_source_file(args.source, args.ref, path)
+    for mode, path, content in reads:
         dest_rel = apply_rules(path, rules)
         dest_path = dest_root / dest_rel
         dest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -231,15 +285,19 @@ def cmd_apply(args):
             # Binary/non-UTF-8: copied byte-for-byte, never substituted,
             # and excluded from the residual scan.
             dest_path.write_bytes(content)
-            continue
-        ported_text = apply_rules(text, rules)
-        dest_path.write_text(ported_text)
-        findings.extend(_scan_text(dest_rel, ported_text))
+        else:
+            ported_text = apply_rules(text, rules)
+            dest_path.write_text(ported_text, encoding="utf-8")
+            findings.extend(_scan_text(dest_rel, ported_text))
+        if mode == _EXECUTABLE_MODE:
+            dest_path.chmod(0o755)
     return _report_findings(findings)
 
 
 def cmd_verify(args):
     dest_root = Path(args.dest)
+    if not dest_root.is_dir():
+        raise PortError(f"destination is not a directory: {args.dest}")
     findings = []
     for file_path in sorted(dest_root.rglob("*")):
         if not file_path.is_file():
