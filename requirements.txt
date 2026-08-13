@@ -1,0 +1,4 @@
+# Third-party dependencies for the delivery board's `tui` verb only
+# (plugins/s/skills/build/scripts/dashboard.py). The rest of the spec engine
+# stays stdlib-only Python 3 — see .shipd/constitution.md.
+textual>=8.2.8,<9
