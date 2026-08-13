@@ -1,0 +1,247 @@
+## ADDED Requirements
+
+### Requirement: Board theme
+id: board-shipd-theme
+
+The `tui` app SHALL register a custom `textual` theme named `shipd`, built from
+the Shipd design-system tokens — backgrounds base `#0A0A0D`, surface `#111118`,
+elevated panel `#1C1C26`, hover `#22222E`, active `#28283A`; accent/primary
+`#C6FF4E` (dim `#8FBF1A`); semantic red `#FF4D3D`, orange `#FF8C42`, green
+`#3DCC8E`, blue `#4DA6FF`, purple `#9B7FFF`; foreground tiers `#F0F0F8` /
+`#8888A0` / `#55556A`; borders `#2A2A38` / `#3E3E52` — and SHALL activate it as
+the app's theme on startup. The theme SHALL be the palette's single source: it
+SHALL expose per-lane variables (`lane-unplanned` `#8888A0`, `lane-ready`
+`#4DA6FF`, `lane-building` `#FF8C42`, `lane-review` `#9B7FFF`, `lane-shipped`
+`#3DCC8E`) and risk variables (`risk-high` `#FF8C42`, `risk-medium` `#C6FF4E`,
+`risk-low` `#55556A`) as named theme variables for widget CSS to reference,
+and the TUI widget CSS SHALL reference colors only through `$` theme
+variables — no hex literals and no named colors outside the theme definition
+(the `html` verb's separate inline page CSS is exempt). The board chrome SHALL
+render flat dark surfaces: lane and modal borders are flat (non-round)
+theme-variable borders, task-card risk accent bars use the risk variables
+(high=orange, medium=chartreuse, low=dim), and focus highlights derive from
+the accent.
+
+#### Scenario: The Shipd theme is registered and active
+- **WHEN** the board app is mounted
+- **THEN** a theme named `shipd` is registered on the app and is its active
+  theme
+
+#### Scenario: The theme exposes lane and risk variables
+- **WHEN** the `shipd` theme's variables are resolved
+- **THEN** they carry the five per-lane colors (`lane-unplanned` `#8888A0`,
+  `lane-ready` `#4DA6FF`, `lane-building` `#FF8C42`, `lane-review` `#9B7FFF`,
+  `lane-shipped` `#3DCC8E`) and the three risk colors (`risk-high` `#FF8C42`,
+  `risk-medium` `#C6FF4E`, `risk-low` `#55556A`)
+
+#### Scenario: Widget CSS carries no hard-coded colors
+- **WHEN** the TUI widget CSS blocks are scanned
+- **THEN** they contain no hex color literal and no named color — every color
+  reference is a `$` theme variable
+
+#### Scenario: Chrome borders are flat, not round
+- **WHEN** the lane and modal container styles render
+- **THEN** their borders are flat theme-variable borders with no `round`
+  border style anywhere in the TUI widget CSS
+
+## MODIFIED Requirements
+
+### Requirement: Board epic grouping
+id: board-epic-grouping
+base: bdaf3541a7bf
+
+The `tui` board SHALL provide a **group-by-epic** mode, toggled from a control in
+the **controls strip** above the lanes and also from a footer-bound key, and
+SHALL start with grouping **on** by default. When grouping is **on**, every
+lifecycle lane SHALL render its cards grouped under a **collapsible per-epic
+header** (one group per epic, in board order, each group individually
+collapsible), replacing the previous shipped-lane-only grouping — so an epic's
+cards in a lane sit together under that epic's header. Each epic group header
+SHALL show the epic's slug and status and, when the epic belongs to an
+initiative, that **initiative** (its slug); this re-homes the initiative → epic
+structure that the removed hierarchy panel used to carry. The group's visual
+SHALL be a flat **theme surface band** (the registered theme's panel
+background) with **theme-variable border separator lines** dividing adjacent
+groups — no per-epic-status colour coding and no hard-coded colors (see the
+Board theme requirement). Each **runnable** epic group
+header SHALL carry a **clickable run control**; an epic is **runnable** when its
+status is `ready` or `active` **and** it has at least one `unplanned` or `ready`
+member (there is something for the autopilot to drive). A **non-runnable** epic —
+a `complete`/`archived` epic, or one with no drivable members — SHALL NOT render a
+run control at all, so a closed epic can never be run from the board. Activating a
+run control SHALL NOT toggle the group's collapsed state (the two affordances are
+distinct); instead it SHALL open a **confirmation modal** reading exactly "This
+will deliver the full epic, are you sure you want to continue?" with a **Yes**
+control and a **No** control, plus a **close (✕) control in its top-left**. The
+**epic-level run** (the same autopilot launch the removed hierarchy panel
+triggered) SHALL be dispatched **only** when the user chooses **Yes**; choosing
+**No**, the ✕ control, or `Escape` SHALL dismiss the modal **without** dispatching
+any run. Independently of the run control, **every** epic group header SHALL also
+carry a **clickable open control** — distinct from both the run control and the
+collapse toggle, and present on every epic whether runnable or not — that opens an
+**epic-detail modal** for that epic. The header's controls SHALL render **inline
+on the header's title row, immediately after the epic's title text** — the run
+control first (when present), then the open control **one cell after it** (the
+open control sits flush to the title when no run control renders), inside the
+group's panel — never docked at the far edge of the lane row outside the
+group's visual box. If the rendered title is too wide for its lane, the
+controls SHALL pin inside the lane's right edge — painting over the clipped
+title tail — so they stay visible and clickable; a header control SHALL never
+render outside its group row. The header controls and every modal **close (✕) control**
+SHALL be **compact — a single row high and exactly three cells wide** — while
+remaining visually evident as clickable buttons. The **epic-detail modal** SHALL
+occupy the
+majority of the viewport, carry a **close (✕) control** the user can click (in
+addition to `Escape`), and present the epic's slug and status, its theme and
+initiative when set, a **list of the epic's member specs** — each showing its board
+state and risk and **clickable to open that change's own spec-detail modal**
+(the same spec-detail modal a lane card opens, pushed on top of the epic-detail
+modal so dismissing it returns to the epic-detail modal) — and the epic's own
+overview rendered as **Markdown** from its
+`epics/<slug>/epic.md` artifact. Reading that epic artifact SHALL be a
+**dependency-free** operation (no `textual`), so it is unit-tested without the
+TUI. Activating the open control SHALL NOT toggle the group's collapsed state, and
+dismissing the epic-detail modal (its ✕ control or `Escape`) SHALL return to the
+board. When grouping is **off**, every lane SHALL render its cards **flat** — no
+epic headers — matching the pre-grouping lane layout. Grouping state SHALL fold
+into the diff-aware refresh so an idle board never repaints and a collapsed group
+stays collapsed across refreshes; toggling the mode SHALL repaint the lanes.
+Removing the hierarchy panel SHALL NOT change the board's **data layer**
+(`build_board`, the aggregation, the epic-run launch builder): only the rendering
+and the run trigger move.
+
+#### Scenario: Grouping is on by default
+- **WHEN** the app is mounted with no override
+- **THEN** the group-by-epic mode is active and each lane's cards render under
+  per-epic headers
+
+#### Scenario: Each lane groups its cards under per-epic headers when grouped
+- **GIVEN** grouping is on and a lane holds cards from two different epics
+- **WHEN** the lane is rendered
+- **THEN** the cards appear under two collapsible epic headers, each header
+  naming its epic, with each epic's cards beneath its own header
+
+#### Scenario: An epic group header shows the epic's initiative
+- **GIVEN** grouping is on and an epic that belongs to an initiative
+- **WHEN** that epic's group header renders
+- **THEN** the header shows the epic's slug and status and the initiative it
+  belongs to
+
+#### Scenario: Epic groups use a theme surface band with theme border separators
+- **GIVEN** grouping is on
+- **WHEN** a lane's epic groups render
+- **THEN** each group has the theme's panel background and adjacent groups are
+  divided by a theme border-variable separator line, with no per-epic-status
+  colour applied
+
+#### Scenario: A runnable epic shows a run control
+- **GIVEN** grouping is on and an epic whose status is `ready` or `active` with
+  at least one `unplanned` or `ready` member
+- **WHEN** that epic's group header renders
+- **THEN** the header carries a clickable run control
+
+#### Scenario: The header controls sit inline next to the epic name
+- **GIVEN** grouping is on and a runnable epic's group header
+- **WHEN** the header renders
+- **THEN** the run control occupies the header's title row immediately after
+  the title text with the open control one cell after it, inside the
+  group's panel, not at the lane row's far edge, and each control is one row
+  high and three cells wide
+
+#### Scenario: Modal close controls are one row high
+- **GIVEN** the spec-detail, epic-detail, or epic-run confirmation modal is
+  open
+- **WHEN** its close (✕) control renders
+- **THEN** that control occupies a single row, three cells wide
+
+#### Scenario: A non-runnable epic's open control sits flush to the title
+- **GIVEN** grouping is on and a non-runnable epic's group header
+- **WHEN** the header renders
+- **THEN** the open control occupies the header's title row immediately after
+  the title text, with no run control before it
+
+#### Scenario: An overlong title pins the controls inside the lane
+- **GIVEN** grouping is on and an epic whose rendered header title is wider
+  than its lane
+- **WHEN** the header renders
+- **THEN** the run and open controls render fully inside the lane on the title
+  row, pinned at the lane's right edge over the clipped title, and remain
+  clickable
+
+#### Scenario: A non-runnable epic shows no run control
+- **GIVEN** grouping is on and a `complete`/`archived` epic (or one with no
+  `unplanned`/`ready` member)
+- **WHEN** that epic's group header renders
+- **THEN** the header carries no run control, so the epic cannot be run from the
+  board
+
+#### Scenario: Clicking a run control opens the confirmation modal
+- **GIVEN** grouping is on and a runnable epic's run control
+- **WHEN** the run control is clicked
+- **THEN** a confirmation modal reading "This will deliver the full epic, are you
+  sure you want to continue?" is pushed onto the screen stack, no epic-level run
+  has been dispatched yet, and the group's collapsed state is unchanged
+
+#### Scenario: Confirming with Yes dispatches the epic-level run
+- **GIVEN** an open epic-run confirmation modal for an epic
+- **WHEN** the user activates its Yes control
+- **THEN** the epic-level run is dispatched for that epic and the modal is
+  dismissed
+
+#### Scenario: Declining or closing the modal runs nothing
+- **GIVEN** an open epic-run confirmation modal
+- **WHEN** the user activates its No control, its ✕ close control, or presses
+  `Escape`
+- **THEN** the modal is dismissed and no epic-level run is dispatched
+
+#### Scenario: Every epic group header carries an open control
+- **GIVEN** grouping is on and any epic (runnable or not)
+- **WHEN** that epic's group header renders
+- **THEN** the header carries a clickable open control distinct from the run
+  control
+
+#### Scenario: Clicking the open control opens the epic-detail modal
+- **GIVEN** grouping is on and an epic group header's open control
+- **WHEN** the open control is clicked
+- **THEN** an epic-detail modal for that epic is pushed onto the screen stack and
+  the group's collapsed state is unchanged
+
+#### Scenario: The epic-detail modal lists the epic's member specs
+- **GIVEN** an epic with member specs
+- **WHEN** its epic-detail modal opens
+- **THEN** the modal shows the epic's slug and status and a list of its member
+  specs, each with its board state and risk
+
+#### Scenario: Clicking a member spec opens its spec-detail modal
+- **GIVEN** an open epic-detail modal listing the epic's member specs
+- **WHEN** the user clicks one of the listed member specs
+- **THEN** that change's spec-detail modal is pushed onto the screen stack (the
+  same modal a lane card opens), on top of the epic-detail modal, and dismissing
+  it returns to the epic-detail modal
+
+#### Scenario: The epic-detail modal shows the epic overview
+- **GIVEN** an epic whose `epics/<slug>/epic.md` artifact exists
+- **WHEN** its epic-detail modal opens
+- **THEN** the modal renders that epic artifact's content as Markdown
+
+#### Scenario: The epic-detail modal is dismissed by its close control
+- **GIVEN** an open epic-detail modal
+- **WHEN** the user clicks its ✕ close control or presses `Escape`
+- **THEN** the modal is dismissed and the board screen is shown again
+
+#### Scenario: Reading the epic artifact is dependency-free
+- **GIVEN** an environment without `textual`
+- **WHEN** the epic-artifact helper is called for an epic that has an
+  `epics/<slug>/epic.md`
+- **THEN** it returns that epic's Markdown text without importing `textual`
+
+#### Scenario: Toggling grouping off renders flat lanes
+- **GIVEN** grouping is on
+- **WHEN** the group-by-epic toggle is switched off
+- **THEN** every lane re-renders its cards flat, with no epic headers
+
+#### Scenario: A collapsed epic group hides its cards
+- **GIVEN** grouping is on and an epic group whose header is expanded
+- **WHEN** that group's header is collapsed
+- **THEN** that epic's cards in the lane are hidden while another epic's group
+  stays visible

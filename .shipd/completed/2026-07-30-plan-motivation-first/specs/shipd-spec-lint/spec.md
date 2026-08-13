@@ -1,0 +1,41 @@
+## MODIFIED Requirements
+
+### Requirement: Proposal header validation
+id: proposal-header-validation
+base: 9f035e776c48
+
+When linting a change, the linter SHALL report an error when the change's
+`plan.md` is missing; when its first line is not a `# <change-name>` title
+matching the change's directory slug; when no `Status:` line appears among
+the first five non-blank lines; when the status value is not one of
+`draft`, `ready`, `active`, `complete`, `verified`, `rejected`; when the
+document lacks a level-2 `## Idea` section or a level-2 `## Implementation`
+section; or when it lacks a level-3 `### Motivation`, `### Details`, or
+`### Non-goals` heading. A gate-owned `## Context insufficient` section
+SHALL be tolerated in any status. Master-library linting SHALL be
+unaffected.
+
+#### Scenario: Invalid status value fails lint
+- **WHEN** the plan's status line reads `Status: in-progress`
+- **THEN** change lint reports an error naming the invalid value
+
+#### Scenario: Rejected status lints as valid
+- **WHEN** a change's plan carries `Status: rejected` and a
+  `## Context insufficient` section
+- **THEN** neither produces a lint error
+
+#### Scenario: Missing required section fails lint
+- **WHEN** a change's `plan.md` has no `## Implementation` section
+- **THEN** change lint reports an error naming the missing section
+
+#### Scenario: Missing Idea subsection fails lint
+- **WHEN** a change's `plan.md` has both level-2 sections and a
+  `### Non-goals` heading but no `### Motivation` heading
+- **THEN** change lint reports an error naming the missing `### Motivation`
+  subsection
+
+#### Scenario: Missing non-goals heading fails lint
+- **WHEN** a change's `plan.md` has both level-2 sections but no
+  `### Non-goals` heading
+- **THEN** change lint reports an error naming the missing `### Non-goals`
+  subsection
