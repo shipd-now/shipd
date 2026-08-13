@@ -1,5 +1,5 @@
 # shipd-port
-Status: ready
+Status: active
 Theme: spec-engine
 
 ## Introduction
