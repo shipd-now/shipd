@@ -319,11 +319,12 @@ answered by reading is a failure of this skill.
    readiness bar, ask nothing and go straight to step 6.
 5. **Check readiness.** Gate on the four-item checklist in
    `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/readiness.md`, and print its
-   **Attestation** as user-visible response text — one cited line per checklist
-   item — before authoring any artifact. Internal reasoning does not satisfy
-   this; if it is not printed, it does not count. Any item that cannot be
-   discharged with a citation (per the Attestation section) is unmet → go back
-   to investigate or ask. All four met and cited → emit.
+   **Attestation** as user-visible response text — a markdown table with one
+   cited row per checklist item — before authoring any artifact. Internal
+   reasoning does not satisfy this; if it is not printed, it does not count.
+   Any item that cannot be discharged with a citation (per the Attestation
+   section) is unmet → go back to investigate or ask. All four met and cited →
+   emit.
 6. **Emit** the lean `am` artifacts (`plan.md`, delta specs, `tasks.md`) into a
    **staging directory**, then install them through `spec_emit.py change` —
    silently, following
