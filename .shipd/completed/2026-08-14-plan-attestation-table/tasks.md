@@ -16,4 +16,4 @@
       "one cited line per checklist item" with "a markdown table with one
       cited row per checklist item", leaving the rest of the step unchanged.
 - [x] 1.3 [req: *] Bump `version` in
-      `plugins/s/.claude-plugin/plugin.json` from `0.6.96` to `0.6.97`.
+      `plugins/s/.claude-plugin/plugin.json` from `0.6.97` to `0.6.98`.

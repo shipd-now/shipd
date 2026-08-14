@@ -1,5 +1,5 @@
 # plan-attestation-table
-Status: complete
+Status: verified
 
 ## Idea
 
@@ -53,7 +53,7 @@ code changes, no new dependencies.
   with one cited row per checklist item"); the evidence standards per item are
   untouched. This keeps the delta reviewable and the blast radius to two
   documentation files.
-- **Version bump `0.6.96` → `0.6.97`** in
+- **Version bump `0.6.97` → `0.6.98`** in
   `plugins/s/.claude-plugin/plugin.json`, per the repo rule that every
   `plugins/s/` change bumps the version in the same PR (the plugin cache
   snapshot is keyed by version).
