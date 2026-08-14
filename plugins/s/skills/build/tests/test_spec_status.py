@@ -23,6 +23,7 @@ SCRIPT = os.path.normpath(os.path.join(HERE, "..", "scripts", "spec_status.py"))
 # delta stays matching regardless of the hash implementation.
 sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
 import spec_common as sc  # noqa: E402
+import spec_status as ss  # noqa: E402
 
 
 class SpecStatusTestBase(unittest.TestCase):
@@ -463,6 +464,34 @@ class MetadataPreservationTest(SpecStatusTestBase):
         self.assertIn("Theme: reliability", r.stdout)
 
 
+class BoardLaneTest(unittest.TestCase):
+    """The shared state→lane projection ``spec_status.board_lane`` (spec-status
+    epic-status-verbs): a member's lane derives from its state alone, and the
+    dashboard's ``flow_lane`` consumes the very same function so the board and
+    the epic report cannot drift. Pure — driven by direct import, no CLI.
+
+    Written test-first; expected to FAIL until ``board_lane`` lands in
+    ``spec_status.py`` (task 1.2)."""
+
+    def test_archived_is_shipped(self):
+        self.assertEqual(ss.board_lane("archived"), "shipped")
+
+    def test_ready_is_ready(self):
+        self.assertEqual(ss.board_lane("ready"), "ready")
+
+    def test_unplanned_is_unplanned(self):
+        self.assertEqual(ss.board_lane("unplanned"), "unplanned")
+
+    def test_every_other_state_is_building(self):
+        for state in ("draft", "active", "complete", "verified", "rejected",
+                      "?"):
+            self.assertEqual(ss.board_lane(state), "building", state)
+
+    # ``dashboard.flow_lane``'s delegation to this projection is asserted in
+    # ``tests_textual/test_dashboard.py`` — importing ``dashboard`` needs
+    # ``textual``, which this stdlib-only suite never installs.
+
+
 class EpicVerbTest(SpecStatusTestBase):
     """The three epic status verbs (spec-status epic-status-verbs):
     ``epic-show``, ``epic-sync``, ``epic-set-status``.
@@ -484,7 +513,9 @@ class EpicVerbTest(SpecStatusTestBase):
             "| --- | --- | --- | --- | --- | --- |",
         ]
         for rslug, desc, ratings in rows:
-            table.append("| %s | %s | %s |" % (rslug, desc, " | ".join(ratings)))
+            # An empty ``ratings`` emits a row with no rating cells at all —
+            # the "row carries no rating" fixture the report renders as `?`.
+            table.append("| %s |" % " | ".join([rslug, desc] + list(ratings)))
         header = ["# %s" % slug, "Status: %s" % status]
         if metadata:
             header.extend(metadata)
@@ -513,9 +544,52 @@ class EpicVerbTest(SpecStatusTestBase):
         os.makedirs(os.path.join(
             self.root, ".shipd", "completed", "%s-%s" % (date, slug)))
 
-    # -- epic-show ---------------------------------------------------------
+    # -- the board-shaped epic report --------------------------------------
 
-    def test_epic_show_lists_status_metadata_and_members(self):
+    LANES = ("UNPLANNED", "READY", "BUILDING", "SHIPPED")
+
+    def lane_headers(self, out):
+        """The report's ``<LANE> (<count>)`` header lines, in order."""
+        return [ln for ln in out.splitlines()
+                if ln.split(" ")[0] in self.LANES and not ln.startswith(" ")]
+
+    def member_line(self, out, slug):
+        """The indented member row for ``slug``, or None when absent."""
+        for line in out.splitlines():
+            if line.startswith("  ") and line.split()[:1] == [slug]:
+                return line
+        return None
+
+    def member_state(self, out, slug):
+        """The state field of ``slug``'s member row (None when it has none)."""
+        line = self.member_line(out, slug)
+        return None if line is None else line.split()[1]
+
+    def lane_of(self, out, slug):
+        """The lane header ``slug``'s member row falls under."""
+        lane = None
+        for line in out.splitlines():
+            if not line.startswith(" ") and line.split(" ")[0] in self.LANES:
+                lane = line.split(" ")[0]
+            elif line.startswith("  ") and line.split()[:1] == [slug]:
+                return lane
+        return None
+
+    def test_epic_show_keeps_status_and_metadata_header(self):
+        # Byte-compatible with the pre-report epic-show: the status line first,
+        # then the epic's metadata lines.
+        self.make_epic(
+            "reporting-overhaul", status="active",
+            metadata=["Theme: reliability", "Initiative: mvp-readiness"],
+            rows=[("csv-export", "CSV", ("low",) * 4)])
+        r = self.cli("epic-show", "reporting-overhaul")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[0], "reporting-overhaul: active")
+        self.assertEqual(lines[1], "Theme: reliability")
+        self.assertEqual(lines[2], "Initiative: mvp-readiness")
+
+    def test_epic_show_groups_members_into_board_lanes(self):
         self.make_epic(
             "reporting-overhaul", status="active",
             metadata=["Theme: reliability", "Initiative: mvp-readiness"],
@@ -528,14 +602,63 @@ class EpicVerbTest(SpecStatusTestBase):
         self.make_change("pdf-export", status="active")  # planned, active
         # new-thing has neither a completed nor a planned dir → unplanned.
         r = self.cli("epic-show", "reporting-overhaul")
-        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.returncode, 0, r.stderr)
         out = r.stdout
-        self.assertIn("reporting-overhaul: active", out)
-        self.assertIn("Theme: reliability", out)
-        self.assertIn("Initiative: mvp-readiness", out)
-        self.assertIn("csv-export: archived", out)
-        self.assertIn("pdf-export: active", out)
-        self.assertIn("new-thing: unplanned", out)
+        self.assertEqual(self.lane_of(out, "csv-export"), "SHIPPED")
+        self.assertEqual(self.lane_of(out, "pdf-export"), "BUILDING")
+        self.assertEqual(self.lane_of(out, "new-thing"), "UNPLANNED")
+        self.assertEqual(self.member_state(out, "csv-export"), "archived")
+        self.assertEqual(self.member_state(out, "pdf-export"), "active")
+        self.assertEqual(self.member_state(out, "new-thing"), "unplanned")
+
+    def test_epic_show_lanes_print_in_board_order_with_counts(self):
+        self.make_epic(
+            "e", status="active",
+            rows=[("csv-export", "CSV", ("low",) * 4),
+                  ("new-thing", "TBD", ("low",) * 4)])
+        self.make_completed("csv-export")
+        r = self.cli("epic-show", "e")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # Board order, every lane present — empty ones included.
+        self.assertEqual(
+            self.lane_headers(r.stdout),
+            ["UNPLANNED (1)", "READY (0)", "BUILDING (0)", "SHIPPED (1)"])
+
+    def test_epic_show_empty_lane_has_no_member_lines(self):
+        self.make_epic(
+            "e", status="ready",
+            rows=[("new-thing", "TBD", ("low",) * 4)])
+        r = self.cli("epic-show", "e")
+        lines = r.stdout.splitlines()
+        idx = lines.index("READY (0)")
+        # The next line is the following lane header, not a member row.
+        self.assertEqual(lines[idx + 1], "BUILDING (0)")
+
+    def test_epic_show_reports_shipped_progress(self):
+        rows = [("m-%d" % i, "M%d" % i, ("low",) * 4) for i in range(7)]
+        self.make_epic("e", status="active", rows=rows)
+        self.make_completed("m-0")
+        self.make_completed("m-1")
+        r = self.cli("epic-show", "e")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("shipped 2/7", r.stdout.splitlines())
+
+    def test_epic_show_member_line_carries_risk_rating(self):
+        # The risk is the stub table's last rating cell.
+        self.make_epic(
+            "e", status="ready",
+            rows=[("member-a", "A", ("low", "medium", "low", "high"))])
+        r = self.cli("epic-show", "e")
+        line = self.member_line(r.stdout, "member-a")
+        self.assertIsNotNone(line)
+        self.assertEqual(line.split(), ["member-a", "unplanned", "risk", "high"])
+
+    def test_epic_show_member_without_ratings_reports_question_mark_risk(self):
+        self.make_epic("e", status="ready", rows=[("member-a", "A", ())])
+        r = self.cli("epic-show", "e")
+        line = self.member_line(r.stdout, "member-a")
+        self.assertIsNotNone(line)
+        self.assertEqual(line.split(), ["member-a", "unplanned", "risk", "?"])
 
     # -- epic-sync ---------------------------------------------------------
 
@@ -683,8 +806,8 @@ class MemberStateWorktreeTest(EpicVerbTest):
     ``.worktrees/<name>`` directory, in sorted name order, exactly as
     ``cmd_locate`` does (spec-status epic-status-verbs).
 
-    Exercised through ``epic-show``, which prints one ``<mslug>: <state>``
-    line per stub member.
+    Exercised through ``epic-show``, whose board-shaped report carries one
+    member row per stub member, naming its derived state.
 
     Written test-first; expected to FAIL until the worktree-aware probe lands
     in ``spec_status.py`` (task 2.2)."""
@@ -708,7 +831,24 @@ class MemberStateWorktreeTest(EpicVerbTest):
         self.make_worktree_change("member-a", "member-a", "ready")
         r = self.cli("epic-show", "e")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("member-a: ready", r.stdout)
+        self.assertEqual(self.member_state(r.stdout, "member-a"), "ready")
+
+    def test_worktree_derived_member_is_marked(self):
+        self.make_epic(
+            "e", status="ready", rows=[("member-a", "A", ("low",) * 4)])
+        self.make_worktree_change("member-a", "member-a", "ready")
+        r = self.cli("epic-show", "e")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(
+            self.member_line(r.stdout, "member-a").endswith(" [worktree]"),
+            r.stdout)
+
+    def test_invocation_root_member_is_not_marked(self):
+        self.make_epic(
+            "e", status="ready", rows=[("member-a", "A", ("low",) * 4)])
+        self.make_change("member-a", status="active")
+        r = self.cli("epic-show", "e")
+        self.assertNotIn("[worktree]", r.stdout)
 
     def test_invocation_root_wins_over_worktree(self):
         self.make_epic(
@@ -717,7 +857,7 @@ class MemberStateWorktreeTest(EpicVerbTest):
         self.make_worktree_change("member-a", "member-a", "rejected")
         r = self.cli("epic-show", "e")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("member-a: active", r.stdout)
+        self.assertEqual(self.member_state(r.stdout, "member-a"), "active")
 
     def test_member_absent_everywhere_is_unplanned(self):
         self.make_epic(
@@ -727,7 +867,7 @@ class MemberStateWorktreeTest(EpicVerbTest):
         self.make_worktree_change("member-a", "some-other-change", "active")
         r = self.cli("epic-show", "e")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("member-a: unplanned", r.stdout)
+        self.assertEqual(self.member_state(r.stdout, "member-a"), "unplanned")
 
     def test_unreadable_worktree_config_is_skipped(self):
         self.make_epic(
@@ -739,7 +879,57 @@ class MemberStateWorktreeTest(EpicVerbTest):
             fh.write("{not valid json")
         r = self.cli("epic-show", "e")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("member-a: unplanned", r.stdout)
+        self.assertEqual(self.member_state(r.stdout, "member-a"), "unplanned")
+
+
+class EpicFallbackTest(EpicVerbTest):
+    """``status``/``show`` fall back to the epic when their argument names no
+    change but an epic of that slug exists (spec-status status-cli): ``status``
+    prints the epic's status value, ``show`` prints the board-shaped report
+    ``epic-show`` prints. A name matching neither keeps printing ``?``.
+
+    Written test-first; expected to FAIL until the fallback lands in
+    ``spec_status.py`` (task 3.2)."""
+
+    def test_status_falls_back_to_the_epic(self):
+        self.make_epic("shipd-port", status="active",
+                       rows=[("member-a", "A", ("low",) * 4)])
+        r = self.cli("status", "shipd-port")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "active")
+
+    def test_show_falls_back_to_the_epic_report(self):
+        self.make_epic(
+            "shipd-port", status="active",
+            metadata=["Theme: reliability"],
+            rows=[("csv-export", "CSV", ("low",) * 4),
+                  ("new-thing", "TBD", ("high",) * 4)])
+        self.make_completed("csv-export")
+        show = self.cli("show", "shipd-port")
+        epic_show = self.cli("epic-show", "shipd-port")
+        self.assertEqual(show.returncode, 0, show.stderr)
+        self.assertEqual(epic_show.returncode, 0, epic_show.stderr)
+        # Byte-identical: one renderer serves both verbs.
+        self.assertEqual(show.stdout, epic_show.stdout)
+        self.assertIn("shipd-port: active", show.stdout)
+
+    def test_a_change_of_the_same_name_still_wins(self):
+        self.make_epic("overlap", status="active",
+                       rows=[("member-a", "A", ("low",) * 4)])
+        self.make_change("overlap", status="ready")
+        r = self.cli("status", "overlap")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "ready")
+
+    def test_neither_change_nor_epic_stays_a_question_mark(self):
+        r = self.cli("status", "no-such-thing")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "?")
+
+    def test_show_of_neither_change_nor_epic_is_unchanged(self):
+        r = self.cli("show", "no-such-thing")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "no-such-thing: ?")
 
 
 class InitiativeVerbTest(SpecStatusTestBase):

@@ -263,14 +263,12 @@ def flow_lane(state):
     state-only projection of :func:`_member_column` (which also folds in the
     live heartbeat): ``archived``→``shipped``, ``ready``→``ready``,
     ``unplanned``→``unplanned``, everything else (``draft``/``active``/
-    ``rejected``/…)→``building``. Pure."""
-    if state == "archived":
-        return "shipped"
-    if state == "ready":
-        return "ready"
-    if state == "unplanned":
-        return "unplanned"
-    return "building"
+    ``rejected``/…)→``building``. Pure.
+
+    Delegates to :func:`spec_status.board_lane`, the single shared projection
+    the epic report also groups its members with, so the board and the report
+    cannot drift."""
+    return ss.board_lane(state)
 
 
 def dora_tiles(metrics):
