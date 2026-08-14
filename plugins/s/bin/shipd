@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""shipd — the single command-line front end for the shipd spec engine.
+
+A curated dispatcher, not a passthrough: every verb below maps to one engine
+script invocation under ``../skills/build/scripts/``, resolved relative to this
+file's own resolved location so the binary works from a repo checkout and from
+a versioned plugin cache snapshot alike. Delegation is process replacement
+(:func:`os.execv`), so the delegate's stdout, stderr, interactivity, and exit
+code are this binary's own — nothing is reimplemented or reformatted here.
+
+Only read/inspect verbs are exposed. The mutating verbs (``set-status``,
+``merge``, ``emit``, ``autopilot``, ``worktree remove``) stay behind their
+guarded scripts and skills.
+
+Stdlib-only Python 3, per the engine's constitution.
+"""
+
+import argparse
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+SCRIPTS = HERE.parent / "skills" / "build" / "scripts"
+MANIFEST = HERE.parent / ".claude-plugin" / "plugin.json"
+
+# An applied change is archived as ``completed/<YYYY-MM-DD>-<slug>/``; the slug
+# is the change's name. Mirrors the engine's own archive-directory convention
+# (``metrics.py``'s ship-date walk, ``dashboard.py``'s ``completed/*-<slug>``
+# resolution) rather than importing a private helper.
+ARCHIVE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-(.+)$")
+
+# The engine modules the in-binary ``list`` verb reads, imported on demand by
+# :func:`_load_engine` — every other verb replaces this process before it needs
+# them, so dispatch pays no import cost.
+sc = None
+ss = None
+
+# The curated verb table: verb -> (engine script, leading arguments). Trailing
+# arguments from the command line are appended verbatim, so ``--root``, slugs,
+# and flags keep working exactly as they do against the script itself.
+VERB_TABLE = {
+    "status": ("spec_status.py", ["show"]),
+    "locate": ("spec_status.py", ["locate"]),
+    "epic": ("spec_status.py", ["epic-show"]),
+    "workspace": ("spec_status.py", ["workspace-show"]),
+    "board": ("dashboard.py", ["board"]),
+    "tui": ("dashboard.py", ["tui"]),
+    "metrics": ("metrics.py", []),
+    "lint": ("spec_lint.py", []),
+}
+
+USAGE = """\
+usage: shipd <verb> [args...]
+
+Read/inspect verbs over the shipd spec engine. Trailing arguments are passed
+through to the engine verbatim.
+
+verbs:
+  list [--root DIR] [--all]  in-flight changes across the root and its worktrees
+  status [change]            a change's status and progress
+  locate [change]            where an installed change lives
+  epic <slug>                an epic's status, metadata, and member states
+  workspace                  the workspace root, its projects, and initiatives
+  board [--root DIR]         the delivery board
+  tui [--root DIR]           the delivery board, full-screen
+  metrics [subverb]          delivery metrics (default: summary)
+  lint [change]              structurally validate specs and change deltas
+
+options:
+  -h, --help                 print this banner
+  --version                  print the plugin version
+"""
+
+
+def cmd_version():
+    """Print the version the adjacent plugin manifest declares — the shipping
+    unit's own version, so a checkout copy and a cache snapshot each report
+    what they actually are."""
+    try:
+        with open(MANIFEST, encoding="utf-8") as fh:
+            data = json.load(fh)
+        version = data["version"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        sys.stderr.write("Error: cannot read %s: %s\n" % (MANIFEST, exc))
+        return 1
+    print(version)
+    return 0
+
+
+def _load_engine():
+    """Import ``spec_common`` and ``spec_status`` from the engine's scripts dir
+    into the module globals ``sc``/``ss``. Deferred to the ``list`` path so a
+    delegating verb never pays for it."""
+    global sc, ss
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    import spec_common
+    import spec_status
+    sc = spec_common
+    ss = spec_status
+
+
+def _content_dir(root):
+    """``root``'s content directory as its layered config resolves it, or
+    ``None`` when that config is unusable — a foreign directory under
+    ``.worktrees/`` must never fail the listing."""
+    try:
+        return sc.specs_dir(root)
+    except sc.ConfigError:
+        return None
+
+
+def _subdirs(path):
+    """Sorted directory entries under ``path`` that are themselves
+    directories; empty when ``path`` is missing or unreadable."""
+    try:
+        names = sorted(os.listdir(path))
+    except OSError:
+        return []
+    return [n for n in names if os.path.isdir(os.path.join(path, n))]
+
+
+def _planned_rows(root, location):
+    """``(name, location, status)`` for every change under ``root``'s
+    ``planned/``, status read by the engine (``?`` when missing or invalid,
+    as ``spec_status.py locate`` prints it)."""
+    content = _content_dir(root)
+    if content is None:
+        return []
+    return [(name, location, ss.read_status(root, name) or "?")
+            for name in _subdirs(os.path.join(content, "planned"))]
+
+
+def _archived_rows(root, location):
+    """``(name, location, "archived")`` for every applied change under
+    ``root``'s ``completed/``, named by the archive directory's slug."""
+    content = _content_dir(root)
+    if content is None:
+        return []
+    rows = []
+    for name in _subdirs(os.path.join(content, "completed")):
+        m = ARCHIVE_DIR_RE.match(name)
+        rows.append((m.group(1) if m else name, location, "archived"))
+    return rows
+
+
+def _probes(root):
+    """``(directory, location-label)`` pairs to probe, the invocation root
+    first and then each ``.worktrees/<name>`` in sorted order — the probe
+    order and precedence of ``spec_status.py locate``."""
+    probes = [(root, "root")]
+    worktrees = os.path.join(root, ".worktrees")
+    for name in _subdirs(worktrees):
+        probes.append((os.path.join(worktrees, name), "worktree:" + name))
+    return probes
+
+
+def _collect(root, reader):
+    """Apply ``reader`` over every probe, keyed by change name. Probes run
+    root-first, so a worktree occurrence wins a contested name."""
+    found = {}
+    for candidate, location in _probes(root):
+        for row in reader(candidate, location):
+            found[row[0]] = row
+    return found
+
+
+def cmd_list(args):
+    """List in-flight changes across the invocation root and its worktrees."""
+    parser = argparse.ArgumentParser(
+        prog="shipd list",
+        description="In-flight changes across the root and its worktrees.")
+    parser.add_argument("--root", default=os.getcwd(),
+                        help="repository root (default: cwd)")
+    parser.add_argument("--all", action="store_true",
+                        help="also list applied changes from completed/")
+    opts = parser.parse_args(args)
+    root = os.path.abspath(opts.root)
+    _load_engine()
+
+    in_flight = _collect(root, _planned_rows)
+    rows = [in_flight[name] for name in sorted(in_flight)]
+    if opts.all:
+        # Appended after the in-flight rows; a name still in flight keeps its
+        # live row rather than an older archive of the same change.
+        archived = _collect(root, _archived_rows)
+        rows.extend(archived[name] for name in sorted(archived)
+                    if name not in in_flight)
+
+    if not rows:
+        print("no changes in flight")
+        return 0
+    name_width = max(len(row[0]) for row in rows)
+    location_width = max(len(row[1]) for row in rows)
+    for name, location, status in rows:
+        print("%-*s  %-*s  %s"
+              % (name_width, name, location_width, location, status))
+    return 0
+
+
+def main(argv):
+    if not argv:
+        sys.stderr.write(USAGE)
+        return 2
+    verb, rest = argv[0], argv[1:]
+    if verb in ("help", "-h", "--help"):
+        sys.stdout.write(USAGE)
+        return 0
+    if verb == "--version":
+        return cmd_version()
+    if verb == "list":
+        return cmd_list(rest)
+    if verb not in VERB_TABLE:
+        sys.stderr.write(USAGE)
+        return 2
+
+    script, leading = VERB_TABLE[verb]
+    # Bare `shipd metrics` means the delivery-metrics summary; metrics.py has
+    # no default subcommand of its own.
+    if verb == "metrics" and not rest:
+        leading = ["summary"]
+    command = [sys.executable, str(SCRIPTS / script), *leading, *rest]
+    try:
+        os.execv(sys.executable, command)
+    except OSError as exc:
+        sys.stderr.write("Error: cannot run %s: %s\n" % (script, exc))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
