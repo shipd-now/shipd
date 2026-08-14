@@ -36,9 +36,11 @@ Then, before any round opens, **route every surviving decision through the
 ask-mikk rung** (see `SKILL.md`'s "The ask-mikk rung" section): consult the
 oracle on each decision, fold in the ones it answers `ANSWER`, and carry only
 the `INSUFFICIENT` decisions into the agenda's grouped rounds below.
-Oracle-settled decisions are reported with their `Cited:` citations in the next
-round's context brief — or in the closing shared-understanding summary when no
-round remains to open.
+Oracle-settled decisions are reported as
+`Q<n> — <question summary> → <answer summary>`, with who settled it, their
+`Cited:` citations, and `/s:teach <change> Q<n>` as the correction path, in the
+next round's context brief — or in the closing shared-understanding summary
+when no round remains to open.
 
 ## Context brief — open every round with a restatement
 
@@ -51,7 +53,11 @@ turn did not first present the visible brief is a protocol violation. Do not
 put the questions until the brief is printed. The brief's content:
 
 - **What is already known** — restate the accumulated understanding so the user
-  sees that nothing already settled will be re-asked.
+  sees that nothing already settled will be re-asked. Every decision the oracle
+  settled since the last round is listed here as
+  `Q<n> — <question summary> → <answer summary>`, with who settled it and its
+  `Cited:` source(s), and the list names `/s:teach <change> Q<n>` as the way to
+  teach the oracle a different answer.
 - **A diagram, only when one carries the decisions** — attach a visual only
   where it actually carries a decision the round is putting to the user (defer
   to `visualization.md`'s bar; never a decorative visual).

@@ -46,7 +46,60 @@ Run every engine verb with `python3 <CLI> --root <repo-root> <verb …>`, where
 An **optional invocation argument** narrows the run to one topic or surface
 (e.g. a capability name, an epic slug, or a subject keyword). When present,
 scope the scan and the distillation to it; when absent, run the full bounded
-sweep below.
+sweep below. The one exception is the ledger-entry reference below — an
+argument of the form `<change> Q<n>` — which runs a different flow entirely.
+**Every other argument is handled exactly as before.**
+
+## 0. Ledger-entry reference mode — `/s:teach <change> Q<n>`
+
+**When the invocation argument matches `<change> Q<n>`** (a change slug followed
+by a `Q` and a number, e.g. `/s:teach dark-mode-toggle Q1`), **bypass the
+distillation sweep**: steps 2–5 do not run. The user is pointing at one recorded
+ask-mikk consultation in that change's plan ledger (the plan's
+`## Questions and answers` section) to correct the standing answer it captured.
+
+1. **Resolve the store** exactly as in step 1 below — the correction still
+   installs through the store's one staged write path.
+2. **Resolve the change through the engine read**, which covers both a live
+   change and one already archived:
+
+   ```
+   python3 STATUS_CLI --root <repo-root> cat change <change>
+   ```
+
+   `cat change` resolves `planned/<change>/` first and falls back to the newest
+   archived `completed/*-<change>/`, so a merged change's ledger stays
+   readable. If the read fails, or its `plan.md` carries no
+   `### Q<n>:` entry of the referenced number, **report that and stop without
+   writing anything** — no staging dir, no emit, no queue write.
+3. **Print the entry in full** as user-visible text — its `### Q<n>:` header and
+   every field (`**Question:**`, `**Verdict:**`, `**Answered by:**`,
+   `**Answer:**`, and the `**Cited:**` or `**Queued:**` field it carries) — so
+   the user sees exactly what was asked and what was answered before correcting
+   it.
+4. **Interview for the corrected standing position** in the plugin's house
+   question shape: one plain-text round asking what the standing answer should
+   be instead, and what the correction rests on. Keep it to that one round.
+5. **Install the correction through the step 6 staged emit**, with three rules
+   specific to this mode:
+   - **Update the cited page, don't duplicate it.** When the entry carries a
+     `**Cited:**` field naming a wiki page that exists, stage an updated version
+     of *that* page carrying the corrected position — never a near-duplicate new
+     slug. Only when the entry cites no existing page does the correction author
+     a new page (with its `index.md` entry).
+   - **Preserve the correction verbatim.** The user's typed correction exists
+     nowhere else, so stage it as a dated, add-only `sources/<dated-file>` like
+     any other interview answer.
+   - **Drain the entry's queue block in the same ingest.** When the entry
+     carries a `**Queued:** q-<slug>` and `cat wiki queue` still shows that
+     block, remove it from the staged `queue.md` (per step 5's draining rules)
+     so the queued question does not stay pending forever. A block that is
+     already gone is not an error.
+
+   The run's `log.md` entry names the change and the `Q<n>` it corrected.
+
+Then report what was touched, as usual. Anything that does **not** match
+`<change> Q<n>` falls through to the sweep below untouched.
 
 ## 1. Resolve the store
 

@@ -87,6 +87,49 @@ and the change's status becomes `rejected`; a human enriches the plan and
 re-gates, at which point a passing run removes the section and promotes the plan
 to `ready`. The linter tolerates the section in any status.
 
+### The questions-and-answers ledger
+
+An optional **`## Questions and answers` section** MAY follow the required
+sections. It is the durable record of the ask-mikk oracle consultations that ran
+while planning the change: one entry per consultation, in consultation order,
+so a settled decision keeps a stable `Q<n>` reference long after the session
+ends. A planning session with no consultation emits no section.
+
+Each entry is a level-3 header followed by a dash list of fields:
+
+```
+### Q1: Which store holds the toggle?
+- **Question:** Should the toggle live in the settings store or the theme
+  store? Options: (1) settings; (2) theme. Recommendation: (1).
+- **Verdict:** ANSWER
+- **Answered by:** ORACLE
+- **Answer:** The settings store — option 1. It already persists user-scoped
+  display preferences.
+- **Cited:** verified/settings-store
+```
+
+- **`### Q<n>: <one-line question summary>`** — entries are numbered
+  sequentially from `Q1`; enrichment-time consultations append to the existing
+  section and continue the numbering.
+- **`**Question:**`** — the full compact question as it was put to the oracle
+  (decision, options, recommendation).
+- **`**Verdict:**`** — `ANSWER` or `INSUFFICIENT`.
+- **`**Answered by:**`** — `ORACLE` or `USER`, placed directly above the answer
+  so who settled the decision is clear at a glance.
+- **`**Answer:**`** — the oracle's position in full for an `ANSWER` entry, the
+  user's typed resolution for an `INSUFFICIENT` one.
+- **`**Cited:**`** — the oracle's sources; on `ANSWER` entries.
+- **`**Queued:**`** — the `q-<slug>` the oracle filed in the wiki queue; on
+  `INSUFFICIENT` entries.
+
+The linter validates the section when it is present — at least one entry,
+`### Q<n>:` headers numbered sequentially from `Q1`, and a `**Question:**`,
+`**Answered by:**`, and `**Answer:**` field on every entry — and reports
+nothing when it is absent. Entries are paraphrased rather than pasted so they
+never carry the context gate's placeholder markers or its open-question phrase,
+which the gate scans for across the whole plan. `/s:teach <change> Q<n>` replays
+an entry so the user can correct the oracle's standing answer.
+
 ### Header metadata
 
 The header MAY carry an optional **metadata block**: contiguous `Key: value`

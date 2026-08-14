@@ -91,6 +91,16 @@ REQ_TAG_RE = re.compile(r"\[req:([^\]]*)\]")
 # prose after the link is ignored.
 RESEARCH_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 
+# Plan `## Questions and answers` section (shipd-spec-format
+# plan-document-sections, shipd-spec-lint qa-section-validation): one oracle
+# consultation per `### Q<n>: <one-line question summary>` entry, numbered
+# sequentially from Q1, each carrying the fields below. `**Verdict:**`,
+# `**Cited:**`, and `**Queued:**` stay authoring guidance — only the three
+# fields `/s:teach` reads mechanically are enforced.
+QA_SECTION = "## Questions and answers"
+QA_ENTRY_RE = re.compile(r"^###\s+Q(\d+):\s*\S")
+QA_REQUIRED_FIELDS = ("**Question:**", "**Answered by:**", "**Answer:**")
+
 
 class LintError:
     """A single structural error, tied to a file ``location`` for reporting."""
@@ -357,6 +367,69 @@ def check_plan_metadata(root, change, errors):
             "plan.md carries both `Epic:` and `Initiative:`; a grouped change "
             "derives its initiative through its epic, so attach the initiative "
             "to the epic instead", path))
+
+
+# ---------------------------------------------------------------------------
+# Change plan questions-and-answers ledger (shipd-spec-lint
+# qa-section-validation)
+# ---------------------------------------------------------------------------
+
+
+def check_plan_qa_section(root, change, errors):
+    """Validate a change's optional ``## Questions and answers`` plan section
+    (shipd-spec-lint ``qa-section-validation``, shipd-spec-format
+    ``plan-document-sections``).
+
+    When the section is absent, no finding is produced. When it is present it
+    SHALL hold at least one ``### Q<n>: <one-line question summary>`` entry,
+    the entry numbers SHALL run sequentially from ``Q1``, and every entry
+    SHALL carry a ``**Question:**``, an ``**Answered by:**``, and an
+    ``**Answer:**`` field. Each error names the offending entry. A missing
+    plan is left to :func:`check_plan_header` to report."""
+    path = os.path.join(sc.specs_dir(root), "planned", change, "plan.md")
+    if not os.path.isfile(path):
+        return
+    section = _section_lines(_read(path), QA_SECTION)
+    if section is None:
+        return
+
+    # Split the section into entries at its level-3 headings; a heading that is
+    # not a well-formed `### Q<n>:` header is an error naming the raw heading.
+    entries = []          # (label, header_line, body_lines)
+    for line in section:
+        if line.startswith("### "):
+            m = QA_ENTRY_RE.match(line.rstrip())
+            label = "Q%s" % m.group(1) if m else None
+            entries.append((label, line.rstrip(), []))
+        elif entries:
+            entries[-1][2].append(line)
+
+    if not entries:
+        errors.append(LintError(
+            "plan.md `%s` section has no entries (at least one "
+            "`### Q<n>: <summary>` entry required)" % QA_SECTION, path))
+        return
+
+    expected = 1
+    for label, header, body in entries:
+        if label is None:
+            errors.append(LintError(
+                "plan.md `%s` entry header '%s' does not match "
+                "`### Q<n>: <summary>`" % (QA_SECTION, header), path))
+            continue
+        number = int(label[1:])
+        if number != expected:
+            errors.append(LintError(
+                "plan.md `%s` entry '%s' is out of sequence (expected `### Q%d:`"
+                "; entries are numbered sequentially from Q1)"
+                % (QA_SECTION, label, expected), path))
+        expected = number + 1
+        text = "\n".join(body)
+        for field in QA_REQUIRED_FIELDS:
+            if field not in text:
+                errors.append(LintError(
+                    "plan.md `%s` entry '%s' has no `%s` field"
+                    % (QA_SECTION, label, field), path))
 
 
 # ---------------------------------------------------------------------------
@@ -1235,6 +1308,7 @@ def lint_change(root, change, warnings=None):
     errors = []
     check_plan_header(root, change, errors)
     check_plan_metadata(root, change, errors)
+    check_plan_qa_section(root, change, errors)
     check_epic_reference(root, change, errors, warnings)
     plan_path = os.path.join(sc.specs_dir(root), "planned", change, "plan.md")
     if os.path.isfile(plan_path):

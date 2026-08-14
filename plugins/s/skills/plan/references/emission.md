@@ -181,6 +181,76 @@ Risk: a stale persisted value from a future theme name; guard by falling back
 to `light` on an unknown value.
 ```
 
+### `## Questions and answers` — the oracle ledger
+
+When one or more ask-mikk oracle consultations ran while planning the change,
+`plan.md` carries an optional `## Questions and answers` section after the two
+required ones. It is the durable record of those consultations: one entry per
+consultation, in consultation order, so each settled decision keeps a stable
+`Q<n>` reference the user can correct later with `/s:teach <change> Q<n>`.
+
+**No consultations, no section.** A planning session that never consulted the
+oracle emits no `## Questions and answers` section at all — an empty or
+placeholder section is wrong.
+
+**Record every consultation**, not just the ones the oracle settled. An
+`ANSWER` entry carries the oracle's position and its cited sources; an
+`INSUFFICIENT` entry carries the user's typed resolution and the `q-<slug>` the
+oracle filed in the wiki queue, which is what later lets `/s:teach` drain that
+queue entry.
+
+Each entry is a `### Q<n>: <one-line question summary>` header — numbered
+sequentially from `Q1` — followed by a dash list of fields:
+
+- `- **Question:**` the full compact question as it was put to the oracle
+  (decision, options, recommendation).
+- `- **Verdict:**` `ANSWER` or `INSUFFICIENT`.
+- `- **Answered by:**` `ORACLE` or `USER`, directly above the answer so who
+  settled the decision is clear at a glance.
+- `- **Answer:**` the oracle's position in full for an `ANSWER` entry, the
+  user's typed resolution for an `INSUFFICIENT` one.
+- `- **Cited:**` the oracle's sources — on `ANSWER` entries.
+- `- **Queued:**` the filed `q-<slug>` — on `INSUFFICIENT` entries.
+
+The linter errors on a present section that holds no entries, on a header that
+is not `### Q<n>: <summary>`, on numbering that does not run sequentially from
+`Q1`, and on an entry missing its `**Question:**`, `**Answered by:**`, or
+`**Answer:**` field.
+
+**Phrasing rule — stay clear of the gate's marker scans.** The
+context-sufficiency gate scans *all* of `plan.md` outside its own
+`## Context insufficient` section, so a ledger entry must never contain a
+placeholder marker (`TBD`, `TODO`, `FIXME`, `XXX`, the two-word phrase the gate
+matches for an unresolved question, or a bare `???`). Paraphrase the
+consultation into settled prose; never paste a transcript that still carries
+those markers. Trim to the decision, the options, and the answer — the plan's
+~8,000-character budget covers this section too.
+
+```markdown
+## Questions and answers
+
+### Q1: Which store holds the toggle?
+- **Question:** Should the persisted theme live in the existing settings store
+  or a dedicated theme file? Options: (1) settings store; (2) theme file.
+  Recommendation: (1).
+- **Verdict:** ANSWER
+- **Answered by:** ORACLE
+- **Answer:** The settings store — option 1. It already persists user-scoped
+  display preferences and rides the current migration path, so a dedicated
+  file would add I/O for one enum value without a second reader.
+- **Cited:** verified/ui-theming, wiki/settings-store
+
+### Q2: What does the toggle default to on first run?
+- **Question:** Should a fresh install default to `light` or follow the OS
+  appearance on first paint? Options: (1) always `light`; (2) read the OS
+  appearance once. Recommendation: (1).
+- **Verdict:** INSUFFICIENT
+- **Answered by:** USER
+- **Answer:** Default to `light` — following the OS appearance is explicitly a
+  non-goal for this change, and a fixed default keeps first paint deterministic.
+- **Queued:** q-theme-default
+```
+
 ## Delta specs — the contract
 
 Each `specs/<capability>/spec.md` is a **delta**, not a full capability restate.

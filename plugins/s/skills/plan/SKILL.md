@@ -130,7 +130,11 @@ change directory (`<root>/<dir>`), never re-emitting through staging.
    round. Batch those under the **fast-path question contract** (a visible
    context brief first, then a plain-text numbered typed round), and fold the
    answers back into the artifacts. **Do not ask about anything discoverable
-   from the repository.**
+   from the repository.** An enrichment-time consultation is ledgered like any
+   other: **append** its entry to the installed `plan.md`'s
+   `## Questions and answers` section — in place, like every other enrichment
+   edit — **continuing the existing numbering** from the highest `Q<n>` already
+   there (creating the section when the plan carries none yet).
 
 ### Exit enrichment through the re-gate
 
@@ -482,13 +486,28 @@ enrichment's true-gap round — consult the oracle on each remaining decision
     oracle has already queued it, so nothing more is needed to escalate it.
   - **Spawn failure or any other first line** (a malformed verdict) → treat the
     decision as `INSUFFICIENT` and continue. **The rung never blocks planning.**
+- **Number every consultation `Q<n>`.** Assign each consultation of the session
+  a sequential reference — `Q1`, `Q2`, … in consultation order, across every
+  rung invocation of the session, not restarting per round. That reference is
+  what the emitted ledger and every report below name.
 - **Keep oracle-settled decisions visible.** Report every decision the oracle
-  settled in user-visible text with the oracle's position and its `Cited:`
-  source(s) — in the **context brief** of the round that still opens for the
-  remaining `INSUFFICIENT` decisions, or in visible **status text before
-  proceeding** to the readiness gate when nothing remains to ask. A typed user
-  override always supersedes the oracle: the user is the final authority, the
-  wiki merely caches their standing answer.
+  settled in user-visible text as
+  `Q<n> — <one-line question summary> → <one-line answer summary>`, with who
+  settled it and its `Cited:` source(s) — in the **context brief** of the round
+  that still opens for the remaining `INSUFFICIENT` decisions, or in visible
+  **status text before proceeding** to the readiness gate when nothing remains
+  to ask. Name **`/s:teach <change> Q<n>`** as the path for correcting a
+  settled answer. A typed user override always supersedes the oracle: the user
+  is the final authority, the wiki merely caches their standing answer.
+- **Record every consultation for the ledger.** Carry each consultation —
+  `ANSWER` and `INSUFFICIENT` alike — into the emitted plan's
+  `## Questions and answers` section (grammar and worked example in
+  `references/emission.md`): the compact question, the verdict, an
+  `**Answered by:** ORACLE` or `**Answered by:** USER` field directly above the
+  answer, and the answer in full — the oracle's position on an `ANSWER` entry
+  with its `**Cited:**` sources, the user's typed resolution on an
+  `INSUFFICIENT` entry with the `**Queued:**` `q-<slug>` the oracle filed. A
+  session with no consultation emits no section.
 
 **The investigation turn consults the rung in place, same-turn.** When the
 findings digest (step 2) names open task-shaping decisions under **OPEN

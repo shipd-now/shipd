@@ -142,6 +142,24 @@ def _change_dir(root, change):
     return os.path.join(_changes_dir(root), change)
 
 
+def _readable_change_dir(root, change):
+    """Resolve a change directory for *reading* (spec-io mediated-read-verb):
+    ``planned/<change>/`` first and, when absent, the archived
+    ``completed/*-<change>/`` directory — the lexicographically last (newest
+    date prefix) when several match. Returns ``None`` when the change lives in
+    neither. Read-only callers use this so a reference survives the
+    merge/archive; the lifecycle helpers keep resolving ``planned/`` only,
+    since an archived change is not a live one."""
+    planned = _change_dir(root, change)
+    if os.path.isdir(planned):
+        return planned
+    archives = sorted(
+        path for path in glob.glob(
+            os.path.join(sc.specs_dir(root), "completed", "*-" + change))
+        if os.path.isdir(path))
+    return archives[-1] if archives else None
+
+
 def _plan_path(root, change):
     return os.path.join(_change_dir(root, change), "plan.md")
 
@@ -915,13 +933,16 @@ def _cat_files(root, paths):
 def cmd_cat(root, kind, slug, personal=False):
     """Print a named artifact's content through the engine's resolved locations
     (spec-io mediated-read-verb). For a change: its ``plan.md``, every delta
-    spec, and ``tasks.md``. For a ``wiki`` page, ``personal`` selects the
-    personal memory store instead of the workspace store. An unknown name exits
+    spec, and ``tasks.md``, resolved from ``planned/<slug>/`` and falling back
+    to the newest archived ``completed/*-<slug>/`` so a reference survives the
+    merge/archive. For a ``wiki`` page, ``personal`` selects the personal
+    memory store instead of the workspace store. An unknown name exits
     non-zero."""
     if kind == "change":
-        cdir = _change_dir(root, slug)
-        if not os.path.isdir(cdir):
-            raise StatusError("change '%s' not found (%s)" % (slug, cdir))
+        cdir = _readable_change_dir(root, slug)
+        if cdir is None:
+            raise StatusError("change '%s' not found (%s)"
+                              % (slug, _change_dir(root, slug)))
         paths = []
         plan = os.path.join(cdir, "plan.md")
         if os.path.isfile(plan):
