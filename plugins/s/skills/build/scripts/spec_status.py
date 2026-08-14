@@ -21,7 +21,7 @@ Verbs (see the spec-status + statusline capabilities for the contract):
                      subject to the transition guards (--force bypasses guards
                      but never the status-value check)
   sync [change]      re-derive the status from tasks.md checkbox progress
-  locate <change>    find an installed change by probing the invocation root's
+  locate [change]    find an installed change by probing the invocation root's
                      planned/ then each .worktrees/<name> directory, printing a
                      keyed block (change/root/dir/status) per match
   check-base [change]
@@ -484,13 +484,16 @@ def cmd_sync(root, change):
 def cmd_locate(root, change):
     """Probe the invocation root's resolved ``planned/`` first, then each
     ``.worktrees/<name>`` directory under it in sorted name order, for an
-    installed ``change`` (spec-status locate-verb). The content directory is
-    resolved independently per candidate root, so a worktree may carry its own
-    ``.shipd-config.json``. Print one keyed block per match — ``change:``,
+    installed ``change`` (spec-status locate-verb). Where ``change`` is
+    omitted, falls back to the currently selected spec via
+    ``_resolve_change``, raising when none is selected. The content directory
+    is resolved independently per candidate root, so a worktree may carry its
+    own ``.shipd-config.json``. Print one keyed block per match — ``change:``,
     ``root:`` (absolute), ``dir:`` (relative to that root), ``status:`` (``?``
     when missing or invalid) — separated by a blank line, the invocation root's
     own match first. Exit 0 on at least one match; raise (exit 1) naming the
     probed locations when none. No git, model, or network calls."""
+    change = _resolve_change(root, change)
     probed = []
     matches = []
 
@@ -1658,7 +1661,7 @@ def main(argv=None):
     p_locate = sub.add_parser(
         "locate",
         help="find an installed change across the root and its worktrees")
-    p_locate.add_argument("change")
+    p_locate.add_argument("change", nargs="?", default=None)
 
     p_check_base = sub.add_parser(
         "check-base",
