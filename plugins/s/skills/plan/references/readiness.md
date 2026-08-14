@@ -60,6 +60,20 @@ discharges each of the four items with concrete evidence. Internal reasoning
 does not satisfy this — if it is not printed as response text, it does not
 count.
 
+Print it as a **markdown table** with one row per checklist item, so it can be
+scanned at a glance — three columns, `#`, `Item`, and `Evidence`:
+
+```
+| # | Item | Evidence |
+|---|------|----------|
+| 1 | Problem and motivation | … |
+| 2 | Scope and non-goals | … |
+| 3 | Affected capabilities and files | … |
+| 4 | No open task-shaping decision | … |
+```
+
+Each row's `Evidence` cell carries that item's citation, to these standards:
+
 - **Item 1 (problem and motivation).** Cite the `file:line`, requirement id, or
   capability name grounding the motivation — not a restatement of the
   motivation itself.
@@ -85,5 +99,5 @@ count.
 
 **An item with no such citation is unmet**, exactly like an item left
 unaddressed — go back to investigate, consult the oracle, or ask the user, per
-"How to use the gate" above. Print the attestation as one cited line per
-checklist item before authoring any artifact.
+"How to use the gate" above. Print the attestation as a markdown table with one
+cited row per checklist item before authoring any artifact.
