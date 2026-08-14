@@ -98,6 +98,40 @@ For the requirement and delta grammar (`id:` merge keys, `base:` hashes, the
 four operation headers), see [`.shipd/README.md`](.shipd/README.md) — the
 format authority. This README does not restate it.
 
+## The `shipd` CLI
+
+`plugins/s/bin/shipd` is a single stdlib-only binary fronting the engine's
+read/inspect verbs, so a terminal never needs a raw script path:
+
+```
+shipd list [--all]     in-flight changes across the root and its worktrees
+shipd status [change]  a change's status and progress
+shipd locate [change]  where an installed change lives
+shipd epic <slug>      an epic's status, metadata, and member states
+shipd workspace        the workspace root, its projects, and initiatives
+shipd board            the delivery board
+shipd tui              the delivery board, full-screen
+shipd metrics          delivery metrics (default: summary)
+shipd lint [change]    structurally validate specs and change deltas
+```
+
+Every verb but `list` delegates straight to the engine script, so output, exit
+codes, and trailing flags (`--root`, slugs) behave exactly as they do against
+the script itself. Mutating verbs (`set-status`, `merge`, `emit`, `autopilot`,
+`worktree remove`) stay behind their guarded scripts and skills.
+
+### Put `shipd` on your PATH
+
+Symlink the copy in your **repo checkout** into a PATH directory:
+
+```
+ln -s "$PWD/plugins/s/bin/shipd" ~/bin/shipd
+```
+
+Never symlink the versioned plugin cache
+(`~/.claude/plugins/cache/shipd/s/<version>/…`) — that path changes on every
+version bump, so the link breaks the next time the plugin updates.
+
 ## Statusline
 
 `plugins/s/integrations/statusline.sh` renders a live spec — its name,
