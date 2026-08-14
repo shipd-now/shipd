@@ -1,0 +1,17 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "bash plugins/s/integrations/statusline.sh"
+  },
+  "enabledPlugins": {
+    "s@shipd": true
+  },
+  "extraKnownMarketplaces": {
+    "shipd": {
+      "source": {
+        "source": "directory",
+        "path": "."
+      }
+    }
+  }
+}

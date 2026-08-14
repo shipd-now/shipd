@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "shipd",
+  "owner": {
+    "name": "Mikkel Bergmann",
+    "email": "bergmann@gmail.com"
+  },
+  "description": "Shipd — personal collection of Claude Code commands and skills, invoked as /s:<name>.",
+  "plugins": [
+    {
+      "name": "s",
+      "source": "./plugins/s",
+      "description": "Shipd commands and skills, namespaced under /s:",
+      "category": "productivity",
+      "keywords": ["shipd", "s", "workflow"]
+    }
+  ]
+}
