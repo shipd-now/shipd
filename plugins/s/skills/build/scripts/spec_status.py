@@ -21,7 +21,7 @@ Verbs (see the spec-status + statusline capabilities for the contract):
                      subject to the transition guards (--force bypasses guards
                      but never the status-value check)
   sync [change]      re-derive the status from tasks.md checkbox progress
-  locate <change>    find an installed change by probing the invocation root's
+  locate [change]    find an installed change by probing the invocation root's
                      planned/ then each .worktrees/<name> directory, printing a
                      keyed block (change/root/dir/status) per match
   check-base [change]
