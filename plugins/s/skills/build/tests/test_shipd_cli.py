@@ -22,8 +22,8 @@ SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
 BIN = os.path.normpath(os.path.join(HERE, "..", "..", "..", "bin", "shipd"))
 
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
-VERBS = ("list", "status", "locate", "epic", "workspace", "board", "tui",
-         "metrics", "lint")
+VERBS = ("list", "status", "locate", "epic", "workspace", "board", "metrics",
+         "lint")
 
 EPIC_HEADER = (
     "| Change | Description | Code | Integration | Unknowns | Risk |\n"
@@ -42,13 +42,14 @@ def _imports_textual(python):
 
 # ``dashboard.py``'s script entry calls ``tui_bootstrap.ensure_textual`` before
 # its own module-scope ``textual`` import, so *any* subprocess invocation of it
-# — ``board`` included — self-provisions the dependency into a cached venv over
-# the network when ``textual`` is missing. This suite is the stdlib-only one
-# that must pass without ``textual`` installed (the constitution's named
-# exception lives in ``tests_textual/``), so the board-delegation test is
-# skipped rather than allowed to trigger that bootstrap. Both the runner's
-# interpreter (which drives the engine script directly) and the PATH
-# ``python3`` (which the binary's shebang resolves to) must have it.
+# — ``board`` and ``html`` included — self-provisions the dependency into a
+# cached venv over the network when ``textual`` is missing. This suite is the
+# stdlib-only one that must pass without ``textual`` installed (the
+# constitution's named exception lives in ``tests_textual/``), so every
+# board-mode delegation test is skipped rather than allowed to trigger that
+# bootstrap. Both the runner's interpreter (which drives the engine script
+# directly) and the PATH ``python3`` (which the binary's shebang resolves to)
+# must have it.
 HAS_TEXTUAL = _imports_textual(sys.executable) and _imports_textual("python3")
 
 
@@ -156,15 +157,47 @@ class DispatchTest(ShipdCliTestBase):
 
     @unittest.skipUnless(HAS_TEXTUAL, "dashboard.py's script entry provisions "
                                       "textual; see HAS_TEXTUAL")
-    def test_board_delegates_to_dashboard(self):
+    def test_bare_board_is_the_interactive_board(self):
+        # ``--help`` proves the default-mode mapping (and that flags reach the
+        # delegate untouched) without launching the full-screen app.
+        direct = self.script("dashboard.py", "tui", "--help")
+        r = self.cli("board", "--help")
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+
+    @unittest.skipUnless(HAS_TEXTUAL, "dashboard.py's script entry provisions "
+                                      "textual; see HAS_TEXTUAL")
+    def test_board_text_delegates_to_dashboard_board(self):
         self.make_epic("ep", ["m1", "m2"])
         self.make_change(self.root, "m1", status="ready")
         direct = self.script("dashboard.py", "board", "--root", self.root)
-        r = self.cli("board", "--root", self.root)
+        r = self.cli("board", "text", "--root", self.root)
         self.assertEqual(r.returncode, 0)
         self.assertEqual(direct.returncode, 0)
         self.assertEqual(r.stdout, direct.stdout)
         self.assertIn("epic ep", r.stdout)
+
+    @unittest.skipUnless(HAS_TEXTUAL, "dashboard.py's script entry provisions "
+                                      "textual; see HAS_TEXTUAL")
+    def test_board_html_writes_one_snapshot(self):
+        self.make_epic("ep", ["m1"])
+        self.make_change(self.root, "m1", status="ready")
+        out = os.path.join(self.root, "board.html")
+        r = self.cli("board", "html", "--root", self.root, "--out", out,
+                     "--once")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.exists(out), "html mode wrote no page")
+        with open(out, encoding="utf-8") as fh:
+            page = fh.read()
+        self.assertIn("<html", page.lower())
+        self.assertIn("ep", page)
+
+    def test_retired_tui_verb_is_a_usage_error(self):
+        r = self.cli("tui")
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(r.stdout, "")
+        self.assertUsageBanner(r.stderr)
 
 
 class ListTest(ShipdCliTestBase):

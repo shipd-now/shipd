@@ -46,10 +46,20 @@ VERB_TABLE = {
     "locate": ("spec_status.py", ["locate"]),
     "epic": ("spec_status.py", ["epic-show"]),
     "workspace": ("spec_status.py", ["workspace-show"]),
-    "board": ("dashboard.py", ["board"]),
-    "tui": ("dashboard.py", ["tui"]),
+    "board": ("dashboard.py", ["tui"]),
     "metrics": ("metrics.py", []),
     "lint": ("spec_lint.py", []),
+}
+
+# ``board`` leads with the interactive board and exposes its other renderings
+# as positional mode words: mode -> (engine script, leading arguments), with
+# ``None`` the mode-less default. A mode is recognized only when it is the
+# *first* trailing argument and a bare word, so ``shipd board --root X`` keeps
+# the default mode and passes its flags through untouched.
+BOARD_MODES = {
+    None: ("dashboard.py", ["tui"]),
+    "text": ("dashboard.py", ["board"]),
+    "html": ("dashboard.py", ["html"]),
 }
 
 USAGE = """\
@@ -64,8 +74,7 @@ verbs:
   locate [change]            where an installed change lives
   epic <slug>                an epic's status, metadata, and member states
   workspace                  the workspace root, its projects, and initiatives
-  board [--root DIR]         the delivery board
-  tui [--root DIR]           the delivery board, full-screen
+  board [text|html] [args]   the delivery board (default: full-screen)
   metrics [subverb]          delivery metrics (default: summary)
   lint [change]              structurally validate specs and change deltas
 
@@ -222,6 +231,13 @@ def main(argv):
     # no default subcommand of its own.
     if verb == "metrics" and not rest:
         leading = ["summary"]
+    # `shipd board [mode]` picks its renderer by mode word, consuming it; any
+    # other first argument (or none) leaves the default mode in place.
+    if verb == "board":
+        mode = rest[0] if rest and rest[0] in BOARD_MODES else None
+        if mode is not None:
+            rest = rest[1:]
+        script, leading = BOARD_MODES[mode]
     command = [sys.executable, str(SCRIPTS / script), *leading, *rest]
     try:
         os.execv(sys.executable, command)
