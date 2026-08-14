@@ -1,0 +1,5 @@
+[
+  {"id": 1, "title": "Draft the board layout", "lane": "todo"},
+  {"id": 2, "title": "Wire up the card store", "lane": "doing"},
+  {"id": 3, "title": "Pick the three lanes", "lane": "done"}
+]

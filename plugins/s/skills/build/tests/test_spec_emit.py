@@ -1,0 +1,567 @@
+#!/usr/bin/env python3
+"""Tests for spec_emit.py — staged validate-then-install of spec content
+(spec-io staged-emission).
+
+The CLI is driven as a black box via subprocess against a throwaway temp repo
+root, with ``$HOME`` isolated so config resolution never reads the real home.
+Written test-first; expected to FAIL until ``spec_emit.py`` lands."""
+
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SCRIPT = os.path.normpath(os.path.join(HERE, "..", "scripts", "spec_emit.py"))
+
+
+CLEAN_PLAN = (
+    "# my-change\n"
+    "Status: draft\n"
+    "\n"
+    "## Idea\n\nA one-sentence summary.\n\n"
+    "### Motivation\n\nBecause it matters.\n\n"
+    "### Details\n\nThe concrete changes.\n\n"
+    "### Non-goals\n\n- Not that.\n\n"
+    "## Implementation\n\nCarefully.\n"
+)
+
+CLEAN_DELTA = (
+    "## ADDED Requirements\n\n"
+    "### Requirement: Example\n"
+    "id: example\n\n"
+    "The system SHALL do a thing.\n\n"
+    "#### Scenario: It works\n"
+    "- **WHEN** something happens\n"
+    "- **THEN** it is handled\n"
+)
+
+CLEAN_TASKS = "# Tasks\n\n- [ ] 1.1 [req: *] Do the thing.\n"
+
+CLEAN_BRIEF = (
+    "# my-goal\n"
+    "Status: open\n"
+    "\n"
+    "Get there.\n"
+    "\n"
+    "## Requirements\n"
+    "\n"
+    "- [ ] Do it\n"
+)
+
+CLEAN_EPIC = (
+    "# reporting-overhaul\n"
+    "Status: draft\n"
+    "\n"
+    "## Introduction\n\nWhy it matters.\n\n"
+    "### Non-goals\n\n- Not that.\n\n"
+    "## Decisions\n\nWhy.\n\n"
+    "## Design\n\nHow.\n\n"
+    "## Changes\n\n"
+    "| Change | Description | Code | Integration | Unknowns | Risk |\n"
+    "| --- | --- | --- | --- | --- | --- |\n"
+    "| csv-export | Export as CSV | low | medium | low | low |\n"
+)
+
+
+CLEAN_REPORT = (
+    "# Payment API landscape\n"
+    "\n"
+    "## Summary\n"
+    "\n"
+    "Stripe leads on developer experience [1].\n"
+    "\n"
+    "## Sources\n"
+    "\n"
+    "1. Stripe docs — https://stripe.com/docs\n"
+)
+
+CLEAN_VIDEO_BRIEF = (
+    "# Board walkthrough\n"
+    "Video: board-walkthrough.mp4\n"
+    "\n"
+    "## Speakers\n"
+    "\n"
+    "- Mikk — product lead\n"
+    "\n"
+    "## Intents\n"
+    "\n"
+    "### Explain the parked-member signal\n"
+    "\n"
+    "The board should surface parked members clearly [1].\n"
+    "\n"
+    "## Sources\n"
+    "\n"
+    "1. [00:14:22.4] Mikk: parked members need a visible signal.\n"
+)
+
+
+class SpecEmitTestBase(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="spec-emit-test-")
+        self.stage = tempfile.mkdtemp(prefix="spec-emit-stage-")
+        self.home = tempfile.mkdtemp(prefix="spec-emit-home-")
+        # Redirect flow-time-series capture (the change-install hook) to a
+        # throwaway dir so no test writes to the real ~/.shipd/builds/flow.jsonl.
+        # cli() copies os.environ, so the subprocess inherits this.
+        self.flow_dir = tempfile.mkdtemp(prefix="spec-emit-flow-")
+        self._old_flow = os.environ.get("AM_FLOW_LOG_DIR")
+        os.environ["AM_FLOW_LOG_DIR"] = self.flow_dir
+
+    def tearDown(self):
+        if self._old_flow is None:
+            os.environ.pop("AM_FLOW_LOG_DIR", None)
+        else:
+            os.environ["AM_FLOW_LOG_DIR"] = self._old_flow
+        for d in (self.root, self.stage, self.home, self.flow_dir):
+            shutil.rmtree(d, ignore_errors=True)
+
+    def flow_records(self):
+        """Every flow.jsonl record captured under this test's flow dir."""
+        path = os.path.join(self.flow_dir, "flow.jsonl")
+        records = []
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line:
+                        records.append(json.loads(line))
+        except OSError:
+            pass
+        return records
+
+    def cli(self, *args):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        return subprocess.run(
+            ["python3", SCRIPT, "--root", self.root, *args],
+            capture_output=True, text=True, env=env)
+
+    def declare_workspace(self):
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"workspace": {}}, fh)
+
+    def stage_change(self, plan=CLEAN_PLAN, delta=CLEAN_DELTA,
+                     tasks=CLEAN_TASKS):
+        with open(os.path.join(self.stage, "plan.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(plan)
+        cap = os.path.join(self.stage, "specs", "auth")
+        os.makedirs(cap, exist_ok=True)
+        with open(os.path.join(cap, "spec.md"), "w", encoding="utf-8") as fh:
+            fh.write(delta)
+        with open(os.path.join(self.stage, "tasks.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(tasks)
+
+    def stage_file(self, text):
+        path = os.path.join(self.stage, "artifact.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def planned_dir(self, name):
+        return os.path.join(self.root, ".shipd", "planned", name)
+
+
+class ChangeEmitTest(SpecEmitTestBase):
+    def test_clean_change_installs(self):
+        self.stage_change()
+        r = self.cli("change", "my-change", "--from", self.stage)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        dest = self.planned_dir("my-change")
+        self.assertTrue(os.path.isfile(os.path.join(dest, "plan.md")))
+        self.assertTrue(os.path.isfile(
+            os.path.join(dest, "specs", "auth", "spec.md")))
+        self.assertTrue(os.path.isfile(os.path.join(dest, "tasks.md")))
+
+    def test_invalid_change_leaves_no_directory(self):
+        # A plan missing its `### Non-goals` subsection is a lint error.
+        bad_plan = CLEAN_PLAN.replace("### Non-goals\n\n- Not that.\n\n", "")
+        self.stage_change(plan=bad_plan)
+        r = self.cli("change", "my-change", "--from", self.stage)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue(r.stdout + r.stderr)  # findings printed
+        self.assertFalse(os.path.exists(self.planned_dir("my-change")))
+
+    def test_existing_destination_refused_without_replace(self):
+        self.stage_change()
+        self.assertEqual(
+            self.cli("change", "my-change", "--from", self.stage).returncode, 0)
+        # Mark the installed copy so we can prove it was untouched.
+        sentinel = os.path.join(self.planned_dir("my-change"), "sentinel")
+        with open(sentinel, "w", encoding="utf-8") as fh:
+            fh.write("keep")
+        r = self.cli("change", "my-change", "--from", self.stage)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue(os.path.isfile(sentinel))
+
+    def test_existing_destination_replaced_with_flag(self):
+        self.stage_change()
+        self.assertEqual(
+            self.cli("change", "my-change", "--from", self.stage).returncode, 0)
+        sentinel = os.path.join(self.planned_dir("my-change"), "sentinel")
+        with open(sentinel, "w", encoding="utf-8") as fh:
+            fh.write("stale")
+        r = self.cli("change", "my-change", "--from", self.stage, "--replace")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # The stale sentinel is gone; the fresh artifacts are present.
+        self.assertFalse(os.path.exists(sentinel))
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.planned_dir("my-change"), "plan.md")))
+
+
+class InitiativeEmitTest(SpecEmitTestBase):
+    def _brief_path(self, slug):
+        return os.path.join(
+            self.root, ".shipd", "initiatives", slug, "brief.md")
+
+    def test_clean_brief_installs(self):
+        self.declare_workspace()
+        src = self.stage_file(CLEAN_BRIEF)
+        r = self.cli("initiative", "my-goal", "--from", src)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(self._brief_path("my-goal")))
+
+    def test_invalid_brief_leaves_no_file(self):
+        self.declare_workspace()
+        bad = CLEAN_BRIEF.replace(
+            "## Requirements\n\n- [ ] Do it\n", "")  # no requirements section
+        src = self.stage_file(bad)
+        r = self.cli("initiative", "my-goal", "--from", src)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse(os.path.exists(
+            os.path.join(self.root, ".shipd", "initiatives", "my-goal")))
+
+
+class EpicEmitTest(SpecEmitTestBase):
+    def _epic_path(self, slug):
+        return os.path.join(self.root, ".shipd", "epics", slug, "epic.md")
+
+    def test_clean_epic_installs(self):
+        src = self.stage_file(CLEAN_EPIC)
+        r = self.cli("epic", "reporting-overhaul", "--from", src)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(self._epic_path("reporting-overhaul")))
+
+    def test_invalid_epic_leaves_no_file(self):
+        bad = CLEAN_EPIC[:CLEAN_EPIC.index("## Changes")]  # drop Changes table
+        src = self.stage_file(bad)
+        r = self.cli("epic", "reporting-overhaul", "--from", src)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse(os.path.exists(
+            os.path.join(self.root, ".shipd", "epics", "reporting-overhaul")))
+
+
+class ResearchEmitTest(SpecEmitTestBase):
+    def _report_path(self, slug):
+        return os.path.join(
+            self.root, ".shipd", "research", slug, "report.md")
+
+    def test_clean_report_installs(self):
+        src = self.stage_file(CLEAN_REPORT)
+        r = self.cli("research", "payment-apis", "--from", src)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(self._report_path("payment-apis")))
+
+    def test_invalid_report_leaves_no_directory(self):
+        # An unresolved citation marker ([4] over one source) is a lint error.
+        bad = CLEAN_REPORT.replace(
+            "developer experience [1].", "developer experience [4].")
+        src = self.stage_file(bad)
+        r = self.cli("research", "payment-apis", "--from", src)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue(r.stdout + r.stderr)  # findings printed
+        self.assertFalse(os.path.exists(
+            os.path.join(self.root, ".shipd", "research", "payment-apis")))
+
+    def test_existing_destination_refused_without_replace(self):
+        src = self.stage_file(CLEAN_REPORT)
+        self.assertEqual(
+            self.cli("research", "payment-apis", "--from", src).returncode, 0)
+        sentinel = os.path.join(
+            os.path.dirname(self._report_path("payment-apis")), "sentinel")
+        with open(sentinel, "w", encoding="utf-8") as fh:
+            fh.write("keep")
+        r = self.cli("research", "payment-apis", "--from", src)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue(os.path.isfile(sentinel))
+
+    def test_existing_destination_replaced_with_flag(self):
+        src = self.stage_file(CLEAN_REPORT)
+        self.assertEqual(
+            self.cli("research", "payment-apis", "--from", src).returncode, 0)
+        sentinel = os.path.join(
+            os.path.dirname(self._report_path("payment-apis")), "sentinel")
+        with open(sentinel, "w", encoding="utf-8") as fh:
+            fh.write("stale")
+        r = self.cli("research", "payment-apis", "--from", src, "--replace")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(sentinel))
+        self.assertTrue(os.path.isfile(self._report_path("payment-apis")))
+
+
+class VideoEmitTest(SpecEmitTestBase):
+    """The staged ``video`` emit subcommand (spec-io staged-emission),
+    installing a video intent brief at ``<content-dir>/video/<slug>/
+    brief.md`` under the validate-then-install rule.
+
+    Written test-first; expected to FAIL until ``video`` lands in
+    ``spec_emit.py`` (task 3.2/3.3)."""
+
+    def _brief_path(self, slug):
+        return os.path.join(self.root, ".shipd", "video", slug, "brief.md")
+
+    def test_clean_brief_installs(self):
+        src = self.stage_file(CLEAN_VIDEO_BRIEF)
+        r = self.cli("video", "board-walkthrough", "--from", src)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(self._brief_path("board-walkthrough")))
+
+    def test_uncited_intent_leaves_no_directory(self):
+        # Dropping the intent's [1] marker is a lint error.
+        bad = CLEAN_VIDEO_BRIEF.replace(
+            "The board should surface parked members clearly [1].",
+            "The board should surface parked members clearly.")
+        src = self.stage_file(bad)
+        r = self.cli("video", "board-walkthrough", "--from", src)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue(r.stdout + r.stderr)  # findings printed
+        self.assertFalse(os.path.exists(
+            os.path.join(self.root, ".shipd", "video", "board-walkthrough")))
+
+    def test_existing_destination_refused_without_replace(self):
+        src = self.stage_file(CLEAN_VIDEO_BRIEF)
+        self.assertEqual(
+            self.cli("video", "board-walkthrough", "--from", src).returncode,
+            0)
+        sentinel = os.path.join(
+            os.path.dirname(self._brief_path("board-walkthrough")),
+            "sentinel")
+        with open(sentinel, "w", encoding="utf-8") as fh:
+            fh.write("keep")
+        r = self.cli("video", "board-walkthrough", "--from", src)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue(os.path.isfile(sentinel))
+
+
+class WikiEmitTest(SpecEmitTestBase):
+    """The staged ``wiki`` emit subcommand (spec-io wiki-emission).
+
+    ``self.root`` doubles as the workspace root; the store lives at
+    ``<root>/.shipd/wiki/``. A staging dir mirrors a store subset."""
+
+    def wiki(self):
+        return os.path.join(self.root, ".shipd", "wiki")
+
+    def _w(self, rel, text):
+        path = os.path.join(self.wiki(), rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def seed_store(self):
+        """A clean seeded store: one page cataloged by a matching index."""
+        os.makedirs(os.path.join(self.wiki(), "sources"), exist_ok=True)
+        os.makedirs(os.path.join(self.wiki(), "wiki"), exist_ok=True)
+        self._w("schema.md", "# Wiki schema\n\nConventions.\n")
+        self._w("index.md", "# Index\n\n- [[welcome]] — The welcome page.\n")
+        self._w("log.md",
+                "# Log\n\n## [2026-07-30] wiki-init | seeded the store\n\n"
+                "Init.\n")
+        self._w("queue.md", "# Queue\n")
+        self._w("wiki/welcome.md", "# Welcome\n\nHello.\n")
+
+    def stage_wiki(self, files):
+        """Write ``{relpath: text}`` into the staging directory."""
+        for rel, text in files.items():
+            path = os.path.join(self.stage, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+
+    def _snapshot(self):
+        snap = {}
+        for dirpath, _dirs, names in os.walk(self.wiki()):
+            for name in names:
+                path = os.path.join(dirpath, name)
+                with open(path, encoding="utf-8") as fh:
+                    snap[os.path.relpath(path, self.wiki())] = fh.read()
+        return snap
+
+    def test_page_install_with_index_update(self):
+        self.declare_workspace()
+        self.seed_store()
+        self.stage_wiki({
+            "wiki/intro.md": "# Intro\n\nThe intro page.\n",
+            "index.md": ("# Index\n\n- [[welcome]] — The welcome page.\n"
+                         "- [[intro]] — Introduction.\n"),
+        })
+        r = self.cli("wiki", "--from", self.stage)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.wiki(), "wiki", "intro.md")))
+        with open(os.path.join(self.wiki(), "index.md"),
+                  encoding="utf-8") as fh:
+            self.assertIn("[[intro]]", fh.read())
+
+    def test_invalid_result_rolls_back(self):
+        self.declare_workspace()
+        self.seed_store()
+        before = self._snapshot()
+        # An orphan page (no index entry) plus a dead wikilink.
+        self.stage_wiki({"wiki/orphan.md": "# Orphan\n\nSee [[ghost]].\n"})
+        r = self.cli("wiki", "--from", self.stage)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue(r.stdout + r.stderr)  # findings printed
+        self.assertEqual(self._snapshot(), before)  # byte-for-byte restore
+        self.assertFalse(os.path.exists(
+            os.path.join(self.wiki(), "wiki", "orphan.md")))
+
+    def test_source_overwrite_refused(self):
+        self.declare_workspace()
+        self.seed_store()
+        self._w("sources/notes.md", "original notes\n")
+        before = self._snapshot()
+        self.stage_wiki({
+            "sources/notes.md": "new notes\n",
+            "wiki/intro.md": "# Intro\n\nThe intro page.\n",
+        })
+        r = self.cli("wiki", "--from", self.stage)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("source", r.stderr.lower())
+        self.assertEqual(self._snapshot(), before)  # nothing installed
+        self.assertFalse(os.path.exists(
+            os.path.join(self.wiki(), "wiki", "intro.md")))
+
+    def test_requires_workspace(self):
+        # No workspace declared → the mode fails naming the missing workspace.
+        self.stage_wiki({"wiki/intro.md": "# Intro\n\nHi.\n"})
+        r = self.cli("wiki", "--from", self.stage)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no workspace", r.stderr.lower())
+
+    # -- Auto-commit (shipd-wiki wiki-autocommit) --
+
+    def _git(self, *args):
+        subprocess.run(["git", "-C", self.root, *args],
+                       capture_output=True, text=True, check=True)
+
+    def _init_git(self):
+        subprocess.run(["git", "init", "-q", self.root],
+                       capture_output=True, text=True, check=True)
+        self._git("config", "user.email", "test@example.com")
+        self._git("config", "user.name", "Test")
+
+    def _commit_baseline(self):
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "baseline")
+
+    def _commit_count(self):
+        r = subprocess.run(
+            ["git", "-C", self.root, "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True, check=True)
+        return int(r.stdout.strip())
+
+    def _head_subject(self):
+        r = subprocess.run(
+            ["git", "-C", self.root, "log", "-1", "--format=%s"],
+            capture_output=True, text=True, check=True)
+        return r.stdout.strip()
+
+    def _head_files(self):
+        r = subprocess.run(
+            ["git", "-C", self.root, "show", "--name-only", "--format=", "HEAD"],
+            capture_output=True, text=True, check=True)
+        return sorted(p for p in r.stdout.split("\n") if p.strip())
+
+    def test_successful_emit_commits_installed_files(self):
+        self.declare_workspace()
+        self.seed_store()
+        self._init_git()
+        self._commit_baseline()
+        before = self._commit_count()
+        self.stage_wiki({
+            "wiki/intro.md": "# Intro\n\nThe intro page.\n",
+            "index.md": ("# Index\n\n- [[welcome]] — The welcome page.\n"
+                         "- [[intro]] — Introduction.\n"),
+        })
+        r = self.cli("wiki", "--from", self.stage)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._commit_count(), before + 1)
+        self.assertEqual(self._head_subject(), "shipd-wiki: emit 2 file(s)")
+        self.assertEqual(
+            self._head_files(),
+            [".shipd/wiki/index.md", ".shipd/wiki/wiki/intro.md"])
+
+    def test_non_git_workspace_installs_without_git(self):
+        self.declare_workspace()
+        self.seed_store()
+        self.stage_wiki({
+            "wiki/intro.md": "# Intro\n\nThe intro page.\n",
+            "index.md": ("# Index\n\n- [[welcome]] — The welcome page.\n"
+                         "- [[intro]] — Introduction.\n"),
+        })
+        r = self.cli("wiki", "--from", self.stage)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.wiki(), "wiki", "intro.md")))
+        self.assertFalse(os.path.exists(os.path.join(self.root, ".git")))
+
+    def test_lint_failing_emit_makes_no_commit(self):
+        self.declare_workspace()
+        self.seed_store()
+        self._init_git()
+        self._commit_baseline()
+        before = self._commit_count()
+        # An orphan page (no index entry) plus a dead wikilink → lint fails.
+        self.stage_wiki({"wiki/orphan.md": "# Orphan\n\nSee [[ghost]].\n"})
+        r = self.cli("wiki", "--from", self.stage)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self._commit_count(), before)
+
+
+class ChangeInstallFlowHookTest(SpecEmitTestBase):
+    """A change install appends a best-effort flow snapshot
+    (delivery-metrics flow-timeseries)."""
+
+    def _seed_epic(self):
+        # An epic referencing my-change so, once installed (draft), the snapshot
+        # lists it in the draft band.
+        epic_dir = os.path.join(self.root, ".shipd", "epics", "e1")
+        os.makedirs(epic_dir)
+        with open(os.path.join(epic_dir, "epic.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("# e1\nStatus: active\n\n## Changes\n\n"
+                     "| Change | Description | Risk |\n| --- | --- | --- |\n"
+                     "| my-change | the member | low |\n")
+
+    def test_change_install_appends_a_flow_record(self):
+        self._seed_epic()
+        self.stage_change()
+        r = self.cli("change", "my-change", "--from", self.stage)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        records = self.flow_records()
+        self.assertTrue(records)
+        rec = records[-1]
+        self.assertEqual(rec["root"], os.path.abspath(self.root))
+        self.assertEqual(rec["states"].get("draft"), ["my-change"])
+
+    def test_unwritable_flow_dest_does_not_fail_install(self):
+        self.stage_change()
+        blocker = os.path.join(self.root, "blocker")
+        os.makedirs(self.root, exist_ok=True)
+        with open(blocker, "w", encoding="utf-8") as fh:
+            fh.write("x")
+        os.environ["AM_FLOW_LOG_DIR"] = os.path.join(blocker, "nope")
+        r = self.cli("change", "my-change", "--from", self.stage)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.planned_dir("my-change"), "plan.md")))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Run engine test suite
+        run: python3 -m unittest discover -s plugins/s/skills/build/tests -v
+
+      - name: Install textual (board tui dependency)
+        run: python3 -m pip install -r requirements.txt
+
+      - name: Run textual-dependent test suite
+        run: python3 -m unittest discover -s plugins/s/skills/build/tests_textual -v
+
+      - name: Run review test suite
+        run: python3 -m unittest discover -s plugins/s/skills/review/tests -v
+
+      - name: Run video-ingest test suite
+        run: python3 -m unittest discover -s plugins/s/skills/video-ingest/tests -v
+
+      - name: Lint master spec library
+        run: python3 plugins/s/skills/build/scripts/spec_lint.py
+
+      - name: Lint in-flight changes
+        run: |
+          for d in .shipd/planned/*/; do
+            [ -d "$d" ] || continue
+            python3 plugins/s/skills/build/scripts/spec_lint.py "$(basename "$d")"
+          done
+
+      - name: Shell syntax checks
+        run: |
+          bash -n plugins/s/integrations/statusline.sh
+          bash -n plugins/s/skills/build/scripts/claim_task.sh
+          bash -n plugins/s/skills/build/scripts/worktree.sh
