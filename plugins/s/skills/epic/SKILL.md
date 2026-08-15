@@ -68,7 +68,7 @@ about. A question you could have answered by reading is a failure of this skill.
    Record every brief you actually read as a link entry in the epic's
    `## Video` section (see the epic contract), and never invent an entry for a
    brief you did not read. **The brief is an input to investigation, never a
-   replacement for it:** the codebase-first rule below still applies in full —
+   replacement for it:** the codebase-first rule above still applies in full —
    the affected capabilities and the decomposition seams are still established
    by reading the repository, not taken from the brief alone. **This skill does
    not ingest recordings:** when the invocation argument names a video
