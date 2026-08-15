@@ -45,6 +45,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cli_common as cc  # noqa: E402
 import spec_common as sc  # noqa: E402
 import spec_lint as sl  # noqa: E402
 import spec_status as ss  # noqa: E402
@@ -384,10 +385,10 @@ def main(argv=None):
     try:
         return run_gate(root, args.change)
     except GateError as exc:
-        print("Error: %s" % exc, file=sys.stderr)
+        cc.err(str(exc))
         return 1
     except (OSError, ss.StatusError) as exc:
-        print("Error: %s" % exc, file=sys.stderr)
+        cc.err(str(exc))
         return 1
 
 

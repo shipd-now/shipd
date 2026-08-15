@@ -54,6 +54,7 @@ import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cli_common as cc  # noqa: E402
 import spec_common as sc  # noqa: E402
 import spec_lint as sl  # noqa: E402
 
@@ -387,7 +388,7 @@ def main(argv=None):
         if args.mode == "wiki":
             return emit_wiki(root, args.src, args.personal)
     except (EmitError, sc.ConfigError) as exc:
-        print("Error: %s" % exc, file=sys.stderr)
+        cc.err(str(exc))
         return 1
     return 2
 

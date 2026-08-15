@@ -36,6 +36,7 @@ import time
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPTS_DIR)
 
+import cli_common as cc  # noqa: E402
 import spec_common as sc  # noqa: E402
 import spec_status as ss  # noqa: E402
 import build_report as br  # noqa: E402
@@ -4390,7 +4391,7 @@ def main(argv=None):
     try:
         return args.func(args)
     except ValueError as exc:
-        print(str(exc), file=sys.stderr)
+        cc.err(str(exc))
         return 1
 
 

@@ -101,6 +101,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cli_common as cc  # noqa: E402
 import spec_common as sc  # noqa: E402
 import spec_merge  # noqa: E402
 from spec_lint import lint_change, lint_epic, lint_wiki  # noqa: E402
@@ -2255,10 +2256,10 @@ def main(argv=None):
             print(detail, file=sys.stderr)
         return 3
     except StatusError as exc:
-        print("Error: %s" % exc, file=sys.stderr)
+        cc.err(str(exc))
         return 1
     except sc.ConfigError as exc:
-        print("Error: %s" % exc, file=sys.stderr)
+        cc.err(str(exc))
         return 1
     return 2
 

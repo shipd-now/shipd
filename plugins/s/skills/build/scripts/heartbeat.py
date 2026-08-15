@@ -26,6 +26,7 @@ import time
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPTS_DIR)
 
+import cli_common as cc  # noqa: E402
 import spec_common as sc  # noqa: E402
 
 
@@ -229,8 +230,7 @@ def _write_build_heartbeat(root, slug, mutate, location, session_id, out):
     try:
         path = build_heartbeat_path(root, slug)
     except sc.ConfigError as exc:
-        out("Warning: build heartbeat write failed (%s); the build continues."
-            % exc)
+        out("build heartbeat write failed (%s); the build continues." % exc)
         return
     state = _load_build_state(path)
     mutate(state)
@@ -250,8 +250,7 @@ def _write_build_heartbeat(root, slug, mutate, location, session_id, out):
             json.dump(state, fh, indent=2, sort_keys=True)
         os.replace(tmp, path)
     except OSError as exc:
-        out("Warning: build heartbeat write failed (%s); the build continues."
-            % exc)
+        out("build heartbeat write failed (%s); the build continues." % exc)
 
 
 def _build_start(state):
@@ -293,7 +292,7 @@ def main(argv=None):
     session_id = args.session_id
 
     def out(msg):
-        print(msg, file=sys.stderr)
+        cc.warn(msg)
 
     if args.cmd == "build-start":
         mutate = _build_start
