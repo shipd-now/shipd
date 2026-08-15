@@ -25,8 +25,8 @@ you do **not** plan or build anything from what you find.
 
 **Announce the version first.** Read the running plugin version from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include
-`am:video-ingest v<version>` in your first user-visible status sentence (e.g.
-"am:video-ingest v0.6.0 — confirming the toolchain and obtaining the bundle"),
+`s:video-ingest v<version>` in your first user-visible status sentence (e.g.
+"s:video-ingest v0.6.0 — confirming the toolchain and obtaining the bundle"),
 so the user can always see which plugin snapshot the session is running.
 
 Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
@@ -268,6 +268,10 @@ installed brief exists:
 2. **Summarize the extracted intents** — one line per intent under
    `## Intents`, plus a note of anything routed to `## Open questions` for
    lack of a configured decider.
-3. **Stop.** This skill composes and installs a brief; it does not plan a
-   change, build anything, or open an epic from what it found. Point out that
-   the brief is now readable by an epic or a plan, and end the turn there.
+3. **Point at `/s:epic` consumption.** Tell the user the brief is ready to
+   feed an epic: `/s:epic` reads briefs linked from an epic's `## Video`
+   section (as `- [<title>](../../video/<slug>/brief.md)`) and treats them as
+   pre-investigation context.
+4. **Stop.** This skill composes and installs a brief; it does not plan a
+   change, build anything, or open an epic from what it found. End the turn
+   there.
