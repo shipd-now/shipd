@@ -102,6 +102,19 @@ transcript's wording for the same on-screen element, the brief states what the
 frame shows and separately notes the transcript's wording — it never repeats
 the misheard term as if it were fact.
 
+**Read the pointer crop where a cited frame carries one.** A cited frame's
+`frames.json` entry may carry a `cursor` object naming a zoom-crop `file`
+alongside the full frame's own `file` — a ~20px cursor is effectively
+invisible in the full frame but unmistakable in its crop. Where an entry
+carries a `cursor` object, read that crop image too (with the Read tool) and
+name the element under the pointer as the intent's target — the strongest
+available evidence of what was being discussed. Where a cited frame carries no
+`cursor` object, ground the intent on the full frame alone and make **no
+claim** about where the speaker was pointing; never guess a position the
+bundle does not record. Where the `cursor` object's `origin` is `carried`,
+treat the recorded position as the pointer's last known **resting place**, not
+as a gesture made at the moment the cited words were spoken.
+
 ## Intent headings — state the change, never the observed state
 
 **A heading is what a downstream reader acts on.** An epic or a plan reads
