@@ -34,12 +34,21 @@ Parse the invocation arguments into exactly one command. Where `[change]` is
 omitted, the CLI already defaults to the currently-selected spec (and errors if
 none is selected) — so you never resolve the selection yourself.
 
-- **`/s:status`** or **`/s:status status [change]`** → run the bare `status`
-  verb, then also run `show` for the friendly one-liner, and report both:
+- **`/s:status`** or **`/s:status status [change]`** → run `show`, and relay
+  its output:
   ```
-  python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" status [change]
   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" show [change]
   ```
+  Run the bare `status` verb **as well**, for the bare value, only when a
+  `[change]` was given or a spec is selected (`current` prints a name) — that
+  is the only case in which it has an answer:
+  ```
+  python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" status [change]
+  ```
+  With **no argument and no selection**, run `show` alone and relay the
+  **workspace board report** it prints (see below) verbatim. Never surface the
+  bare `status` verb's no-selection error as the answer — a bare status value
+  has no workspace-wide meaning, so that verb is simply not the one to run.
 - **`/s:status validate [change]`** → run `validate`; report `OK` on exit 0,
   or print the reported errors on non-zero:
   ```
@@ -50,6 +59,17 @@ none is selected) — so you never resolve the selection yourself.
   ```
   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" set-status <status> [change]
   ```
+
+### When there is no argument and no selection — the workspace report
+
+`show` then reports the **whole delivery board**, derived from the spec tree:
+a `N specs · N epics · N initiatives` totals line, a `shipped <n>/<m>` line
+over every rendered row, and the same four lanes — `UNPLANNED`, `READY`,
+`BUILDING`, `SHIPPED` — each with its count. The non-shipped lanes carry one
+row per change naming its epic (or `standalone` for a change planned outside
+any epic), its slug, its state, its risk, and a `[worktree]` marker; `SHIPPED`
+collapses into one `<epic-slug> (<n>)` rollup row per epic. Relay it as the CLI
+printed it — do not re-summarize, re-order, or re-count the lanes.
 
 ### When the argument names an epic
 

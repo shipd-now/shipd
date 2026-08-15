@@ -297,6 +297,30 @@ class StandaloneChangesTests(unittest.TestCase):
         self.assertEqual(entry["state"], "archived")
         self.assertEqual(entry["location"], os.path.abspath(wt))
 
+    def test_discovery_lives_in_spec_status(self):
+        # The single implementation lives in `spec_status`, where the status
+        # CLI's workspace report consumes it too (spec-status
+        # workspace-board-report).
+        import spec_status
+
+        self.assertTrue(callable(spec_status.standalone_changes))
+        self.assertTrue(callable(spec_status._standalone_plan_path))
+
+    def test_dashboard_delegates_to_spec_status(self):
+        # `dashboard.standalone_changes` keeps its name and signature but is a
+        # thin wrapper, so the board and the status CLI cannot drift.
+        import spec_status
+
+        sentinel = [{"slug": "sentinel"}]
+        original = spec_status.standalone_changes
+        spec_status.standalone_changes = lambda root, slugs: sentinel
+        try:
+            result = self.dashboard.standalone_changes(self.root, set())
+        finally:
+            spec_status.standalone_changes = original
+
+        self.assertIs(result, sentinel)
+
 
 if __name__ == "__main__":
     unittest.main()

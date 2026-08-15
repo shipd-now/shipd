@@ -150,93 +150,25 @@ def epic_markdown(root, slug):
 
 
 def _standalone_plan_path(content_dir, slug):
-    """The plan.md for ``slug`` under ``content_dir`` — the in-flight
-    ``planned/<slug>/plan.md``, else the newest ``completed/<date>-<slug>/
-    plan.md`` archive, else ``None``. Mirrors :func:`change_artifacts`'
-    planned-then-completed resolution."""
-    planned = os.path.join(content_dir, "planned", slug, "plan.md")
-    if os.path.isfile(planned):
-        return planned
-    archives = sorted(
-        glob.glob(os.path.join(content_dir, "completed", "*-" + slug)))
-    if archives:
-        candidate = os.path.join(archives[-1], "plan.md")
-        if os.path.isfile(candidate):
-            return candidate
-    return None
+    """Delegate to :func:`spec_status._standalone_plan_path` — the single
+    implementation, relocated there so the status CLI's workspace report and
+    the board resolve a standalone change's plan identically."""
+    return ss._standalone_plan_path(content_dir, slug)
 
 
 def standalone_changes(root, epic_member_slugs):
     """Discover **standalone changes** — those planned outside any epic — for
     the board (delivery-dashboard board-standalone-changes spec).
 
-    Scans every change directory under ``root``'s content ``planned/`` and the
-    change named by each ``<root>/.worktrees/<name>/`` dir; a change qualifies
-    when its plan carries no ``Epic:`` header line and its slug is in neither
-    ``epic_member_slugs`` nor an already-collected entry. Returns member-shaped
-    dicts ``{"slug", "description": "", "risk": None, "state", "location"}`` in
-    root-then-worktree, slug-sorted order — ``state`` from the hosting root via
-    :func:`spec_status._member_state` (a completed archive reads ``archived``),
-    ``location`` the hosting directory's absolute path. Root entries win a slug
-    contested with a worktree, mirroring :func:`member_board_state`'s root-first
-    precedence. Unreadable or malformed directories are skipped, never raised,
-    so a torn plan mid-worktree-creation cannot fail the board. Deliberately
-    placed here, ahead of this module's own module-scope ``textual`` import
-    below, and kept stdlib-only so it stays usable — and unit-tested in
-    ``tests/`` — without the TUI dependency (mirrors :func:`change_artifacts`
-    above)."""
-    excluded = set(epic_member_slugs or ())
-    results = []
-    seen = set()
-
-    def _consider(hosting_root, slug):
-        if not slug or slug in excluded or slug in seen:
-            return
-        try:
-            content_dir = sc.specs_dir(hosting_root)
-            plan_path = _standalone_plan_path(content_dir, slug)
-            if plan_path is None:
-                return
-            with open(plan_path, encoding="utf-8") as fh:
-                text = fh.read()
-            if any(key == "Epic" for key, _ in sc.parse_plan_metadata(text)):
-                return
-            state = ss._member_state(hosting_root, slug)
-        except (OSError, ValueError, sc.ConfigError):
-            return
-        if state == "unplanned":
-            return
-        seen.add(slug)
-        results.append({
-            "slug": slug,
-            "description": "",
-            "risk": None,
-            "state": state,
-            "location": os.path.abspath(hosting_root),
-        })
-
-    # The root's own planned/ changes.
-    try:
-        planned_dir = os.path.join(sc.specs_dir(root), "planned")
-        root_slugs = sorted(os.listdir(planned_dir))
-    except (OSError, sc.ConfigError):
-        planned_dir, root_slugs = None, []
-    for slug in root_slugs:
-        if os.path.isdir(os.path.join(planned_dir, slug)):
-            _consider(root, slug)
-
-    # Each worktree hosts the change named by its directory.
-    worktrees_dir = os.path.join(root, ".worktrees")
-    try:
-        wt_names = sorted(os.listdir(worktrees_dir))
-    except OSError:
-        wt_names = []
-    for name in wt_names:
-        wt = os.path.join(worktrees_dir, name)
-        if os.path.isdir(wt):
-            _consider(wt, name)
-
-    return results
+    A thin wrapper over :func:`spec_status.standalone_changes`, which holds the
+    single discovery implementation (see its docstring for the contract) so the
+    board's standalone group and the status CLI's workspace board report cannot
+    drift. The name and signature stay here for every existing board caller.
+    Deliberately placed here, ahead of this module's own module-scope
+    ``textual`` import below, and kept stdlib-only so it stays usable — and
+    unit-tested in ``tests/`` — without the TUI dependency (mirrors
+    :func:`change_artifacts` above)."""
+    return ss.standalone_changes(root, epic_member_slugs)
 
 
 # ---------------------------------------------------------------------------

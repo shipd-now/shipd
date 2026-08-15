@@ -13,7 +13,11 @@ Verbs (see the spec-status + statusline capabilities for the contract):
 
   use <change>       record the spec being worked on in .shipd/state.json (the content dir)
   current            print the selected change name (nothing if none)
-  show [change]      print "<change>: <status> (<done>/<total> tasks)"
+  show [change]      print "<change>: <status> (<done>/<total> tasks)"; with no
+                     change given and none selected, print the workspace board
+                     report instead — totals, shipped progress, and the four
+                     board lanes over every epic's members plus the standalone
+                     changes
   status [change]    print the bare status value ("?" when missing/invalid)
   validate [change]  structurally validate the change; non-zero on errors
   set-status <status> [change] [--force]
@@ -79,7 +83,8 @@ The initiative, workspace, and project verbs resolve the workspace from
 ``--root`` and exit non-zero when no workspace is discoverable.
 
 Where ``[change]`` is omitted it defaults to the currently-selected spec; the
-CLI exits non-zero with an error when none is selected. All paths are resolved
+CLI exits non-zero with an error when none is selected — except ``show``, which
+reports the workspace board instead. All paths are resolved
 under ``--root`` (default: the current working directory), matching spec_lint.
 
 Exit codes: 0 success, 1 error (unknown change/status, missing plan, no
@@ -414,6 +419,14 @@ def _epic_fallback(root, name):
 
 
 def cmd_show(root, change):
+    # No name and no selection: the board's own no-argument view is the whole
+    # workspace, so report it rather than erroring (spec-status
+    # workspace-board-report). Checked ahead of `_resolve_change`, which keeps
+    # raising for `status`/`validate`/`set-status`/`sync`.
+    if not change and read_current(root) is None:
+        for line in _workspace_report_lines(root):
+            print(line)
+        return 0
     change = _resolve_change(root, change)
     if _epic_fallback(root, change):
         for line in _epic_report_lines(root, change):
@@ -769,6 +782,97 @@ def _member_state(root, slug):
     return state
 
 
+def _standalone_plan_path(content_dir, slug):
+    """The plan.md for ``slug`` under ``content_dir`` — the in-flight
+    ``planned/<slug>/plan.md``, else the newest ``completed/<date>-<slug>/
+    plan.md`` archive, else ``None``. Mirrors ``dashboard.change_artifacts``'
+    planned-then-completed resolution."""
+    planned = os.path.join(content_dir, "planned", slug, "plan.md")
+    if os.path.isfile(planned):
+        return planned
+    archives = sorted(
+        glob.glob(os.path.join(content_dir, "completed", "*-" + slug)))
+    if archives:
+        candidate = os.path.join(archives[-1], "plan.md")
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def standalone_changes(root, epic_member_slugs):
+    """Discover **standalone changes** — those planned outside any epic — for
+    the board (delivery-dashboard board-standalone-changes spec) and for the
+    status CLI's workspace report (spec-status workspace-board-report).
+
+    Scans every change directory under ``root``'s content ``planned/`` and the
+    change named by each ``<root>/.worktrees/<name>/`` dir; a change qualifies
+    when its plan carries no ``Epic:`` header line and its slug is in neither
+    ``epic_member_slugs`` nor an already-collected entry. Returns member-shaped
+    dicts ``{"slug", "description": "", "risk": None, "state", "location"}`` in
+    root-then-worktree, slug-sorted order — ``state`` from the hosting root via
+    :func:`_member_state` (a completed archive reads ``archived``),
+    ``location`` the hosting directory's absolute path. Root entries win a slug
+    contested with a worktree, mirroring ``dashboard.member_board_state``'s
+    root-first precedence. Unreadable or malformed directories are skipped,
+    never raised, so a torn plan mid-worktree-creation cannot fail the board.
+
+    The single implementation both consumers share: ``dashboard`` delegates to
+    it (:func:`dashboard.standalone_changes`), so the board's standalone group
+    and the workspace report cannot drift."""
+    excluded = set(epic_member_slugs or ())
+    results = []
+    seen = set()
+
+    def _consider(hosting_root, slug):
+        if not slug or slug in excluded or slug in seen:
+            return
+        try:
+            content_dir = sc.specs_dir(hosting_root)
+            plan_path = _standalone_plan_path(content_dir, slug)
+            if plan_path is None:
+                return
+            with open(plan_path, encoding="utf-8") as fh:
+                text = fh.read()
+            if any(key == "Epic" for key, _ in sc.parse_plan_metadata(text)):
+                return
+            state = _member_state(hosting_root, slug)
+        except (OSError, ValueError, sc.ConfigError):
+            return
+        if state == "unplanned":
+            return
+        seen.add(slug)
+        results.append({
+            "slug": slug,
+            "description": "",
+            "risk": None,
+            "state": state,
+            "location": os.path.abspath(hosting_root),
+        })
+
+    # The root's own planned/ changes.
+    try:
+        planned_dir = os.path.join(sc.specs_dir(root), "planned")
+        root_slugs = sorted(os.listdir(planned_dir))
+    except (OSError, sc.ConfigError):
+        planned_dir, root_slugs = None, []
+    for slug in root_slugs:
+        if os.path.isdir(os.path.join(planned_dir, slug)):
+            _consider(root, slug)
+
+    # Each worktree hosts the change named by its directory.
+    worktrees_dir = os.path.join(root, ".worktrees")
+    try:
+        wt_names = sorted(os.listdir(worktrees_dir))
+    except OSError:
+        wt_names = []
+    for name in wt_names:
+        wt = os.path.join(worktrees_dir, name)
+        if os.path.isdir(wt):
+            _consider(wt, name)
+
+    return results
+
+
 def _derive_epic_status(states):
     """Derive an epic's status from its members' states: all archived →
     ``complete``; any member archived or with plan status ``active``,
@@ -831,6 +935,101 @@ def _epic_report_lines(root, slug):
         for _lane, mslug, state, risk, marker in in_lane:
             lines.append("  %-22s %-12s risk %s%s"
                          % (mslug, state, risk, marker))
+    return lines
+
+
+def _workspace_epic_slugs(root):
+    """Every epic slug under ``root``'s content directory, sorted — the epics
+    the workspace report enumerates. An unreadable configuration yields none
+    rather than raising."""
+    try:
+        pattern = os.path.join(sc.specs_dir(root), "epics", "*", "epic.md")
+    except sc.ConfigError:
+        return []
+    return sorted(os.path.basename(os.path.dirname(path))
+                  for path in glob.glob(pattern))
+
+
+def _workspace_report_lines(root):
+    """The workspace board report as a list of lines (spec-status
+    workspace-board-report) — what ``show`` prints with no name given and no
+    spec selected, derived from the spec tree alone (no heartbeat reads).
+
+    In order: a ``N specs · N epics · N initiatives`` totals line mirroring the
+    board's filter-strip totals (``dashboard._board_totals_text``) — members
+    summed across every epic (standalone changes excluded, as on the board),
+    the epic count, and the distinct ``Initiative:`` slugs; a ``shipped <n>/<m>``
+    line over every rendered row (epic members plus standalone changes), ``n``
+    those whose lane is ``shipped``; a blank line; then the four board lanes in
+    board order, each as a ``<LANE> (<count>)`` header even when empty.
+
+    A non-shipped lane prints one indented row per entry carrying its epic's
+    slug (``standalone`` for a change planned outside any epic), the member
+    slug, its derived state, its risk (the stub-table row's last rating cell,
+    ``?`` when absent — always ``?`` for a standalone change, which has no stub
+    row), and a ``[worktree]`` marker when the state came from a worktree
+    rather than ``root``. ``SHIPPED`` instead prints per-epic rollup rows
+    ``<epic-slug> (<n>)`` in epic order, plus ``standalone (<n>)`` last when
+    any standalone change is archived — mirroring the board's collapsed
+    per-epic shipped groups. Lanes come from :func:`board_lane`, the shared
+    projection the epic report and the dashboard use, and standalone changes
+    from :func:`standalone_changes`, the discovery the board consumes. An
+    unreadable epic file is skipped, never raised."""
+    epics = []          # (epic slug, [row, ...]) in epic order
+    initiatives = set()
+    member_slugs = set()
+    for eslug in _workspace_epic_slugs(root):
+        try:
+            with open(_epic_path(root, eslug), encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        meta = dict(_epic_metadata(text))
+        if meta.get("Initiative"):
+            initiatives.add(meta["Initiative"])
+        _header, stub_rows = sc.parse_epic_changes(text)
+        rows = []
+        for mslug, _desc, ratings in stub_rows:
+            member_slugs.add(mslug)
+            state, hosting_root = _member_state_with_root(root, mslug)
+            risk = (ratings[-1].strip()
+                    if ratings and ratings[-1].strip() else "?")
+            marker = " [worktree]" if hosting_root != root else ""
+            rows.append((board_lane(state), eslug, mslug, state, risk, marker))
+        epics.append((eslug, rows))
+
+    # Changes planned outside any epic fold in under the epic column
+    # `standalone`; their hosting location, not a stub table, marks a worktree.
+    root_abs = os.path.abspath(root)
+    standalone = []
+    for entry in standalone_changes(root, member_slugs):
+        state = entry["state"]
+        marker = " [worktree]" if entry.get("location") != root_abs else ""
+        standalone.append((board_lane(state), "standalone", entry["slug"],
+                           state, entry.get("risk") or "?", marker))
+
+    all_rows = [row for _eslug, rows in epics for row in rows] + standalone
+    specs = sum(len(rows) for _eslug, rows in epics)
+    shipped = sum(1 for row in all_rows if row[0] == "shipped")
+    lines = ["%d specs · %d epics · %d initiatives"
+             % (specs, len(epics), len(initiatives)),
+             "shipped %d/%d" % (shipped, len(all_rows)),
+             ""]
+    for lane in _BOARD_LANES:
+        in_lane = [row for row in all_rows if row[0] == lane]
+        lines.append("%s (%d)" % (lane.upper(), len(in_lane)))
+        if lane == "shipped":
+            for eslug, rows in epics:
+                count = sum(1 for row in rows if row[0] == "shipped")
+                if count:
+                    lines.append("  %s (%d)" % (eslug, count))
+            count = sum(1 for row in standalone if row[0] == "shipped")
+            if count:
+                lines.append("  standalone (%d)" % count)
+            continue
+        for _lane, ecol, mslug, state, risk, marker in in_lane:
+            lines.append("  %-20s %-22s %-12s risk %s%s"
+                         % (ecol, mslug, state, risk, marker))
     return lines
 
 
@@ -1735,7 +1934,10 @@ def main(argv=None):
 
     sub.add_parser("current", help="print the selected change name")
 
-    p_show = sub.add_parser("show", help="print a change's status and progress")
+    p_show = sub.add_parser(
+        "show",
+        help="print a change's status and progress (the workspace board "
+             "report with no change given and none selected)")
     p_show.add_argument("change", nargs="?", default=None)
 
     p_status = sub.add_parser("status", help="print the bare status value")
