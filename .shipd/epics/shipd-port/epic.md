@@ -1,5 +1,5 @@
 # shipd-port
-Status: active
+Status: complete
 Theme: spec-engine
 
 ## Introduction
@@ -216,4 +216,5 @@ rewritten — the record of how shipd was created, living in shipd.
 | shipd-identity | Marketplace manifest (`shipd` → `./plugins/s`), plugin manifest (`s`, one bump past shipd's then-current version), `.claude/settings.json` (`s@shipd`, statusline path), then register the marketplace, install the plugin, and confirm `/s:` skills load in a fresh session | low | high | medium | high |
 | shipd-brand | README with new banner and `shipd.now`, `AGENTS.md`/`CLAUDE.md` restated for shipd, `.shipd/README.md` and `constitution.md`, the board's brand block, statusline header, tracked `docs/`, and replacing the throwaway README and Node-template `.gitignore` | low | low | low | low |
 | shipd-evals-port | Port `evals/` — three case fixtures onto the `.shipd` layout, `run.py` driving `/s:plan` against the working-tree plugin, `evals/tests/` — and verify with a live run | low | medium | medium | low |
-| shipd-selfhost | Close the loop in shipd: branch protection and the `ci` + `semantic-review` required checks on `shipd-now/shipd`, then plan → build → merge/archive → review-gate → auto-merge one real change entirely under `/s:` | low | high | high | high |
+| shipd-selfhost | Close the local loop in shipd: plan → build → merge/archive one real change entirely under `/s:`, in a worktree cut by shipd's own `worktree.sh`, with shipd's own linter, status CLI, and merge engine | low | high | high | high |
+| shipd-gated-merge | The remote half `shipd-selfhost` cannot reach: branch protection and the `ci` + `semantic-review` required checks on `shipd-now/shipd`, the six stacked member branches opened as PRs, and the exercise change auto-merged through the gate. Blocked on the credential question `q-shipd-pr-authoring` — no session can perform API writes against `shipd-now/shipd` today | low | high | high | high |
