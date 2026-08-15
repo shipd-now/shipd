@@ -7,8 +7,19 @@ out as ``.shipd/planned/<change>/plan.md`` — never against the real repo. ``HO
 is isolated so the layered content-dir config resolution never reads the real
 home. Mirrors the subprocess-against-temp-roots style of
 ``test_spec_status.py``.
+
+The ``doctor`` checks are the one exception to the black-box style: they read
+the *ambient* environment (PATH, the interpreter, the plugin cache layout), so
+driving them through a subprocess would make the suite's verdict depend on the
+machine running it. They are instead loaded in-process and exercised through
+their injection points — a stub ``which``, a stub ``gh`` runner, a fabricated
+cache root, an explicit ``version_info`` — so every branch is deterministic and
+nothing shells out.
 """
 
+import importlib.machinery
+import importlib.util
+import io
 import json
 import os
 import shutil
@@ -16,6 +27,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
+from contextlib import redirect_stderr, redirect_stdout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
@@ -23,7 +36,20 @@ BIN = os.path.normpath(os.path.join(HERE, "..", "..", "..", "bin", "shipd"))
 
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
 VERBS = ("list", "status", "locate", "epic", "workspace", "board", "metrics",
-         "lint")
+         "lint", "doctor")
+
+
+def _load_binary():
+    """Import ``bin/shipd`` as a module. It has no ``.py`` suffix, so the
+    source loader is named explicitly rather than inferred from the path."""
+    loader = importlib.machinery.SourceFileLoader("shipd_bin_under_test", BIN)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+shipd = _load_binary()
 
 EPIC_HEADER = (
     "| Change | Description | Code | Integration | Unknowns | Risk |\n"
@@ -264,6 +290,250 @@ class VersionTest(ShipdCliTestBase):
         r = self.cli("--version")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), expected)
+
+
+class DoctorCheckTest(unittest.TestCase):
+    """The individual preflight checks (shipd-cli doctor-verb), each driven
+    through its injection points so no branch depends on this machine."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="shipd-doctor-test-")
+        self.home = os.path.join(self.tmp, "home")
+        os.makedirs(self.home)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def stub_which(self, found):
+        """A ``shutil.which`` stand-in resolving only the names in ``found``
+        (a mapping of name -> path)."""
+        return lambda name: found.get(name)
+
+    def make_cache(self, versions):
+        """A fabricated plugin cache ``<tmp>/cache/shipd/s/<version>/``; the
+        list of created version directories is returned in order."""
+        base = os.path.join(self.tmp, "cache", "shipd", "s")
+        made = []
+        for version in versions:
+            path = os.path.join(base, version)
+            os.makedirs(os.path.join(path, "bin"))
+            made.append(path)
+        return made
+
+    # -- python ------------------------------------------------------------
+
+    def test_python_at_the_floor_is_ok(self):
+        level, name, detail = shipd.check_python((3, 9, 0, "final", 0))
+        self.assertEqual((level, name), ("ok", "python"))
+        self.assertIn("3.9", detail)
+
+    def test_python_below_the_floor_fails(self):
+        level, name, detail = shipd.check_python((3, 8, 18, "final", 0))
+        self.assertEqual((level, name), ("fail", "python"))
+        self.assertIn("3.8.18", detail)
+        self.assertIn("3.9", detail)
+
+    # -- git ---------------------------------------------------------------
+
+    def test_git_on_path_is_ok(self):
+        level, name, detail = shipd.check_git(
+            which=self.stub_which({"git": "/usr/bin/git"}))
+        self.assertEqual((level, name), ("ok", "git"))
+        self.assertIn("/usr/bin/git", detail)
+
+    def test_git_missing_fails_with_a_hint(self):
+        level, name, detail = shipd.check_git(which=self.stub_which({}))
+        self.assertEqual((level, name), ("fail", "git"))
+        self.assertIn("PATH", detail)
+        self.assertIn("install", detail.lower())
+
+    # -- config ------------------------------------------------------------
+
+    def config_check(self, root):
+        """``check_config`` with ``HOME`` pointed at the throwaway home, so the
+        outermost config layer can never be the real user's."""
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            return shipd.check_config(root)
+
+    def test_config_with_a_content_dir_is_ok(self):
+        root = os.path.join(self.tmp, "repo")
+        os.makedirs(os.path.join(root, ".shipd", "planned"))
+        level, name, detail = self.config_check(root)
+        self.assertEqual((level, name), ("ok", "config"))
+        self.assertIn(".shipd", detail)
+
+    def test_config_without_a_content_dir_is_ok_with_a_note(self):
+        root = os.path.join(self.tmp, "bare")
+        os.makedirs(root)
+        level, name, detail = self.config_check(root)
+        self.assertEqual((level, name), ("ok", "config"))
+        self.assertIn("/s:plan", detail)
+
+    def test_unreadable_config_fails_naming_the_file(self):
+        root = os.path.join(self.tmp, "broken")
+        os.makedirs(root)
+        path = os.path.join(root, ".shipd-config.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("{not json")
+        level, name, detail = self.config_check(root)
+        self.assertEqual((level, name), ("fail", "config"))
+        self.assertIn(path, detail)
+
+    # -- gh ----------------------------------------------------------------
+
+    def test_gh_authenticated_is_ok(self):
+        level, name, detail = shipd.check_gh(
+            which=self.stub_which({"gh": "/opt/bin/gh"}),
+            gh_status=lambda: 0)
+        self.assertEqual((level, name), ("ok", "gh"))
+        self.assertIn("/opt/bin/gh", detail)
+
+    def test_gh_absent_only_warns(self):
+        level, name, detail = shipd.check_gh(
+            which=self.stub_which({}),
+            gh_status=lambda: self.fail("gh must not be probed when absent"))
+        self.assertEqual((level, name), ("warn", "gh"))
+        self.assertIn("PATH", detail)
+
+    def test_gh_unauthenticated_only_warns(self):
+        level, name, detail = shipd.check_gh(
+            which=self.stub_which({"gh": "/opt/bin/gh"}),
+            gh_status=lambda: 1)
+        self.assertEqual((level, name), ("warn", "gh"))
+        self.assertIn("gh auth login", detail)
+
+    # -- textual -----------------------------------------------------------
+
+    def test_textual_importable_is_ok(self):
+        level, name, _detail = shipd.check_textual(
+            find_spec=lambda name: object())
+        self.assertEqual((level, name), ("ok", "textual"))
+
+    def test_textual_missing_warns_about_the_board_only(self):
+        level, name, detail = shipd.check_textual(find_spec=lambda name: None)
+        self.assertEqual((level, name), ("warn", "textual"))
+        self.assertIn("board", detail)
+
+    def test_textual_probe_failure_warns(self):
+        def boom(name):
+            raise ValueError("no parent package")
+        level, name, _detail = shipd.check_textual(find_spec=boom)
+        self.assertEqual((level, name), ("warn", "textual"))
+
+    # -- snapshot ----------------------------------------------------------
+
+    def test_newest_snapshot_is_ok(self):
+        old, new = self.make_cache(["0.6.9", "0.6.10"])
+        level, name, detail = shipd.check_snapshot(new)
+        self.assertEqual((level, name), ("ok", "snapshot"))
+        self.assertIn("0.6.10", detail)
+        self.assertNotIn("0.6.9", detail)
+        self.assertTrue(os.path.isdir(old))
+
+    def test_stale_snapshot_warns_naming_the_newer_version(self):
+        old, _new = self.make_cache(["0.6.9", "0.6.10"])
+        level, name, detail = shipd.check_snapshot(old)
+        self.assertEqual((level, name), ("warn", "snapshot"))
+        self.assertIn("0.6.9", detail)
+        self.assertIn("0.6.10", detail)
+
+    def test_checkout_reports_dev_mode(self):
+        plugin_root = os.path.join(self.tmp, "repo", "plugins", "s")
+        os.makedirs(os.path.join(plugin_root, "bin"))
+        level, name, detail = shipd.check_snapshot(plugin_root)
+        self.assertEqual((level, name), ("ok", "snapshot"))
+        self.assertIn("dev mode", detail)
+
+
+class DoctorReportTest(unittest.TestCase):
+    """The composed report: line shape, closing line, and exit contract."""
+
+    def report(self, results):
+        return shipd.doctor_report(results)
+
+    def test_line_shape_is_level_name_detail(self):
+        lines, _code = self.report([("ok", "git", "found at /usr/bin/git")])
+        self.assertEqual(lines[0], "ok git — found at /usr/bin/git")
+
+    def test_all_ok_closes_with_ok_and_exits_zero(self):
+        lines, code = self.report([("ok", "python", "3.13.0"),
+                                   ("ok", "git", "found")])
+        self.assertEqual(code, 0)
+        self.assertEqual(lines[-1], "doctor: ok")
+        for line in lines[:-1]:
+            self.assertTrue(line.startswith("ok "), line)
+
+    def test_warnings_alone_do_not_affect_the_exit_code(self):
+        lines, code = self.report([("ok", "python", "3.13.0"),
+                                   ("warn", "gh", "not on PATH"),
+                                   ("warn", "textual", "not importable")])
+        self.assertEqual(code, 0)
+        self.assertEqual(lines[-1], "doctor: 2 problem(s)")
+
+    def test_any_failure_exits_one(self):
+        lines, code = self.report([("fail", "git", "not on PATH"),
+                                   ("ok", "python", "3.13.0")])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines[-1], "doctor: 1 problem(s)")
+
+    def test_failures_and_warnings_are_counted_together(self):
+        lines, code = self.report([("fail", "git", "not on PATH"),
+                                   ("warn", "gh", "not on PATH")])
+        self.assertEqual(code, 1)
+        self.assertEqual(lines[-1], "doctor: 2 problem(s)")
+
+
+class DoctorCommandTest(unittest.TestCase):
+    """``cmd_doctor`` composes the checks, prints the report, and returns the
+    exit code. The checks themselves are injected, so this never shells out."""
+
+    def run_doctor(self, results, args=()):
+        buf = io.StringIO()
+        with unittest.mock.patch.object(
+                shipd, "default_checks", lambda root: list(results)):
+            with redirect_stdout(buf), redirect_stderr(io.StringIO()):
+                code = shipd.cmd_doctor(list(args))
+        return buf.getvalue(), code
+
+    def test_prints_every_check_line_and_the_closing_line(self):
+        out, code = self.run_doctor([("ok", "python", "3.13.0"),
+                                     ("warn", "gh", "not on PATH")])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines(),
+                         ["ok python — 3.13.0",
+                          "warn gh — not on PATH",
+                          "doctor: 1 problem(s)"])
+
+    def test_returns_one_when_a_required_check_fails(self):
+        out, code = self.run_doctor([("fail", "git", "not on PATH — install")])
+        self.assertEqual(code, 1)
+        self.assertIn("fail git — ", out)
+
+    def test_doctor_dispatches_in_binary_without_delegating(self):
+        """``doctor`` is handled in the binary like ``list`` — it is not in the
+        delegating verb table and never replaces the process."""
+        self.assertNotIn("doctor", shipd.VERB_TABLE)
+        seen = []
+
+        def fake_doctor(args):
+            seen.append(args)
+            return 0
+
+        def no_exec(*args):
+            self.fail("doctor must not exec-delegate")
+
+        with unittest.mock.patch.object(shipd, "cmd_doctor", fake_doctor), \
+                unittest.mock.patch.object(shipd.os, "execv", no_exec):
+            code = shipd.main(["doctor"])
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, [[]])
+
+    def test_takes_no_positional_arguments(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.run_doctor([("ok", "python", "3.13.0")], args=("extra",))
+        self.assertEqual(caught.exception.code, 2)
 
 
 if __name__ == "__main__":
