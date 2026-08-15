@@ -3,13 +3,19 @@
 ### Requirement: Error output convention
 id: error-output-convention
 
-Every engine CLI under `plugins/s/skills/build/scripts/` and the `shipd`
-binary SHALL report a fatal error as a single `Error: <reason>` line on
+The engine CLIs `spec_status.py`, `spec_lint.py`, `spec_emit.py`,
+`spec_merge.py`, `spec_gate.py`, `metrics.py`, `heartbeat.py`, and
+`dashboard.py` under `plugins/s/skills/build/scripts/`, and the `shipd`
+binary, SHALL report a fatal error as a single `Error: <reason>` line on
 stderr and exit nonzero, and SHALL report a usage error (unknown or missing
 verb, invalid arguments) with usage text on stderr and exit 2. A shared
 stdlib helper (`cli_common.err` / `cli_common.warn`) SHALL be the single
-implementation of the error and warning line format, and callers SHALL keep
-owning their exit codes.
+implementation of these CLIs' fatal `Error:` lines and of `heartbeat.py`'s
+fail-soft CLI `WARNING:` lines (the `shipd` binary inlines the same
+TTY/`NO_COLOR` guard rather than importing the module), and callers SHALL
+keep owning their exit codes. Engine scripts outside this set conform to the
+`Error:` line shape as they are next touched; this requirement does not yet
+bind them.
 
 #### Scenario: Fatal errors are one Error line on stderr
 - **WHEN** `spec_status.py locate no-such-change` runs in a repo without that

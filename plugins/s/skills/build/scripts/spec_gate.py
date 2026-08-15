@@ -387,7 +387,7 @@ def main(argv=None):
     except GateError as exc:
         cc.err(str(exc))
         return 1
-    except (OSError, ss.StatusError) as exc:
+    except (OSError, sc.ConfigError, ss.StatusError) as exc:
         cc.err(str(exc))
         return 1
 

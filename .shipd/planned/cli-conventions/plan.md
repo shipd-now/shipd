@@ -36,8 +36,11 @@ plugin version bump. No new dependencies.
 
 ### Non-goals
 
-- No change to any pinned output text: piped (non-TTY) bytes stay identical,
-  so no other capability's scenarios are amended.
+- No change to any pinned output text: every reason text stays byte-identical
+  and no other capability's scenarios are amended. (Unpinned prefix tokens may
+  canonicalize toward the convention: `metrics.py` and `dashboard.py` fatal
+  lines gain the `Error:` prefix, and `heartbeat.py`'s fail-soft CLI warning
+  reads `WARNING:`.)
 - No new verbosity/quiet flags and no `--json` (the `cli-json` sibling owns
   machine output).
 - No color in the TUI (textual owns its own theming) and none on stdout data

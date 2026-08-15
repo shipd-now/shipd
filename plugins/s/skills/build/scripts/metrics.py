@@ -1907,7 +1907,14 @@ def main(argv=None):
     p_rollup.set_defaults(func=_cmd_rollup)
 
     args = parser.parse_args(argv)
-    return args.func(args)
+    # A malformed `.shipd-config.json` under `--root` is a user-facing failure,
+    # not a bug: report it as the one-line `Error:` the CLI convention requires
+    # rather than a traceback.
+    try:
+        return args.func(args)
+    except sc.ConfigError as exc:
+        cc.err(str(exc))
+        return 1
 
 
 if __name__ == "__main__":

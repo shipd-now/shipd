@@ -304,15 +304,15 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     warnings = []
-    # A missing delta set or an occupied archive destination is a user-facing
-    # failure, not a bug: report it as the one-line `Error:` the CLI convention
-    # requires rather than a traceback.
+    # A missing delta set, an occupied archive destination, or a malformed
+    # `.shipd-config.json` is a user-facing failure, not a bug: report it as the
+    # one-line `Error:` the CLI convention requires rather than a traceback.
     try:
         affected = merge_change(args.root, args.change, warnings)
         archived = None
         if not args.no_archive:
             archived = archive_change(args.root, args.change)
-    except ValueError as exc:
+    except (ValueError, sc.ConfigError) as exc:
         cc.err(str(exc))
         return 1
 
