@@ -89,6 +89,21 @@ options:
 """
 
 
+def _err(reason):
+    """Write the convention's single ``Error: <reason>`` line to stderr, red
+    prefix only on a terminal with ``NO_COLOR`` unset.
+
+    The engine's ``cli_common.err`` is the authority on this format; the guard
+    is inlined here because dispatch replaces this process (:func:`os.execv`)
+    before any engine import, and a path insert plus import on every invocation
+    is not worth two error sites. Keep the two in step.
+    """
+    prefix = "Error:"
+    if sys.stderr.isatty() and not os.environ.get("NO_COLOR"):
+        prefix = "\x1b[31m%s\x1b[0m" % prefix
+    sys.stderr.write("%s %s\n" % (prefix, reason))
+
+
 def cmd_version():
     """Print the version the adjacent plugin manifest declares — the shipping
     unit's own version, so a checkout copy and a cache snapshot each report
@@ -98,7 +113,7 @@ def cmd_version():
             data = json.load(fh)
         version = data["version"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        sys.stderr.write("Error: cannot read %s: %s\n" % (MANIFEST, exc))
+        _err("cannot read %s: %s" % (MANIFEST, exc))
         return 1
     print(version)
     return 0
@@ -399,7 +414,7 @@ def main(argv):
     try:
         os.execv(sys.executable, command)
     except OSError as exc:
-        sys.stderr.write("Error: cannot run %s: %s\n" % (script, exc))
+        _err("cannot run %s: %s" % (script, exc))
         return 1
 
 

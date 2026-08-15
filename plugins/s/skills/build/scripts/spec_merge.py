@@ -29,6 +29,7 @@ import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cli_common as cc  # noqa: E402
 import spec_common as sc  # noqa: E402
 
 
@@ -303,10 +304,17 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     warnings = []
-    affected = merge_change(args.root, args.change, warnings)
-    archived = None
-    if not args.no_archive:
-        archived = archive_change(args.root, args.change)
+    # A missing delta set, an occupied archive destination, or a malformed
+    # `.shipd-config.json` is a user-facing failure, not a bug: report it as the
+    # one-line `Error:` the CLI convention requires rather than a traceback.
+    try:
+        affected = merge_change(args.root, args.change, warnings)
+        archived = None
+        if not args.no_archive:
+            archived = archive_change(args.root, args.change)
+    except (ValueError, sc.ConfigError) as exc:
+        cc.err(str(exc))
+        return 1
 
     report_warnings(warnings, as_json=args.as_json)
     if not args.as_json:

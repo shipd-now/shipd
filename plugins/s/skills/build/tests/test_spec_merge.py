@@ -2,6 +2,7 @@
 """Unit tests for spec_merge: the four operations, base-hash match/mismatch,
 warning summary shape, deterministic ordering, and the archive move."""
 
+import contextlib
 import io
 import json
 import os
@@ -281,6 +282,29 @@ class MergeAndArchiveTest(unittest.TestCase):
         os.environ["AM_FLOW_LOG_DIR"] = os.path.join(blocker, "nope")
         dst = sm.archive_change(self.tmp, "sample-change", date="2026-07-22")
         self.assertTrue(os.path.isdir(dst))
+
+
+class MalformedConfigCliTest(unittest.TestCase):
+    """A `.shipd-config.json` that is not parseable JSON is a user-facing
+    failure: the CLI reports one `Error:` line on stderr and exits 1. An
+    uncaught ConfigError would instead propagate out of main() (a traceback)
+    and fail this test."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        with open(os.path.join(self.tmp, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("{ not json")
+
+    def test_malformed_config_is_one_error_line(self):
+        errbuf = io.StringIO()
+        with contextlib.redirect_stderr(errbuf):
+            code = sm.main(["--root", self.tmp, "sample-change"])
+        self.assertEqual(code, 1)
+        lines = errbuf.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, errbuf.getvalue())
+        self.assertTrue(lines[0].startswith("Error: "), errbuf.getvalue())
 
 
 if __name__ == "__main__":

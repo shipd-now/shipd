@@ -42,6 +42,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cli_common as cc  # noqa: E402
 import spec_common as sc  # noqa: E402
 
 SHALL_MUST_RE = re.compile(r"\b(SHALL|MUST)\b")
@@ -1365,53 +1366,59 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     warnings = []
-    if args.wiki:
-        errors = []
-        ws_root = sc.find_workspace_root(args.root)
-        if ws_root is None:
-            errors.append(LintError(
-                "no workspace found from %s; `--wiki` requires a "
-                "discoverable workspace root" % os.path.abspath(args.root)))
-        else:
-            lint_wiki(ws_root, errors)
-        target = "wiki"
-    elif args.workspace:
-        errors = []
-        ws_root = sc.find_workspace_root(args.root)
-        if ws_root is None:
-            errors.append(LintError(
-                "no workspace found from %s; `--workspace` requires a "
-                "discoverable workspace root" % os.path.abspath(args.root)))
-        else:
-            try:
-                registry = sc.load_workspace(ws_root)
-            except sc.ConfigError as exc:
-                errors.append(LintError(str(exc)))
+    # A malformed layered config is a fatal error, not a lint finding:
+    # report it as the convention's one `Error:` line and exit 1.
+    try:
+        if args.wiki:
+            errors = []
+            ws_root = sc.find_workspace_root(args.root)
+            if ws_root is None:
+                errors.append(LintError(
+                    "no workspace found from %s; `--wiki` requires a "
+                    "discoverable workspace root" % os.path.abspath(args.root)))
             else:
-                for msg in sc.validate_workspace(registry):
-                    errors.append(LintError(msg, sc.CONFIG_FILENAME))
-        target = "workspace"
-    elif args.initiative:
-        errors = []
-        ws_root = sc.find_workspace_root(args.root)
-        if ws_root is None:
-            errors.append(LintError(
-                "no workspace found from %s; `--initiative` requires a "
-                "discoverable workspace root"
-                % os.path.abspath(args.root)))
+                lint_wiki(ws_root, errors)
+            target = "wiki"
+        elif args.workspace:
+            errors = []
+            ws_root = sc.find_workspace_root(args.root)
+            if ws_root is None:
+                errors.append(LintError(
+                    "no workspace found from %s; `--workspace` requires a "
+                    "discoverable workspace root" % os.path.abspath(args.root)))
+            else:
+                try:
+                    registry = sc.load_workspace(ws_root)
+                except sc.ConfigError as exc:
+                    errors.append(LintError(str(exc)))
+                else:
+                    for msg in sc.validate_workspace(registry):
+                        errors.append(LintError(msg, sc.CONFIG_FILENAME))
+            target = "workspace"
+        elif args.initiative:
+            errors = []
+            ws_root = sc.find_workspace_root(args.root)
+            if ws_root is None:
+                errors.append(LintError(
+                    "no workspace found from %s; `--initiative` requires a "
+                    "discoverable workspace root"
+                    % os.path.abspath(args.root)))
+            else:
+                lint_initiative(ws_root, args.initiative, errors)
+            target = "initiative '%s'" % args.initiative
+        elif args.epic:
+            errors = []
+            lint_epic(args.root, args.epic, errors, warnings)
+            target = "epic '%s'" % args.epic
+        elif args.change:
+            errors = lint_change(args.root, args.change, warnings)
+            target = "change '%s'" % args.change
         else:
-            lint_initiative(ws_root, args.initiative, errors)
-        target = "initiative '%s'" % args.initiative
-    elif args.epic:
-        errors = []
-        lint_epic(args.root, args.epic, errors, warnings)
-        target = "epic '%s'" % args.epic
-    elif args.change:
-        errors = lint_change(args.root, args.change, warnings)
-        target = "change '%s'" % args.change
-    else:
-        errors = lint_library(args.root)
-        target = "master library"
+            errors = lint_library(args.root)
+            target = "master library"
+    except sc.ConfigError as exc:
+        cc.err(str(exc))
+        return 1
 
     for warning in warnings:
         print("WARNING: %s" % warning, file=sys.stderr)
