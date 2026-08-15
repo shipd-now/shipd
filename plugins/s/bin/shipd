@@ -16,15 +16,19 @@ Stdlib-only Python 3, per the engine's constitution.
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SCRIPTS = HERE.parent / "skills" / "build" / "scripts"
-MANIFEST = HERE.parent / ".claude-plugin" / "plugin.json"
+PLUGIN_ROOT = HERE.parent
+SCRIPTS = PLUGIN_ROOT / "skills" / "build" / "scripts"
+MANIFEST = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
 
 # An applied change is archived as ``completed/<YYYY-MM-DD>-<slug>/``; the slug
 # is the change's name. Mirrors the engine's own archive-directory convention
@@ -77,6 +81,7 @@ verbs:
   board [text|html] [args]   the delivery board (default: full-screen)
   metrics [subverb]          delivery metrics (default: summary)
   lint [change]              structurally validate specs and change deltas
+  doctor                     preflight this environment for shipd
 
 options:
   -h, --help                 print this banner
@@ -210,6 +215,156 @@ def cmd_list(args):
     return 0
 
 
+# ---------------------------------------------------------------------------
+# doctor (shipd-cli doctor-verb)
+# ---------------------------------------------------------------------------
+
+# The interpreter floor: the engine is stdlib-only Python 3 and the pinned
+# ``textual`` supports 3.9+, so 3.9 is the oldest interpreter the whole surface
+# runs on.
+PYTHON_FLOOR = (3, 9)
+
+# A plugin cache snapshot lives at ``<cache>/<marketplace>/<plugin>/<version>/``
+# — a directory named for a dotted release. A checkout's ``plugins/s`` never is.
+VERSION_DIR_RE = re.compile(r"^\d+(?:\.\d+)*$")
+
+
+def _version_key(name):
+    """A dotted version's comparison key, so ``0.6.10`` sorts above ``0.6.9``
+    where a plain string sort would not."""
+    return tuple(int(part) for part in name.split("."))
+
+
+def _gh_auth_status():
+    """The exit code of ``gh auth status``; nonzero when gh cannot be run at
+    all. The one subprocess in the doctor path, isolated here so tests inject
+    a stub instead of touching the network."""
+    try:
+        return subprocess.run(["gh", "auth", "status"],
+                              capture_output=True).returncode
+    except OSError:
+        return 1
+
+
+def check_python(version_info=None):
+    """The running interpreter — the one the engine itself runs on."""
+    info = tuple((version_info or sys.version_info)[:3])
+    shown = ".".join(str(part) for part in info)
+    floor = ".".join(str(part) for part in PYTHON_FLOOR)
+    if info >= PYTHON_FLOOR:
+        return ("ok", "python", "%s (>= %s)" % (shown, floor))
+    return ("fail", "python",
+            "%s is below the required %s — run shipd on a newer Python 3"
+            % (shown, floor))
+
+
+def check_git(which=shutil.which):
+    """git — every worktree, branch, and PR in the workflow needs it."""
+    found = which("git")
+    if found:
+        return ("ok", "git", "found at %s" % found)
+    return ("fail", "git",
+            "not on PATH — install git (https://git-scm.com/downloads); "
+            "worktrees, branches, and shipping all need it")
+
+
+def check_config(root):
+    """The layered content-directory configuration at ``root``. A missing
+    content directory is fine — ``/s:plan`` scaffolds it on first use; only an
+    unusable config file is a failure."""
+    _load_engine()
+    try:
+        content = sc.specs_dir(root)
+    except sc.ConfigError as exc:
+        return ("fail", "config", "%s" % exc)
+    if os.path.isdir(content):
+        return ("ok", "config", "content directory %s" % content)
+    return ("ok", "config",
+            "no content directory yet at %s — /s:plan scaffolds it" % content)
+
+
+def check_gh(which=shutil.which, gh_status=_gh_auth_status):
+    """The GitHub CLI. A warning, never a failure: planning and building work
+    without it, and shipping is its first touchpoint."""
+    found = which("gh")
+    if not found:
+        return ("warn", "gh",
+                "not on PATH — needed only to ship (https://cli.github.com)")
+    if gh_status() != 0:
+        return ("warn", "gh",
+                "%s is not authenticated — run `gh auth login` before shipping"
+                % found)
+    return ("ok", "gh", "authenticated at %s" % found)
+
+
+def check_textual(find_spec=importlib.util.find_spec):
+    """The delivery board's one third-party dependency — board-only, so its
+    absence is a warning."""
+    try:
+        found = find_spec("textual") is not None
+    except (ImportError, ValueError):
+        found = False
+    if found:
+        return ("ok", "textual", "importable; the delivery board can render")
+    return ("warn", "textual",
+            "not importable — only the board (`shipd board`) needs it; "
+            "pip install -r requirements.txt")
+
+
+def check_snapshot(plugin_root):
+    """Whether this binary is the newest installed plugin snapshot.
+
+    ``plugin_root`` is the directory holding this ``bin/`` — a version-named
+    directory inside a plugin cache, or a repository checkout's ``plugins/s``.
+    """
+    root = Path(plugin_root)
+    if not VERSION_DIR_RE.match(root.name):
+        return ("ok", "snapshot", "dev mode — running from %s" % root)
+    versions = [name for name in _subdirs(str(root.parent))
+                if VERSION_DIR_RE.match(name)]
+    newest = max(versions, key=_version_key) if versions else root.name
+    if _version_key(newest) > _version_key(root.name):
+        return ("warn", "snapshot",
+                "running %s but %s is installed — start a new session to load "
+                "it" % (root.name, newest))
+    return ("ok", "snapshot", "%s is the newest installed snapshot" % newest)
+
+
+def default_checks(root):
+    """Every preflight check, required ones first, as ``(level, name, detail)``
+    triples."""
+    return [check_python(),
+            check_git(),
+            check_config(root),
+            check_gh(),
+            check_textual(),
+            check_snapshot(PLUGIN_ROOT)]
+
+
+def doctor_report(results):
+    """``(lines, exit_code)`` for a sequence of check results: one
+    ``<level> <check> — <detail>`` line each, a closing summary, and exit ``1``
+    iff a check failed — a warning reports but never fails the preflight."""
+    lines = ["%s %s — %s" % result for result in results]
+    problems = [level for level, _name, _detail in results if level != "ok"]
+    failed = any(level == "fail" for level, _name, _detail in results)
+    lines.append("doctor: %d problem(s)" % len(problems) if problems
+                 else "doctor: ok")
+    return lines, 1 if failed else 0
+
+
+def cmd_doctor(args):
+    """Preflight the environment. Read-only: nothing here installs or edits."""
+    parser = argparse.ArgumentParser(
+        prog="shipd doctor",
+        description="Preflight the environment shipd runs in. Reports only.")
+    parser.parse_args(args)
+    lines, code = doctor_report(default_checks(os.getcwd()))
+    for line in lines:
+        print(line)
+    return code
+
+
 def main(argv):
     if not argv:
         sys.stderr.write(USAGE)
@@ -222,6 +377,8 @@ def main(argv):
         return cmd_version()
     if verb == "list":
         return cmd_list(rest)
+    if verb == "doctor":
+        return cmd_doctor(rest)
     if verb not in VERB_TABLE:
         sys.stderr.write(USAGE)
         return 2
