@@ -85,11 +85,12 @@ CHARS_PER_TOKEN = 4
 CHECKBOX_RE = re.compile(r"- \[[ ~x]\]")
 REQ_TAG_RE = re.compile(r"\[req:([^\]]*)\]")
 
-# Epic `## Research` section (shipd-spec-format epic-research-section): a markdown
-# list entry links a research file — `- [title](path)`. This captures the link
-# target of any inline markdown link on a list-item line; trailing annotation
-# prose after the link is ignored.
-RESEARCH_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+# An epic's context sections (`## Research`, `## Video`; shipd-spec-format
+# epic-research-section, epic-video-section): a markdown list entry links a
+# context file — `- [title](path)`. This captures the link target of any
+# inline markdown link on a list-item line; trailing annotation prose after
+# the link is ignored.
+EPIC_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 
 # Plan `## Questions and answers` section (shipd-spec-format
 # plan-document-sections, shipd-spec-lint qa-section-validation): one oracle
@@ -564,32 +565,35 @@ def _is_within(path, parent):
     return path == parent or path.startswith(parent + os.sep)
 
 
-def _check_epic_research(root, path, text, errors):
-    """Validate an epic's optional ``## Research`` section (shipd-spec-format
-    epic-research-section, shipd-spec-lint epic-research-link-validation).
+def _check_epic_link_section(root, path, text, errors, header, folder, noun):
+    """Validate one of an epic's optional context-link sections — ``header``
+    (e.g. ``"## Research"``), whose entries must resolve to files under the
+    content directory's ``folder`` (e.g. ``"research"``), reported with the
+    given ``noun`` (e.g. ``"research file"``).
 
     When the section is present it SHALL hold at least one markdown list entry
     whose link resolves — first relative to the epic's own directory, then
     relative to the repository root — to an existing file under the content
-    directory's ``research/`` folder. A section carrying no link entries is an
-    error; each link that resolves to no existing file, or to a file outside the
-    ``research/`` folder, is an error naming the link. When the section is
-    absent, no finding is produced and the ``research/`` folder is never walked."""
-    section = _section_lines(text, "## Research")
+    directory's ``folder`` folder. A section carrying no link entries is an
+    error; each link that resolves to no existing file, or to a file outside
+    that folder, is an error naming the link. When the section is absent, no
+    finding is produced and the folder is never walked."""
+    section = _section_lines(text, header)
     if section is None:
         return
     links = []
     for line in section:
         if line.lstrip().startswith(("- ", "* ", "+ ")):
-            links.extend(RESEARCH_LINK_RE.findall(line))
+            links.extend(EPIC_LINK_RE.findall(line))
     if not links:
         errors.append(LintError(
-            "epic.md `## Research` section has no link entries (at least one "
-            "`- [title](path)` linking a research file required)", path))
+            "epic.md `%s` section has no link entries (at least one "
+            "`- [title](path)` linking a %s required)" % (header, noun),
+            path))
         return
     try:
-        research_root = os.path.abspath(
-            os.path.join(sc.specs_dir(root), "research"))
+        folder_root = os.path.abspath(
+            os.path.join(sc.specs_dir(root), folder))
     except sc.ConfigError as exc:
         errors.append(LintError(str(exc), sc.CONFIG_FILENAME))
         return
@@ -599,14 +603,14 @@ def _check_epic_research(root, path, text, errors):
         for base in (epic_dir, root):
             candidate = os.path.abspath(os.path.join(base, target))
             if os.path.isfile(candidate) and _is_within(candidate,
-                                                        research_root):
+                                                        folder_root):
                 resolved = True
                 break
         if not resolved:
             errors.append(LintError(
-                "epic.md `## Research` link '%s' does not resolve to an "
-                "existing file under the content directory's research/ folder"
-                % target, path))
+                "epic.md `%s` link '%s' does not resolve to an existing "
+                "file under the content directory's %s/ folder"
+                % (header, target, folder), path))
 
 
 def _section_lines(text, header):
@@ -689,7 +693,10 @@ def lint_epic(root, slug, errors, warnings=None):
             path))
     if "## Changes" in stripped:
         _check_epic_changes(text, path, errors)
-    _check_epic_research(root, path, text, errors)
+    _check_epic_link_section(
+        root, path, text, errors, "## Research", "research", "research file")
+    _check_epic_link_section(
+        root, path, text, errors, "## Video", "video", "video intent brief")
 
 
 # ---------------------------------------------------------------------------

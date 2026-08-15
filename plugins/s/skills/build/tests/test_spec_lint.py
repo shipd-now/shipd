@@ -1011,6 +1011,195 @@ class EpicResearchLintTest(unittest.TestCase):
         self.assertEqual([str(e) for e in sl.lint_library(self.root)], [])
 
 
+class EpicVideoLintTest(unittest.TestCase):
+    """Epic ``## Video`` section validation (shipd-spec-format
+    epic-video-section, shipd-spec-lint epic-video-link-validation): the
+    optional section links video intent briefs under the content dir's
+    ``video/`` folder. When present it holds at least one markdown list entry
+    whose link resolves — epic-dir-first, then repo-root — to an existing file
+    under ``<content-dir>/video/``. Absent, the epic is exactly as valid as
+    before; the linter never walks ``video/`` on its own. The check is the
+    research check, parameterized (`_check_epic_link_section`), so this mirrors
+    ``EpicResearchLintTest`` exactly.
+
+    Written test-first; expected to FAIL until the video-link check lands in
+    ``lint_epic`` (task 1.2)."""
+
+    BASE_EPIC = (
+        "# reporting-overhaul\n"
+        "Status: draft\n"
+        "\n"
+        "## Introduction\n"
+        "\n"
+        "Reports drift from the source data, so teams stop trusting them.\n"
+        "\n"
+        "### Non-goals\n"
+        "\n"
+        "- No new report types.\n"
+        "\n"
+        "## Decisions\n"
+        "\n"
+        "Export lives behind a flag.\n"
+        "\n"
+        "## Design\n"
+        "\n"
+        "A shared exporter module feeds every format.\n"
+        "\n"
+        "## Changes\n"
+        "\n"
+        "| Change | Description | Code | Integration | Unknowns | Risk |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| csv-export | Export as CSV | low | medium | low | low |\n"
+    )
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.home = tempfile.mkdtemp()
+        self._old_home = os.environ.get("HOME")
+        os.environ["HOME"] = self.home
+
+    def tearDown(self):
+        if self._old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self._old_home
+        shutil.rmtree(self.root, ignore_errors=True)
+        shutil.rmtree(self.home, ignore_errors=True)
+
+    def _write_epic(self, slug, text):
+        edir = os.path.join(self.root, ".shipd", "epics", slug)
+        os.makedirs(edir, exist_ok=True)
+        with open(os.path.join(edir, "epic.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def _write_video(self, relpath, text="# brief\n"):
+        p = os.path.join(self.root, ".shipd", "video", relpath)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def _write_research(self, relpath, text="# report\n"):
+        p = os.path.join(self.root, ".shipd", "research", relpath)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def _epic_with_video(self, *entries):
+        return self.BASE_EPIC + "\n## Video\n\n" + "".join(
+            e + "\n" for e in entries)
+
+    def _epic_errors(self, slug):
+        errors = []
+        sl.lint_epic(self.root, slug, errors)
+        return [str(e) for e in errors]
+
+    def _run_cli(self, argv):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = sl.main(argv)
+        return code, err.getvalue()
+
+    def test_epic_relative_link_resolves(self):
+        # A link relative to the epic's own directory
+        # (.shipd/epics/<slug>/ -> ../../video/...).
+        self._write_video("kickoff-call/brief.md")
+        self._write_epic(
+            "reporting-overhaul",
+            self._epic_with_video(
+                "- [Kickoff call](../../video/kickoff-call/brief.md)"))
+        self.assertEqual(self._epic_errors("reporting-overhaul"), [])
+
+    def test_repo_root_relative_link_resolves(self):
+        # A link relative to the repository root.
+        self._write_video("kickoff-call/brief.md")
+        self._write_epic(
+            "reporting-overhaul",
+            self._epic_with_video(
+                "- [Kickoff call](.shipd/video/kickoff-call/brief.md)"))
+        self.assertEqual(self._epic_errors("reporting-overhaul"), [])
+
+    def test_dead_link_errors_naming_it(self):
+        self._write_epic(
+            "reporting-overhaul",
+            self._epic_with_video(
+                "- [Missing](../../video/missing/brief.md)"))
+        errors = self._epic_errors("reporting-overhaul")
+        self.assertTrue(
+            has(errors, "../../video/missing/brief.md"), errors)
+        # The dead link makes the --epic CLI mode exit non-zero.
+        code, _err = self._run_cli(["--epic", "reporting-overhaul",
+                                    "--root", self.root])
+        self.assertEqual(code, 1)
+
+    def test_link_outside_video_folder_errors(self):
+        # A link that resolves (epic-relative) to a real file that does not
+        # live under the content dir's video/ folder.
+        edir = os.path.join(self.root, ".shipd", "epics", "reporting-overhaul")
+        os.makedirs(edir, exist_ok=True)
+        with open(os.path.join(edir, "notes.md"), "w", encoding="utf-8") as fh:
+            fh.write("# notes\n")
+        self._write_epic(
+            "reporting-overhaul",
+            self._epic_with_video("- [Notes](notes.md)"))
+        self.assertTrue(
+            has(self._epic_errors("reporting-overhaul"), "notes.md"))
+
+    def test_empty_video_section_errors(self):
+        self._write_epic(
+            "reporting-overhaul", self.BASE_EPIC + "\n## Video\n")
+        self.assertTrue(
+            has(self._epic_errors("reporting-overhaul"), "Video"))
+
+    def test_no_video_section_produces_no_finding(self):
+        self._write_epic("reporting-overhaul", self.BASE_EPIC)
+        errors = self._epic_errors("reporting-overhaul")
+        self.assertEqual(errors, [])
+        self.assertFalse(has([e.lower() for e in errors], "video"))
+
+    def test_unlinked_malformed_video_file_ignored(self):
+        # A malformed file under video/ that no epic links produces no
+        # library-lint finding — the linter never walks video/ on its own.
+        self._write_video("orphan.md", "not a valid anything @@@\n")
+        self._write_epic("reporting-overhaul", self.BASE_EPIC)
+        self.assertEqual([str(e) for e in sl.lint_library(self.root)], [])
+
+    def test_context_sections_are_independent(self):
+        # Each context section is validated against its own reserved folder,
+        # and neither section's contents affect the other's findings
+        # (shipd-spec-format epic-video-section).
+        self._write_research("payment-apis/report.md")
+        self._write_video("kickoff-call/brief.md")
+        both = (
+            self.BASE_EPIC
+            + "\n## Research\n\n"
+            + "- [Payment APIs](../../research/payment-apis/report.md)\n"
+            + "\n## Video\n\n"
+            + "- [Kickoff call](../../video/kickoff-call/brief.md)\n")
+        self._write_epic("reporting-overhaul", both)
+        self.assertEqual(self._epic_errors("reporting-overhaul"), [])
+
+        # Cross-linked: the brief under `## Research` and the report under
+        # `## Video`. Each link is an error against its own folder, and each
+        # finding names its own section — the sections do not cover for one
+        # another.
+        crossed = (
+            self.BASE_EPIC
+            + "\n## Research\n\n"
+            + "- [Kickoff call](../../video/kickoff-call/brief.md)\n"
+            + "\n## Video\n\n"
+            + "- [Payment APIs](../../research/payment-apis/report.md)\n")
+        self._write_epic("reporting-overhaul", crossed)
+        errors = self._epic_errors("reporting-overhaul")
+        self.assertEqual(len(errors), 2, errors)
+        self.assertTrue(has(errors, "`## Research` link "
+                                    "'../../video/kickoff-call/brief.md'"),
+                        errors)
+        self.assertTrue(has(errors, "`## Video` link "
+                                    "'../../research/payment-apis/report.md'"),
+                        errors)
+
+
 class ResearchReportLintTest(unittest.TestCase):
     """Research report validation (shipd-spec-format research-report-format,
     shipd-spec-lint research-report-validation): ``lint_research(root, slug,

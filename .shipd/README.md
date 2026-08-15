@@ -429,6 +429,10 @@ its intended outcome, with success criteria recommended.
 
 - [Payment APIs](../../research/payment-apis/report.md) — optional annotation.
 
+## Video
+
+- [Kickoff call](../../video/kickoff-call/brief.md) — optional annotation.
+
 ## Decisions
 
 The cross-cutting decisions every member change inherits.
@@ -487,6 +491,16 @@ Rules the linter enforces (in library lint and via `spec_lint.py --epic <slug>`)
   `spec_emit.py research <slug> --from <file>` writes it (validate-then-install,
   so an invalid report never lands) and `spec_status.py cat research <slug>`
   reads it.
+- **Video (optional).** An epic MAY carry a `## Video` section associating video
+  intent briefs with the epic. `<content-dir>/video/` (default `.shipd/video/`)
+  is the reserved home of video intent briefs. When the section is present it
+  holds at least one markdown list entry `- [title](path)` whose link resolves
+  (epic-dir-first, then repo-root) to an existing file under that folder; the
+  epic-relative form `../../video/<slug>/brief.md` is the clickable convention.
+  An empty section, a dead link, or a link to a file outside `video/` is a lint
+  error. Omit the section entirely when a feature has no brief — an absent
+  section is exactly as valid as before. The linter never walks `video/` on its
+  own; files there are validated only when an epic links them.
 - **Stub table.** The `## Changes` section holds a table whose header is exactly
   the six columns `| Change | Description | Code | Integration | Unknowns | Risk |`
   in order, with at least one data row. Each `Change` cell is a kebab-case slug,
@@ -552,6 +566,9 @@ and code blocks are skipped) must reference a listed source number.
 The brief is installed and read back only through the engine —
 `spec_emit.py video <slug> --from <file>` writes it (validate-then-install, so
 an invalid brief never lands) and `spec_status.py cat video <slug>` reads it.
+
+An epic associates a brief with itself by linking it from the epic's `## Video`
+section — see the epic contract's **Video (optional)** rule above.
 
 ## Requirement format (master library)
 

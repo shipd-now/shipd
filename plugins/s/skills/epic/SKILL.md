@@ -60,7 +60,21 @@ about. A question you could have answered by reading is a failure of this skill.
    context before your question round — they may already answer questions you
    would otherwise ask. Record every report you actually read as a link entry in
    the epic's `## Research` section (see the epic contract), and never invent an
-   entry for a file you did not read.
+   entry for a file you did not read. **Read any supplied video brief the same
+   way:** when the user names a video bundle slug, or points authoring at a
+   brief under the content dir's `video/` folder, read it with
+   `python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" cat
+   video <slug>` as pre-investigation context before your question round.
+   Record every brief you actually read as a link entry in the epic's
+   `## Video` section (see the epic contract), and never invent an entry for a
+   brief you did not read. **The brief is an input to investigation, never a
+   replacement for it:** the codebase-first rule below still applies in full —
+   the affected capabilities and the decomposition seams are still established
+   by reading the repository, not taken from the brief alone. **This skill does
+   not ingest recordings:** when the invocation argument names a video
+   container rather than an installed brief, report that and point the user at
+   `/s:video-ingest` to produce the brief first — `/s:epic` consumes only
+   briefs already installed under the content dir's `video/` folder.
 2. **Ask only what remains** — and only if something remains. If genuinely
    un-inferrable decisions are left (the decomposition boundaries, a shared
    architectural choice, the theme/initiative), batch them into a **single**
@@ -133,6 +147,10 @@ a `### Non-goals` subsection listing the scope exclusions. This mirrors
 
 - [<report title>](../../research/<name>/report.md) <optional annotation>
 
+## Video                           (optional)
+
+- [<brief title>](../../video/<slug>/brief.md) <optional annotation>
+
 ## Decisions
 
 The cross-cutting decisions every member change inherits — the shared
@@ -170,6 +188,14 @@ Rules the linter enforces (so get them right up front):
   convention. An empty `## Research` section, a dead link, or a link to a file
   outside `research/` is a lint error. List only reports you actually read —
   never invent entries.
+- **Video (optional).** `## Video` is optional — omit it entirely for a feature
+  with no video brief. When present it must hold at least one markdown list
+  entry `- [title](path)` whose link resolves (epic-dir-first, then repo-root)
+  to an existing file under the content dir's `video/` folder; the
+  epic-relative form (`../../video/<slug>/brief.md`) is the clickable
+  convention. An empty `## Video` section, a dead link, or a link to a file
+  outside `video/` is a lint error. List only briefs you actually read — never
+  invent entries.
 - **Stub table.** The header row must be exactly the six columns in order. At
   least one data row. Each `Change` cell is a kebab-case slug, unique within the
   table. Each of the four rating cells (Code, Integration, Unknowns, Risk) is one
@@ -193,7 +219,7 @@ the linter reports any error, **fix the epic and re-run** — repeat until it ex
 
 ## Ending — hand off, don't plan the members
 
-`am:epic` is standalone: it ends when the epic is emitted and lint-clean. When
+`s:epic` is standalone: it ends when the epic is emitted and lint-clean. When
 that point is reached:
 
 1. **Promote to `ready` on approval.** Emission wrote the epic at
