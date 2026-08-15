@@ -900,15 +900,15 @@ def member_board_state(root, slug):
 # ---------------------------------------------------------------------------
 
 def _epic_slugs(root):
-    """Every epic slug under the content directory's ``epics/`` (those with an
-    ``epic.md``), in sorted order."""
-    epics_dir = os.path.join(sc.specs_dir(root), "epics")
-    try:
-        names = sorted(os.listdir(epics_dir))
-    except OSError:
-        return []
-    return [n for n in names
-            if os.path.isfile(os.path.join(epics_dir, n, "epic.md"))]
+    """Every discoverable epic as ``(slug, hosting_root)`` pairs — the
+    invocation root's own epics in sorted order first, then the epics hosted
+    only under a ``.worktrees/<name>`` worktree in sorted order, each paired
+    with the first worktree hosting it (delivery-dashboard board-aggregation).
+
+    Delegates to ``ss.all_epic_slugs_with_roots``, the single discovery seam
+    the status CLI's epic surfaces share, so the board and the CLI can never
+    disagree about which epics exist or where they live."""
+    return ss.all_epic_slugs_with_roots(root)
 
 
 def _initiative_context(root, slug):
@@ -997,28 +997,38 @@ def _annotate_member_actions(members, heartbeat, report):
         m["actions"] = member_actions(m, entry)
 
 
-def _epic_board(root, slug):
+def _epic_board(root, slug, hosting_root=None):
     """Aggregate one epic: status, theme, initiative context, worktree-aware
     members, and the run context merged from the live heartbeat and last
-    report."""
-    with open(ss._epic_path(root, slug), encoding="utf-8") as fh:
+    report.
+
+    ``hosting_root`` is the root the epic itself lives under (defaulting to
+    ``root``): its file, status, heartbeat, and run report are all read from
+    there, so an epic authored inside a ``.worktrees/<name>`` worktree — where
+    a worktree-run autopilot also writes its heartbeat — aggregates with its
+    real run context. Member states keep deriving from the invocation ``root``,
+    whose own worktree probe already reaches every checkout. The hosting root
+    rides the row as ``location``, mirroring a member's."""
+    epic_root = hosting_root or root
+    with open(ss._epic_path(epic_root, slug), encoding="utf-8") as fh:
         text = fh.read()
     meta = dict(ss._epic_metadata(text))
     initiative = None
     if meta.get("Initiative"):
         initiative = _initiative_context(root, meta["Initiative"])
     header, rows = sc.parse_epic_changes(text)
-    report_path = os.path.join(sc.specs_dir(root), "autopilot",
+    report_path = os.path.join(sc.specs_dir(epic_root), "autopilot",
                                "%s-report.json" % slug)
-    heartbeat = _read_json(heartbeat_path(root, slug))
+    heartbeat = _read_json(heartbeat_path(epic_root, slug))
     report = _read_json(report_path)
     members = _member_rows(root, header, rows)
     _annotate_member_actions(members, heartbeat, report)
     return {
         "slug": slug,
-        "status": ss.read_epic_status(root, slug),
+        "status": ss.read_epic_status(epic_root, slug),
         "theme": meta.get("Theme"),
         "initiative": initiative,
+        "location": os.path.abspath(epic_root),
         "members": members,
         "heartbeat": heartbeat,
         "report": report,
@@ -1055,17 +1065,19 @@ def _group_epics(epics):
 
 
 def _all_epic_member_slugs(root):
-    """Every slug appearing in any epic's ``## Changes`` stub table under
-    ``root`` (across all epics, independent of a ``--epic`` scope) — the
+    """Every slug appearing in any epic's ``## Changes`` stub table discoverable
+    from ``root`` — every epic under the invocation root **or** a
+    ``.worktrees/<name>`` worktree, independent of a ``--epic`` scope — the
     exclusion set :func:`standalone_changes` uses so a change adopted into an
-    epic never also lists as standalone. A missing or unreadable epic file
-    contributes nothing rather than raising."""
+    epic never also lists as standalone, whether that epic has merged yet or
+    not. A missing or unreadable epic file contributes nothing rather than
+    raising."""
     slugs = set()
-    for eslug in _epic_slugs(root):
+    for eslug, epic_root in _epic_slugs(root):
         try:
-            with open(ss._epic_path(root, eslug), encoding="utf-8") as fh:
+            with open(ss._epic_path(epic_root, eslug), encoding="utf-8") as fh:
                 _header, rows = sc.parse_epic_changes(fh.read())
-        except OSError:
+        except (OSError, sc.ConfigError):
             continue
         for mslug, _desc, _ratings in rows:
             slugs.add(mslug)
@@ -1077,19 +1089,28 @@ def build_board(root, epic=None):
 
     Returns ``{"root", "generated_at", "epics": [...], "groups": [...],
     "standalone": [...]}`` where each epic carries its status, theme, initiative
-    context, worktree-aware member states, live heartbeat, and last run report
-    (design: board data shape). The flat ``epics`` list is preserved; ``groups``
-    buckets those same epic dicts under their initiative (a workspace-wide group
-    for epics carrying no ``Initiative:``); ``standalone`` holds the changes
-    planned outside any epic (:func:`standalone_changes`, empty when none),
-    each with empty board ``actions`` (run/open are epic-scoped). An explicit
-    ``epic`` with no ``epic.md`` raises ``ValueError`` — the CLI turns it into a
-    one-line error rather than a raw FileNotFoundError from ``_epic_board``."""
-    if epic is not None and not os.path.isfile(ss._epic_path(root, epic)):
-        raise ValueError(
-            "epic '%s' not found under %s" % (epic, sc.specs_dir(root)))
-    slugs = [epic] if epic is not None else _epic_slugs(root)
-    epics = [_epic_board(root, s) for s in slugs]
+    context, hosting ``location``, worktree-aware member states, live heartbeat,
+    and last run report (design: board data shape). Epics are discovered
+    through :func:`_epic_slugs` — the invocation root's own first, then those
+    hosted only under a ``.worktrees/<name>`` worktree, each aggregated exactly
+    once from its hosting root — so an epic authored in its own worktree is on
+    the board before its PR merges. The flat ``epics`` list is preserved;
+    ``groups`` buckets those same epic dicts under their initiative (a
+    workspace-wide group for epics carrying no ``Initiative:``);
+    ``standalone`` holds the changes planned outside any epic
+    (:func:`standalone_changes`, empty when none), each with empty board
+    ``actions`` (run/open are epic-scoped). An explicit ``epic`` no candidate
+    hosts raises ``ValueError`` — the CLI turns it into a one-line error rather
+    than a raw FileNotFoundError from ``_epic_board``."""
+    if epic is not None:
+        hosting_root = ss._epic_hosting_root(root, epic)
+        if hosting_root is None:
+            raise ValueError(
+                "epic '%s' not found under %s" % (epic, sc.specs_dir(root)))
+        pairs = [(epic, hosting_root)]
+    else:
+        pairs = _epic_slugs(root)
+    epics = [_epic_board(root, s, hosting_root=r) for s, r in pairs]
     standalone = standalone_changes(root, _all_epic_member_slugs(root))
     for row in standalone:
         row["actions"] = []
@@ -1118,6 +1139,12 @@ def _render_epic_lines(epic, board_root):
     header = "  epic %s [%s]" % (epic["slug"], epic.get("status") or "?")
     if epic.get("theme"):
         header += "  theme: %s" % epic["theme"]
+    # An epic authored inside a worktree (its `location` is not the board root)
+    # is marked exactly as a worktree-derived member row is (delivery-dashboard
+    # board-aggregation). A fixture carrying no `location` stays unmarked.
+    location = epic.get("location")
+    if location and location != board_root:
+        header += "  [worktree]"
     lines.append(header)
 
     hb = epic.get("heartbeat")
@@ -1550,7 +1577,7 @@ def _count_suffix(count):
 
 
 def epic_group_title(epic_slug, epic_status, initiative, stalled=False,
-                     count=None):
+                     count=None, worktree=False):
     """The label text for one epic's group header: slug + status, plus the
     initiative's slug when the epic belongs to one (delivery-dashboard
     board-epic-grouping spec) — re-homing the initiative -> epic structure
@@ -1558,12 +1585,19 @@ def epic_group_title(epic_slug, epic_status, initiative, stalled=False,
     the count of that epic's cards in the lane as a muted ` (N)` suffix (theme
     ``$fg-muted`` markup) after the initiative segment. ``count=None`` keeps
     the output byte-identical to before the per-lane count. When ``stalled`` is
-    set the title is prefixed with a theme-error-colored ``✗`` marker. Pure —
-    no ``textual``."""
+    set the title is prefixed with a theme-error-colored ``✗`` marker. When
+    ``worktree`` is set — the epic is hosted under a ``.worktrees/<name>``
+    root rather than the board's own (delivery-dashboard board-aggregation) —
+    a muted ``[worktree]`` marker closes the title; its brackets are
+    **escaped** (``\\[``) so content markup paints them literally instead of
+    swallowing the word as a style tag. ``worktree=False`` keeps the output
+    byte-identical to before the marker. Pure — no ``textual``."""
     title = "%s [%s]" % (epic_slug, epic_status)
     if initiative:
         title += " · %s" % initiative.get("slug")
     title += _count_suffix(count)
+    if worktree:
+        title += " [$fg-muted]\\[worktree][/]"
     if stalled:
         title = "[$text-error]✗[/] " + title
     return title
@@ -2414,7 +2448,11 @@ class EpicDetailScreen(ModalScreen):
             else:
                 yield Static("no specs")
             yield Rule()
-            text = epic_markdown(self.app.root, self.epic_slug)
+            # The overview reads the epic artifact from the root that hosts it
+            # — a worktree's when the epic was authored there and has not
+            # merged yet (delivery-dashboard board-aggregation).
+            text = epic_markdown(epic.get("location") or self.app.root,
+                                 self.epic_slug)
             if text is not None:
                 with VerticalScroll():
                     yield Markdown(text)
@@ -2447,10 +2485,15 @@ class EpicDetailScreen(ModalScreen):
 
     def action_open_editor(self):
         # Open the epic's own `epics/<slug>/epic.md` in `$EDITOR` as a suspend
-        # launch, resolving the content dir exactly as `epic_markdown` does; a
-        # no-op when the epic file is absent (board-modal-chrome).
+        # launch, resolving the content dir exactly as `epic_markdown` does —
+        # from the epic's hosting root, so a worktree-authored epic opens the
+        # file the overview above is showing (delivery-dashboard
+        # board-aggregation); a no-op when the epic file is absent
+        # (board-modal-chrome).
+        epic = _find_epic(self.app.board, self.epic_slug) or {}
+        epic_root = epic.get("location") or self.app.root
         epic_path = os.path.join(
-            sc.specs_dir(self.app.root), "epics", self.epic_slug, "epic.md")
+            sc.specs_dir(epic_root), "epics", self.epic_slug, "epic.md")
         if not os.path.isfile(epic_path):
             return
         self.app._spawn_launch(build_editor_launch(epic_path))
@@ -4057,11 +4100,17 @@ class BoardApp(App):
                 # standalone group carries the bare `standalone` label plus the
                 # same suffix, no separate count element.
                 count = len(group_cards)
+                # An epic hosted under a worktree carries the `[worktree]`
+                # marker its board row does (delivery-dashboard
+                # board-aggregation).
+                location = epic.get("location") if epic else None
                 title = ("standalone" + _count_suffix(count)) if is_standalone \
                     else epic_group_title(
                         group_slug, group_status, initiative,
                         stalled=epic_stalled(epic) if epic else False,
-                        count=count)
+                        count=count,
+                        worktree=bool(location
+                                      and location != self.board.get("root")))
                 # An *epic* group's header title itself splits the click
                 # (delivery-dashboard board-epic-grouping spec): the arrow
                 # cell toggles, anywhere else opens the epic-detail modal —

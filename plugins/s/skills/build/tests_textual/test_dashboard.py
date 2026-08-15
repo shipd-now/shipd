@@ -189,6 +189,108 @@ class BoardTest(DashboardTestBase):
         self.assertEqual({e["slug"] for e in data["epics"]}, {"ep"})
 
 
+class WorktreeEpicBoardTest(DashboardTestBase):
+    """An epic authored inside a ``.worktrees/<name>`` worktree joins the board
+    (delivery-dashboard board-aggregation): it aggregates once, carries the
+    hosting worktree root as ``location``, and has its file, status, heartbeat,
+    and run report read from there. The invocation root always shadows a
+    worktree's copy of the same slug.
+
+    Written test-first; expected to FAIL until the worktree-aware discovery
+    lands in ``dashboard.py`` (task 3.2)."""
+
+    def worktree(self, name):
+        return os.path.join(self.root, ".worktrees", name)
+
+    def test_worktree_authored_epic_joins_the_board(self):
+        wt = self.worktree("epic-shipd-port")
+        _make_epic(wt, "shipd-port",
+                   [("m1", "a member", "low"), ("m2", "another", "high")],
+                   status="active", theme="observability",
+                   initiative="shipd-dx")
+        board = dashboard.build_board(self.root)
+        self.assertEqual([e["slug"] for e in board["epics"]], ["shipd-port"])
+        epic = board["epics"][0]
+        # File and status came from the worktree, not the (empty) root.
+        self.assertEqual(epic["status"], "active")
+        self.assertEqual(epic["theme"], "observability")
+        self.assertEqual(epic["initiative"]["slug"], "shipd-dx")
+        self.assertEqual([m["slug"] for m in epic["members"]], ["m1", "m2"])
+        self.assertEqual(epic["location"], os.path.abspath(wt))
+        self.assertNotEqual(epic["location"], board["root"])
+
+    def test_root_hosted_epic_location_is_the_board_root(self):
+        _make_epic(self.root, "ep", [("m1", "a member", "low")],
+                   status="ready")
+        board = dashboard.build_board(self.root)
+        self.assertEqual(board["epics"][0]["location"], board["root"])
+
+    def test_root_epics_come_before_worktree_only_epics(self):
+        _make_epic(self.root, "r-b", [("m1", "a member", "low")])
+        _make_epic(self.root, "r-a", [("m2", "a member", "low")])
+        _make_epic(self.worktree("epic-w"), "w-a", [("m3", "a member", "low")])
+        board = dashboard.build_board(self.root)
+        self.assertEqual([e["slug"] for e in board["epics"]],
+                         ["r-a", "r-b", "w-a"])
+
+    def test_a_slug_hosted_in_both_aggregates_once_from_the_root(self):
+        _make_epic(self.root, "ep", [("m1", "a member", "low")],
+                   status="ready", theme="root-theme")
+        _make_epic(self.worktree("epic-ep"), "ep",
+                   [("m1", "a member", "low"), ("m2", "another", "high")],
+                   status="complete", theme="worktree-theme")
+        board = dashboard.build_board(self.root)
+        self.assertEqual([e["slug"] for e in board["epics"]], ["ep"])
+        epic = board["epics"][0]
+        self.assertEqual(epic["status"], "ready")
+        self.assertEqual(epic["theme"], "root-theme")
+        self.assertEqual(epic["location"], board["root"])
+
+    def test_worktree_epic_heartbeat_and_report_read_from_its_root(self):
+        wt = self.worktree("epic-shipd-port")
+        _make_epic(wt, "shipd-port", [("m1", "a member", "low")],
+                   status="active")
+        _write(dashboard.heartbeat_path(wt, "shipd-port"), json.dumps({
+            "epic": "shipd-port", "state": "running", "seq": 7,
+            "updated_at": time.time(),
+            "roster": [{"slug": "m1", "state": "driving", "stage": "gate"}]}))
+        _write(os.path.join(wt, ".shipd", "autopilot",
+                            "shipd-port-report.json"),
+               json.dumps({"epic": "shipd-port",
+                           "shipped": [{"member": "m1"}]}))
+        epic = dashboard.build_board(self.root)["epics"][0]
+        self.assertIsNotNone(epic["heartbeat"])
+        self.assertEqual(epic["heartbeat"]["seq"], 7)
+        self.assertIsNotNone(epic["report"])
+        self.assertEqual(epic["report"]["shipped"][0]["member"], "m1")
+
+    def test_worktree_epic_members_are_excluded_from_standalone(self):
+        # `m1` is planned at the root but adopted by a worktree-authored epic,
+        # so it must not also list as a standalone change.
+        _make_epic(self.worktree("epic-shipd-port"), "shipd-port",
+                   [("m1", "a member", "low")], status="active")
+        _plan(self.root, "m1", "ready")
+        self.assertIn("m1", dashboard._all_epic_member_slugs(self.root))
+        board = dashboard.build_board(self.root)
+        self.assertEqual([row["slug"] for row in board["standalone"]], [])
+
+    def test_epic_flag_scopes_to_a_worktree_hosted_epic(self):
+        _make_epic(self.worktree("epic-shipd-port"), "shipd-port",
+                   [("m1", "a member", "low")], status="active")
+        _make_epic(self.root, "ep", [("m2", "a member", "low")])
+        scoped = dashboard.build_board(self.root, epic="shipd-port")
+        self.assertEqual([e["slug"] for e in scoped["epics"]], ["shipd-port"])
+
+    def test_an_unreadable_worktree_config_does_not_break_discovery(self):
+        _make_epic(self.root, "ep", [("m1", "a member", "low")])
+        broken = self.worktree("epic-broken")
+        os.makedirs(broken, exist_ok=True)
+        _write(os.path.join(broken, ".shipd-config.json"), "{not valid json")
+        _make_epic(self.worktree("epic-w"), "w-a", [("m2", "a member", "low")])
+        board = dashboard.build_board(self.root)
+        self.assertEqual([e["slug"] for e in board["epics"]], ["ep", "w-a"])
+
+
 # ---------------------------------------------------------------------------
 # Initiative grouping and per-member action eligibility
 # ---------------------------------------------------------------------------
@@ -326,6 +428,54 @@ class RendererTest(unittest.TestCase):
         # A run that never started (or crashed away its heartbeat) still renders.
         lines = dashboard.render_board_lines(board)
         self.assertIn("ep", "\n".join(lines))
+
+
+class WorktreeEpicMarkerTest(unittest.TestCase):
+    """The ``[worktree]`` marker on an epic whose ``location`` is not the board
+    root (delivery-dashboard board-aggregation): the human-readable board's
+    epic header line and the TUI's epic group header both carry it, and a
+    root-hosted epic carries none. Pure — no terminal.
+
+    Written test-first; expected to FAIL until the markers land in
+    ``dashboard.py`` (task 3.4)."""
+
+    def _worktree_board(self):
+        board = _sample_board()
+        board["epics"][0]["location"] = "/x/.worktrees/epic-ep"
+        return board
+
+    def test_text_board_marks_a_worktree_hosted_epic_header(self):
+        lines = dashboard.render_board_lines(self._worktree_board())
+        header = [ln for ln in lines if ln.strip().startswith("epic ep")]
+        self.assertEqual(len(header), 1, lines)
+        self.assertIn("[worktree]", header[0])
+
+    def test_text_board_leaves_a_root_hosted_epic_unmarked(self):
+        board = _sample_board()
+        board["epics"][0]["location"] = board["root"]
+        lines = dashboard.render_board_lines(board)
+        header = [ln for ln in lines if ln.strip().startswith("epic ep")]
+        self.assertEqual(len(header), 1, lines)
+        self.assertNotIn("[worktree]", header[0])
+
+    def test_text_board_leaves_a_locationless_epic_unmarked(self):
+        # A hand-built fixture predating `location` still renders unmarked.
+        lines = dashboard.render_board_lines(_sample_board())
+        header = [ln for ln in lines if ln.strip().startswith("epic ep")]
+        self.assertNotIn("[worktree]", header[0])
+
+    def test_epic_group_title_carries_the_marker(self):
+        title = dashboard.epic_group_title("ep", "active", None, worktree=True)
+        self.assertIn("[worktree]", title)
+
+    def test_epic_group_title_is_unchanged_without_the_marker(self):
+        self.assertEqual(
+            dashboard.epic_group_title("ep", "active", None, worktree=False),
+            dashboard.epic_group_title("ep", "active", None))
+        self.assertNotIn(
+            "[worktree]",
+            dashboard.epic_group_title("ep", "active", {"slug": "init"},
+                                       count=2, stalled=True))
 
 
 class FlowLaneDelegationTest(unittest.TestCase):
@@ -2382,6 +2532,40 @@ def _one_epic_two_ready_board():
     }
 
 
+def _worktree_hosted_epic_board():
+    """One epic hosted under a worktree root — its ``location`` is not the
+    board root, so its group header must carry the ``[worktree]`` marker."""
+    board = _one_epic_two_ready_board()
+    board["epics"][0]["location"] = "/x/.worktrees/epic-ep"
+    return board
+
+
+class WorktreeEpicGroupHeaderTest(unittest.IsolatedAsyncioTestCase):
+    """The TUI epic group header marks a worktree-hosted epic (delivery-
+    dashboard board-aggregation): the ``[worktree]`` marker is *painted*, not
+    swallowed as content markup, and a root-hosted epic carries none.
+
+    Written test-first; expected to FAIL until the marker lands in
+    ``dashboard.py`` (task 3.4)."""
+
+    async def test_group_header_paints_the_worktree_marker(self):
+        app = dashboard.BoardApp(root="/x",
+                                 board_fn=_worktree_hosted_epic_board)
+        async with app.run_test(size=(200, 24)) as pilot:
+            await pilot.pause()
+            group = app.query_one("#epic-group-ready-ep", Collapsible)
+            title = group.query_one("CollapsibleTitle")
+            self.assertIn("[worktree]", _painted_line(app, title).text)
+
+    async def test_root_hosted_group_header_has_no_marker(self):
+        app = dashboard.BoardApp(root="/x", board_fn=_one_epic_two_ready_board)
+        async with app.run_test(size=(200, 24)) as pilot:
+            await pilot.pause()
+            group = app.query_one("#epic-group-ready-ep", Collapsible)
+            title = group.query_one("CollapsibleTitle")
+            self.assertNotIn("worktree", _painted_line(app, title).text)
+
+
 _OVERLONG_EPIC_SLUG = (
     "a-very-long-epic-slug-that-is-wide-enough-to-overflow-any-narrow-lane")
 
@@ -2791,6 +2975,44 @@ class EpicDetailModalTest(DashboardTestBase, unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(app.screen, dashboard.EpicDetailScreen)
             await pilot.press("escape")
             self.assertNotIsInstance(app.screen, dashboard.EpicDetailScreen)
+
+
+class WorktreeEpicDetailOverviewTest(DashboardTestBase,
+                                     unittest.IsolatedAsyncioTestCase):
+    """The epic-detail modal reads its overview markdown from the epic's own
+    hosting root (delivery-dashboard board-aggregation), so an epic authored
+    inside a ``.worktrees/<name>`` worktree renders its ``epic.md`` instead of
+    the not-found notice.
+
+    Written test-first; expected to FAIL until the call site passes
+    ``epic["location"]`` (task 3.4)."""
+
+    async def test_overview_renders_a_worktree_hosted_epic_markdown(self):
+        wt = os.path.join(self.root, ".worktrees", "epic-ep1")
+        _make_epic(wt, "ep1", [("m1", "d", "low")])
+        board = _epic_detail_board(self.root, "ep1",
+                                   members=[("m1", "low", "ready")])
+        board["epics"][0]["location"] = os.path.abspath(wt)
+        app = dashboard.BoardApp(root=self.root, board_fn=lambda: board)
+        self.app_ = app
+        async with app.run_test(size=(120, 24)) as pilot:
+            await _open_epic_detail(pilot, app, "ready", "ep1")
+            self.assertIsInstance(app.screen, dashboard.EpicDetailScreen)
+            self.assertTrue(list(app.screen.query(dashboard.Markdown)))
+            rendered = "\n".join(
+                str(w.render()) for w in app.screen.query(dashboard.Static))
+            self.assertNotIn("epic file not found", rendered)
+
+    async def test_overview_still_reports_a_missing_epic_file(self):
+        # No epic.md anywhere: the not-found notice, not a Markdown widget.
+        board = _epic_detail_board(self.root, "ep1",
+                                   members=[("m1", "low", "ready")])
+        board["epics"][0]["location"] = os.path.abspath(self.root)
+        app = dashboard.BoardApp(root=self.root, board_fn=lambda: board)
+        self.app_ = app
+        async with app.run_test(size=(120, 24)) as pilot:
+            await _open_epic_detail(pilot, app, "ready", "ep1")
+            self.assertFalse(list(app.screen.query(dashboard.Markdown)))
 
 
 class CompactControlTest(DashboardTestBase, unittest.IsolatedAsyncioTestCase):
@@ -3643,6 +3865,45 @@ class ModalKeysTest(DashboardTestBase, unittest.IsolatedAsyncioTestCase):
                                      "epic.md")
             self.assertEqual(
                 launches, [dashboard.build_editor_launch(epic_path, "nano")])
+
+    async def test_o_in_epic_detail_opens_a_worktree_hosted_epic_markdown(self):
+        # The epic was authored inside its own worktree, so `o` must open the
+        # file under that worktree's content dir — the very file the overview
+        # renders — not a nonexistent path under the board root
+        # (delivery-dashboard board-aggregation).
+        wt = os.path.join(self.root, ".worktrees", "epic-ep1")
+        _make_epic(wt, "ep1", [("m1", "d", "low")])
+        board = _epic_detail_board(self.root, "ep1",
+                                   members=[("m1", "low", "ready")])
+        board["epics"][0]["location"] = os.path.abspath(wt)
+        app = dashboard.BoardApp(root=self.root, board_fn=lambda: board)
+        async with app.run_test(size=(120, 24)) as pilot:
+            launches = []
+            app._spawn_launch = launches.append
+            app.push_screen(dashboard.EpicDetailScreen("ep1"))
+            await pilot.pause()
+            with mock.patch.dict(os.environ, {"EDITOR": "nano"}):
+                await pilot.press("o")
+            epic_path = os.path.join(os.path.abspath(wt), ".shipd", "epics",
+                                     "ep1", "epic.md")
+            self.assertEqual(
+                launches, [dashboard.build_editor_launch(epic_path, "nano")])
+
+    async def test_o_in_epic_detail_is_a_no_op_when_the_epic_file_is_absent(
+            self):
+        # No epic.md anywhere: `o` spawns nothing and the modal stays open.
+        board = _epic_detail_board(self.root, "ep1",
+                                   members=[("m1", "low", "ready")])
+        board["epics"][0]["location"] = os.path.abspath(self.root)
+        app = dashboard.BoardApp(root=self.root, board_fn=lambda: board)
+        async with app.run_test(size=(120, 24)) as pilot:
+            launches = []
+            app._spawn_launch = launches.append
+            app.push_screen(dashboard.EpicDetailScreen("ep1"))
+            await pilot.pause()
+            await pilot.press("o")
+            self.assertEqual(launches, [])
+            self.assertIsInstance(app.screen, dashboard.EpicDetailScreen)
 
     async def test_o_with_the_notice_showing_is_a_no_op(self):
         # No artifacts planted for "undocumented", so the modal shows the

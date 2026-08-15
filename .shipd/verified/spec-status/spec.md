@@ -85,10 +85,14 @@ spec and SHALL exit non-zero with an error when none is selected — except
 `show`, which SHALL instead print the workspace board report (see the
 Workspace board report requirement) when no name is given and no spec is
 selected; `status` SHALL keep the error in that case. When the
-given name matches no change but an epic of that slug exists, `status`
-SHALL print the epic's status value and `show` SHALL print the epic's
-board-shaped report — identical to `epic-show`'s output; a name matching
-neither a change nor an epic SHALL keep printing `?` from `status`.
+given name matches no change but an epic of that slug exists — discovered
+by probing the invocation root first, then each `.worktrees/<name>`
+directory under it in sorted name order, resolving each candidate's
+content directory independently and skipping unreadable candidates —
+`status` SHALL print the epic's status value and `show` SHALL print the
+epic's board-shaped report — identical to `epic-show`'s output; a name
+matching neither a change nor an epic in any candidate SHALL keep
+printing `?` from `status`.
 
 #### Scenario: Sync derives active
 - **GIVEN** a change with status `ready`
@@ -115,8 +119,15 @@ neither a change nor an epic SHALL keep printing `?` from `status`.
 - **THEN** the output is the same board-shaped report `epic-show <slug>`
   prints
 
+#### Scenario: Status falls back to a worktree-hosted epic
+- **GIVEN** an epic whose `epic.md` exists only under a
+  `.worktrees/<name>` content directory
+- **WHEN** `status <slug>` runs from the invocation root
+- **THEN** that epic's status value is printed and the exit code is 0
+
 #### Scenario: A name that is neither change nor epic stays a question mark
 - **WHEN** `status <name>` runs for a name matching no change and no epic
+  in the invocation root or any worktree
 - **THEN** `?` is printed
 
 #### Scenario: Bare status without a selection still errors
@@ -220,9 +231,18 @@ board-shaped report; `epic-sync <slug>` re-deriving the epic's status from
 member states; and `epic-set-status <status> <slug>` writing a validated
 epic status (`draft`, `ready`, `active`, `complete`), refusing `ready`
 unless the epic lints clean, with refusals printing a `Refused: ` reason
-and exiting 3. The board-shaped report SHALL print, in order: the
+and exiting 3. `epic-show` SHALL resolve the epic by probing the
+invocation root first, then each `.worktrees/<name>` directory under it in
+sorted name order — resolving each candidate's content directory
+independently and skipping unreadable candidates, the invocation root
+winning a slug hosted in both — and SHALL read the epic's file and status
+from the hosting root; the mutating verbs (`epic-sync`,
+`epic-set-status`) SHALL keep resolving the invocation root only. The
+board-shaped report SHALL print, in order: the
 `<slug>: <status>` line and the epic's header metadata lines (unchanged
-from before this report existed); a `shipped <n>/<m>` line where `n` is
+from before this report existed); when the epic resolved from a worktree,
+a `worktree: <name>` line directly after the metadata lines; a
+`shipped <n>/<m>` line where `n` is
 the count of members whose derived state is `archived` and `m` the count
 of all stub members; a blank line; then the four board lanes in board
 order — `UNPLANNED`, `READY`, `BUILDING`, `SHIPPED` — each printed as a
@@ -290,6 +310,19 @@ whose status is `draft`.
 - **GIVEN** a worktree whose content-directory configuration cannot be read
 - **WHEN** a member's state is derived from the invocation root
 - **THEN** that worktree is skipped and derivation completes without raising
+
+#### Scenario: Epic-show resolves a worktree-hosted epic
+- **GIVEN** an epic whose `epic.md` exists only under a
+  `.worktrees/<name>` content directory
+- **WHEN** `epic-show <slug>` runs from the invocation root
+- **THEN** the report prints with the epic's status on the first line and a
+  `worktree: <name>` line after the metadata lines
+
+#### Scenario: Mutating verbs stay invocation-root-only
+- **GIVEN** an epic hosted only under a worktree
+- **WHEN** `epic-set-status ready <slug>` runs from the invocation root
+- **THEN** the CLI exits non-zero with the epic-not-found error and writes
+  nothing
 
 #### Scenario: Sync derives active from one started member
 - **GIVEN** a `ready` epic whose stub table lists two members, one of which
@@ -791,7 +824,13 @@ across epic files, matching the board header's totals; a `shipped <n>/<m>`
 line over every rendered row (epic members plus standalone changes), `n`
 counting those whose lane is `shipped`; a blank line; then the four board
 lanes in board order — `UNPLANNED`, `READY`, `BUILDING`, `SHIPPED` — each
-printed as a `<LANE> (<count>)` header even when its count is 0. In the
+printed as a `<LANE> (<count>)` header even when its count is 0. The
+report's epics SHALL be discovered by probing the invocation root first,
+then each `.worktrees/<name>` directory under it in sorted name order —
+resolving each candidate's content directory independently, skipping
+unreadable candidates, the invocation root winning a slug hosted in
+both — each epic read from its hosting root, so the totals and rows match
+the board's worktree-aware aggregation. In the
 non-shipped lanes each member SHALL print as one indented row carrying its
 epic's slug (or `standalone` for a change planned outside any epic), the
 member slug, its derived state, `risk <value>` (`?` when absent), and a
@@ -829,7 +868,9 @@ raised.
 - **THEN** it appears as a row under its lane with the epic column
   `standalone`
 
-#### Scenario: A selection still wins
-- **GIVEN** a selected change
-- **WHEN** `show` runs with no argument
-- **THEN** the change's one-liner is printed, not the workspace report
+#### Scenario: A worktree-authored epic counts in the report
+- **GIVEN** an epic whose `epic.md` exists only under a
+  `.worktrees/<name>` content directory
+- **WHEN** the workspace report prints from the invocation root
+- **THEN** the epic count includes it, its members are summed into the
+  totals, and its member rows render under their lanes
