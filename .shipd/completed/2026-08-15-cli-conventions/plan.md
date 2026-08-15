@@ -1,5 +1,5 @@
 # cli-conventions
-Status: complete
+Status: verified
 Epic: shipd-dx
 
 ## Idea
