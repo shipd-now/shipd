@@ -268,6 +268,123 @@ class PlanHeaderTest(unittest.TestCase):
         self.assertTrue(has(errors, "parked"))
 
 
+class PlanQuestionsAndAnswersTest(unittest.TestCase):
+    """Optional ``## Questions and answers`` plan-section validation
+    (shipd-spec-lint qa-section-validation, shipd-spec-format
+    plan-document-sections). An absent section produces no finding; a present
+    section must hold `### Q<n>:` entries numbered sequentially from `Q1`, each
+    carrying `**Question:**`, `**Answered by:**`, and `**Answer:**` fields."""
+
+    HEADER = "# dark-mode-toggle\nStatus: ready\n"
+    BODY = ("\n## Idea\nOne-sentence summary.\n\n"
+            "### Motivation\nBecause.\n\n"
+            "### Details\nThe concrete changes.\n\n"
+            "### Non-goals\nNot that.\n\n"
+            "## Implementation\nLike so.\n")
+
+    ENTRY_1 = ("### Q1: Which store holds the toggle?\n"
+               "- **Question:** Should the toggle live in the settings store "
+               "or the theme store? Options: (1) settings; (2) theme. "
+               "Recommendation: (1).\n"
+               "- **Verdict:** ANSWER\n"
+               "- **Answered by:** ORACLE\n"
+               "- **Answer:** The settings store — option 1. It already "
+               "persists user-scoped display preferences.\n"
+               "- **Cited:** verified/settings-store\n")
+    ENTRY_2 = ("### Q2: What does the report call the toggle?\n"
+               "- **Question:** Should the report name the toggle 'dark mode' "
+               "or 'theme'? Options: (1) dark mode; (2) theme.\n"
+               "- **Verdict:** INSUFFICIENT\n"
+               "- **Answered by:** USER\n"
+               "- **Answer:** Call it 'dark mode' everywhere in the report.\n"
+               "- **Queued:** q-report-format\n")
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _qa_errors(self, section=None, change="dark-mode-toggle"):
+        """Write a valid plan for ``change``, optionally carrying a
+        ``## Questions and answers`` section holding ``section``, and return
+        the questions-and-answers findings as strings."""
+        cdir = os.path.join(self.root, ".shipd", "planned", change)
+        os.makedirs(cdir, exist_ok=True)
+        text = self.HEADER + self.BODY
+        if section is not None:
+            text += "\n## Questions and answers\n\n" + section
+        with open(os.path.join(cdir, "plan.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+        errors = []
+        sl.check_plan_qa_section(self.root, change, errors)
+        return [str(e) for e in errors]
+
+    def test_absent_section_is_clean(self):
+        self.assertEqual(self._qa_errors(section=None), [])
+
+    def test_empty_section_errors(self):
+        errors = self._qa_errors("")
+        self.assertTrue(has(errors, "Questions and answers"))
+
+    def test_non_sequential_first_entry_errors(self):
+        # The first entry is headed `### Q2:`, so the numbering does not start
+        # at Q1; the error names the offending entry.
+        errors = self._qa_errors(self.ENTRY_2)
+        self.assertTrue(has(errors, "Q2"))
+
+    def test_missing_question_field_errors(self):
+        entry = "\n".join(
+            ln for ln in self.ENTRY_1.splitlines()
+            if not ln.startswith("- **Question:**")) + "\n"
+        errors = self._qa_errors(entry)
+        self.assertTrue(has(errors, "Q1"))
+        self.assertTrue(has(errors, "**Question:**"))
+
+    def test_missing_answered_by_field_errors(self):
+        entry = "\n".join(
+            ln for ln in self.ENTRY_1.splitlines()
+            if not ln.startswith("- **Answered by:**")) + "\n"
+        errors = self._qa_errors(entry)
+        self.assertTrue(has(errors, "Q1"))
+        self.assertTrue(has(errors, "**Answered by:**"))
+
+    def test_missing_answer_field_errors(self):
+        entry = "\n".join(
+            ln for ln in self.ENTRY_1.splitlines()
+            if not ln.startswith("- **Answer:**")) + "\n"
+        errors = self._qa_errors(entry)
+        self.assertTrue(has(errors, "Q1"))
+        self.assertTrue(has(errors, "**Answer:**"))
+
+    def test_malformed_entry_header_errors(self):
+        errors = self._qa_errors(
+            "### Which store holds the toggle?\n"
+            "- **Question:** Settings or theme store?\n"
+            "- **Verdict:** ANSWER\n"
+            "- **Answered by:** ORACLE\n"
+            "- **Answer:** The settings store.\n")
+        self.assertTrue(has(errors, "### Q<n>:"))
+
+    def test_conforming_two_entry_section_is_clean(self):
+        errors = self._qa_errors(self.ENTRY_1 + "\n" + self.ENTRY_2)
+        self.assertEqual(errors, [])
+
+    def test_conforming_section_is_clean_through_lint_change(self):
+        # The pass is wired into the change lint, so a conforming section
+        # produces no finding there either.
+        change = "dark-mode-toggle"
+        self._qa_errors(self.ENTRY_1 + "\n" + self.ENTRY_2, change=change)
+        errors = [str(e) for e in sl.lint_change(self.root, change)]
+        self.assertFalse(has(errors, "Questions and answers"))
+
+    def test_malformed_section_errors_through_lint_change(self):
+        change = "dark-mode-toggle"
+        self._qa_errors(self.ENTRY_2, change=change)
+        errors = [str(e) for e in sl.lint_change(self.root, change)]
+        self.assertTrue(has(errors, "Q2"))
+
+
 class PlanMetadataTest(unittest.TestCase):
     """Header-metadata validation (shipd-spec-lint plan-metadata-validation,
     plan-profile-values, initiative-attaches-through-epic). The optional

@@ -1534,6 +1534,63 @@ class CatTest(SpecStatusTestBase):
         self.assertIn("Requirement: Example", r.stdout)    # delta content
         self.assertIn("Do the thing", r.stdout)            # tasks content
 
+    def make_archived_change(self, change, date, body="Archived idea.\n"):
+        """Create `.shipd/completed/<date>-<change>/` with a plan, one delta
+        spec, and tasks — the shape `spec_merge.py` leaves behind."""
+        cdir = os.path.join(
+            self.root, ".shipd", "completed", "%s-%s" % (date, change))
+        specs = os.path.join(cdir, "specs", "example")
+        os.makedirs(specs)
+        with open(os.path.join(cdir, "plan.md"), "w", encoding="utf-8") as fh:
+            fh.write("# %s\nStatus: verified\n\n## Idea\n%s" % (change, body))
+        with open(os.path.join(specs, "spec.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("## ADDED Requirements\n\n"
+                     "### Requirement: Example\nid: example\n\n"
+                     "The system SHALL do a thing.\n")
+        with open(os.path.join(cdir, "tasks.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("# Tasks\n\n- [x] 1.1 [req: *] Did the thing.\n")
+        return cdir
+
+    def test_cat_change_falls_back_to_completed_archive(self):
+        """A change present only under `completed/<date>-<slug>/` still prints
+        (spec-io mediated-read-verb)."""
+        self.make_archived_change("my-change", "2026-08-14")
+        r = self.cli("cat", "change", "my-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        adir = os.path.join(".shipd", "completed", "2026-08-14-my-change")
+        for sep in ("--- " + os.path.join(adir, "plan.md"),
+                    "--- " + os.path.join(adir, "specs", "example", "spec.md"),
+                    "--- " + os.path.join(adir, "tasks.md")):
+            self.assertIn(sep, r.stdout)
+        self.assertIn("Archived idea", r.stdout)
+        self.assertIn("Requirement: Example", r.stdout)
+        self.assertIn("Did the thing", r.stdout)
+
+    def test_cat_change_prefers_the_newest_archive(self):
+        """With several archives of one slug the lexicographically last (newest
+        date prefix) wins."""
+        self.make_archived_change("my-change", "2026-01-01", "Older idea.\n")
+        self.make_archived_change("my-change", "2026-02-02", "Newer idea.\n")
+        r = self.cli("cat", "change", "my-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("2026-02-02-my-change", r.stdout)
+        self.assertNotIn("2026-01-01-my-change", r.stdout)
+        self.assertIn("Newer idea", r.stdout)
+        self.assertNotIn("Older idea", r.stdout)
+
+    def test_cat_change_prefers_planned_over_the_archive(self):
+        """`planned/<slug>/` resolves first; the archive is only a fallback."""
+        self.make_change("my-change", status="active")
+        self.make_archived_change("my-change", "2026-08-14")
+        r = self.cli("cat", "change", "my-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(
+            "--- " + os.path.join(".shipd", "planned", "my-change", "plan.md"),
+            r.stdout)
+        self.assertNotIn("2026-08-14-my-change", r.stdout)
+
     def test_cat_verified(self):
         vdir = os.path.join(self.root, ".shipd", "verified", "auth")
         os.makedirs(vdir)
