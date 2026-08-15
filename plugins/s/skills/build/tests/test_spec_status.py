@@ -499,11 +499,15 @@ class EpicVerbTest(SpecStatusTestBase):
     Written test-first; expected to FAIL until the verbs land in
     ``spec_status.py`` (task 2.2)."""
 
-    def make_epic(self, slug, status="draft", metadata=None, rows=None):
+    def make_epic(self, slug, status="draft", metadata=None, rows=None,
+                  root=None):
         """Write .shipd/epics/<slug>/epic.md with a conforming header and stub
         table. ``metadata`` is a list of ``Key: value`` header lines; ``rows``
-        is a list of (slug, description, (r1, r2, r3, r4)) tuples."""
-        edir = os.path.join(self.root, ".shipd", "epics", slug)
+        is a list of (slug, description, (r1, r2, r3, r4)) tuples. ``root``
+        defaults to the invocation root — pass a worktree root to author the
+        epic there instead."""
+        edir = os.path.join(root if root is not None else self.root,
+                            ".shipd", "epics", slug)
         os.makedirs(edir, exist_ok=True)
         if rows is None:
             rows = [("csv-export", "Export as CSV",
@@ -528,6 +532,28 @@ class EpicVerbTest(SpecStatusTestBase):
         with open(os.path.join(edir, "epic.md"), "w", encoding="utf-8") as fh:
             fh.write(text)
         return edir
+
+    def make_worktree_epic(self, worktree, slug, status="ready", metadata=None,
+                           rows=None):
+        """Author an epic inside ``.worktrees/<worktree>``'s content directory —
+        an epic born in its own worktree, invisible to a root-only probe — and
+        return that worktree root."""
+        wt = os.path.join(self.root, ".worktrees", worktree)
+        os.makedirs(wt, exist_ok=True)
+        if rows is None:
+            rows = [("member-a", "A", ("low",) * 4)]
+        self.make_epic(slug, status=status, metadata=metadata, rows=rows,
+                       root=wt)
+        return wt
+
+    def make_broken_worktree(self, worktree):
+        """A worktree whose content-directory configuration cannot be read."""
+        wt = os.path.join(self.root, ".worktrees", worktree)
+        os.makedirs(wt, exist_ok=True)
+        with open(os.path.join(wt, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("{not valid json")
+        return wt
 
     def write_epic_raw(self, slug, text):
         edir = os.path.join(self.root, ".shipd", "epics", slug)
@@ -882,6 +908,185 @@ class MemberStateWorktreeTest(EpicVerbTest):
         self.assertEqual(self.member_state(r.stdout, "member-a"), "unplanned")
 
 
+class EpicDiscoveryTest(EpicVerbTest):
+    """The shared root-first epic discovery seam (spec-status
+    epic-status-verbs, delivery-dashboard board-aggregation):
+    ``_epic_hosting_root`` and ``all_epic_slugs_with_roots`` probe the
+    invocation root first, then each ``.worktrees/<name>`` directory in sorted
+    name order, resolving each candidate's content directory independently and
+    skipping unreadable ones. Driven by direct import — the seam is a library
+    function both the status CLI and the dashboard consume.
+
+    Written test-first; expected to FAIL until the seam lands in
+    ``spec_status.py`` (task 1.2)."""
+
+    # -- _epic_hosting_root -------------------------------------------------
+
+    def test_hosting_root_is_the_invocation_root_when_it_hosts(self):
+        self.make_epic("e1", status="ready")
+        self.assertEqual(ss._epic_hosting_root(self.root, "e1"), self.root)
+
+    def test_invocation_root_wins_over_a_worktree_copy(self):
+        self.make_epic("e1", status="ready")
+        self.make_worktree_epic("wt-a", "e1")
+        self.assertEqual(ss._epic_hosting_root(self.root, "e1"), self.root)
+
+    def test_hosting_root_falls_through_to_the_worktree(self):
+        wt = self.make_worktree_epic("wt-a", "e1")
+        self.assertEqual(ss._epic_hosting_root(self.root, "e1"), wt)
+
+    def test_first_hosting_worktree_in_sorted_order_wins(self):
+        self.make_worktree_epic("wt-b", "e1")
+        first = self.make_worktree_epic("wt-a", "e1")
+        self.assertEqual(ss._epic_hosting_root(self.root, "e1"), first)
+
+    def test_hosting_root_is_none_when_no_candidate_hosts(self):
+        self.make_worktree_epic("wt-a", "other")
+        self.assertIsNone(ss._epic_hosting_root(self.root, "e1"))
+
+    def test_unreadable_worktree_config_is_skipped(self):
+        self.make_broken_worktree("wt-a")
+        wt = self.make_worktree_epic("wt-b", "e1")
+        self.assertEqual(ss._epic_hosting_root(self.root, "e1"), wt)
+
+    def test_unreadable_worktree_config_alone_yields_none(self):
+        self.make_broken_worktree("wt-a")
+        self.assertIsNone(ss._epic_hosting_root(self.root, "e1"))
+
+    # -- all_epic_slugs_with_roots ------------------------------------------
+
+    def test_root_epics_sort_first_then_worktree_only_epics(self):
+        self.make_epic("r-b", status="ready")
+        self.make_epic("r-a", status="ready")
+        wt_z = self.make_worktree_epic("wt-z", "w-z")
+        wt_a = self.make_worktree_epic("wt-a", "w-a")
+        self.assertEqual(
+            ss.all_epic_slugs_with_roots(self.root),
+            [("r-a", self.root), ("r-b", self.root),
+             ("w-a", wt_a), ("w-z", wt_z)])
+
+    def test_a_duplicated_slug_is_listed_once_from_the_root(self):
+        self.make_epic("e1", status="ready")
+        self.make_worktree_epic("wt-a", "e1")
+        self.assertEqual(ss.all_epic_slugs_with_roots(self.root),
+                         [("e1", self.root)])
+
+    def test_a_slug_in_two_worktrees_takes_the_sorted_first(self):
+        self.make_worktree_epic("wt-b", "e1")
+        first = self.make_worktree_epic("wt-a", "e1")
+        self.assertEqual(ss.all_epic_slugs_with_roots(self.root),
+                         [("e1", first)])
+
+    def test_an_unreadable_worktree_config_does_not_break_the_listing(self):
+        self.make_epic("e1", status="ready")
+        self.make_broken_worktree("wt-a")
+        wt = self.make_worktree_epic("wt-b", "w-1")
+        self.assertEqual(ss.all_epic_slugs_with_roots(self.root),
+                         [("e1", self.root), ("w-1", wt)])
+
+    def test_an_empty_workspace_lists_nothing(self):
+        self.assertEqual(ss.all_epic_slugs_with_roots(self.root), [])
+
+
+class EpicShowWorktreeHostTest(EpicVerbTest):
+    """``epic-show`` resolves an epic hosted only under a ``.worktrees/<name>``
+    worktree and marks it with a ``worktree: <name>`` line directly after the
+    metadata lines, while the mutating verbs stay invocation-root-only
+    (spec-status epic-status-verbs).
+
+    Written test-first; expected to FAIL until the resolution lands in
+    ``spec_status.py`` (task 2.4)."""
+
+    def test_epic_show_resolves_a_worktree_hosted_epic(self):
+        self.make_worktree_epic(
+            "epic-shipd-port", "shipd-port", status="active",
+            rows=[("csv-export", "CSV", ("low",) * 4),
+                  ("new-thing", "TBD", ("high",) * 4)])
+        self.make_completed("csv-export")
+        r = self.cli("epic-show", "shipd-port")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout
+        self.assertEqual(out.splitlines()[0], "shipd-port: active")
+        self.assertIn("shipped 1/2", out.splitlines())
+        self.assertEqual(self.lane_of(out, "csv-export"), "SHIPPED")
+        self.assertEqual(self.lane_of(out, "new-thing"), "UNPLANNED")
+
+    def test_worktree_line_follows_the_metadata_lines(self):
+        self.make_worktree_epic(
+            "epic-shipd-port", "shipd-port", status="active",
+            metadata=["Theme: reliability", "Initiative: mvp-readiness"])
+        r = self.cli("epic-show", "shipd-port")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[0], "shipd-port: active")
+        self.assertEqual(lines[1], "Theme: reliability")
+        self.assertEqual(lines[2], "Initiative: mvp-readiness")
+        self.assertEqual(lines[3], "worktree: epic-shipd-port")
+
+    def test_worktree_line_names_the_hosting_worktree_without_metadata(self):
+        self.make_worktree_epic("epic-shipd-port", "shipd-port", status="ready")
+        r = self.cli("epic-show", "shipd-port")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[0], "shipd-port: ready")
+        self.assertEqual(lines[1], "worktree: epic-shipd-port")
+
+    def test_a_root_hosted_epic_carries_no_worktree_line(self):
+        self.make_epic("e", status="ready", metadata=["Theme: reliability"])
+        r = self.cli("epic-show", "e")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("worktree:", r.stdout)
+
+    def test_the_invocation_root_copy_wins_and_carries_no_marker(self):
+        self.make_epic("shipd-port", status="ready",
+                       rows=[("member-a", "A", ("low",) * 4)])
+        self.make_worktree_epic("epic-shipd-port", "shipd-port",
+                                status="complete")
+        r = self.cli("epic-show", "shipd-port")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines()[0], "shipd-port: ready")
+        self.assertNotIn("worktree:", r.stdout)
+
+    def test_show_fallback_matches_epic_show_for_a_worktree_epic(self):
+        self.make_worktree_epic(
+            "epic-shipd-port", "shipd-port", status="active",
+            metadata=["Theme: reliability"],
+            rows=[("csv-export", "CSV", ("low",) * 4)])
+        show = self.cli("show", "shipd-port")
+        epic_show = self.cli("epic-show", "shipd-port")
+        self.assertEqual(show.returncode, 0, show.stderr)
+        self.assertEqual(epic_show.returncode, 0, epic_show.stderr)
+        # Byte-identical: one renderer serves both verbs, worktrees included.
+        self.assertEqual(show.stdout, epic_show.stdout)
+
+    def test_an_epic_in_no_candidate_still_errors(self):
+        self.make_worktree_epic("epic-other", "other", status="ready")
+        r = self.cli("epic-show", "shipd-port")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("epic 'shipd-port' not found", r.stderr)
+
+    # -- the mutating verbs stay invocation-root-only ----------------------
+
+    def test_epic_set_status_refuses_a_worktree_hosted_epic(self):
+        wt = self.make_worktree_epic("epic-shipd-port", "shipd-port",
+                                     status="draft")
+        path = os.path.join(wt, ".shipd", "epics", "shipd-port", "epic.md")
+        with open(path, encoding="utf-8") as fh:
+            before = fh.read()
+        r = self.cli("epic-set-status", "ready", "shipd-port")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("epic 'shipd-port' not found", r.stderr)
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), before)
+
+    def test_epic_sync_refuses_a_worktree_hosted_epic(self):
+        self.make_worktree_epic("epic-shipd-port", "shipd-port",
+                                status="ready")
+        r = self.cli("epic-sync", "shipd-port")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("epic 'shipd-port' not found", r.stderr)
+
+
 class EpicFallbackTest(EpicVerbTest):
     """``status``/``show`` fall back to the epic when their argument names no
     change but an epic of that slug exists (spec-status status-cli): ``status``
@@ -921,7 +1126,48 @@ class EpicFallbackTest(EpicVerbTest):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), "ready")
 
+    def test_status_falls_back_to_a_worktree_hosted_epic(self):
+        # The epic was authored in its own worktree and has not merged yet, so
+        # the invocation root's content dir does not carry it at all.
+        self.make_worktree_epic("epic-shipd-port", "shipd-port",
+                                status="active")
+        r = self.cli("status", "shipd-port")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "active")
+
+    def test_show_falls_back_to_a_worktree_hosted_epic_report(self):
+        self.make_worktree_epic(
+            "epic-shipd-port", "shipd-port", status="active",
+            rows=[("csv-export", "CSV", ("low",) * 4),
+                  ("new-thing", "TBD", ("high",) * 4)])
+        self.make_completed("csv-export")
+        r = self.cli("show", "shipd-port")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout
+        self.assertEqual(out.splitlines()[0], "shipd-port: active")
+        self.assertIn("shipped 1/2", out.splitlines())
+        self.assertEqual(self.lane_of(out, "csv-export"), "SHIPPED")
+        self.assertEqual(self.lane_of(out, "new-thing"), "UNPLANNED")
+
+    def test_the_invocation_root_epic_wins_over_a_worktree_copy(self):
+        self.make_epic("shipd-port", status="ready",
+                       rows=[("member-a", "A", ("low",) * 4)])
+        self.make_worktree_epic("epic-shipd-port", "shipd-port",
+                                status="complete")
+        r = self.cli("status", "shipd-port")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "ready")
+
     def test_neither_change_nor_epic_stays_a_question_mark(self):
+        r = self.cli("status", "no-such-thing")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "?")
+
+    def test_a_name_in_no_candidate_stays_a_question_mark(self):
+        # A worktree exists and hosts an epic of its own, so the probe walks
+        # every candidate before falling through to `?`.
+        self.make_worktree_epic("epic-other", "other", status="ready")
+        self.make_broken_worktree("epic-broken")
         r = self.cli("status", "no-such-thing")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), "?")
@@ -1110,6 +1356,56 @@ class WorkspaceReportTest(EpicVerbTest):
         self.assertEqual([row.strip() for row in self.rows_in(out, "SHIPPED")],
                          ["e1 (1)", "standalone (1)"])
         self.assertEqual(out.splitlines()[1], "shipped 2/2")
+
+    # -- worktree-authored epics -------------------------------------------
+
+    def test_worktree_authored_epic_counts_in_the_totals(self):
+        self.make_epic("e1", status="ready",
+                       metadata=["Initiative: mvp-readiness"],
+                       rows=[("m1", "A", ("low",) * 4)])
+        self.make_worktree_epic(
+            "epic-shipd-port", "shipd-port", status="ready",
+            metadata=["Initiative: shipd-dx"],
+            rows=[("m2", "B", ("low",) * 4),
+                  ("m3", "C", ("low",) * 4)])
+        lines = self.report().splitlines()
+        self.assertEqual(lines[0], "3 specs · 2 epics · 2 initiatives")
+        self.assertEqual(lines[1], "shipped 0/3")
+
+    def test_worktree_authored_epic_members_render_under_their_lanes(self):
+        self.make_worktree_epic(
+            "epic-shipd-port", "shipd-port", status="active",
+            rows=[("m1", "A", ("low", "low", "low", "high")),
+                  ("m2", "B", ("low",) * 4)])
+        self.make_completed("m2")
+        out = self.report()
+        lane, row = self.row_for(out, "m1")
+        self.assertEqual(lane, "UNPLANNED")
+        self.assertEqual(
+            row.split(), ["shipd-port", "m1", "unplanned", "risk", "high"])
+        self.assertEqual([r.strip() for r in self.rows_in(out, "SHIPPED")],
+                         ["shipd-port (1)"])
+
+    def test_a_duplicated_epic_slug_is_counted_once_from_the_root(self):
+        self.make_epic("shipd-port", status="ready",
+                       rows=[("m1", "A", ("low",) * 4)])
+        self.make_worktree_epic(
+            "epic-shipd-port", "shipd-port", status="active",
+            rows=[("m1", "A", ("low",) * 4),
+                  ("m2", "B", ("low",) * 4)])
+        lines = self.report().splitlines()
+        # The root's copy — one member, not the worktree's two.
+        self.assertEqual(lines[0], "1 specs · 1 epics · 0 initiatives")
+        self.assertIsNone(self.row_for(self.report(), "m2")[1])
+
+    def test_an_unreadable_worktree_config_does_not_break_the_report(self):
+        self.make_epic("e1", status="ready",
+                       rows=[("m1", "A", ("low",) * 4)])
+        self.make_broken_worktree("epic-broken")
+        self.make_worktree_epic("epic-shipd-port", "shipd-port", status="ready",
+                                rows=[("m2", "B", ("low",) * 4)])
+        lines = self.report().splitlines()
+        self.assertEqual(lines[0], "2 specs · 2 epics · 0 initiatives")
 
     # -- fail-soft and the untouched neighbours ------------------------------
 

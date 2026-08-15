@@ -411,11 +411,18 @@ def _plan_metadata(root, change):
 
 
 def _epic_fallback(root, name):
-    """True when ``name`` names no change but an epic of that slug exists — the
+    """The root hosting the epic ``name`` falls back to, or ``None`` when
+    ``name`` names a change or no candidate hosts such an epic — the
     ``status``/``show`` epic fallback (spec-status status-cli). Resolution
     lives here at the CLI rather than in a skill so every caller (the ``shipd``
-    dispatcher included) gains it."""
-    return not _is_change(root, name) and os.path.isfile(_epic_path(root, name))
+    dispatcher included) gains it.
+
+    Discovery goes through :func:`_epic_hosting_root`, so an epic authored
+    inside a ``.worktrees/<name>`` worktree and not yet merged falls back
+    exactly as a root-hosted one does."""
+    if _is_change(root, name):
+        return None
+    return _epic_hosting_root(root, name)
 
 
 def cmd_show(root, change):
@@ -428,7 +435,7 @@ def cmd_show(root, change):
             print(line)
         return 0
     change = _resolve_change(root, change)
-    if _epic_fallback(root, change):
+    if _epic_fallback(root, change) is not None:
         for line in _epic_report_lines(root, change):
             print(line)
         return 0
@@ -446,8 +453,11 @@ def cmd_show(root, change):
 
 def cmd_status(root, change):
     change = _resolve_change(root, change)
-    if _epic_fallback(root, change):
-        print(read_epic_status(root, change) or "?")
+    hosting_root = _epic_fallback(root, change)
+    if hosting_root is not None:
+        # The status is read from the root that hosts the epic — a worktree's
+        # when the epic was authored there and has not merged yet.
+        print(read_epic_status(hosting_root, change) or "?")
         return 0
     print(read_status(root, change) or "?")
     return 0
@@ -782,6 +792,77 @@ def _member_state(root, slug):
     return state
 
 
+def _epic_candidate_roots(root):
+    """The candidate roots epic discovery probes, in order: ``root`` itself,
+    then each ``.worktrees/<name>`` directory under it in sorted name order —
+    the same single-level walk :func:`_member_state_with_root` and
+    :func:`cmd_locate` use, so every probe in this file agrees on where a
+    change or epic may live."""
+    candidates = [root]
+    worktrees_dir = os.path.join(root, ".worktrees")
+    if os.path.isdir(worktrees_dir):
+        for name in sorted(os.listdir(worktrees_dir)):
+            wt = os.path.join(worktrees_dir, name)
+            if os.path.isdir(wt):
+                candidates.append(wt)
+    return candidates
+
+
+def _epic_hosting_root(root, slug):
+    """The first candidate root whose content directory holds
+    ``epics/<slug>/epic.md``, or ``None`` when no candidate does (spec-status
+    epic-status-verbs; delivery-dashboard board-aggregation).
+
+    Probes :func:`_epic_candidate_roots` in order — the invocation root first,
+    then each worktree in sorted name order — resolving each candidate's
+    content directory independently (``sc.specs_dir(candidate)``) and skipping
+    any candidate whose configuration is unreadable (``sc.ConfigError``). The
+    invocation root therefore always shadows a worktree's copy of the same
+    slug, mirroring ``_member_state_with_root``'s root-first precedence.
+
+    The shared read-side seam: the status CLI's epic surfaces and the
+    dashboard's board aggregation both resolve epics through it, so the two
+    can never disagree about where an epic lives."""
+    for candidate in _epic_candidate_roots(root):
+        try:
+            specs_dir = sc.specs_dir(candidate)
+        except sc.ConfigError:
+            continue
+        if os.path.isfile(os.path.join(specs_dir, "epics", slug, "epic.md")):
+            return candidate
+    return None
+
+
+def all_epic_slugs_with_roots(root):
+    """Every discoverable epic as ``(slug, hosting_root)`` pairs (spec-status
+    epic-status-verbs; delivery-dashboard board-aggregation).
+
+    The invocation root's own epics come first in slug order, then the epics
+    hosted only under a worktree in slug order, each paired with the first
+    worktree hosting it in sorted name order. A slug hosted in more than one
+    candidate appears exactly once, the invocation root winning. Candidates
+    whose configuration is unreadable are skipped, never raised."""
+    def _slugs(candidate):
+        try:
+            pattern = os.path.join(
+                sc.specs_dir(candidate), "epics", "*", "epic.md")
+        except sc.ConfigError:
+            return []
+        return sorted(os.path.basename(os.path.dirname(path))
+                      for path in glob.glob(pattern))
+
+    candidates = _epic_candidate_roots(root)
+    pairs = [(slug, root) for slug in _slugs(root)]
+    seen = {slug for slug, _r in pairs}
+    worktree_pairs = {}
+    for candidate in candidates[1:]:
+        for slug in _slugs(candidate):
+            if slug not in seen and slug not in worktree_pairs:
+                worktree_pairs[slug] = candidate
+    pairs.extend((slug, worktree_pairs[slug]) for slug in sorted(worktree_pairs))
+    return pairs
+
+
 def _standalone_plan_path(content_dir, slug):
     """The plan.md for ``slug`` under ``content_dir`` — the in-flight
     ``planned/<slug>/plan.md``, else the newest ``completed/<date>-<slug>/
@@ -903,27 +984,37 @@ def _epic_report_lines(root, slug):
 
     In order: the ``<slug>: <status>`` line and the epic's header metadata
     lines (unchanged from before this report existed — the autopilot skill
-    reads that status line); a ``shipped <n>/<m>`` line counting the members
+    reads that status line); a ``worktree: <name>`` line when the epic resolved
+    from a worktree; a ``shipped <n>/<m>`` line counting the members
     whose derived state is ``archived`` against every stub member; a blank
     line; then the four board lanes in board order, each as a
     ``<LANE> (<count>)`` header even when empty, followed by one indented row
     per member in it. A member's lane comes from :func:`board_lane` — the
     projection the dashboard shares — its risk from the last rating cell of
     its stub-table row (``?`` when the row carries none), and a ``[worktree]``
-    marker when its state was derived from a worktree rather than ``root``."""
-    path = _epic_path(root, slug)
+    marker when its state was derived from a worktree rather than ``root``.
+
+    The epic's file and status are read from the root :func:`_epic_hosting_root`
+    resolves — a worktree's when the epic was authored there and has not
+    merged yet — while member states keep deriving from the invocation
+    ``root``, so a worktree-hosted epic reports the same board the merged one
+    will."""
+    epic_root = _epic_hosting_root(root, slug) or root
+    path = _epic_path(epic_root, slug)
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
-    lines = ["%s: %s" % (slug, read_epic_status(root, slug) or "?")]
+    lines = ["%s: %s" % (slug, read_epic_status(epic_root, slug) or "?")]
     for key, value in _epic_metadata(text):
         lines.append("%s: %s" % (key, value))
+    if epic_root != root:
+        lines.append("worktree: %s" % os.path.basename(epic_root))
 
     _header, rows = sc.parse_epic_changes(text)
     members = []
     for mslug, _desc, ratings in rows:
-        state, hosting_root = _member_state_with_root(root, mslug)
+        state, member_root = _member_state_with_root(root, mslug)
         risk = ratings[-1].strip() if ratings and ratings[-1].strip() else "?"
-        marker = " [worktree]" if hosting_root != root else ""
+        marker = " [worktree]" if member_root != root else ""
         members.append((board_lane(state), mslug, state, risk, marker))
 
     shipped = sum(1 for lane, _s, _st, _r, _m in members if lane == "shipped")
@@ -939,15 +1030,13 @@ def _epic_report_lines(root, slug):
 
 
 def _workspace_epic_slugs(root):
-    """Every epic slug under ``root``'s content directory, sorted — the epics
-    the workspace report enumerates. An unreadable configuration yields none
-    rather than raising."""
-    try:
-        pattern = os.path.join(sc.specs_dir(root), "epics", "*", "epic.md")
-    except sc.ConfigError:
-        return []
-    return sorted(os.path.basename(os.path.dirname(path))
-                  for path in glob.glob(pattern))
+    """Every discoverable epic as ``(slug, hosting_root)`` pairs — the epics the
+    workspace report enumerates, in :func:`all_epic_slugs_with_roots` order
+    (the invocation root's own first, then the worktree-only ones), so an epic
+    authored inside a worktree counts exactly as the board counts it. An
+    unreadable candidate configuration yields none of its epics rather than
+    raising."""
+    return all_epic_slugs_with_roots(root)
 
 
 def _workspace_report_lines(root):
@@ -973,16 +1062,19 @@ def _workspace_report_lines(root):
     any standalone change is archived — mirroring the board's collapsed
     per-epic shipped groups. Lanes come from :func:`board_lane`, the shared
     projection the epic report and the dashboard use, and standalone changes
-    from :func:`standalone_changes`, the discovery the board consumes. An
+    from :func:`standalone_changes`, the discovery the board consumes. The
+    epics themselves come from :func:`_workspace_epic_slugs`, the worktree-aware
+    seam the board's aggregation shares, each read from its hosting root, so a
+    worktree-authored epic counts here exactly as it does on the board. An
     unreadable epic file is skipped, never raised."""
     epics = []          # (epic slug, [row, ...]) in epic order
     initiatives = set()
     member_slugs = set()
-    for eslug in _workspace_epic_slugs(root):
+    for eslug, epic_root in _workspace_epic_slugs(root):
         try:
-            with open(_epic_path(root, eslug), encoding="utf-8") as fh:
+            with open(_epic_path(epic_root, eslug), encoding="utf-8") as fh:
                 text = fh.read()
-        except OSError:
+        except (OSError, sc.ConfigError):
             continue
         meta = dict(_epic_metadata(text))
         if meta.get("Initiative"):
@@ -1034,9 +1126,11 @@ def _workspace_report_lines(root):
 
 
 def cmd_epic_show(root, slug):
-    path = _epic_path(root, slug)
-    if not os.path.isfile(path):
-        raise StatusError("epic '%s' not found (%s)" % (slug, path))
+    # Read-only, so it resolves across the invocation root and its worktrees;
+    # the mutating verbs below deliberately stay invocation-root-only.
+    if _epic_hosting_root(root, slug) is None:
+        raise StatusError(
+            "epic '%s' not found (%s)" % (slug, _epic_path(root, slug)))
     for line in _epic_report_lines(root, slug):
         print(line)
     return 0
