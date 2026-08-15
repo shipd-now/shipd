@@ -328,6 +328,19 @@ class RendererTest(unittest.TestCase):
         self.assertIn("ep", "\n".join(lines))
 
 
+class FlowLaneDelegationTest(unittest.TestCase):
+    """``flow_lane`` delegates to ``spec_status.board_lane`` — the single shared
+    state→lane projection the epic report also groups its members with, so the
+    board and the report cannot drift (spec-status epic-status-verbs)."""
+
+    def test_flow_lane_matches_the_shared_projection(self):
+        import spec_status as ss
+        for state in ("archived", "ready", "unplanned", "draft", "active",
+                      "complete", "verified", "rejected", "?"):
+            self.assertEqual(dashboard.flow_lane(state), ss.board_lane(state),
+                             state)
+
+
 class AgeRendererTest(unittest.TestCase):
     """`_age` prefixes its human age with a caller-chosen ``verb`` — defaulting
     to ``updated`` so every existing call site is byte-identical, while the

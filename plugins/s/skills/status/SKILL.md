@@ -51,6 +51,26 @@ none is selected) — so you never resolve the selection yourself.
   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" set-status <status> [change]
   ```
 
+### When the argument names an epic
+
+`[change]` may name an **epic** rather than a change. You do not detect that
+yourself — the CLI does: when the name matches no change but
+`epics/<name>/epic.md` exists, `status` prints the epic's status value and
+`show` prints the epic's **board-shaped report** (identical to
+`epic-show <slug>`): the `<slug>: <status>` line, the epic's metadata, a
+`shipped <n>/<m>` line, and the members grouped into the board's four lanes —
+`UNPLANNED`, `READY`, `BUILDING`, `SHIPPED` — each with its count, and each
+member line naming its state, its risk rating, and a `[worktree]` marker when
+its state was derived from a worktree. Relay that report as the CLI printed it;
+do not re-summarize or re-order the lanes.
+
+Epic **transitions** never go through `set-status`, which is change-only. Use
+the epic verbs instead — `epic-set-status <status> <slug>` (a guarded write of
+`draft`/`ready`/`active`/`complete`, refusing `ready` unless the epic lints
+clean, with the same exit-3 refusal flow below) and `epic-sync <slug>` to
+re-derive an epic's status from its members. If the user asks to set an epic's
+status, run `epic-set-status`, never `set-status`.
+
 `<status>` is one of `draft`, `ready`, `active`, `complete`, `verified`, or
 `rejected`. `rejected` is the context-sufficiency gate's parking state
 (`spec_gate.py` enters it from `draft`/`ready` when a plan lacks build context);

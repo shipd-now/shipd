@@ -29,7 +29,9 @@ Verbs (see the spec-status + statusline capabilities for the contract):
                      library (read-only), printing one finding line per
                      mismatched entry (stale-base/missing-master/id-collision)
                      plus a summary; exit 0 clean, 4 on findings
-  epic-show <slug>   print an epic's status, metadata, and per-member states
+  epic-show <slug>   print an epic's board-shaped report: status, metadata,
+                     shipped progress, and its members grouped into the
+                     board's lanes
   epic-sync <slug>   re-derive an epic's status from its members' states
   epic-set-status <status> <slug>
                      write a validated epic status (draft/ready/active/
@@ -403,8 +405,20 @@ def _plan_metadata(root, change):
             if k in sc.METADATA_KEYS]
 
 
+def _epic_fallback(root, name):
+    """True when ``name`` names no change but an epic of that slug exists — the
+    ``status``/``show`` epic fallback (spec-status status-cli). Resolution
+    lives here at the CLI rather than in a skill so every caller (the ``shipd``
+    dispatcher included) gains it."""
+    return not _is_change(root, name) and os.path.isfile(_epic_path(root, name))
+
+
 def cmd_show(root, change):
     change = _resolve_change(root, change)
+    if _epic_fallback(root, change):
+        for line in _epic_report_lines(root, change):
+            print(line)
+        return 0
     status = read_status(root, change) or "?"
     counts = count_tasks(root, change)
     if counts is None:
@@ -419,6 +433,9 @@ def cmd_show(root, change):
 
 def cmd_status(root, change):
     change = _resolve_change(root, change)
+    if _epic_fallback(root, change):
+        print(read_epic_status(root, change) or "?")
+        return 0
     print(read_status(root, change) or "?")
     return 0
 
@@ -690,6 +707,24 @@ def _epic_metadata(text):
             if k in sc.EPIC_METADATA_KEYS]
 
 
+def board_lane(state):
+    """Map a lifecycle ``state`` onto its board lane (spec-status
+    epic-status-verbs): ``archived``→``shipped``, ``ready``→``ready``,
+    ``unplanned``→``unplanned``, every other state (``draft``/``active``/
+    ``complete``/``verified``/``rejected``/``?``)→``building``.
+
+    The single shared projection: the epic report groups its members with it
+    and ``dashboard.flow_lane`` delegates to it, so the board and the report
+    cannot drift. Pure — no I/O."""
+    if state == "archived":
+        return "shipped"
+    if state == "ready":
+        return "ready"
+    if state == "unplanned":
+        return "unplanned"
+    return "building"
+
+
 def _member_state_with_root(root, slug):
     """Derive one stub member's state, and the candidate root that produced it
     (spec-status epic-status-verbs; design: epic status derivation).
@@ -752,18 +787,59 @@ def _epic_rows(root, slug):
     return rows
 
 
+# The board lanes in board order — the order the delivery board's columns
+# read left to right, and the order the epic report prints them in.
+_BOARD_LANES = ("unplanned", "ready", "building", "shipped")
+
+
+def _epic_report_lines(root, slug):
+    """The board-shaped epic report as a list of lines (spec-status
+    epic-status-verbs) — the single renderer ``epic-show`` and ``show``'s epic
+    fallback both print, so the two outputs are identical by construction.
+
+    In order: the ``<slug>: <status>`` line and the epic's header metadata
+    lines (unchanged from before this report existed — the autopilot skill
+    reads that status line); a ``shipped <n>/<m>`` line counting the members
+    whose derived state is ``archived`` against every stub member; a blank
+    line; then the four board lanes in board order, each as a
+    ``<LANE> (<count>)`` header even when empty, followed by one indented row
+    per member in it. A member's lane comes from :func:`board_lane` — the
+    projection the dashboard shares — its risk from the last rating cell of
+    its stub-table row (``?`` when the row carries none), and a ``[worktree]``
+    marker when its state was derived from a worktree rather than ``root``."""
+    path = _epic_path(root, slug)
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    lines = ["%s: %s" % (slug, read_epic_status(root, slug) or "?")]
+    for key, value in _epic_metadata(text):
+        lines.append("%s: %s" % (key, value))
+
+    _header, rows = sc.parse_epic_changes(text)
+    members = []
+    for mslug, _desc, ratings in rows:
+        state, hosting_root = _member_state_with_root(root, mslug)
+        risk = ratings[-1].strip() if ratings and ratings[-1].strip() else "?"
+        marker = " [worktree]" if hosting_root != root else ""
+        members.append((board_lane(state), mslug, state, risk, marker))
+
+    shipped = sum(1 for lane, _s, _st, _r, _m in members if lane == "shipped")
+    lines.append("shipped %d/%d" % (shipped, len(members)))
+    lines.append("")
+    for lane in _BOARD_LANES:
+        in_lane = [m for m in members if m[0] == lane]
+        lines.append("%s (%d)" % (lane.upper(), len(in_lane)))
+        for _lane, mslug, state, risk, marker in in_lane:
+            lines.append("  %-22s %-12s risk %s%s"
+                         % (mslug, state, risk, marker))
+    return lines
+
+
 def cmd_epic_show(root, slug):
     path = _epic_path(root, slug)
     if not os.path.isfile(path):
         raise StatusError("epic '%s' not found (%s)" % (slug, path))
-    with open(path, encoding="utf-8") as fh:
-        text = fh.read()
-    print("%s: %s" % (slug, read_epic_status(root, slug) or "?"))
-    for key, value in _epic_metadata(text):
-        print("%s: %s" % (key, value))
-    _header, rows = sc.parse_epic_changes(text)
-    for mslug, _desc, _ratings in rows:
-        print("%s: %s" % (mslug, _member_state(root, mslug)))
+    for line in _epic_report_lines(root, slug):
+        print(line)
     return 0
 
 
@@ -1690,7 +1766,9 @@ def main(argv=None):
     p_check_base.add_argument("change", nargs="?", default=None)
 
     p_epic_show = sub.add_parser(
-        "epic-show", help="print an epic's status, metadata, and member states")
+        "epic-show",
+        help="print an epic's board-shaped report (status, metadata, shipped "
+             "progress, members grouped into the board's lanes)")
     p_epic_show.add_argument("slug")
 
     p_epic_sync = sub.add_parser(
