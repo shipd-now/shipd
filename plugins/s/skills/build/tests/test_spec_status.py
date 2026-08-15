@@ -932,6 +932,215 @@ class EpicFallbackTest(EpicVerbTest):
         self.assertEqual(r.stdout.strip(), "no-such-thing: ?")
 
 
+class WorkspaceReportTest(EpicVerbTest):
+    """The workspace board report (spec-status workspace-board-report):
+    ``show`` with no name given and no spec selected reports the whole
+    delivery board — a totals line, ``shipped <n>/<m>``, and the four board
+    lanes with an epic column on the non-shipped rows and per-epic rollups
+    under ``SHIPPED``. ``status`` keeps its no-selection error.
+
+    Written test-first; expected to FAIL until the report lands in
+    ``spec_status.py`` (tasks 2.2/2.3)."""
+
+    def make_worktree_change(self, worktree, change, status):
+        """Create .worktrees/<worktree>/.shipd/planned/<change>/plan.md with the
+        given status — a change installed under a sibling worktree root."""
+        cdir = os.path.join(
+            self.root, ".worktrees", worktree, ".shipd", "planned", change)
+        os.makedirs(cdir)
+        with open(os.path.join(cdir, "plan.md"), "w", encoding="utf-8") as fh:
+            fh.write("# %s\nStatus: %s\n\n## Idea\nA summary.\n" % (
+                change, status))
+        return os.path.join(self.root, ".worktrees", worktree)
+
+    def make_worktree_completed(self, worktree, change, date="2026-01-01"):
+        """Archive ``change`` under a sibling worktree root — the only shape in
+        which a standalone change reads ``archived`` (discovery walks the root's
+        ``planned/`` dirs and the worktree names)."""
+        cdir = os.path.join(
+            self.root, ".worktrees", worktree, ".shipd", "completed",
+            "%s-%s" % (date, change))
+        os.makedirs(cdir)
+        with open(os.path.join(cdir, "plan.md"), "w", encoding="utf-8") as fh:
+            fh.write("# %s\nStatus: verified\n\n## Idea\nA summary.\n" % change)
+
+    # -- report accessors --------------------------------------------------
+
+    def report(self):
+        r = self.cli("show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def rows_in(self, out, lane):
+        """The indented rows printed under the ``lane`` header."""
+        rows, current = [], None
+        for line in out.splitlines():
+            if line and not line.startswith(" ") \
+                    and line.split(" ")[0] in self.LANES:
+                current = line.split(" ")[0]
+            elif line.startswith("  ") and current == lane:
+                rows.append(line)
+        return rows
+
+    def row_for(self, out, member):
+        """``(lane, row)`` for the row whose member column is ``member``."""
+        for lane in self.LANES:
+            for row in self.rows_in(out, lane):
+                fields = row.split()
+                if len(fields) > 1 and fields[1] == member:
+                    return lane, row
+        return None, None
+
+    # -- the header lines --------------------------------------------------
+
+    def test_bare_show_prints_totals_and_all_four_lanes(self):
+        self.make_epic("e1", status="ready",
+                       metadata=["Initiative: mvp-readiness"],
+                       rows=[("m1", "A", ("low",) * 4),
+                             ("m2", "B", ("low",) * 4)])
+        self.make_epic("e2", status="ready",
+                       metadata=["Initiative: mvp-readiness"],
+                       rows=[("m3", "C", ("low",) * 4)])
+        out = self.report()
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "3 specs · 2 epics · 1 initiatives")
+        self.assertEqual(lines[1], "shipped 0/3")
+        self.assertEqual(lines[2], "")
+        self.assertEqual(
+            self.lane_headers(out),
+            ["UNPLANNED (3)", "READY (0)", "BUILDING (0)", "SHIPPED (0)"])
+
+    def test_totals_count_epic_members_not_standalone(self):
+        self.make_epic("e1", status="ready",
+                       rows=[("m1", "A", ("low",) * 4)])
+        self.make_change("solo", status="active")
+        lines = self.report().splitlines()
+        # `solo` is not a spec in the totals line, but it is a rendered row.
+        self.assertEqual(lines[0], "1 specs · 1 epics · 0 initiatives")
+        self.assertEqual(lines[1], "shipped 0/2")
+
+    def test_shipped_line_counts_members_and_standalone(self):
+        self.make_epic("e1", status="active",
+                       rows=[("m1", "A", ("low",) * 4),
+                             ("m2", "B", ("low",) * 4)])
+        self.make_completed("m1")
+        self.make_change("solo", status="active")
+        self.assertEqual(self.report().splitlines()[1], "shipped 1/3")
+
+    def test_empty_workspace_reports_zeroes(self):
+        out = self.report()
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "0 specs · 0 epics · 0 initiatives")
+        self.assertEqual(lines[1], "shipped 0/0")
+        self.assertEqual(
+            self.lane_headers(out),
+            ["UNPLANNED (0)", "READY (0)", "BUILDING (0)", "SHIPPED (0)"])
+
+    # -- the non-shipped rows ----------------------------------------------
+
+    def test_member_row_carries_its_epic_state_and_risk(self):
+        self.make_epic("e1", status="ready",
+                       rows=[("m1", "A", ("low", "medium", "low", "high"))])
+        lane, row = self.row_for(self.report(), "m1")
+        self.assertEqual(lane, "UNPLANNED")
+        self.assertEqual(row.split(), ["e1", "m1", "unplanned", "risk", "high"])
+
+    def test_member_row_without_ratings_reports_question_mark_risk(self):
+        self.make_epic("e1", status="ready", rows=[("m1", "A", ())])
+        _lane, row = self.row_for(self.report(), "m1")
+        self.assertEqual(row.split(), ["e1", "m1", "unplanned", "risk", "?"])
+
+    def test_worktree_derived_member_row_is_marked(self):
+        self.make_epic("e1", status="ready",
+                       rows=[("m1", "A", ("low",) * 4)])
+        self.make_worktree_change("m1", "m1", "ready")
+        lane, row = self.row_for(self.report(), "m1")
+        self.assertEqual(lane, "READY")
+        self.assertEqual(
+            row.split(), ["e1", "m1", "ready", "risk", "low", "[worktree]"])
+
+    def test_invocation_root_member_row_is_not_marked(self):
+        self.make_epic("e1", status="active",
+                       rows=[("m1", "A", ("low",) * 4)])
+        self.make_change("m1", status="active")
+        out = self.report()
+        self.assertNotIn("[worktree]", out)
+        lane, row = self.row_for(out, "m1")
+        self.assertEqual(lane, "BUILDING")
+        self.assertEqual(row.split(), ["e1", "m1", "active", "risk", "low"])
+
+    def test_standalone_change_folds_in_under_standalone(self):
+        self.make_change("solo", status="active")
+        lane, row = self.row_for(self.report(), "solo")
+        self.assertEqual(lane, "BUILDING")
+        self.assertEqual(
+            row.split(), ["standalone", "solo", "active", "risk", "?"])
+
+    def test_worktree_hosted_standalone_row_is_marked(self):
+        self.make_worktree_change("solo", "solo", "ready")
+        lane, row = self.row_for(self.report(), "solo")
+        self.assertEqual(lane, "READY")
+        self.assertEqual(
+            row.split(),
+            ["standalone", "solo", "ready", "risk", "?", "[worktree]"])
+
+    # -- the shipped lane --------------------------------------------------
+
+    def test_shipped_lane_rolls_up_per_epic(self):
+        self.make_epic("e1", status="active",
+                       rows=[("m1", "A", ("low",) * 4),
+                             ("m2", "B", ("low",) * 4)])
+        self.make_epic("e2", status="active",
+                       rows=[("m3", "C", ("low",) * 4)])
+        for slug in ("m1", "m2", "m3"):
+            self.make_completed(slug)
+        out = self.report()
+        self.assertEqual([row.strip() for row in self.rows_in(out, "SHIPPED")],
+                         ["e1 (2)", "e2 (1)"])
+        # Rollups only — never a flat member row.
+        self.assertIsNone(self.row_for(out, "m1")[1])
+        self.assertIn("SHIPPED (3)", self.lane_headers(out))
+
+    def test_shipped_lane_appends_standalone_rollup_last(self):
+        self.make_epic("e1", status="active",
+                       rows=[("m1", "A", ("low",) * 4)])
+        self.make_completed("m1")
+        self.make_worktree_completed("solo", "solo")
+        out = self.report()
+        self.assertEqual([row.strip() for row in self.rows_in(out, "SHIPPED")],
+                         ["e1 (1)", "standalone (1)"])
+        self.assertEqual(out.splitlines()[1], "shipped 2/2")
+
+    # -- fail-soft and the untouched neighbours ------------------------------
+
+    def test_unreadable_epic_file_is_skipped(self):
+        self.make_epic("e1", status="ready",
+                       rows=[("m1", "A", ("low",) * 4)])
+        # An `epic.md` that is a directory: the read raises OSError, and the
+        # report skips that epic rather than failing.
+        os.makedirs(os.path.join(self.root, ".shipd", "epics", "broken",
+                                 "epic.md"))
+        out = self.report()
+        self.assertEqual(out.splitlines()[0], "1 specs · 1 epics · 0 initiatives")
+        self.assertEqual(self.row_for(out, "m1")[0], "UNPLANNED")
+
+    def test_a_selection_wins_over_the_workspace_report(self):
+        self.make_epic("e1", status="ready",
+                       rows=[("m1", "A", ("low",) * 4)])
+        self.make_change("feat", status="draft")
+        self.cli("use", "feat")
+        r = self.cli("show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "feat: draft")
+
+    def test_bare_status_without_a_selection_still_errors(self):
+        self.make_epic("e1", status="ready",
+                       rows=[("m1", "A", ("low",) * 4)])
+        r = self.cli("status")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no change given and no spec selected", r.stderr)
+
+
 class InitiativeVerbTest(SpecStatusTestBase):
     """The three initiative status verbs (spec-status initiative-status-verbs):
     ``initiative-show``, ``initiative-sync``, ``initiative-set-status``.
