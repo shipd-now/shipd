@@ -60,15 +60,16 @@ def video_config(project_dir="."):
     video-bundle-contract), its ``build.video_asr`` key (default
     ``parakeet``, video-backend-adapters), and its ``build.video_vocabulary``
     key (default ``[]``, video-vocabulary-biasing), its
-    ``build.video_max_frames`` key (default 24, video-frame-budget), and its
+    ``build.video_max_frames`` key (default 24, video-frame-budget), its
     ``build.video_scene_floor`` key (default `SCENE_FLOOR_FRACTION`,
-    video-frame-budget).
+    video-frame-budget), and its ``build.video_cursor`` key (default
+    ``True``, video-cursor-crops).
 
     Read-only — a missing config, a missing ``build`` key, or an unreadable
     config yields the defaults, so callers always proceed."""
     settings = {"video_dir": DEFAULT_VIDEO_DIR, "asr": DEFAULT_ASR,
                "vocabulary": [], "max_frames": DEFAULT_VIDEO_MAX_FRAMES,
-               "scene_floor": SCENE_FLOOR_FRACTION}
+               "scene_floor": SCENE_FLOOR_FRACTION, "video_cursor": True}
     try:
         build = _build_scripts_dir()
         if build not in sys.path:
@@ -89,6 +90,8 @@ def video_config(project_dir="."):
             settings["max_frames"] = build_cfg["video_max_frames"]
         if build_cfg.get("video_scene_floor") is not None:
             settings["scene_floor"] = build_cfg["video_scene_floor"]
+        if build_cfg.get("video_cursor") is not None:
+            settings["video_cursor"] = bool(build_cfg["video_cursor"])
     return settings
 
 
@@ -189,6 +192,32 @@ def probe_media(video_path, run):
     except (TypeError, ValueError):
         duration = 0.0
     return has_audio, duration
+
+
+def probe_video_dimensions(video_path, run):
+    """Run `ffprobe` on ``video_path`` through the injectable runner and
+    return its video stream's ``(width, height)``, or ``None`` if no video
+    stream or dimensions can be determined (video-cursor-crops). Mirrors
+    `probe_media`'s JSON shape but reports dimensions rather than
+    audio/duration — kept as a separate function so `probe_media`'s
+    existing ``(has_audio, duration)`` signature, depended on elsewhere,
+    never changes. A source whose dimensions cannot be determined simply
+    skips the cursor stage rather than failing the ingest."""
+    rc, stdout, _stderr = run(probe_argv(video_path))
+    if rc != 0:
+        return None
+    try:
+        data = json.loads(stdout)
+    except ValueError:
+        return None
+    for stream in data.get("streams", []):
+        if stream.get("codec_type") != "video":
+            continue
+        width, height = stream.get("width"), stream.get("height")
+        if isinstance(width, int) and isinstance(height, int) \
+                and width > 0 and height > 0:
+            return width, height
+    return None
 
 
 def extract_audio_argv(video_path, wav_path):
@@ -595,6 +624,455 @@ def resolve_frame_candidates(deixis, scene, max_frames, duration,
     return kept, dropped
 
 
+# --- pointer localization ----------------------------------------------------
+
+# 960px: the working width the differencing pass scales to, making cost
+# independent of source resolution — the cursor's tile energy collapses at
+# 640px (25) but survives at 960px (272), at ~0.23s/frame (plan.md).
+CURSOR_WORK_WIDTH = 960
+
+# 0.2s: the short baseline that isolates the pointer from the app's own
+# slower redraws — `diff(t-0.2, t)` peaks on the true cursor (energy 1847 vs
+# 64) where `diff(t-1.0, t)` is dominated by a ticking counter (4035 vs the
+# cursor's 2728) (plan.md).
+CURSOR_DIFF_STEP_SECONDS = 0.2
+
+# 4 grayscale frames spaced CURSOR_DIFF_STEP_SECONDS apart yield 3
+# differences: two "earlier" ones (the persistent-churn mask) and the last
+# one the pointer is read from (plan.md).
+CURSOR_DIFF_FRAMES = 4
+
+# 16px tiles: the differencing grid granularity underlying every gate below.
+CURSOR_TILE = 16
+
+# 24: a pixel must move by more than this (0-255 grayscale) to accumulate
+# into its tile's energy — filters out compression noise.
+CURSOR_PIXEL_DELTA = 24
+
+# 0.15: a tile's energy must exceed this fraction of the difference's
+# strongest tile to count as changed at all — relative, never absolute, the
+# same lesson video-scene-peaks already encodes (plan.md).
+CURSOR_RELATIVE_FLOOR = 0.15
+
+# 3 tiles: the largest span (per dimension) a pointer-sized region may cover
+# — a modal redraw at t=30.0 yields 240x48px regions, far larger (plan.md).
+CURSOR_MAX_SPAN_TILES = 3
+
+# 2.0x: the winning region's energy must exceed every other changed region's
+# by this factor — raw differencing alone is not enough (plan.md).
+CURSOR_DOMINANCE = 2.0
+
+# 0.6s: the window's own span — the distance from its first frame to its
+# last. A frame earlier than this has no full window ending on it, so
+# `locate_cursors` declines rather than differencing a window that ends
+# *after* the frame it is grounding.
+CURSOR_WINDOW_SPAN_SECONDS = ((CURSOR_DIFF_FRAMES - 1)
+                              * CURSOR_DIFF_STEP_SECONDS)
+
+
+def cursor_window_argv(video_path, time, out_path, width, height):
+    """Argv for the single `ffmpeg` pass that writes `CURSOR_DIFF_FRAMES`
+    grayscale frames spaced `CURSOR_DIFF_STEP_SECONDS` apart, the last one at
+    `time`, scaled to `width`x`height`, as raw pixel bytes to `out_path`
+    (video-cursor-localization). Pure — no I/O. Every path is its own argv
+    element, never a shell string.
+
+    `time` must be at least `CURSOR_WINDOW_SPAN_SECONDS`, which
+    `locate_cursors` enforces: an earlier `time` has no room for the window
+    before it, and clamping the start to 0 would silently ground the frame on
+    pixels from *after* its own timestamp.
+
+    Raw pixels never cross the text runner: this pass writes them to a file
+    (`read_gray_frames` reads them back as bytes) rather than returning them
+    through the runner's stdout, which `default_run` decodes as text."""
+    span = CURSOR_WINDOW_SPAN_SECONDS
+    start = max(0.0, time - span)
+    duration = CURSOR_DIFF_FRAMES * CURSOR_DIFF_STEP_SECONDS
+    fps = 1.0 / CURSOR_DIFF_STEP_SECONDS
+    return ["ffmpeg", "-y", "-ss", "%s" % start, "-i", video_path,
+           "-t", "%s" % duration, "-vf",
+           "fps=%g,scale=%d:%d" % (fps, width, height),
+           "-pix_fmt", "gray", "-f", "rawvideo", out_path]
+
+
+def read_gray_frames(path, width, height):
+    """Read the grayscale rawvideo bytes `cursor_window_argv`'s `ffmpeg` pass
+    wrote to `path` and split them into `width * height`-byte frame buffers,
+    oldest first (video-cursor-localization). Any trailing partial frame
+    (a short final write) is dropped rather than yielding a mismatched
+    buffer."""
+    frame_size = width * height
+    with open(path, "rb") as fh:
+        data = fh.read()
+    return [data[offset:offset + frame_size]
+           for offset in range(0, len(data) - frame_size + 1, frame_size)]
+
+
+def tile_difference(a, b, width, height):
+    """Per-tile accumulated absolute pixel difference between two
+    working-scale grayscale buffers `a` and `b` (video-cursor-localization):
+    for each pixel whose absolute difference exceeds `CURSOR_PIXEL_DELTA`,
+    the full difference accumulates into its `CURSOR_TILE`x`CURSOR_TILE`
+    tile — pixels at or below the delta contribute nothing. Returns a flat
+    list of tile energies, row-major over the tile grid (`ceil(width /
+    CURSOR_TILE)` tiles wide). Pure — no I/O."""
+    tile_cols = -(-width // CURSOR_TILE)
+    tile_rows = -(-height // CURSOR_TILE)
+    energies = [0] * (tile_cols * tile_rows)
+    for y in range(height):
+        row = y * width
+        tile_row_base = (y // CURSOR_TILE) * tile_cols
+        for x in range(width):
+            diff = a[row + x] - b[row + x]
+            if diff < 0:
+                diff = -diff
+            if diff > CURSOR_PIXEL_DELTA:
+                energies[tile_row_base + x // CURSOR_TILE] += diff
+    return energies
+
+
+def changed_regions(tiles, banned, floor, width):
+    """Group `tiles` (a flat, row-major list of per-tile energies `width`
+    tiles wide, as returned by `tile_difference`) into 8-connected regions,
+    excluding any tile index in `banned` and any tile at or below `floor`
+    (video-cursor-localization). Each region carries its tile bounding box
+    (`min_row`, `max_row`, `min_col`, `max_col`, inclusive), the set of
+    member tile indices (`tiles`), and `energy` (the sum of its member
+    tiles' energies), ordered by descending energy. Pure — no I/O."""
+    active = {index for index, energy in enumerate(tiles)
+             if energy > floor and index not in banned}
+    visited = set()
+    regions = []
+    for start in active:
+        if start in visited:
+            continue
+        stack = [start]
+        visited.add(start)
+        members = []
+        while stack:
+            index = stack.pop()
+            members.append(index)
+            row, col = divmod(index, width)
+            for drow in (-1, 0, 1):
+                for dcol in (-1, 0, 1):
+                    if drow == 0 and dcol == 0:
+                        continue
+                    ncol = col + dcol
+                    if ncol < 0 or ncol >= width:
+                        continue
+                    neighbor = (row + drow) * width + ncol
+                    if neighbor in active and neighbor not in visited:
+                        visited.add(neighbor)
+                        stack.append(neighbor)
+        rows = [member // width for member in members]
+        cols = [member % width for member in members]
+        regions.append({
+            "tiles": set(members),
+            "min_row": min(rows), "max_row": max(rows),
+            "min_col": min(cols), "max_col": max(cols),
+            "energy": sum(tiles[member] for member in members),
+        })
+    regions.sort(key=lambda region: -region["energy"])
+    return regions
+
+
+def _region_span(region):
+    """A region's tile span in each dimension, inclusive of both edges."""
+    return (region["max_row"] - region["min_row"] + 1,
+           region["max_col"] - region["min_col"] + 1)
+
+
+def _tile_bbox_to_pixels(region, width, height):
+    """A region's tile bounding box translated to working-scale pixel
+    coordinates, clamped to `width`x`height`."""
+    x0 = region["min_col"] * CURSOR_TILE
+    y0 = region["min_row"] * CURSOR_TILE
+    x1 = min((region["max_col"] + 1) * CURSOR_TILE, width)
+    y1 = min((region["max_row"] + 1) * CURSOR_TILE, height)
+    return x0, y0, x1 - x0, y1 - y0
+
+
+def locate_pointer(frames, width, height, source_size):
+    """Locate the pointer among `CURSOR_DIFF_FRAMES` working-scale grayscale
+    buffers `frames`, oldest first, ending at the target time
+    (video-cursor-localization). Applies the four gates in order to the last
+    of the three successive differences:
+
+    (a) span — a region wider or taller than `CURSOR_MAX_SPAN_TILES` tiles
+        is never a pointer, as a modal redraw's region is;
+    (b) persistent churn — tiles active (above their own difference's
+        relative floor) in *both* earlier differences are excluded before
+        grouping, removing a ticking counter that changes on every
+        difference;
+    (c) uniqueness — the sole surviving region wins outright; where several
+        survive, the sole one absent from the preceding difference wins
+        (the others being the pointer's own trailing positions), else no
+        position is reported;
+    (d) dominance — the winner's energy must exceed every other changed
+        region's (of the same, last difference) by `CURSOR_DOMINANCE`.
+
+    Returns a dict of `x`, `y`, `w`, `h` mapped to `source_size` pixel
+    coordinates, or `None` if no region satisfies all four gates. Pure — no
+    I/O."""
+    tile_cols = -(-width // CURSOR_TILE)
+    diffs = [tile_difference(frames[i], frames[i + 1], width, height)
+             for i in range(len(frames) - 1)]
+    earlier, last = diffs[:-1], diffs[-1]
+
+    def above_floor(energies):
+        peak = max(energies) if energies else 0
+        if peak <= 0:
+            return set()
+        floor = CURSOR_RELATIVE_FLOOR * peak
+        return {i for i, e in enumerate(energies) if e > floor}
+
+    earlier_active = [above_floor(d) for d in earlier]
+    banned = set.intersection(*earlier_active) if earlier_active else set()
+
+    last_peak = max(last) if last else 0
+    if last_peak <= 0:
+        return None
+    last_floor = CURSOR_RELATIVE_FLOOR * last_peak
+
+    regions = changed_regions(last, banned, last_floor, tile_cols)
+    if not regions:
+        return None
+
+    sized = [r for r in regions
+            if _region_span(r)[0] <= CURSOR_MAX_SPAN_TILES
+            and _region_span(r)[1] <= CURSOR_MAX_SPAN_TILES]
+    if not sized:
+        return None
+
+    if len(sized) == 1:
+        winner = sized[0]
+    else:
+        preceding = earlier[-1] if earlier else []
+        preceding_active = above_floor(preceding)
+        preceding_tiles = set()
+        if preceding_active:
+            preceding_floor = CURSOR_RELATIVE_FLOOR * max(preceding)
+            for region in changed_regions(preceding, set(), preceding_floor,
+                                          tile_cols):
+                preceding_tiles |= region["tiles"]
+        absent = [r for r in sized if not (r["tiles"] & preceding_tiles)]
+        if len(absent) != 1:
+            return None
+        winner = absent[0]
+
+    others = [r["energy"] for r in regions if r is not winner]
+    if others and winner["energy"] < max(others) * CURSOR_DOMINANCE:
+        return None
+
+    x, y, w, h = _tile_bbox_to_pixels(winner, width, height)
+    source_width, source_height = source_size
+    scale_x = source_width / width
+    scale_y = source_height / height
+    return {
+        "x": round(x * scale_x), "y": round(y * scale_y),
+        "w": round(w * scale_x), "h": round(h * scale_y),
+    }
+
+
+def region_unchanged(frame_a, frame_b, region, width, height):
+    """Whether working-scale grayscale buffers `frame_a` and `frame_b`
+    (each `width` x `height`) are byte-for-byte identical over `region`
+    (`x`, `y`, `w`, `h`, working-scale pixel coordinates, clamped to the
+    buffers' bounds) (video-cursor-carry-forward). Pure — no I/O."""
+    x0 = max(0, region["x"])
+    y0 = max(0, region["y"])
+    x1 = min(width, region["x"] + region["w"])
+    y1 = min(height, region["y"] + region["h"])
+    for y in range(y0, y1):
+        row = y * width
+        if frame_a[row + x0:row + x1] != frame_b[row + x0:row + x1]:
+            return False
+    return True
+
+
+def carry_pointer(previous, frame_a, frame_b, width, height, source_size,
+                  from_time):
+    """Carry `previous` — a `locate_pointer`-shaped `x`/`y`/`w`/`h` position
+    in source pixel coordinates — forward to a new, inconclusive frame,
+    verified rather than assumed (video-cursor-carry-forward): `frame_a` is
+    the working-scale buffer of the frame `previous` was located on and
+    `frame_b` is the new frame's working-scale buffer, both `width` x
+    `height`; `source_size` maps `previous` back to that working scale for
+    the byte-for-byte comparison via `region_unchanged`.
+
+    Returns `previous` with `origin` set to `"carried"` and `from` set to
+    `from_time` (the frame `previous` was carried from), or `None` when
+    `previous` is `None` or the region changed between the two frames. Pure
+    — no I/O."""
+    if previous is None:
+        return None
+    source_width, source_height = source_size
+    scale_x = width / source_width
+    scale_y = height / source_height
+    region = {
+        "x": round(previous["x"] * scale_x),
+        "y": round(previous["y"] * scale_y),
+        "w": max(1, round(previous["w"] * scale_x)),
+        "h": max(1, round(previous["h"] * scale_y)),
+    }
+    if not region_unchanged(frame_a, frame_b, region, width, height):
+        return None
+    carried = dict(previous)
+    carried["origin"] = "carried"
+    carried["from"] = from_time
+    return carried
+
+
+# 1/3: the crop window's width as a fraction of the source recording's
+# width, at a 4:3 aspect — cropping the already downscaled frame PNG would
+# discard the only detail that matters, so this crops the source instead
+# (plan.md).
+CURSOR_CROP_WIDTH_FRACTION = 1.0 / 3.0
+
+# 960px: the crop's long edge after scaling — the tested
+# `crop=480:360,scale=960:-2:flags=lanczos` made the I-beam and its target
+# row unmistakable where the full frame did not (plan.md).
+CURSOR_CROP_LONG_EDGE = 960
+
+
+def cursor_crop_box(position, source_width, source_height):
+    """The zoom-crop window for `position` (an `x`/`y`/`w`/`h` dict in
+    source pixel coordinates, as `locate_pointer`/`carry_pointer` return):
+    `CURSOR_CROP_WIDTH_FRACTION` of `source_width` at a 4:3 aspect, centred
+    on the pointer and clamped into `source_width` x `source_height`
+    (video-cursor-crops). Returns `x`, `y`, `w`, `h`. Pure — no I/O.
+
+    The window's *size* is clamped before it is positioned: on a source wider
+    than 4:1 — a multi-monitor span, say — the nominal 4:3 window is taller
+    than the frame, and a box `ffmpeg` cannot crop would fail the whole
+    ingest. The 4:3 aspect is preserved by shrinking width to match, so the
+    box always fits inside the frame."""
+    width = source_width * CURSOR_CROP_WIDTH_FRACTION
+    height = width * 3.0 / 4.0
+    if height > source_height:
+        height = float(source_height)
+        width = min(height * 4.0 / 3.0, float(source_width))
+    center_x = position["x"] + position["w"] / 2.0
+    center_y = position["y"] + position["h"] / 2.0
+    x = center_x - width / 2.0
+    y = center_y - height / 2.0
+    x = min(max(x, 0.0), max(source_width - width, 0.0))
+    y = min(max(y, 0.0), max(source_height - height, 0.0))
+    return {
+        "x": int(round(x)), "y": int(round(y)),
+        "w": int(round(width)), "h": int(round(height)),
+    }
+
+
+def cursor_crop_filename(index, time):
+    """Filename for the pointer crop at ordinal `index` (0-based, matching
+    its full frame's own ordinal) and `time` seconds (video-cursor-crops).
+    Pure — no I/O."""
+    return "%03d-%.2fs-cursor.png" % (index, time)
+
+
+def cursor_crop_argv(video_path, time, box, out_path):
+    """Argv for the `ffmpeg` call that crops `box` (`x`, `y`, `w`, `h`,
+    source pixel coordinates) out of `video_path` at `time` seconds and
+    scales it to a `CURSOR_CROP_LONG_EDGE` long edge with lanczos
+    (video-cursor-crops). Pure — no I/O. Every path is its own argv
+    element, never a shell string."""
+    crop = "crop=%d:%d:%d:%d" % (box["w"], box["h"], box["x"], box["y"])
+    scale = "scale=%d:-2:flags=lanczos" % CURSOR_CROP_LONG_EDGE
+    return ["ffmpeg", "-y", "-ss", "%s" % time, "-i", video_path,
+           "-vframes", "1", "-vf", "%s,%s" % (crop, scale), out_path]
+
+
+def cursor_work_dimensions(source_width, source_height):
+    """The differencing working scale for a source `source_width` x
+    `source_height`: capped at `CURSOR_WORK_WIDTH` so a source already
+    smaller is never upscaled, with height following the source aspect
+    ratio (video-cursor-localization). Pure — no I/O."""
+    width = min(CURSOR_WORK_WIDTH, source_width)
+    height = max(1, round(width * source_height / source_width))
+    return width, height
+
+
+def locate_cursors(candidates, video_path, frames_dir, window_path,
+                   source_size, run):
+    """Walk `candidates` (already-extracted frame dicts carrying `file`, in
+    time order) localizing the on-screen pointer for each through the
+    injectable runner: a single `ffmpeg` pass writes `window_path`'s
+    grayscale differencing window (`cursor_window_argv`), read back as
+    bytes (`read_gray_frames`) and passed to `locate_pointer`; where a
+    frame is inconclusive, `carry_pointer` verifies whether the most
+    recently *located* (never carried) position can carry forward
+    (video-cursor-localization, video-cursor-carry-forward). Each frame
+    with a known position gets a zoom crop extracted into `frames_dir`
+    beside its full frame (video-cursor-crops).
+
+    A candidate earlier than `CURSOR_WINDOW_SPAN_SECONDS` is declined
+    outright: no window fits before it, so it is indexed with no position
+    rather than grounded on one read from after its own timestamp.
+
+    Returns a new list of candidate dicts (input candidates are not
+    mutated), each carrying a `cursor` key only where a position is known.
+    Raises :class:`VideoIngestError` if a crop `ffmpeg` call exits
+    non-zero — a window `ffmpeg` failure or an unreadable window instead
+    simply yields no position for that frame, since the fuller frame
+    extraction has already succeeded and a cursor position is optional."""
+    width, height = cursor_work_dimensions(*source_size)
+    last_located = None  # (position, working-scale buffer, its own time)
+    result = []
+    for index, candidate in enumerate(candidates):
+        time = candidate["time"]
+        position = None
+        origin = None
+        # A frame earlier than the window's own span has no full window
+        # ending on it; differencing one clamped to 0 would ground it on
+        # pixels from after its own timestamp, so decline instead. Candidates
+        # arrive in time order, so such a frame precedes any localization and
+        # there is nothing to carry forward either.
+        if time >= CURSOR_WINDOW_SPAN_SECONDS:
+            rc, _stdout, _stderr = run(cursor_window_argv(
+                video_path, time, window_path, width, height))
+            frames = []
+            if rc == 0:
+                try:
+                    frames = read_gray_frames(window_path, width, height)
+                except OSError:
+                    frames = []  # an unreadable window is simply no position
+            if len(frames) == CURSOR_DIFF_FRAMES:
+                position = locate_pointer(frames, width, height, source_size)
+                if position is not None:
+                    origin = "located"
+                    last_located = (position, frames[-1], time)
+                elif last_located is not None:
+                    prev_position, prev_frame, prev_time = last_located
+                    carried = carry_pointer(
+                        prev_position, prev_frame, frames[-1], width, height,
+                        source_size, prev_time)
+                    if carried is not None:
+                        position = carried
+                        origin = "carried"
+        if position is None:
+            result.append(dict(candidate))
+            continue
+        source_width, source_height = source_size
+        box = cursor_crop_box(position, source_width, source_height)
+        filename = cursor_crop_filename(index, time)
+        rc, _stdout, stderr = run(cursor_crop_argv(
+            video_path, time, box, os.path.join(frames_dir, filename)))
+        if rc != 0:
+            raise VideoIngestError(
+                "ffmpeg failed extracting a cursor crop at %.2fs from %s: %s"
+                % (time, video_path, stderr.strip()))
+        cursor_entry = {"x": position["x"], "y": position["y"],
+                        "w": position["w"], "h": position["h"],
+                        "file": filename, "origin": origin}
+        if origin == "carried":
+            cursor_entry["from"] = position["from"]
+        result.append(dict(candidate, cursor=cursor_entry))
+    if os.path.exists(window_path):
+        os.remove(window_path)
+    return result
+
+
 # --- frame extraction and index ---------------------------------------------
 
 # 1568px: the long-edge cap applied to every extracted frame, preserving
@@ -604,7 +1082,9 @@ def resolve_frame_candidates(deixis, scene, max_frames, duration,
 FRAME_SCALE_FILTER = ("scale='min(1568,iw)':'min(1568,ih)':"
                       "force_original_aspect_ratio=decrease")
 
-FRAMES_SCHEMA_VERSION = 1
+# version 2: adds the optional per-frame `cursor` object
+# (video-cursor-crops).
+FRAMES_SCHEMA_VERSION = 2
 
 
 def frame_filename(index, time):
@@ -650,7 +1130,10 @@ def build_frames_index(candidates):
     """Build the `frames.json` document: a schema `version` plus a `frames`
     array (video-frame-extraction). Each entry carries the candidate's
     `file`, `time`, `reason`, and its reason-specific provenance fields
-    (`anchor`/`word_start` for `deixis`, `score` for `scene`)."""
+    (`anchor`/`word_start` for `deixis`, `score` for `scene`), plus the
+    optional `cursor` object on a candidate carrying a known pointer
+    position — and nothing at all on one that does not, so a consumer can
+    never mistake absence for a position (video-cursor-crops)."""
     frames = []
     for candidate in candidates:
         entry = {
@@ -663,6 +1146,8 @@ def build_frames_index(candidates):
             entry["word_start"] = candidate["word_start"]
         elif candidate["reason"] == "scene":
             entry["score"] = candidate["score"]
+        if "cursor" in candidate:
+            entry["cursor"] = candidate["cursor"]
         frames.append(entry)
     return {"version": FRAMES_SCHEMA_VERSION, "frames": frames}
 
@@ -824,6 +1309,12 @@ def cmd_ingest(args, project_dir, run=default_run):
             deixis, scene, max_frames, duration, scene_floor)
         extracted_frames = extract_frames(
             frame_candidates, args.video, os.path.join(path, "frames"), run)
+        if config.get("video_cursor", True):
+            source_size = probe_video_dimensions(args.video, run)
+            if source_size is not None:
+                extracted_frames = locate_cursors(
+                    extracted_frames, args.video, os.path.join(path, "frames"),
+                    os.path.join(path, ".cursor-window.raw"), source_size, run)
         write_frames_index(path, extracted_frames)
 
         try:
