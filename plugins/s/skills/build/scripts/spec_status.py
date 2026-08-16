@@ -2413,6 +2413,77 @@ def cmd_wiki_queue_add(root, slug, question, options, recommendation, origin):
     return 0
 
 
+def cmd_wiki_queue_answer(root, slug, answer):
+    """Write a user's answer into a still-pending queue block (shipd-wiki
+    wiki-queue-answer-verb). Resolves the workspace store exactly as
+    ``wiki-queue-add`` does, accepts the bare slug (prefixing ``q-`` itself),
+    and replaces the ``## q-<slug>`` block's ``- Answer: pending`` line with
+    ``- Answer: <answer>``, printing the block id. A missing store, a missing
+    block, or a block whose answer is no longer ``pending`` writes nothing and
+    exits non-zero — an answered block belongs to the `/s:teach` drain and is
+    never overwritten."""
+    if not sc.KEBAB_RE.match(slug):
+        raise StatusError("queue slug '%s' is not a kebab-case slug" % slug)
+    answer = answer.strip()
+    if not answer:
+        raise StatusError("--answer must not be empty")
+    ws_root = _resolve_workspace(root)
+    wiki = sc.wiki_dir(ws_root)
+    queue_path = os.path.join(wiki, "queue.md")
+    if not os.path.isfile(queue_path):
+        raise StatusError("no wiki store at %s (run `wiki-init`)" % wiki)
+    with open(queue_path, encoding="utf-8") as fh:
+        before = fh.read()
+
+    qid = "q-%s" % slug
+    fields = dict(sc.parse_queue_blocks(before)).get(qid)
+    if fields is None:
+        raise StatusError("queue has no block '%s'" % qid)
+    if fields.get("Answer", "").strip() != "pending":
+        raise StatusError(
+            "block '%s' is already answered ('%s'); correcting an answer is "
+            "`/s:teach`'s job" % (qid, fields.get("Answer", "")))
+
+    # Rewrite only the target block's Answer line; every other line — including
+    # other blocks' `- Answer: pending` — is preserved verbatim.
+    lines = before.splitlines(keepends=True)
+    in_block = False
+    written = False
+    for i, line in enumerate(lines):
+        header = sc.WIKI_QUEUE_HEADER_RE.match(line.rstrip("\n"))
+        if header:
+            in_block = header.group(1) == qid
+            continue
+        if line.startswith("## "):
+            in_block = False
+            continue
+        if not in_block:
+            continue
+        fm = sc.WIKI_QUEUE_FIELD_RE.match(line.rstrip("\n"))
+        if fm and fm.group(1) == "Answer":
+            newline = "\n" if line.endswith("\n") else ""
+            lines[i] = "- Answer: %s%s" % (answer, newline)
+            written = True
+            break
+    if not written:  # defensive: the parser found the field, so this is a bug
+        raise StatusError("block '%s' has no `- Answer:` line" % qid)
+    new_text = "".join(lines)
+
+    _write_text(queue_path, new_text)
+    errors = _validate_queue_text(new_text)
+    if errors:
+        _write_text(queue_path, before)  # restore prior content
+        raise StatusError(
+            "queue would become invalid; nothing written (%s)"
+            % "; ".join(errors))
+    # A successful write auto-commits queue.md when the store sits inside a git
+    # work tree (shipd-wiki wiki-autocommit); a no-op outside git, and a commit
+    # failure never fails the write.
+    sc.wiki_autocommit(wiki, [queue_path], "shipd-wiki: queue-answer %s" % qid)
+    print(qid)
+    return 0
+
+
 def _remove_index_entry(index_text, slug):
     """Return ``index_text`` with any ``- [[slug]] — …`` catalog entry for
     ``slug`` dropped (shipd-wiki wiki-index-and-log). Non-entry lines and entries
@@ -2703,6 +2774,12 @@ def main(argv=None):
     p_wiki_qadd.add_argument("--recommendation", required=True)
     p_wiki_qadd.add_argument("--origin", default=None)
 
+    p_wiki_qanswer = sub.add_parser(
+        "wiki-queue-answer",
+        help="write an answer into a still-pending wiki queue block")
+    p_wiki_qanswer.add_argument("slug")
+    p_wiki_qanswer.add_argument("--answer", required=True)
+
     args = parser.parse_args(argv)
     root = os.path.abspath(args.root)
 
@@ -2770,6 +2847,8 @@ def main(argv=None):
             return cmd_wiki_queue_add(
                 root, args.slug, args.question, args.options,
                 args.recommendation, args.origin)
+        if args.verb == "wiki-queue-answer":
+            return cmd_wiki_queue_answer(root, args.slug, args.answer)
     except RefusalError as exc:
         print("Refused: %s" % exc.reason, file=sys.stderr)
         for detail in exc.details:

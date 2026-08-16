@@ -2624,6 +2624,129 @@ class WikiQueueAddTest(SpecStatusTestBase):
         self.assertFalse(os.path.exists(os.path.join(self.root, ".git")))
 
 
+class WikiQueueAnswerTest(SpecStatusTestBase):
+    """The ``wiki-queue-answer <slug> --answer "<text>"`` verb (shipd-wiki
+    wiki-queue-answer-verb, wiki-autocommit): it writes a user's answer into a
+    still-pending queue block. ``self.root`` doubles as the workspace root; the
+    store lives at ``<root>/.shipd/wiki/``."""
+
+    def queue_text(self):
+        with open(os.path.join(self.root, ".shipd", "wiki", "queue.md"),
+                  encoding="utf-8") as fh:
+            return fh.read()
+
+    def make_store(self):
+        self.declare_workspace()
+        self.cli("wiki-init")
+
+    def add_block(self, slug):
+        r = self.cli("wiki-queue-add", slug,
+                     "--question", "Q?", "--options", "a | b",
+                     "--recommendation", "a")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_pending_block_is_answered(self):
+        self.make_store()
+        self.add_block("retention")
+        r = self.cli("wiki-queue-answer", "retention",
+                     "--answer", "prune after one release")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "q-retention")
+        queue = self.queue_text()
+        self.assertIn("- Answer: prune after one release", queue)
+        self.assertNotIn("Answer: pending", queue)
+
+    def test_answer_leaves_other_blocks_pending(self):
+        self.make_store()
+        self.add_block("retention")
+        self.add_block("cache-ttl")
+        r = self.cli("wiki-queue-answer", "retention", "--answer", "one release")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        queue = self.queue_text()
+        self.assertIn("- Answer: one release", queue)
+        self.assertEqual(queue.count("- Answer: pending"), 1)
+
+    def test_missing_block_errors(self):
+        self.make_store()
+        self.add_block("retention")
+        before = self.queue_text()
+        r = self.cli("wiki-queue-answer", "no-such-entry", "--answer", "x")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("q-no-such-entry", r.stderr)
+        self.assertEqual(self.queue_text(), before)  # byte-identical
+
+    def test_already_answered_block_refused(self):
+        self.make_store()
+        self.add_block("retention")
+        self.assertEqual(
+            self.cli("wiki-queue-answer", "retention",
+                     "--answer", "one release").returncode, 0)
+        before = self.queue_text()
+        r = self.cli("wiki-queue-answer", "retention", "--answer", "two releases")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("q-retention", r.stderr)
+        self.assertIn("answered", r.stderr.lower())
+        self.assertEqual(self.queue_text(), before)  # byte-identical
+
+    def test_requires_workspace(self):
+        r = self.cli("wiki-queue-answer", "retention", "--answer", "x")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no workspace", r.stderr.lower())
+
+    # -- Auto-commit (shipd-wiki wiki-autocommit) --
+
+    def _git(self, *args):
+        subprocess.run(["git", "-C", self.root, *args],
+                       capture_output=True, text=True, check=True)
+
+    def _init_git(self):
+        subprocess.run(["git", "init", "-q", self.root],
+                       capture_output=True, text=True, check=True)
+        self._git("config", "user.email", "test@example.com")
+        self._git("config", "user.name", "Test")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "baseline")
+
+    def _commit_count(self):
+        r = subprocess.run(
+            ["git", "-C", self.root, "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True, check=True)
+        return int(r.stdout.strip())
+
+    def _head_files(self):
+        r = subprocess.run(
+            ["git", "-C", self.root, "show", "--name-only", "--format=", "HEAD"],
+            capture_output=True, text=True, check=True)
+        return sorted(p for p in r.stdout.split("\n") if p.strip())
+
+    def test_answer_commits_only_queue_md(self):
+        self.make_store()
+        self.add_block("retention")
+        self._init_git()
+        before = self._commit_count()
+        r = self.cli("wiki-queue-answer", "retention", "--answer", "one release")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._commit_count(), before + 1)
+        self.assertEqual(self._head_files(), [".shipd/wiki/queue.md"])
+
+    def test_refused_answer_makes_no_commit(self):
+        self.make_store()
+        self.add_block("retention")
+        self._init_git()
+        before = self._commit_count()
+        r = self.cli("wiki-queue-answer", "no-such-entry", "--answer", "x")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self._commit_count(), before)
+
+    def test_non_git_store_answers_without_git(self):
+        self.make_store()
+        self.add_block("retention")
+        r = self.cli("wiki-queue-answer", "retention", "--answer", "one release")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("- Answer: one release", self.queue_text())
+        self.assertFalse(os.path.exists(os.path.join(self.root, ".git")))
+
+
 class LocateTest(SpecStatusTestBase):
     """`locate <change>` probes the invocation root's planned/ then each
     .worktrees/<name> directory, printing one keyed block per match."""
