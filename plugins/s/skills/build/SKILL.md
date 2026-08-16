@@ -526,7 +526,9 @@ Phase 7's watch. `BLOCKED` when the branch is **neither `BEHIND` nor `DIRTY`**
 means it is merely waiting on required checks (in this repo, the
 `semantic-review` gate has not been posted yet, or `ci` is still running) — do
 **not** merge `main`; post the gate (the `/s:review` post flow from AGENTS.md)
-and let the checks run, then move on to Phase 7's watch. Only a `DIRTY` or
+— unless the resolved pipeline skips or omits the `review` stage, in which
+case post nothing (see "A skipped or absent `review` stage posts no gate"
+below) — and let the checks run, then move on to Phase 7's watch. Only a `DIRTY` or
 `BEHIND` state (or a `BLOCKED` that a behind/conflicting branch caused) means it
 cannot merge as armed, so reconcile now rather than leave `--auto` waiting on an
 impossible merge:
