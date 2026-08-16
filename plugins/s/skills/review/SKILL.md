@@ -139,7 +139,11 @@ table, then the task-honesty and uncovered-code items.
 2. **Findings header — directly below the effort score.** A line
    `## Findings: <marker> <VERDICT>` — `✅ Ship it` when no finding is high or
    medium; `❌ Fix required` otherwise. This is the **same** decision as the
-   `--json` verdict — never let the two diverge.
+   `--json` verdict — never let the two diverge. In the summary comment
+   `review_gate.py post` upserts, the brand line `**☕ shipd** semantic review`
+   precedes this header — it is the first visible line of the comment body,
+   directly after the hidden `<!-- am-semantic-review -->` marker, which stays
+   byte-identical.
 3. **Summary table** — one row per finding, most-severe first, columns
    `# | rating | details`; rating is 🔴 high / 🟠 med / 🟡 low (display label
    `med`; the severity value stays `medium`). No findings → print
@@ -329,10 +333,11 @@ installs software and reaches the network. git is the one hard requirement.
 
 ## Guardrails
 
-- **Emoji at exactly the two sanctioned sites** — the ✅/❌ verdict marker in
-  the findings header and the 🔴/🟠/🟡 severity dots in the summary table.
-  Nowhere else: not in prose, findings, other tables, or mermaid labels.
-  `--json` output carries none.
+- **Emoji at exactly the three sanctioned sites** — the ☕ mark in the
+  `**☕ shipd** semantic review` brand line opening the posted summary
+  comment's visible body, the ✅/❌ verdict marker in the findings header, and
+  the 🔴/🟠/🟡 severity dots in the summary table. Nowhere else: not in prose,
+  findings, other tables, or mermaid labels. `--json` output carries none.
 - **Read-only.** The review never edits the repo.
 - **shipd naming only** — no other product branding or brand marks.
 - Prefer the tool's JSON over re-deriving diffs; that keeps token cost low.

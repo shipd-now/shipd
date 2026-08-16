@@ -42,9 +42,13 @@ import sys
 PROG = "review_gate"
 CONTEXT = "semantic-review"
 MARKER = "<!-- am-semantic-review -->"
+# The ☕ brand line that opens the summary comment's visible body — the hidden
+# MARKER above stays line 1 and unbranded, so upsert matching is untouched.
+BRAND_LINE = "**☕ shipd** semantic review"
 
-# Severity -> summary-table dot. These plus the ✅/❌ verdict marker are the
-# only emoji this script emits, mirroring the skill's two sanctioned sites.
+# Severity -> summary-table dot. These, the ✅/❌ verdict marker, and the ☕ of
+# BRAND_LINE are the only emoji this script emits, mirroring the skill's three
+# sanctioned sites.
 _SEV_DOT = {"high": "\U0001F534", "medium": "\U0001F7E0", "low": "\U0001F7E1"}
 _SEV_LABEL = {"high": "high", "medium": "med", "low": "low"}
 
@@ -209,10 +213,14 @@ def _detail_cell(f):
 
 
 def render_summary(review, unanchored, disposition="all", model=None):
-    """Render the marker-tagged summary comment body: verdict header, effort,
-    the policy provenance lines, the ``# | rating | details`` findings table,
-    and an "Additional findings" section carrying the ``unanchored`` findings in
-    full (they get no inline comment).
+    """Render the marker-tagged summary comment body: the ☕ brand line, the
+    verdict header, effort, the policy provenance lines, the
+    ``# | rating | details`` findings table, and an "Additional findings"
+    section carrying the ``unanchored`` findings in full (they get no inline
+    comment).
+
+    The brand line opens the visible body — the hidden ``MARKER`` stays line 1
+    and byte-identical, so upsert matching is unmoved.
 
     Provenance: a non-``all`` ``disposition`` adds a ``Disposition: <scope>``
     line so a green status over visible findings is explained on the PR, and a
@@ -220,7 +228,7 @@ def render_summary(review, unanchored, disposition="all", model=None):
     tiers are never resolved here."""
     verdict = review.get("verdict")
     findings = review.get("findings") or []
-    out = [MARKER, "", _verdict_header(verdict), "",
+    out = [MARKER, "", BRAND_LINE, "", _verdict_header(verdict), "",
            "Effort: %s/5" % review.get("effort", "?")]
     if disposition and disposition != "all":
         out.append("Disposition: %s" % disposition)

@@ -232,6 +232,8 @@ class InstallerTest(unittest.TestCase):
         self.assertIn("plugin install s@shipd", self.claude_calls())
         self.assertTrue(os.access(self.launcher, os.X_OK),
                         "%s is missing or not executable" % self.launcher)
+        # The completion line carries the brand mark before the product name.
+        self.assertIn("Installed the ☕ shipd launcher at ", r.stdout)
 
     def test_written_launcher_is_the_heredoc_body(self):
         self.stub_claude()

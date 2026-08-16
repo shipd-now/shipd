@@ -274,6 +274,48 @@ class CommentableLinesTest(unittest.TestCase):
         self.assertEqual(review_gate.commentable_lines(patch), {1, 20, 21})
 
 
+class SummaryBrandTest(unittest.TestCase):
+    """The summary body opens its visible content with the ☕ brand line, while
+    the hidden marker line stays byte-identical so upsert matching is unmoved."""
+
+    BRAND = "**☕ shipd** semantic review"
+
+    def _lines(self, review, unanchored=(), **kw):
+        return review_gate.render_summary(review, list(unanchored), **kw).split("\n")
+
+    def test_brand_line_precedes_verdict_header(self):
+        for verdict in ("pass", "changes-requested"):
+            lines = self._lines(_review(verdict=verdict))
+            self.assertEqual(lines[0], MARKER)
+            rest = [ln for ln in lines[1:] if ln.strip()]
+            self.assertEqual(rest[0], self.BRAND)
+            self.assertTrue(rest[1].startswith("## Findings:"))
+
+    def test_brand_line_survives_disposition_and_model(self):
+        findings = [{"id": "f1", "severity": "high", "location": "z.py:1",
+                     "what": "boom", "why": "w", "fix": "x"}]
+        lines = self._lines(_review(verdict="changes-requested",
+                                    findings=findings),
+                            unanchored=findings,
+                            disposition="high-only", model="opus")
+        self.assertEqual(lines[0], MARKER)
+        rest = [ln for ln in lines[1:] if ln.strip()]
+        self.assertEqual(rest[0], self.BRAND)
+        self.assertTrue(rest[1].startswith("## Findings:"))
+
+    def test_posted_and_reposted_bodies_both_carry_the_brand(self):
+        gh = FakeGh()
+        review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertIn(self.BRAND, gh.summary_body())
+        review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertTrue(gh.comment_patch_calls())
+        self.assertIn(self.BRAND, gh.summary_body())
+        # The machine surfaces stay unbranded.
+        self.assertEqual(gh.posted_status["context"], "semantic-review")
+        self.assertNotIn("☕", gh.posted_status["context"])
+        self.assertNotIn("☕", MARKER)
+
+
 class PostTest(unittest.TestCase):
     def test_pass_verdict_creates_comment_and_success_status(self):
         gh = FakeGh()

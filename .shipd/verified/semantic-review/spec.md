@@ -120,7 +120,9 @@ report SHALL carry an effort score (1–5), a findings header reading
 `## Findings: ❌ Fix required` otherwise, a summary table rating findings
 with 🔴/🟠/🟡 severity dots, a collapsible walkthrough, and an explicit
 list of what could not be verified. Emoji SHALL appear only at those two
-sites; branding is shipd-only, and the skill SHALL NOT modify the repo.
+sites and, in the posted summary comment, the ☕ of the
+`**☕ shipd** semantic review` brand line — the three sanctioned sites;
+branding is shipd-only, and the skill SHALL NOT modify the repo.
 
 #### Scenario: Blocking verdict matches severities
 - **WHEN** a review yields one medium and one low finding
@@ -405,3 +407,16 @@ successful pass.
   the gate's severity marker
 - **WHEN** `autoreply <pr> --disposition high-only` runs
 - **THEN** the thread is untouched and reported as unparsed
+
+### Requirement: Summary comment brand mark
+id: summary-brand-mark
+
+When `review_gate.py post` renders the marker-tagged summary comment, the system SHALL open the comment's visible body with the brand line `**☕ shipd** semantic review` — after the hidden `<!-- am-semantic-review -->` marker and before the `## Findings:` verdict header — on fresh posts and in-place re-post edits alike, leaving the marker line itself byte-identical.
+
+#### Scenario: Summary opens with the brand line
+- **WHEN** the summary body is rendered for any review JSON
+- **THEN** the first non-blank line after the hidden marker is `**☕ shipd** semantic review`, and the `## Findings:` verdict header follows it
+
+#### Scenario: Machine surfaces stay unbranded
+- **WHEN** `post` sets the commit status for a review
+- **THEN** the status context is exactly `semantic-review`, with no brand mark in the context or the hidden marker
