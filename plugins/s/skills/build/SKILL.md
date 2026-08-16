@@ -89,10 +89,10 @@ planning already answered. Before authoring anything, gate on context:
    implementation that follows in this build. When it is absent, proceed
    unchanged.
 1. **Resolve the pipeline — once, at flow start.** Before anything else, run
-   the status CLI's `pipeline-show` verb exactly once and honor the entries it
-   resolves for the rest of this build:
+   the status CLI's `pipeline-show --json` verb exactly once and honor the
+   entries it resolves for the rest of this build:
    ```
-   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-show
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-show --json
    ```
    - **Non-zero exit stops the flow.** A validation error (e.g. `entry 4
      ({"stage": "build", "validater": false}): build.validater: Extra inputs
@@ -101,14 +101,15 @@ planning already answered. Before authoring anything, gate on context:
      means the declared pipeline is unusable: report the engine's own error
      text and **stop before any spec work** — nothing authored, no sub-agent
      spawned. A declared pipeline never half-runs.
-   - **The rendered labels are the API.** Read each entry's declared options
-     from its printed line — the stage followed by its options as `key=value`
-     pairs, e.g.
-     `5. build  subagent_model=tier-two-below, validator=false, telemetry=false`
-     — and never re-derive them from configuration files. The header line
-     names the provenance (a config path, `preset:<name> (<config-path>)`, or
-     `[default]`); a `[default]` pipeline declares no options and changes
-     nothing about this build.
+   - **The JSON is the contract.** The verb emits one object: read each
+     entry's declared options from the `entries` dicts, e.g.
+     `{"stage": "build", "subagent_model": "tier-two-below", "validator":
+     false, "telemetry": false}` — and never re-derive them from configuration
+     files. `source` carries the provenance (a config path, `preset:<name>
+     (<config-path>)`, or `default`); a `default` source means no layer
+     declared a pipeline, which declares no options and changes nothing about
+     this build. Never parse the human-rendered label lines the flagless verb
+     prints — they are display-only and carry no contract status.
    - **What this flow honors:** the resolved `build` entry's `subagent_model`
      and `parallelism` (Phase 3), its `validator` (Phase 5), its `telemetry`
      (Phases 6–7), and the resolved `review` entry's `disposition` and `model`
