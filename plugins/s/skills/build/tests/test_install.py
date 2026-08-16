@@ -33,6 +33,22 @@ LAUNCHER_MARKER = "SHIPD_LAUNCHER_EOF"
 # The one command every "no snapshot installed" error must name.
 INSTALL_HINT = "claude plugin install s@shipd"
 
+# The post-install auto-update notice. Auto-update is off by default for
+# third-party marketplaces, so a successful install has to name both enable
+# surfaces — the `/plugin` Marketplaces toggle and the `"autoUpdate": true`
+# settings entry — plus how an update applies and the manual fallback. The
+# settings fragment doubles as the notice's sentinel: it appears nowhere else,
+# so its absence is the notice's absence.
+AUTO_UPDATE_SENTINEL = '"autoUpdate": true'
+AUTO_UPDATE_FRAGMENTS = (
+    "/plugin",
+    "Marketplaces",
+    "shipd",
+    AUTO_UPDATE_SENTINEL,
+    "session",
+    "claude plugin update s@shipd",
+)
+
 
 def launcher_body():
     """The python3 launcher's source, extracted from ``install.sh``'s quoted
@@ -235,6 +251,46 @@ class InstallerTest(unittest.TestCase):
         r = self.run_install(local_bin_on_path=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("PATH", r.stdout)
+
+    def test_success_prints_the_auto_update_notice(self):
+        self.stub_claude()
+        r = self.run_install()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for fragment in AUTO_UPDATE_FRAGMENTS:
+            self.assertIn(fragment, r.stdout)
+
+    def test_auto_update_notice_prints_when_local_bin_is_on_path(self):
+        # The notice is unconditional: it must not ride along with the PATH
+        # hint, which a consumer whose ~/.local/bin is already on PATH misses.
+        self.stub_claude()
+        r = self.run_install(local_bin_on_path=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(AUTO_UPDATE_SENTINEL, r.stdout)
+
+    def test_install_edits_no_settings_file(self):
+        # The notice instructs, never performs: enabling auto-update is the
+        # user's toggle to flip, so the installer leaves ~/.claude untouched
+        # and only the stub `claude` (which writes nothing) could create it.
+        self.stub_claude()
+        r = self.run_install()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(
+            os.path.exists(os.path.join(self.home, ".claude")),
+            "install.sh must not create anything under ~/.claude")
+
+    def test_missing_claude_aborts_without_the_auto_update_notice(self):
+        # No stub `claude` -> nothing was installed, so nothing to auto-update.
+        r = self.run_install()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn(AUTO_UPDATE_SENTINEL, r.stdout)
+        self.assertNotIn(AUTO_UPDATE_SENTINEL, r.stderr)
+
+    def test_failed_claude_step_prints_no_auto_update_notice(self):
+        self.stub_claude()
+        r = self.run_install(mode="boom")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn(AUTO_UPDATE_SENTINEL, r.stdout)
+        self.assertNotIn(AUTO_UPDATE_SENTINEL, r.stderr)
 
     def test_missing_claude_aborts_without_writing_launcher(self):
         # No stub `claude` written -> the prerequisite check must abort first.

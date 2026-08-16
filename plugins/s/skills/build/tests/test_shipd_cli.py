@@ -513,6 +513,15 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertIn("0.6.9", detail)
         self.assertIn("0.6.10", detail)
 
+    def test_stale_snapshot_names_both_ways_to_get_later_versions(self):
+        # The durable fix is marketplace auto-update; the manual command is the
+        # always-works fallback, so a stale snapshot names both.
+        old, _new = self.make_cache(["0.6.9", "0.6.10"])
+        _level, _name, detail = shipd.check_snapshot(old)
+        self.assertIn("auto-update", detail)
+        self.assertIn("/plugin", detail)
+        self.assertIn("claude plugin update s@shipd", detail)
+
     def test_checkout_reports_dev_mode(self):
         plugin_root = os.path.join(self.tmp, "repo", "plugins", "s")
         os.makedirs(os.path.join(plugin_root, "bin"))

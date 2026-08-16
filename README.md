@@ -51,6 +51,35 @@ re-link. Re-running the installer is safe: an already-registered marketplace or
 already-installed plugin counts as success. Set `SHIPD_PLUGIN_CACHE` to point
 the launcher at a different cache root.
 
+Claude Code can then keep the plugin current on its own, but **auto-update is
+off by default for third-party marketplaces** like `shipd`, so turn it on once.
+From a session, open `/plugin` → **Marketplaces** → `shipd` and toggle
+auto-update on; or add `"autoUpdate": true` to the `shipd` marketplace entry in
+`~/.claude/settings.json`, keeping whatever `source` that entry already has:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "shipd": {
+      "source": "<keep this entry's existing source value>",
+      "autoUpdate": true
+    }
+  }
+}
+```
+
+An entry that loses its `source` is invalid and gets ignored, so add the flag
+to the entry you already have rather than replacing it wholesale.
+
+Enabled, updates are fetched shortly after a session starts and load in the
+**next** session (or right away after `/reload-plugins`) — the launcher already
+runs the newest installed snapshot, so nothing needs re-linking. Updating by
+hand works at any time and is the fallback if you leave auto-update off:
+
+```bash
+claude plugin update s@shipd
+```
+
 Verify with:
 
 ```bash
