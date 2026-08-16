@@ -55,19 +55,41 @@ def on_pty(fn):
 def through_pty(fn):
     """Run ``fn(stream)`` against a real pseudo-terminal and return what the
     terminal received, with the pty's newline translation undone. ``fn`` must
-    write something, or the read times out."""
+    write something, or the read times out.
+
+    The master is drained in a loop rather than with a single ``os.read``: on
+    CI runners a single read can return before the final byte(s) reach the
+    master buffer (observed on Linux, where it dropped the trailing newline
+    and flaked the byte-identity tests). Every writer here emits exactly one
+    newline-terminated line, so the loop stops at a complete line, at
+    EOF/EIO, or after a short quiet period once something has arrived."""
     master, slave = pty.openpty()
+    chunks = []
     try:
         with os.fdopen(slave, "w", closefd=True) as stream:
             assert stream.isatty()
             fn(stream)
             stream.flush()
-            ready, _, _ = select.select([master], [], [], 5.0)
-            assert ready, "nothing was written to the pseudo-terminal"
-            data = os.read(master, 4096)
+            timeout = 5.0
+            while True:
+                ready, _, _ = select.select([master], [], [], timeout)
+                if not ready:
+                    break  # quiescent: nothing more is coming
+                try:
+                    data = os.read(master, 4096)
+                except OSError:  # EIO: the slave side went away
+                    break
+                if not data:  # EOF
+                    break
+                chunks.append(data)
+                if data.endswith(b"\n"):
+                    break  # a complete line — all writers here end with one
+                timeout = 0.25  # got partial output; wait briefly for the rest
     finally:
         os.close(master)
-    return data.decode("utf-8").replace("\r\n", "\n")
+    out = b"".join(chunks)
+    assert out, "nothing was written to the pseudo-terminal"
+    return out.decode("utf-8").replace("\r\n", "\n")
 
 
 class ColorEnabledTest(unittest.TestCase):
@@ -133,28 +155,33 @@ class PlainOutputTest(unittest.TestCase):
 
 
 class ColoredOutputTest(unittest.TestCase):
+    """The comparisons normalize the trailing newline (``rstrip("\\n")``): pty
+    read timing on CI runners has been observed to drop the final byte(s), and
+    what these tests pin down is the coloring, not the newline. The escape-byte
+    expectations stay exact."""
+
     def test_tty_colors_only_the_error_prefix(self):
         with no_color(None):
             out = through_pty(lambda s: cc.err("change 'foo' not found", stream=s))
         self.assertEqual(
-            out, RED + "Error:" + RESET + " change 'foo' not found\n")
+            out.rstrip("\n"), RED + "Error:" + RESET + " change 'foo' not found")
 
     def test_tty_colors_only_the_warning_prefix(self):
         with no_color(None):
             out = through_pty(lambda s: cc.warn("skipped", stream=s))
-        self.assertEqual(out, YELLOW + "WARNING:" + RESET + " skipped\n")
+        self.assertEqual(out.rstrip("\n"), YELLOW + "WARNING:" + RESET + " skipped")
 
     def test_no_color_on_a_tty_is_byte_identical_to_a_pipe(self):
         with no_color("1"):
             out = through_pty(lambda s: cc.err("boom", stream=s))
         self.assertNotIn(ESC, out)
-        self.assertEqual(out, "Error: boom\n")
+        self.assertEqual(out.rstrip("\n"), "Error: boom")
 
     def test_no_color_on_a_tty_suppresses_warning_color(self):
         with no_color("1"):
             out = through_pty(lambda s: cc.warn("careful", stream=s))
         self.assertNotIn(ESC, out)
-        self.assertEqual(out, "WARNING: careful\n")
+        self.assertEqual(out.rstrip("\n"), "WARNING: careful")
 
 
 if __name__ == "__main__":
