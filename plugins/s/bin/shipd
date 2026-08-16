@@ -86,6 +86,9 @@ verbs:
 options:
   -h, --help                 print this banner
   --version                  print the plugin version
+
+The read verbs list, status, locate, epic, workspace, and lint accept --json,
+emitting one machine-readable JSON document instead of the text report.
 """
 
 
@@ -206,6 +209,8 @@ def cmd_list(args):
                         help="repository root (default: cwd)")
     parser.add_argument("--all", action="store_true",
                         help="also list applied changes from completed/")
+    parser.add_argument("--json", action="store_true", dest="json",
+                        help="emit the rows as a JSON array on stdout")
     opts = parser.parse_args(args)
     root = os.path.abspath(opts.root)
     _load_engine()
@@ -218,6 +223,15 @@ def cmd_list(args):
         archived = _collect(root, _archived_rows)
         rows.extend(archived[name] for name in sorted(archived)
                     if name not in in_flight)
+
+    # The machine rendering of the very same rows, in the very same order — an
+    # empty listing is an empty array, never the text placeholder (shipd-cli
+    # list-json).
+    if opts.json:
+        print(json.dumps([{"name": name, "location": location,
+                           "status": status}
+                          for name, location, status in rows]))
+        return 0
 
     if not rows:
         print("no changes in flight")

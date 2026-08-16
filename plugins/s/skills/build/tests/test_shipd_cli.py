@@ -280,6 +280,80 @@ class ListTest(ShipdCliTestBase):
         self.assertEqual(r.stdout.strip(), "no changes in flight")
 
 
+class ListJsonTest(ShipdCliTestBase):
+    """``shipd list --json`` emits the listing as a JSON array (shipd-cli
+    list-json), and a delegated verb passes ``--json`` through verbatim.
+
+    Written test-first; expected to FAIL until the flag lands in
+    ``bin/shipd`` (task 2.2)."""
+
+    def json_rows(self, *args):
+        r = self.cli("list", "--root", self.root, *args)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_list_json_carries_name_location_and_status(self):
+        self.make_worktree_change("foo", "foo", status="ready")
+        self.assertEqual(
+            self.json_rows("--json"),
+            [{"name": "foo", "location": "worktree:foo", "status": "ready"}])
+
+    def test_list_json_rows_match_the_text_rows_and_order(self):
+        self.make_change(self.root, "alpha", status="active")
+        self.make_worktree_change("zulu", "zulu", status="ready")
+        text = self.cli("list", "--root", self.root)
+        self.assertEqual(text.returncode, 0, text.stderr)
+        self.assertEqual(
+            [[row["name"], row["location"], row["status"]]
+             for row in self.json_rows("--json")],
+            [line.split() for line in text.stdout.splitlines()])
+
+    def test_list_json_all_appends_the_archived_rows(self):
+        self.make_change(self.root, "live", status="active")
+        self.make_archive("bar")
+        self.assertEqual(
+            self.json_rows("--json", "--all"),
+            [{"name": "live", "location": "root", "status": "active"},
+             {"name": "bar", "location": "root", "status": "archived"}])
+
+    def test_list_json_omits_archived_rows_without_all(self):
+        self.make_archive("bar")
+        self.assertEqual(self.json_rows("--json"), [])
+
+    def test_empty_listing_is_an_empty_array(self):
+        r = self.cli("list", "--root", self.root, "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), [])
+        self.assertNotIn("no changes in flight", r.stdout)
+
+    def test_list_text_is_unchanged_without_the_flag(self):
+        self.make_change(self.root, "foo", status="active")
+        r = self.cli("list", "--root", self.root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "foo  root  active\n")
+
+    def test_delegated_epic_verb_passes_the_flag_through(self):
+        # Both run from ``self.root``, so the engine's ``--root`` default
+        # resolves identically; the flag is the only trailing argument.
+        self.make_epic("ep", ["m1"])
+        self.make_change(self.root, "m1", status="ready")
+        direct = self.script("spec_status.py", "epic-show", "ep", "--json")
+        r = self.cli("epic", "ep", "--json")
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+        self.assertEqual(json.loads(r.stdout)["kind"], "epic")
+
+    def test_delegated_status_verb_passes_the_flag_through(self):
+        self.make_change(self.root, "foo", status="active")
+        direct = self.script("spec_status.py", "show", "foo", "--json")
+        r = self.cli("status", "foo", "--json")
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+        self.assertEqual(json.loads(r.stdout)["kind"], "change")
+
+
 class VersionTest(ShipdCliTestBase):
     def test_version_is_the_plugin_manifest_version(self):
         manifest = os.path.normpath(

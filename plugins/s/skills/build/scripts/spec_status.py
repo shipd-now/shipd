@@ -79,6 +79,12 @@ Verbs (see the spec-status + statusline capabilities for the contract):
                      --write-gitignore, rewrites only the marked member-repos
                      .gitignore block to match the manifest's member paths
 
+The five read verbs — ``show``, ``status``, ``locate``, ``epic-show``, and
+``workspace-show`` — additionally accept ``--json``, emitting exactly one JSON
+document on stdout in place of their text report, derived from the same data
+(spec-status json-output). Exit codes and the ``Error:`` stderr paths are the
+same in both modes.
+
 The initiative, workspace, and project verbs resolve the workspace from
 ``--root`` and exit non-zero when no workspace is discoverable.
 
@@ -426,42 +432,120 @@ def _epic_fallback(root, name):
     return _epic_hosting_root(root, name)
 
 
-def cmd_show(root, change):
+def _change_report_data(root, change):
+    """The ``show`` report for a change as a JSON-ready dict (spec-status
+    json-output): its name, the ``change`` kind discriminator, its status,
+    its ``tasks`` counts (``None`` when the change carries no checklist), and
+    its plan metadata. The single source both renderings below read, so the
+    text and JSON forms cannot drift."""
+    counts = count_tasks(root, change)
+    tasks = None
+    if counts is not None:
+        done, in_progress, total = counts
+        tasks = {"done": done, "in_progress": in_progress, "total": total}
+    return {
+        "name": change,
+        "kind": "change",
+        "status": read_status(root, change) or "?",
+        "tasks": tasks,
+        # Ordered pairs, never a dict: `Fixes:` is repeatable (shipd-spec-format
+        # plan-header-metadata), and collapsing it would drop lines from the
+        # text report. :func:`_json_ready` groups them for the JSON document.
+        "metadata": _plan_metadata(root, change),
+    }
+
+
+def _change_report_lines(data):
+    """The text ``show`` report for a change, rendered from
+    :func:`_change_report_data`."""
+    tasks = data["tasks"]
+    if tasks is None:
+        lines = ["%s: %s" % (data["name"], data["status"])]
+    else:
+        lines = ["%s: %s (%d/%d tasks)"
+                 % (data["name"], data["status"], tasks["done"],
+                    tasks["total"])]
+    for key, value in data["metadata"]:
+        lines.append("%s: %s" % (key, value))
+    return lines
+
+
+def _metadata_object(pairs):
+    """Group ordered ``(key, value)`` header-metadata pairs into the JSON
+    ``metadata`` object (spec-status json-output): a key appearing once maps to
+    its string value, a key appearing more than once maps to the array of its
+    values in file order.
+
+    Metadata keys are not unique — ``Fixes:`` is explicitly repeatable
+    (shipd-spec-format plan-header-metadata) — so the data layer keeps the
+    ordered pair list the parsers yield and the text renderer prints one line
+    per pair. Only this projection, on the JSON path, ever groups them, which
+    is why a repeated key survives both renderings."""
+    counts = {}
+    for key, _value in pairs:
+        counts[key] = counts.get(key, 0) + 1
+    grouped = {}
+    for key, value in pairs:
+        if counts[key] == 1:
+            grouped[key] = value
+        else:
+            grouped.setdefault(key, []).append(value)
+    return grouped
+
+
+def _json_ready(data):
+    """Project one read verb's data onto its JSON document: the ordered
+    ``metadata`` pair list the data layer carries becomes the grouped object
+    (:func:`_metadata_object`). Every other key passes through untouched, and a
+    verb whose data carries no metadata is returned as-is."""
+    if "metadata" not in data:
+        return data
+    projected = dict(data)
+    projected["metadata"] = _metadata_object(data["metadata"])
+    return projected
+
+
+def _emit(data, lines, as_json):
+    """Render one read verb's result: the JSON document when ``as_json``, else
+    the text ``lines``. The one place the two modes part company (spec-status
+    json-output) — everything above it computes the same values for both."""
+    if as_json:
+        print(json.dumps(_json_ready(data)))
+    else:
+        for line in lines:
+            print(line)
+    return 0
+
+
+def cmd_show(root, change, as_json=False):
     # No name and no selection: the board's own no-argument view is the whole
     # workspace, so report it rather than erroring (spec-status
     # workspace-board-report). Checked ahead of `_resolve_change`, which keeps
     # raising for `status`/`validate`/`set-status`/`sync`.
     if not change and read_current(root) is None:
-        for line in _workspace_report_lines(root):
-            print(line)
-        return 0
+        data = _workspace_report_data(root)
+        return _emit(data, _workspace_report_lines(data), as_json)
     change = _resolve_change(root, change)
     if _epic_fallback(root, change) is not None:
-        for line in _epic_report_lines(root, change):
-            print(line)
-        return 0
-    status = read_status(root, change) or "?"
-    counts = count_tasks(root, change)
-    if counts is None:
-        print("%s: %s" % (change, status))
-    else:
-        done, _in_progress, total = counts
-        print("%s: %s (%d/%d tasks)" % (change, status, done, total))
-    for key, value in _plan_metadata(root, change):
-        print("%s: %s" % (key, value))
-    return 0
+        data = _epic_report_data(root, change)
+        return _emit(data, _epic_report_lines(data), as_json)
+    data = _change_report_data(root, change)
+    return _emit(data, _change_report_lines(data), as_json)
 
 
-def cmd_status(root, change):
+def cmd_status(root, change, as_json=False):
     change = _resolve_change(root, change)
     hosting_root = _epic_fallback(root, change)
     if hosting_root is not None:
         # The status is read from the root that hosts the epic — a worktree's
         # when the epic was authored there and has not merged yet.
-        print(read_epic_status(hosting_root, change) or "?")
-        return 0
-    print(read_status(root, change) or "?")
-    return 0
+        kind = "epic"
+        status = read_epic_status(hosting_root, change) or "?"
+    else:
+        kind = "change"
+        status = read_status(root, change) or "?"
+    return _emit({"name": change, "kind": kind, "status": status},
+                 [status], as_json)
 
 
 def cmd_validate(root, change):
@@ -540,7 +624,7 @@ def cmd_sync(root, change):
     return 0
 
 
-def cmd_locate(root, change):
+def cmd_locate(root, change, as_json=False):
     """Probe the invocation root's resolved ``planned/`` first, then each
     ``.worktrees/<name>`` directory under it in sorted name order, for an
     installed ``change`` (spec-status locate-verb). Where ``change`` is
@@ -551,7 +635,9 @@ def cmd_locate(root, change):
     ``root:`` (absolute), ``dir:`` (relative to that root), ``status:`` (``?``
     when missing or invalid) — separated by a blank line, the invocation root's
     own match first. Exit 0 on at least one match; raise (exit 1) naming the
-    probed locations when none. No git, model, or network calls."""
+    probed locations when none. With ``as_json``, the same rows are emitted as
+    one JSON array instead (spec-status json-output). No git, model, or
+    network calls."""
     change = _resolve_change(root, change)
     probed = []
     matches = []
@@ -579,15 +665,22 @@ def cmd_locate(root, change):
             "change '%s' not found; probed: %s"
             % (change, ", ".join(probed)))
 
-    blocks = []
+    rows = []
     for candidate in matches:
         cdir = os.path.join(sc.specs_dir(candidate), "planned", change)
-        blocks.append(
-            "change: %s\nroot: %s\ndir: %s\nstatus: %s"
-            % (change, os.path.abspath(candidate),
-               os.path.relpath(cdir, candidate),
-               read_status(candidate, change) or "?"))
-    print("\n\n".join(blocks))
+        rows.append({
+            "change": change,
+            "root": os.path.abspath(candidate),
+            "dir": os.path.relpath(cdir, candidate),
+            "status": read_status(candidate, change) or "?",
+        })
+    if as_json:
+        print(json.dumps(rows))
+        return 0
+    print("\n\n".join(
+        "change: %s\nroot: %s\ndir: %s\nstatus: %s"
+        % (row["change"], row["root"], row["dir"], row["status"])
+        for row in rows))
     return 0
 
 
@@ -978,22 +1071,21 @@ def _epic_rows(root, slug):
 _BOARD_LANES = ("unplanned", "ready", "building", "shipped")
 
 
-def _epic_report_lines(root, slug):
-    """The board-shaped epic report as a list of lines (spec-status
-    epic-status-verbs) — the single renderer ``epic-show`` and ``show``'s epic
-    fallback both print, so the two outputs are identical by construction.
+def _epic_report_data(root, slug):
+    """The board-shaped epic report as a JSON-ready dict (spec-status
+    epic-status-verbs, json-output) — the single computation ``epic-show`` and
+    ``show``'s epic fallback both consume, in text and in JSON, so no two of
+    those outputs can drift.
 
-    In order: the ``<slug>: <status>`` line and the epic's header metadata
-    lines (unchanged from before this report existed — the autopilot skill
-    reads that status line); a ``worktree: <name>`` line when the epic resolved
-    from a worktree; a ``shipped <n>/<m>`` line counting the members
-    whose derived state is ``archived`` against every stub member; a blank
-    line; then the four board lanes in board order, each as a
-    ``<LANE> (<count>)`` header even when empty, followed by one indented row
-    per member in it. A member's lane comes from :func:`board_lane` — the
-    projection the dashboard shares — its risk from the last rating cell of
-    its stub-table row (``?`` when the row carries none), and a ``[worktree]``
-    marker when its state was derived from a worktree rather than ``root``.
+    Carries the epic's ``name``, the ``epic`` kind discriminator, its
+    ``status`` and header ``metadata``, the hosting ``worktree`` name (``None``
+    when the invocation root hosts it), ``shipped`` counts over every stub
+    member, and the four board ``lanes``, each a list of
+    ``{"slug", "state", "risk", "worktree"}`` members in stub-table order. A
+    member's lane comes from :func:`board_lane` — the projection the dashboard
+    shares — its risk from the last rating cell of its stub-table row (``?``
+    when the row carries none), and its ``worktree`` flag is set when its state
+    was derived from a worktree rather than ``root``.
 
     The epic's file and status are read from the root :func:`_epic_hosting_root`
     resolves — a worktree's when the epic was authored there and has not
@@ -1004,29 +1096,62 @@ def _epic_report_lines(root, slug):
     path = _epic_path(epic_root, slug)
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
-    lines = ["%s: %s" % (slug, read_epic_status(epic_root, slug) or "?")]
-    for key, value in _epic_metadata(text):
-        lines.append("%s: %s" % (key, value))
-    if epic_root != root:
-        lines.append("worktree: %s" % os.path.basename(epic_root))
 
     _header, rows = sc.parse_epic_changes(text)
-    members = []
+    lanes = {lane: [] for lane in _BOARD_LANES}
+    total = 0
     for mslug, _desc, ratings in rows:
         state, member_root = _member_state_with_root(root, mslug)
-        risk = ratings[-1].strip() if ratings and ratings[-1].strip() else "?"
-        marker = " [worktree]" if member_root != root else ""
-        members.append((board_lane(state), mslug, state, risk, marker))
+        lanes[board_lane(state)].append({
+            "slug": mslug,
+            "state": state,
+            "risk": (ratings[-1].strip()
+                     if ratings and ratings[-1].strip() else "?"),
+            "worktree": member_root != root,
+        })
+        total += 1
+    return {
+        "name": slug,
+        "kind": "epic",
+        "status": read_epic_status(epic_root, slug) or "?",
+        # Ordered pairs for the same reason as the change path — the epic header
+        # reuses the plan header grammar, so no key here may be collapsed.
+        "metadata": _epic_metadata(text),
+        "worktree": (os.path.basename(epic_root)
+                     if epic_root != root else None),
+        "shipped": {"done": len(lanes["shipped"]), "total": total},
+        "lanes": lanes,
+    }
 
-    shipped = sum(1 for lane, _s, _st, _r, _m in members if lane == "shipped")
-    lines.append("shipped %d/%d" % (shipped, len(members)))
+
+def _epic_report_lines(data):
+    """The board-shaped epic report as a list of lines, rendered from
+    :func:`_epic_report_data` (spec-status epic-status-verbs).
+
+    In order: the ``<slug>: <status>`` line and the epic's header metadata
+    lines (unchanged from before this report existed — the autopilot skill
+    reads that status line); a ``worktree: <name>`` line when the epic resolved
+    from a worktree; a ``shipped <n>/<m>`` line counting the members whose
+    derived state is ``archived`` against every stub member; a blank line; then
+    the four board lanes in board order, each as a ``<LANE> (<count>)`` header
+    even when empty, followed by one indented row per member in it, carrying a
+    ``[worktree]`` marker when its state came from a worktree."""
+    lines = ["%s: %s" % (data["name"], data["status"])]
+    for key, value in data["metadata"]:
+        lines.append("%s: %s" % (key, value))
+    if data["worktree"] is not None:
+        lines.append("worktree: %s" % data["worktree"])
+    lines.append("shipped %d/%d"
+                 % (data["shipped"]["done"], data["shipped"]["total"]))
     lines.append("")
     for lane in _BOARD_LANES:
-        in_lane = [m for m in members if m[0] == lane]
+        in_lane = data["lanes"][lane]
         lines.append("%s (%d)" % (lane.upper(), len(in_lane)))
-        for _lane, mslug, state, risk, marker in in_lane:
-            lines.append("  %-22s %-12s risk %s%s"
-                         % (mslug, state, risk, marker))
+        for member in in_lane:
+            lines.append(
+                "  %-22s %-12s risk %s%s"
+                % (member["slug"], member["state"], member["risk"],
+                   " [worktree]" if member["worktree"] else ""))
     return lines
 
 
@@ -1040,37 +1165,38 @@ def _workspace_epic_slugs(root):
     return all_epic_slugs_with_roots(root)
 
 
-def _workspace_report_lines(root):
-    """The workspace board report as a list of lines (spec-status
-    workspace-board-report) — what ``show`` prints with no name given and no
-    spec selected, derived from the spec tree alone (no heartbeat reads).
+def _workspace_report_data(root):
+    """The workspace board report as a JSON-ready dict (spec-status
+    workspace-board-report, json-output) — what ``show`` reports with no name
+    given and no spec selected, derived from the spec tree alone (no heartbeat
+    reads).
 
-    In order: a ``N specs · N epics · N initiatives`` totals line mirroring the
+    Carries the ``workspace`` kind discriminator; ``totals`` mirroring the
     board's filter-strip totals (``dashboard._board_totals_text``) — members
     summed across every epic (standalone changes excluded, as on the board),
-    the epic count, and the distinct ``Initiative:`` slugs; a ``shipped <n>/<m>``
-    line over every rendered row (epic members plus standalone changes), ``n``
-    those whose lane is ``shipped``; a blank line; then the four board lanes in
-    board order, each as a ``<LANE> (<count>)`` header even when empty.
+    the epic count, and the distinct ``Initiative:`` slugs; ``shipped`` counts
+    over every rendered row (epic members plus standalone changes); and the
+    four board ``lanes``, each a list of ``{"epic", "slug", "state", "risk",
+    "worktree"}`` rows. A row's ``epic`` is its epic's slug, or ``standalone``
+    for a change planned outside any epic; its risk is the stub-table row's
+    last rating cell (``?`` when absent — always ``?`` for a standalone change,
+    which has no stub row); and its ``worktree`` flag is set when the state came
+    from a worktree rather than ``root``.
 
-    A non-shipped lane prints one indented row per entry carrying its epic's
-    slug (``standalone`` for a change planned outside any epic), the member
-    slug, its derived state, its risk (the stub-table row's last rating cell,
-    ``?`` when absent — always ``?`` for a standalone change, which has no stub
-    row), and a ``[worktree]`` marker when the state came from a worktree
-    rather than ``root``. ``SHIPPED`` instead prints per-epic rollup rows
-    ``<epic-slug> (<n>)`` in epic order, plus ``standalone (<n>)`` last when
-    any standalone change is archived — mirroring the board's collapsed
-    per-epic shipped groups. Lanes come from :func:`board_lane`, the shared
-    projection the epic report and the dashboard use, and standalone changes
-    from :func:`standalone_changes`, the discovery the board consumes. The
-    epics themselves come from :func:`_workspace_epic_slugs`, the worktree-aware
-    seam the board's aggregation shares, each read from its hosting root, so a
-    worktree-authored epic counts here exactly as it does on the board. An
-    unreadable epic file is skipped, never raised."""
-    epics = []          # (epic slug, [row, ...]) in epic order
+    Rows are collected epic by epic in epic order and the standalone changes
+    last, a grouping the text renderer's ``SHIPPED`` rollups rely on. Lanes come
+    from :func:`board_lane`, the shared projection the epic report and the
+    dashboard use, and standalone changes from :func:`standalone_changes`, the
+    discovery the board consumes. The epics themselves come from
+    :func:`_workspace_epic_slugs`, the worktree-aware seam the board's
+    aggregation shares, each read from its hosting root, so a worktree-authored
+    epic counts here exactly as it does on the board. An unreadable epic file is
+    skipped, never raised."""
+    epic_count = 0
     initiatives = set()
     member_slugs = set()
+    specs = 0
+    all_rows = []
     for eslug, epic_root in _workspace_epic_slugs(root):
         try:
             with open(_epic_path(epic_root, eslug), encoding="utf-8") as fh:
@@ -1081,60 +1207,92 @@ def _workspace_report_lines(root):
         if meta.get("Initiative"):
             initiatives.add(meta["Initiative"])
         _header, stub_rows = sc.parse_epic_changes(text)
-        rows = []
         for mslug, _desc, ratings in stub_rows:
             member_slugs.add(mslug)
             state, hosting_root = _member_state_with_root(root, mslug)
-            risk = (ratings[-1].strip()
-                    if ratings and ratings[-1].strip() else "?")
-            marker = " [worktree]" if hosting_root != root else ""
-            rows.append((board_lane(state), eslug, mslug, state, risk, marker))
-        epics.append((eslug, rows))
+            all_rows.append({
+                "epic": eslug,
+                "slug": mslug,
+                "state": state,
+                "risk": (ratings[-1].strip()
+                         if ratings and ratings[-1].strip() else "?"),
+                "worktree": hosting_root != root,
+            })
+            specs += 1
+        epic_count += 1
 
     # Changes planned outside any epic fold in under the epic column
     # `standalone`; their hosting location, not a stub table, marks a worktree.
     root_abs = os.path.abspath(root)
-    standalone = []
     for entry in standalone_changes(root, member_slugs):
-        state = entry["state"]
-        marker = " [worktree]" if entry.get("location") != root_abs else ""
-        standalone.append((board_lane(state), "standalone", entry["slug"],
-                           state, entry.get("risk") or "?", marker))
+        all_rows.append({
+            "epic": "standalone",
+            "slug": entry["slug"],
+            "state": entry["state"],
+            "risk": entry.get("risk") or "?",
+            "worktree": entry.get("location") != root_abs,
+        })
 
-    all_rows = [row for _eslug, rows in epics for row in rows] + standalone
-    specs = sum(len(rows) for _eslug, rows in epics)
-    shipped = sum(1 for row in all_rows if row[0] == "shipped")
+    lanes = {lane: [] for lane in _BOARD_LANES}
+    for row in all_rows:
+        lanes[board_lane(row["state"])].append(row)
+    return {
+        "kind": "workspace",
+        "totals": {"specs": specs, "epics": epic_count,
+                   "initiatives": len(initiatives)},
+        "shipped": {"done": len(lanes["shipped"]), "total": len(all_rows)},
+        "lanes": lanes,
+    }
+
+
+def _workspace_report_lines(data):
+    """The workspace board report as a list of lines, rendered from
+    :func:`_workspace_report_data` (spec-status workspace-board-report).
+
+    In order: a ``N specs · N epics · N initiatives`` totals line; a
+    ``shipped <n>/<m>`` line; a blank line; then the four board lanes in board
+    order, each as a ``<LANE> (<count>)`` header even when empty.
+
+    A non-shipped lane prints one indented row per entry carrying its epic
+    column, the member slug, its derived state, its risk, and a ``[worktree]``
+    marker when the state came from a worktree. ``SHIPPED`` instead prints
+    per-epic rollup rows ``<epic-slug> (<n>)`` in epic order, plus
+    ``standalone (<n>)`` last when any standalone change is archived —
+    mirroring the board's collapsed per-epic shipped groups. The rollups read
+    straight off the shipped rows, whose epic-then-standalone grouping the data
+    preserves."""
+    totals = data["totals"]
     lines = ["%d specs · %d epics · %d initiatives"
-             % (specs, len(epics), len(initiatives)),
-             "shipped %d/%d" % (shipped, len(all_rows)),
+             % (totals["specs"], totals["epics"], totals["initiatives"]),
+             "shipped %d/%d"
+             % (data["shipped"]["done"], data["shipped"]["total"]),
              ""]
     for lane in _BOARD_LANES:
-        in_lane = [row for row in all_rows if row[0] == lane]
+        in_lane = data["lanes"][lane]
         lines.append("%s (%d)" % (lane.upper(), len(in_lane)))
         if lane == "shipped":
-            for eslug, rows in epics:
-                count = sum(1 for row in rows if row[0] == "shipped")
-                if count:
-                    lines.append("  %s (%d)" % (eslug, count))
-            count = sum(1 for row in standalone if row[0] == "shipped")
-            if count:
-                lines.append("  standalone (%d)" % count)
+            counts = {}          # epic column -> shipped row count, in order
+            for row in in_lane:
+                counts[row["epic"]] = counts.get(row["epic"], 0) + 1
+            for ecol, count in counts.items():
+                lines.append("  %s (%d)" % (ecol, count))
             continue
-        for _lane, ecol, mslug, state, risk, marker in in_lane:
-            lines.append("  %-20s %-22s %-12s risk %s%s"
-                         % (ecol, mslug, state, risk, marker))
+        for row in in_lane:
+            lines.append(
+                "  %-20s %-22s %-12s risk %s%s"
+                % (row["epic"], row["slug"], row["state"], row["risk"],
+                   " [worktree]" if row["worktree"] else ""))
     return lines
 
 
-def cmd_epic_show(root, slug):
+def cmd_epic_show(root, slug, as_json=False):
     # Read-only, so it resolves across the invocation root and its worktrees;
     # the mutating verbs below deliberately stay invocation-root-only.
     if _epic_hosting_root(root, slug) is None:
         raise StatusError(
             "epic '%s' not found (%s)" % (slug, _epic_path(root, slug)))
-    for line in _epic_report_lines(root, slug):
-        print(line)
-    return 0
+    data = _epic_report_data(root, slug)
+    return _emit(data, _epic_report_lines(data), as_json)
 
 
 def cmd_epic_sync(root, slug):
@@ -1531,31 +1689,50 @@ def _load_projects(ws_root):
     return projects if isinstance(projects, dict) else {}
 
 
-def _repo_display(ws_root, repo):
-    """Annotate a repo entry for display: ``(absent)`` when its path is not a
-    directory on this machine, and ``[url]`` when the entry carries a clone URL
-    (both display-only — absence is never an error). Paths are read uniformly
+def _repo_entry_data(ws_root, repo):
+    """One repo registry entry as a JSON-ready dict — its ``path``, whether it
+    is ``present`` (a directory on this machine; absence is never an error),
+    and its declared clone ``url`` (``None`` when it declares none) — or
+    ``None`` when the entry declares no path at all. Paths are read uniformly
     from string and object entry shapes via ``repo_entry_path``."""
     path = sc.repo_entry_path(repo)
     if path is None:
         return None
-    text = path if os.path.isdir(os.path.join(ws_root, path)) else \
-        "%s (absent)" % path
-    if isinstance(repo, dict) and repo.get("url"):
+    url = repo.get("url") if isinstance(repo, dict) else None
+    return {
+        "path": path,
+        "present": os.path.isdir(os.path.join(ws_root, path)),
+        "url": url if url else None,
+    }
+
+
+def _repo_display(entry):
+    """Annotate a :func:`_repo_entry_data` record for display: ``(absent)``
+    when its path is not a directory on this machine, and ``[url]`` when the
+    entry carries a clone URL (both display-only)."""
+    text = entry["path"] if entry["present"] \
+        else "%s (absent)" % entry["path"]
+    if entry["url"]:
         text = "%s [url]" % text
     return text
 
 
-def _project_repo_lines(ws_root, entry):
-    """Yield the annotated repo display lines of one project registry entry,
-    skipping malformed entries defensively."""
+def _project_repo_entries(ws_root, entry):
+    """Yield the :func:`_repo_entry_data` records of one project registry
+    entry, skipping malformed entries defensively."""
     repos = entry.get("repos") if isinstance(entry, dict) else None
     if not isinstance(repos, list):
         return
     for repo in repos:
-        line = _repo_display(ws_root, repo)
-        if line is not None:
-            yield line
+        record = _repo_entry_data(ws_root, repo)
+        if record is not None:
+            yield record
+
+
+def _project_repo_lines(ws_root, entry):
+    """Yield the annotated repo display lines of one project registry entry."""
+    for record in _project_repo_entries(ws_root, entry):
+        yield _repo_display(record)
 
 
 def _context_path(ws_root, slug):
@@ -1585,32 +1762,64 @@ def _iter_initiatives(ws_root):
         yield slug, status, project
 
 
-def cmd_workspace_show(root):
+def _workspace_show_data(root):
+    """The ``workspace-show`` report as a JSON-ready dict (spec-status
+    workspace-status-verbs, json-output): the resolved ``workspace`` root, the
+    declared ``focus`` project (``None`` when undeclared), each declared
+    ``project`` in slug order with its repo records and ``context`` presence,
+    each ``initiative`` in slug order with its status and ``Project:`` scope,
+    and whether this repository falls under the implicit default project. An
+    unloadable registry displays as an empty one — validation lives in the
+    linter (``--workspace``)."""
     ws_root = _resolve_workspace(root)
-    print("workspace: %s" % ws_root)
     try:
         registry = sc.load_workspace(ws_root)
     except sc.ConfigError:
         registry = {}
     focus = registry.get("focus")
-    if isinstance(focus, str) and focus:
-        print("focus: %s" % focus)
     projects = _load_projects(ws_root)
-    for slug in sorted(projects):
-        print("project %s:" % slug)
-        for line in _project_repo_lines(ws_root, projects[slug]):
-            print("  repo: %s" % line)
-        present = os.path.isfile(_context_path(ws_root, slug))
-        print("  context: %s" % ("yes" if present else "no"))
-    initiatives = list(_iter_initiatives(ws_root))
-    if initiatives:
-        print("initiatives:")
-        for slug, status, project in initiatives:
-            scope = "Project: %s" % project if project else "unscoped"
-            print("  %s: %s (%s)" % (slug, status, scope))
-    if sc.project_of(ws_root, root) is None:
-        print("(this repository falls under the implicit default project)")
-    return 0
+    return {
+        "workspace": ws_root,
+        "focus": focus if isinstance(focus, str) and focus else None,
+        "projects": [
+            {"slug": slug,
+             "repos": list(_project_repo_entries(ws_root, projects[slug])),
+             "context": os.path.isfile(_context_path(ws_root, slug))}
+            for slug in sorted(projects)],
+        "initiatives": [
+            {"slug": slug, "status": status, "project": project}
+            for slug, status, project in _iter_initiatives(ws_root)],
+        "implicit_default_project": sc.project_of(ws_root, root) is None,
+    }
+
+
+def _workspace_show_lines(data):
+    """The ``workspace-show`` text report, rendered from
+    :func:`_workspace_show_data`."""
+    lines = ["workspace: %s" % data["workspace"]]
+    if data["focus"]:
+        lines.append("focus: %s" % data["focus"])
+    for project in data["projects"]:
+        lines.append("project %s:" % project["slug"])
+        for repo in project["repos"]:
+            lines.append("  repo: %s" % _repo_display(repo))
+        lines.append("  context: %s" % ("yes" if project["context"] else "no"))
+    if data["initiatives"]:
+        lines.append("initiatives:")
+        for initiative in data["initiatives"]:
+            scope = ("Project: %s" % initiative["project"]
+                     if initiative["project"] else "unscoped")
+            lines.append("  %s: %s (%s)"
+                         % (initiative["slug"], initiative["status"], scope))
+    if data["implicit_default_project"]:
+        lines.append(
+            "(this repository falls under the implicit default project)")
+    return lines
+
+
+def cmd_workspace_show(root, as_json=False):
+    data = _workspace_show_data(root)
+    return _emit(data, _workspace_show_lines(data), as_json)
 
 
 def cmd_workspace_init(path, git=False):
@@ -2016,6 +2225,15 @@ def cmd_wiki_remove(root, slug, personal=False):
 # ---------------------------------------------------------------------------
 
 
+def _add_json_flag(subparser):
+    """Give one read verb's subparser the ``--json`` machine-output flag
+    (spec-status json-output). Only the five read verbs get it — the mutating
+    and guarded verbs stay text-only."""
+    subparser.add_argument(
+        "--json", action="store_true", dest="json",
+        help="emit one JSON document on stdout instead of the text report")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Read/write spec lifecycle status and the current-spec "
@@ -2034,9 +2252,11 @@ def main(argv=None):
         help="print a change's status and progress (the workspace board "
              "report with no change given and none selected)")
     p_show.add_argument("change", nargs="?", default=None)
+    _add_json_flag(p_show)
 
     p_status = sub.add_parser("status", help="print the bare status value")
     p_status.add_argument("change", nargs="?", default=None)
+    _add_json_flag(p_status)
 
     p_validate = sub.add_parser(
         "validate", help="structurally validate the change")
@@ -2056,6 +2276,7 @@ def main(argv=None):
         "locate",
         help="find an installed change across the root and its worktrees")
     p_locate.add_argument("change", nargs="?", default=None)
+    _add_json_flag(p_locate)
 
     p_check_base = sub.add_parser(
         "check-base",
@@ -2067,6 +2288,7 @@ def main(argv=None):
         help="print an epic's board-shaped report (status, metadata, shipped "
              "progress, members grouped into the board's lanes)")
     p_epic_show.add_argument("slug")
+    _add_json_flag(p_epic_show)
 
     p_epic_sync = sub.add_parser(
         "epic-sync", help="re-derive an epic's status from member states")
@@ -2129,9 +2351,10 @@ def main(argv=None):
         help="git-init the target when needed and seed a marked member-repos "
              ".gitignore block")
 
-    sub.add_parser(
+    p_ws_show = sub.add_parser(
         "workspace-show",
         help="print the workspace root, its projects, and its initiatives")
+    _add_json_flag(p_ws_show)
 
     p_proj_show = sub.add_parser(
         "project-show",
@@ -2197,9 +2420,9 @@ def main(argv=None):
         if args.verb == "current":
             return cmd_current(root)
         if args.verb == "show":
-            return cmd_show(root, args.change)
+            return cmd_show(root, args.change, as_json=args.json)
         if args.verb == "status":
-            return cmd_status(root, args.change)
+            return cmd_status(root, args.change, as_json=args.json)
         if args.verb == "validate":
             return cmd_validate(root, args.change)
         if args.verb == "set-status":
@@ -2207,11 +2430,11 @@ def main(argv=None):
         if args.verb == "sync":
             return cmd_sync(root, args.change)
         if args.verb == "locate":
-            return cmd_locate(root, args.change)
+            return cmd_locate(root, args.change, as_json=args.json)
         if args.verb == "check-base":
             return cmd_check_base(root, args.change)
         if args.verb == "epic-show":
-            return cmd_epic_show(root, args.slug)
+            return cmd_epic_show(root, args.slug, as_json=args.json)
         if args.verb == "epic-sync":
             return cmd_epic_sync(root, args.slug)
         if args.verb == "epic-set-status":
@@ -2233,7 +2456,7 @@ def main(argv=None):
         if args.verb == "workspace-init":
             return cmd_workspace_init(args.path, args.git)
         if args.verb == "workspace-show":
-            return cmd_workspace_show(root)
+            return cmd_workspace_show(root, as_json=args.json)
         if args.verb == "project-show":
             return cmd_project_show(root, args.slug)
         if args.verb == "workspace-sync":

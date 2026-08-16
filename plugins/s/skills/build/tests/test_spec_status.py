@@ -2890,5 +2890,459 @@ class FlowHookTest(SpecStatusTestBase):
         self.assertIn("Status: draft", self.read_plan("feat"))
 
 
+class JsonOutputTest(WorkspaceReportTest):
+    """The ``--json`` machine-output flag on ``status``, ``show``, and
+    ``epic-show`` (spec-status json-output): one JSON document on stdout,
+    derived from the same data the text renderer prints, with the flagless
+    text output unchanged.
+
+    Written test-first; expected to FAIL until the flag lands in
+    ``spec_status.py`` (task 1.2)."""
+
+    def json_out(self, *args):
+        """Run the CLI, assert a clean exit, and parse stdout as one JSON
+        document (the whole of stdout — nothing else may be printed)."""
+        r = self.cli(*args)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    # -- status ------------------------------------------------------------
+
+    def test_status_json_reports_a_change(self):
+        self.make_change("feat", status="active")
+        self.assertEqual(
+            self.json_out("status", "feat", "--json"),
+            {"name": "feat", "kind": "change", "status": "active"})
+
+    def test_status_json_reports_the_epic_fallback(self):
+        self.make_epic("reporting", status="active",
+                       rows=[("m1", "A", ("low",) * 4)])
+        self.assertEqual(
+            self.json_out("status", "reporting", "--json"),
+            {"name": "reporting", "kind": "epic", "status": "active"})
+
+    def test_status_json_carries_question_mark_for_a_missing_header(self):
+        self.write_plan("feat", "no header here at all\n")
+        self.assertEqual(
+            self.json_out("status", "feat", "--json"),
+            {"name": "feat", "kind": "change", "status": "?"})
+
+    def test_status_text_is_unchanged_without_the_flag(self):
+        self.make_change("feat", status="active")
+        r = self.cli("status", "feat")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "active\n")
+
+    # -- show, on a change --------------------------------------------------
+
+    def test_show_json_on_a_change_carries_task_counts(self):
+        self.make_change(
+            "feat", status="active",
+            tasks="## 1\n- [x] 1.1 done\n- [ ] 1.2 todo\n- [~] 1.3 wip\n")
+        self.assertEqual(
+            self.json_out("show", "feat", "--json"),
+            {"name": "feat", "kind": "change", "status": "active",
+             "tasks": {"done": 1, "in_progress": 1, "total": 3},
+             "metadata": {}})
+
+    def test_show_json_tasks_are_null_without_a_checklist(self):
+        self.make_change("feat", status="ready")
+        self.assertEqual(
+            self.json_out("show", "feat", "--json"),
+            {"name": "feat", "kind": "change", "status": "ready",
+             "tasks": None, "metadata": {}})
+
+    def test_show_json_carries_the_plan_metadata(self):
+        self.write_plan(
+            "feat",
+            "# feat\nStatus: ready\nEpic: reporting\nTheme: reliability\n\n"
+            "## Idea\nA summary.\n")
+        data = self.json_out("show", "feat", "--json")
+        self.assertEqual(data["metadata"],
+                         {"Epic": "reporting", "Theme": "reliability"})
+
+    # -- repeated metadata keys (`Fixes:` is repeatable) ---------------------
+
+    def test_repeated_metadata_key_keeps_every_text_line(self):
+        # `Fixes:` is explicitly repeatable (shipd-spec-format
+        # plan-header-metadata), so the flagless report must print one line per
+        # occurrence — collapsing the pairs into a dict would drop all but the
+        # last.
+        self.write_plan(
+            "feat",
+            "# feat\nStatus: ready\nFixes: board-theme\nFixes: board-search\n\n"
+            "## Idea\nA summary.\n")
+        r = self.cli("show", "feat")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            r.stdout,
+            "feat: ready\nFixes: board-theme\nFixes: board-search\n")
+
+    def test_repeated_metadata_key_becomes_an_array_in_json(self):
+        self.write_plan(
+            "feat",
+            "# feat\nStatus: ready\nFixes: board-theme\nFixes: board-search\n"
+            "Theme: reliability\n\n## Idea\nA summary.\n")
+        data = self.json_out("show", "feat", "--json")
+        # A repeated key groups into its values in file order; a key appearing
+        # once stays a plain string.
+        self.assertEqual(data["metadata"],
+                         {"Fixes": ["board-theme", "board-search"],
+                          "Theme": "reliability"})
+
+    def test_interleaved_repeated_keys_keep_their_file_order_in_text(self):
+        # The pairs are ordered, not grouped, in the data layer — so a repeated
+        # key split by another key still renders in file order.
+        self.write_plan(
+            "feat",
+            "# feat\nStatus: ready\nFixes: board-theme\nTheme: reliability\n"
+            "Fixes: board-search\n\n## Idea\nA summary.\n")
+        r = self.cli("show", "feat")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            r.stdout,
+            "feat: ready\nFixes: board-theme\nTheme: reliability\n"
+            "Fixes: board-search\n")
+        data = self.json_out("show", "feat", "--json")
+        self.assertEqual(data["metadata"]["Fixes"],
+                         ["board-theme", "board-search"])
+
+    def test_epic_report_keeps_every_metadata_line(self):
+        # The epic header reuses the plan header grammar, so its metadata is
+        # carried as ordered pairs too — one text line per pair, in file order.
+        self.make_epic("e", status="ready",
+                       metadata=["Theme: reliability",
+                                 "Initiative: mvp-readiness"])
+        r = self.cli("epic-show", "e")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[1], "Theme: reliability")
+        self.assertEqual(lines[2], "Initiative: mvp-readiness")
+        data = self.json_out("epic-show", "e", "--json")
+        self.assertEqual(data["metadata"],
+                         {"Theme": "reliability",
+                          "Initiative": "mvp-readiness"})
+
+    def test_epic_report_keeps_a_repeated_metadata_key(self):
+        # A key occurring twice in an epic header renders one text line per
+        # occurrence (collapsing the pairs would drop the first) and groups
+        # into its values in file order on the JSON path.
+        self.make_epic("e", status="ready",
+                       metadata=["Theme: reliability", "Theme: velocity",
+                                 "Initiative: mvp-readiness"])
+        r = self.cli("epic-show", "e")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[1:4],
+                         ["Theme: reliability", "Theme: velocity",
+                          "Initiative: mvp-readiness"])
+        data = self.json_out("epic-show", "e", "--json")
+        self.assertEqual(data["metadata"],
+                         {"Theme": ["reliability", "velocity"],
+                          "Initiative": "mvp-readiness"})
+
+    def test_show_text_on_a_change_is_unchanged_without_the_flag(self):
+        self.make_change(
+            "feat", status="active",
+            tasks="## 1\n- [x] 1.1 done\n- [ ] 1.2 todo\n- [~] 1.3 wip\n")
+        r = self.cli("show", "feat")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "feat: active (1/3 tasks)\n")
+
+    # -- show, the epic fallback -------------------------------------------
+
+    def test_show_json_epic_fallback_matches_epic_show_json(self):
+        self.make_epic("reporting", status="active",
+                       metadata=["Theme: reliability"],
+                       rows=[("m1", "A", ("low",) * 4)])
+        self.assertEqual(self.json_out("show", "reporting", "--json"),
+                         self.json_out("epic-show", "reporting", "--json"))
+
+    # -- show, the workspace report ----------------------------------------
+
+    def test_bare_show_json_is_the_workspace_report(self):
+        self.make_epic("e1", status="ready",
+                       metadata=["Initiative: mvp-readiness"],
+                       rows=[("m1", "A", ("low",) * 4),
+                             ("m2", "B", ("low",) * 4)])
+        self.make_epic("e2", status="ready",
+                       metadata=["Initiative: mvp-readiness"],
+                       rows=[("m3", "C", ("low",) * 4)])
+        self.make_change("solo", status="active")
+        data = self.json_out("show", "--json")
+        self.assertEqual(data["kind"], "workspace")
+        self.assertEqual(data["totals"],
+                         {"specs": 3, "epics": 2, "initiatives": 1})
+        self.assertEqual(data["shipped"], {"done": 0, "total": 4})
+        self.assertEqual(sorted(data["lanes"]),
+                         ["building", "ready", "shipped", "unplanned"])
+        self.assertEqual(
+            data["lanes"]["building"],
+            [{"epic": "standalone", "slug": "solo", "state": "active",
+              "risk": "?", "worktree": False}])
+        self.assertEqual([row["slug"] for row in data["lanes"]["unplanned"]],
+                         ["m1", "m2", "m3"])
+        self.assertEqual([row["epic"] for row in data["lanes"]["unplanned"]],
+                         ["e1", "e1", "e2"])
+
+    def test_bare_show_json_totals_match_the_text_report(self):
+        self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])
+        self.make_change("solo", status="active")
+        data = self.json_out("show", "--json")
+        self.assertEqual(self.report().splitlines()[0],
+                         "%d specs · %d epics · %d initiatives"
+                         % (data["totals"]["specs"], data["totals"]["epics"],
+                            data["totals"]["initiatives"]))
+
+    def test_bare_show_json_shipped_lane_carries_member_rows(self):
+        self.make_epic("e1", status="active",
+                       rows=[("m1", "A", ("low",) * 4)])
+        self.make_completed("m1")
+        data = self.json_out("show", "--json")
+        self.assertEqual(data["shipped"], {"done": 1, "total": 1})
+        self.assertEqual(
+            data["lanes"]["shipped"],
+            [{"epic": "e1", "slug": "m1", "state": "archived",
+              "risk": "low", "worktree": False}])
+
+    def test_bare_show_json_marks_a_worktree_hosted_row(self):
+        self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])
+        self.make_worktree_change("m1", "m1", "ready")
+        data = self.json_out("show", "--json")
+        self.assertEqual(
+            data["lanes"]["ready"],
+            [{"epic": "e1", "slug": "m1", "state": "ready",
+              "risk": "low", "worktree": True}])
+
+    def test_bare_show_text_is_unchanged_without_the_flag(self):
+        self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])
+        out = self.report()
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "1 specs · 1 epics · 0 initiatives")
+        self.assertEqual(lines[1], "shipped 0/1")
+        self.assertEqual(lines[2], "")
+        self.assertEqual(
+            self.lane_headers(out),
+            ["UNPLANNED (1)", "READY (0)", "BUILDING (0)", "SHIPPED (0)"])
+        self.assertEqual(lines[4], "  %-20s %-22s %-12s risk %s"
+                         % ("e1", "m1", "unplanned", "low"))
+
+    # -- epic-show ----------------------------------------------------------
+
+    def test_epic_show_json_carries_status_metadata_and_lanes(self):
+        self.make_epic(
+            "reporting", status="active",
+            metadata=["Theme: reliability", "Initiative: mvp-readiness"],
+            rows=[("csv-export", "CSV", ("low",) * 4),
+                  ("pdf-export", "PDF", ("high",) * 4),
+                  ("new-thing", "TBD", ("low", "low", "low", "medium"))])
+        self.make_completed("csv-export")
+        self.make_change("pdf-export", status="active")
+        data = self.json_out("epic-show", "reporting", "--json")
+        self.assertEqual(data["name"], "reporting")
+        self.assertEqual(data["kind"], "epic")
+        self.assertEqual(data["status"], "active")
+        self.assertEqual(data["metadata"],
+                         {"Theme": "reliability",
+                          "Initiative": "mvp-readiness"})
+        self.assertIsNone(data["worktree"])
+        self.assertEqual(data["shipped"], {"done": 1, "total": 3})
+        self.assertEqual(sorted(data["lanes"]),
+                         ["building", "ready", "shipped", "unplanned"])
+        self.assertEqual(
+            data["lanes"]["shipped"],
+            [{"slug": "csv-export", "state": "archived", "risk": "low",
+              "worktree": False}])
+        self.assertEqual(
+            data["lanes"]["building"],
+            [{"slug": "pdf-export", "state": "active", "risk": "high",
+              "worktree": False}])
+        self.assertEqual(
+            data["lanes"]["unplanned"],
+            [{"slug": "new-thing", "state": "unplanned", "risk": "medium",
+              "worktree": False}])
+        self.assertEqual(data["lanes"]["ready"], [])
+
+    def test_epic_show_json_member_without_ratings_reports_question_mark(self):
+        self.make_epic("e", status="ready", rows=[("member-a", "A", ())])
+        data = self.json_out("epic-show", "e", "--json")
+        self.assertEqual(data["lanes"]["unplanned"][0]["risk"], "?")
+
+    def test_epic_show_json_names_the_hosting_worktree(self):
+        self.make_worktree_epic(
+            "epic-shipd-port", "shipd-port", status="active",
+            rows=[("member-a", "A", ("low",) * 4)])
+        data = self.json_out("epic-show", "shipd-port", "--json")
+        self.assertEqual(data["worktree"], "epic-shipd-port")
+
+    def test_epic_show_json_marks_a_worktree_derived_member(self):
+        self.make_epic("e", status="ready",
+                       rows=[("member-a", "A", ("low",) * 4)])
+        self.make_worktree_change("member-a", "member-a", "ready")
+        data = self.json_out("epic-show", "e", "--json")
+        self.assertEqual(
+            data["lanes"]["ready"],
+            [{"slug": "member-a", "state": "ready", "risk": "low",
+              "worktree": True}])
+
+    def test_epic_show_text_is_unchanged_without_the_flag(self):
+        self.make_epic("e", status="active",
+                       metadata=["Theme: reliability"],
+                       rows=[("member-a", "A", ("low", "low", "low", "high"))])
+        r = self.cli("epic-show", "e")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            r.stdout,
+            "e: active\nTheme: reliability\nshipped 0/1\n\n"
+            "UNPLANNED (1)\n"
+            "  %-22s %-12s risk %s\n"
+            "READY (0)\nBUILDING (0)\nSHIPPED (0)\n"
+            % ("member-a", "unplanned", "high"))
+
+    # -- errors are unaffected by the flag ----------------------------------
+
+    def test_status_json_on_an_unknown_name_matches_the_flagless_form(self):
+        plain = self.cli("status", "no-such-thing")
+        flagged = self.cli("status", "no-such-thing", "--json")
+        self.assertEqual(plain.returncode, flagged.returncode)
+        # A name matching nothing is a change with no plan: `?` either way.
+        self.assertEqual(plain.stdout.strip(), "?")
+        self.assertEqual(json.loads(flagged.stdout)["status"], "?")
+
+    def test_a_fatal_error_still_prints_to_stderr_with_the_flag(self):
+        r = self.cli("epic-show", "no-such-epic", "--json")
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stdout, "")
+        self.assertIn("Error:", r.stderr)
+        # Byte-identical to the flagless refusal.
+        plain = self.cli("epic-show", "no-such-epic")
+        self.assertEqual(r.stderr, plain.stderr)
+
+
+class LocateJsonTest(SpecStatusTestBase):
+    """``locate --json`` emits the located blocks as a JSON array (spec-status
+    json-output).
+
+    Written test-first; expected to FAIL until the flag lands in
+    ``spec_status.py`` (task 1.2)."""
+
+    def make_worktree_change(self, worktree, change, status):
+        cdir = os.path.join(
+            self.root, ".worktrees", worktree, ".shipd", "planned", change)
+        os.makedirs(cdir)
+        with open(os.path.join(cdir, "plan.md"), "w", encoding="utf-8") as fh:
+            fh.write("# %s\nStatus: %s\n\n## Idea\nA summary.\n"
+                     % (change, status))
+        return os.path.join(self.root, ".worktrees", worktree)
+
+    def test_locate_json_is_an_array_of_rows(self):
+        self.make_change("dark-mode", status="rejected")
+        r = self.cli("locate", "dark-mode", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            json.loads(r.stdout),
+            [{"change": "dark-mode", "root": os.path.abspath(self.root),
+              "dir": os.path.join(".shipd", "planned", "dark-mode"),
+              "status": "rejected"}])
+
+    def test_locate_json_lists_root_before_worktree_matches(self):
+        self.make_change("both", status="active")
+        wt = self.make_worktree_change("member-a", "both", "ready")
+        r = self.cli("locate", "both", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = json.loads(r.stdout)
+        self.assertEqual([row["root"] for row in rows],
+                         [os.path.abspath(self.root), os.path.abspath(wt)])
+        self.assertEqual([row["status"] for row in rows], ["active", "ready"])
+
+    def test_locate_text_is_unchanged_without_the_flag(self):
+        self.make_change("dark-mode", status="rejected")
+        r = self.cli("locate", "dark-mode")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            r.stdout,
+            "change: dark-mode\nroot: %s\ndir: %s\nstatus: rejected\n"
+            % (os.path.abspath(self.root),
+               os.path.join(".shipd", "planned", "dark-mode")))
+
+    def test_locate_json_unknown_change_still_errors(self):
+        r = self.cli("locate", "no-such-change", "--json")
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stdout, "")
+        self.assertIn("Error:", r.stderr)
+
+
+class WorkspaceShowJsonTest(SpecStatusTestBase):
+    """``workspace-show --json`` emits one object mirroring the text report's
+    fields (spec-status json-output).
+
+    Written test-first; expected to FAIL until the flag lands in
+    ``spec_status.py`` (task 1.2)."""
+
+    def write_brief(self, slug, status="open", project=None):
+        bdir = os.path.join(self.root, ".shipd", "initiatives", slug)
+        os.makedirs(bdir, exist_ok=True)
+        header = ["# %s" % slug, "Status: %s" % status]
+        if project is not None:
+            header.append("Project: %s" % project)
+        with open(os.path.join(bdir, "brief.md"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(header)
+                     + "\n\nGoal prose.\n\n## Requirements\n\n- [ ] Do it\n")
+
+    def _standard_workspace(self):
+        os.makedirs(os.path.join(self.root, "present-repo"), exist_ok=True)
+        self.declare_workspace({"focus": "alpha", "projects": {
+            "alpha": {"repos": [
+                {"path": "present-repo", "url": "git@example.com:p.git"},
+                "absent-repo"]}}})
+        self.write_brief("mvp-readiness", status="open", project="alpha")
+
+    def test_workspace_show_json_mirrors_the_text_fields(self):
+        self._standard_workspace()
+        r = self.cli("workspace-show", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data = json.loads(r.stdout)
+        self.assertEqual(data["workspace"], self.root)
+        self.assertEqual(data["focus"], "alpha")
+        self.assertEqual(data["projects"], [
+            {"slug": "alpha",
+             "repos": [{"path": "present-repo", "present": True,
+                        "url": "git@example.com:p.git"},
+                       {"path": "absent-repo", "present": False,
+                        "url": None}],
+             "context": False}])
+        self.assertEqual(data["initiatives"], [
+            {"slug": "mvp-readiness", "status": "open", "project": "alpha"}])
+        self.assertTrue(data["implicit_default_project"])
+
+    def test_workspace_show_json_focus_is_null_when_undeclared(self):
+        self.declare_workspace({"projects": {}})
+        r = self.cli("workspace-show", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data = json.loads(r.stdout)
+        self.assertIsNone(data["focus"])
+        self.assertEqual(data["projects"], [])
+        self.assertEqual(data["initiatives"], [])
+
+    def test_workspace_show_text_is_unchanged_without_the_flag(self):
+        self._standard_workspace()
+        r = self.cli("workspace-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            r.stdout,
+            "workspace: %s\nfocus: alpha\nproject alpha:\n"
+            "  repo: present-repo [url]\n  repo: absent-repo (absent)\n"
+            "  context: no\ninitiatives:\n"
+            "  mvp-readiness: open (Project: alpha)\n"
+            "(this repository falls under the implicit default project)\n"
+            % self.root)
+
+    def test_workspace_show_json_without_a_workspace_still_errors(self):
+        r = self.cli("workspace-show", "--json")
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stdout, "")
+        self.assertIn("no workspace", r.stderr.lower())
+
+
 if __name__ == "__main__":
     unittest.main()

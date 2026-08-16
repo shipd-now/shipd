@@ -2241,5 +2241,108 @@ class GatingExitCodeTest(unittest.TestCase):
         self.assertEqual(self._run(["missing-id", "--root", BAD_ROOT]), 1)
 
 
+class JsonOutputTest(unittest.TestCase):
+    """The ``--json`` machine-output flag (shipd-spec-lint lint-json): one
+    JSON object on stdout carrying ``ok``, ``errors``, and ``warnings``, with
+    the flagless exit code and no text report on stdout.
+
+    Written test-first; expected to FAIL until the flag lands in
+    ``spec_lint.py`` (task 3.2)."""
+
+    DELTA = ("## ADDED Requirements\n\n"
+             "### Requirement: Good\nid: good\n\n"
+             "The system SHALL be good.\n\n"
+             "#### Scenario: s\n- **WHEN** a\n- **THEN** b\n")
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="spec-lint-json-")
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _run(self, argv):
+        """``(exit code, stdout, stderr)`` for one ``main`` invocation."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+            code = sl.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def _write_change(self, change, plan_text, delta=None):
+        cdir = os.path.join(self.root, ".shipd", "planned", change)
+        os.makedirs(os.path.join(cdir, "specs", "auth"), exist_ok=True)
+        with open(os.path.join(cdir, "plan.md"), "w", encoding="utf-8") as fh:
+            fh.write(plan_text)
+        with open(os.path.join(cdir, "specs", "auth", "spec.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(self.DELTA if delta is None else delta)
+
+    def _plan(self, change, idea="A summary."):
+        return ("# %s\nStatus: ready\n\n## Idea\n%s\n\n"
+                "### Motivation\nWhy.\n\n### Details\nThe changes.\n\n"
+                "### Non-goals\nNot that.\n\n"
+                "## Implementation\nLike so.\n" % (change, idea))
+
+    def test_clean_library_is_an_ok_object_exiting_zero(self):
+        code, out, _err = self._run(["--root", SAMPLE_ROOT, "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out),
+                         {"ok": True, "errors": [], "warnings": []})
+
+    def test_clean_change_is_an_ok_object_exiting_zero(self):
+        self._write_change("lean-change", self._plan("lean-change"))
+        code, out, _err = self._run(
+            ["lean-change", "--root", self.root, "--json"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out),
+                         {"ok": True, "errors": [], "warnings": []})
+
+    def test_findings_land_in_the_errors_array(self):
+        code, out, _err = self._run(["missing-id", "--root", BAD_ROOT,
+                                     "--json"])
+        # The exit code is the flagless one for the same findings.
+        self.assertEqual(code, self._run(["missing-id", "--root", BAD_ROOT])[0])
+        self.assertEqual(code, 1)
+        data = json.loads(out)
+        self.assertFalse(data["ok"])
+        self.assertTrue(any("has no `id:` line" in err
+                            for err in data["errors"]),
+                        data["errors"])
+
+    def test_error_strings_match_the_texts_the_text_mode_prints(self):
+        _code, _out, err = self._run(["missing-id", "--root", BAD_ROOT])
+        text_errors = [line[len("ERROR: "):] for line in err.splitlines()
+                       if line.startswith("ERROR: ")]
+        _code, out, _err = self._run(["missing-id", "--root", BAD_ROOT,
+                                      "--json"])
+        self.assertEqual(json.loads(out)["errors"], text_errors)
+
+    def test_warnings_are_carried_in_the_warnings_array(self):
+        filler = "filler text " * 800  # ~9,600 chars, over the ~8,000 budget
+        self._write_change("big-change", self._plan("big-change", filler))
+        code, out, _err = self._run(
+            ["big-change", "--root", self.root, "--json"])
+        self.assertEqual(code, 0)
+        data = json.loads(out)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["errors"], [])
+        self.assertTrue(any("context-economy budget" in warning
+                            for warning in data["warnings"]),
+                        data["warnings"])
+
+    def test_nothing_but_the_object_is_written_to_stdout(self):
+        _code, out, _err = self._run(["missing-id", "--root", BAD_ROOT,
+                                      "--json"])
+        self.assertNotIn("ERROR:", out)
+        self.assertNotIn("error(s) in", out)
+        json.loads(out)  # the whole of stdout is the one document
+
+    def test_text_mode_is_unchanged_without_the_flag(self):
+        self._write_change("lean-change", self._plan("lean-change"))
+        code, out, err = self._run(["lean-change", "--root", self.root])
+        self.assertEqual(code, 0)
+        self.assertEqual(out, "OK: change 'lean-change' is valid.\n")
+        self.assertEqual(err, "")
+
+
 if __name__ == "__main__":
     unittest.main()
