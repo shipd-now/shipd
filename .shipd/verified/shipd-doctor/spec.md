@@ -36,7 +36,9 @@ id: doctor-remedy-boundaries
 
 The skill's remedy table SHALL be: a `textual` warning →
 `python3 -m pip install "textual>=8.2.8,<9"` (the range mirrored from
-`requirements.txt`); a stale `snapshot` warning →
+`requirements.txt`); a `pydantic` warning →
+`python3 -m pip install "pydantic>=2.12,<3"` (the range likewise mirrored
+from `requirements.txt`); a stale `snapshot` warning →
 `claude plugin update s@shipd` with the restart-to-apply note; a missing
 `gh` or `git` → the platform-appropriate install command, stated before it
 runs. An unauthenticated `gh` SHALL be handed to the user as
@@ -54,6 +56,12 @@ never install an interpreter and never edit a `.shipd-config.json`. The
 - **WHEN** the findings include a `config` failure naming a malformed file
 - **THEN** the skill reports the file and error with no edit performed and
   proposes no remedy command for it
+
+#### Scenario: Pydantic remedy runs only on consent
+- **WHEN** the findings include a `warn pydantic` line and the user consents
+  to its remedy
+- **THEN** the skill runs `python3 -m pip install "pydantic>=2.12,<3"`, then
+  re-runs the preflight and reports the before/after states
 
 ### Requirement: Doctor skill registration
 id: doctor-skill-registration

@@ -60,7 +60,7 @@ code is `1` when a required check failed, `0` otherwise.
 
 Parse each line into `(level, check, detail)` and keep the whole output
 verbatim as the **before** state. The checks are `python`, `git`, `config`,
-`gh`, `textual`, and `snapshot`.
+`gh`, `textual`, `pydantic`, and `snapshot`.
 
 **Unparseable output is your own failure.** If the command produced no output,
 no closing `doctor:` line, or lines that do not match the format above, report
@@ -82,6 +82,7 @@ exhaustive: a finding not listed here is **report-only**.
 | Finding | Remedy | How it runs |
 | --- | --- | --- |
 | `warn textual` — not importable | `python3 -m pip install "textual>=8.2.8,<9"` | Runnable on consent. The range mirrors `requirements.txt`; keep the two in step. |
+| `warn pydantic` — not importable | `python3 -m pip install "pydantic>=2.12,<3"` | Runnable on consent. The range mirrors `requirements.txt`; the two must change together. |
 | `warn snapshot` — a newer version is installed | `claude plugin update s@shipd` | Runnable on consent. Always add the note that the update applies **in a new session** — skills load at session start. |
 | `warn gh` — not on PATH | The platform-appropriate install command (macOS: `brew install gh`; Debian/Ubuntu: `sudo apt install gh`; otherwise point at https://cli.github.com) | Runnable on consent. **State the exact command in the dialog before it runs**, so a wrong platform guess is visible first. |
 | `fail git` — not on PATH | The platform-appropriate install command (macOS: `xcode-select --install` or `brew install git`; Debian/Ubuntu: `sudo apt install git`; otherwise point at https://git-scm.com/downloads) | Runnable on consent. Same rule: state the exact command first. |
@@ -95,7 +96,7 @@ installable one; "is not authenticated" is the hand-off one.
 ## 5. One consent dialog
 
 Collect consent in **one batched selection** over the runnable remedies (the
-first four rows above). Honor the dialog-and-prose-separation rule:
+first five rows above). Honor the dialog-and-prose-separation rule:
 
 - If the findings need a substantive brief — more than a one-line lead-in —
   **end that turn as plain text**: the findings, their remedies, and the

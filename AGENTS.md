@@ -111,15 +111,23 @@ remove a captured memory from the personal store, and `/s:doctor` to run the
 read-only `shipd doctor` preflight and then run the remedies the user consents
 to.
 
-### The delivery board's one third-party dependency
+### The engine's two third-party dependencies
 
-The spec engine is stdlib-only Python 3 (`.shipd/constitution.md`), with a single
-named exception: `plugins/s/skills/build/scripts/dashboard.py`'s `tui` verb
-renders the delivery board as a `textual` application. `textual` is pinned in
-the repo-root `requirements.txt` — run `pip install -r requirements.txt`
-before using `dashboard.py tui` or running its test suite,
-`plugins/s/skills/build/tests_textual/`. Every other engine script, including
-the rest of `dashboard.py` and the delivery engine `autopilot.py` depends on
-(via the stdlib-only `heartbeat.py`), stays dependency-free —
-`plugins/s/skills/build/tests/` never installs `textual` and always passes
-without it.
+The spec engine is stdlib-only Python 3 (`.shipd/constitution.md`), with two
+scoped exceptions, both pinned in the repo-root `requirements.txt`:
+
+- **`textual` — the delivery board's `tui`.**
+  `plugins/s/skills/build/scripts/dashboard.py`'s `tui` verb renders the board
+  as a `textual` application. Run `pip install -r requirements.txt` before
+  using `dashboard.py tui` or running its test suite,
+  `plugins/s/skills/build/tests_textual/`.
+- **`pydantic` — declared-pipeline validation.** Only the pipeline-declaration
+  validation path may import it, and only lazily; nothing else in the engine
+  does. `plugins/s/bin/shipd doctor` reports a `warn pydantic` line when it is
+  not importable — the probe uses `importlib.util.find_spec`, so the binary
+  itself stays stdlib-only — and `/s:doctor` offers the consent-gated install.
+
+Every other engine script, including the rest of `dashboard.py` and the
+delivery engine `autopilot.py` depends on (via the stdlib-only
+`heartbeat.py`), stays dependency-free — `plugins/s/skills/build/tests/` never
+installs `textual` or `pydantic` and always passes without them.
