@@ -206,18 +206,19 @@ class DispatchTest(ShipdCliTestBase):
 
     @unittest.skipUnless(HAS_TEXTUAL, "dashboard.py's script entry provisions "
                                       "textual; see HAS_TEXTUAL")
-    def test_retired_html_mode_falls_through_to_the_interactive_delegate(self):
-        # ``html`` is no longer a board mode word, so it is not consumed: it
-        # reaches ``dashboard.py tui`` as a trailing argument, which argparse
-        # rejects.
+    def test_unknown_board_mode_word_falls_through_to_the_interactive_delegate(
+            self):
+        # ``text`` is the only board mode word, so any other word is not
+        # consumed: it reaches ``dashboard.py tui`` as a trailing argument,
+        # which argparse rejects by name. Naming it in the assertion is what
+        # makes this discriminating — a wrongly-consumed word would run
+        # ``dashboard.py board --root <root>`` cleanly instead.
         self.make_epic("ep", ["m1"])
         self.make_change(self.root, "m1", status="ready")
-        out = os.path.join(self.root, "board.html")
-        r = self.cli("board", "html", "--root", self.root, "--out", out,
-                     "--once")
+        r = self.cli("board", "frobnicate", "--root", self.root)
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("unrecognized arguments", r.stderr)
-        self.assertFalse(os.path.exists(out), "fall-through wrote a page")
+        self.assertIn("frobnicate", r.stderr)
 
     def test_retired_tui_verb_is_a_usage_error(self):
         r = self.cli("tui")

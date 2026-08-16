@@ -104,9 +104,8 @@ the only other human touchpoint is enriching a rejected plan.
   worktree lives) switches the skill to enrichment: diagnose the in-plan
   findings, resolve what the codebase answers, interview only the true
   gaps, then re-gate. Autopilot runs write a live heartbeat consumed by a
-  board (TUI and auto-refresh HTML) showing runs scoped by epic, each
-  spec's stage, and initiative/theme context — a parked member is never
-  invisible again.
+  board (TUI) showing runs scoped by epic, each spec's stage, and
+  initiative/theme context — a parked member is never invisible again.
 - **Review verdict is a required status check.** Auto-merge proceeds only
   on ci + semantic-review green; the review posts a summary plus inline
   comments on the PR, CodeRabbit-style, via `gh`.
@@ -159,4 +158,4 @@ assembled when 5 and 7 land, and fully operable when 8 and 9 land.
 | plan-enrichment | `/s:plan` rejected-mode recovery: locate verb, gap diagnosis from the in-plan report, enrichment interview, re-gate | medium | medium | low | low |
 | semantic-review-engine | AST-aware semantic diff analyzer with language adapters and structural-text fallback | high | medium | high | medium |
 | semantic-review-gate | CodeRabbit-style PR summary + inline comments and a required status check wired to auto-merge | medium | high | medium | medium |
-| delivery-dashboard | Autopilot run heartbeat, board aggregator verb, curses TUI and auto-refresh HTML: runs by epic, spec stages, initiative and theme context | high | medium | medium | medium |
+| delivery-dashboard | Autopilot run heartbeat, board aggregator verb, curses TUI: runs by epic, spec stages, initiative and theme context | high | medium | medium | medium |

@@ -40,10 +40,10 @@ same banner to stdout and exit `0`.
 - **THEN** the output of `dashboard.py board --root <repo>` is printed and the
   exit code is `0`
 
-#### Scenario: Retired html mode falls through to the interactive delegate
-- **WHEN** `shipd board html --out <path> --once` runs
+#### Scenario: Unknown board mode word falls through to the interactive delegate
+- **WHEN** `shipd board frobnicate --once` runs
 - **THEN** the arguments delegate to `dashboard.py tui`, which rejects them as
-  unrecognized and exits `2`, and no page file is written
+  unrecognized and exits `2`
 
 #### Scenario: Retired tui verb is a usage error
 - **WHEN** `shipd tui` runs

@@ -160,7 +160,7 @@ into it from `requirements.txt` (printing a one-time setup message on stderr),
 and re-exec the same command with that venv's interpreter — so the board runs
 with no manual install and without modifying the system Python. Provisioning
 SHALL be attempted for any `dashboard.py` verb invocation that finds `textual`
-missing (so `board` and `html` also work), SHALL be skipped entirely when
+missing (so `board` also works), SHALL be skipped entirely when
 `textual` is already importable, and — if venv creation or the install fails —
 SHALL fall back to a clear `pip install` hint and a non-zero exit. The app SHALL present a single **header bar** in place of textual's stock `Header` and the previous controls strip — carrying, left to right, a **brand block** (an accent-styled `shipd` beside a muted `delivery board` label), the **centered search input** with its clear control and match-count label (see the Board search requirement), the **grouping segmented control** (see the Board epic grouping requirement) with the **activity indicator** beside it, and the live throughput chart (see the Board throughput chart requirement) — a `Footer` showing the key bindings, and below the header bar a horizontal board of **five bordered lifecycle lanes** (`unplanned`, `ready`, `building`, `review`, `shipped`), each a
 vertically-scrolling column. Each lane SHALL carry a **one-row tinted header
@@ -807,9 +807,9 @@ SHALL expose per-lane variables (`lane-unplanned` `#8888A0`, `lane-ready`
 `#3DCC8E`) and risk variables (`risk-high` `#FF8C42`, `risk-medium` `#C6FF4E`,
 `risk-low` `#55556A`) as named theme variables for widget CSS to reference,
 and the TUI widget CSS SHALL reference colors only through `$` theme
-variables — no hex literals and no named colors outside the theme definition
-(the `html` verb's separate inline page CSS is exempt). The board chrome SHALL
-render flat dark surfaces: lane and modal borders are flat (non-round)
+variables — no hex literals and no named colors outside the theme
+definition. The board chrome SHALL render flat dark surfaces: lane and modal
+borders are flat (non-round)
 theme-variable borders, task-card risk glyphs are coloured through the risk
 variables (high=orange, medium=chartreuse, low=dim), and focus highlights
 derive from the accent.

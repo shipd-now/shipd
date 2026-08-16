@@ -43,8 +43,7 @@ Success criteria:
 ### Non-goals
 
 - No browser or web UI: the `.dc.html` mock is a visual reference only; the
-  deliverable is the `textual` TUI. The `html` verb's static page is out of
-  scope.
+  deliverable is the `textual` TUI.
 - No priority metadata: the existing per-member risk rating is the priority
   signal (no `urgent` tier, no new stub-table column).
 - No ID scheme: kebab-case slugs remain the only identity; the mock's
