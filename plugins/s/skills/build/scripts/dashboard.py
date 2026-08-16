@@ -1301,7 +1301,8 @@ def _lane_signature(cards, group_mode, search_query, initiative_by_epic=None,
     grouping mode (``epic``/``initiative``/``none``), the active
     ``search_query``, and the active ``filters`` (an ordered tuple of
     ``(kind, value)`` chips) — equal when every card's epic slug/status, member
-    slug/state, live stage, and eligible actions match in the same order *and*
+    slug/state, live stage (from the roster entry and from a live build
+    heartbeat), and eligible actions match in the same order *and*
     ``group_mode``, the query, and the filter chips are unchanged; differs
     otherwise. Folding the query in means a query edit always repaints (the
     highlight span changes even when the filtered set does not), while an idle
@@ -1322,9 +1323,18 @@ def _lane_signature(cards, group_mode, search_query, initiative_by_epic=None,
         entry = entry or {}
         initiative = (initiative_by_epic.get(epic_slug)
                       if group_mode != "none" else None)
+        # A live interactive build heartbeat drives both the card's lane and
+        # its stage suffix, so its stage folds in too — a stage transition
+        # that keeps the member in one lane, or a heartbeat ageing past
+        # `BUILD_FRESH_SECONDS` into the same lane, still repaints
+        # (delivery-dashboard board-live-build-lane spec). Judged against the
+        # wall clock: this is the render path, which has no injected clock.
+        build_hb = member.get("build_heartbeat")
+        build_stage = build_hb.get("stage") if _build_is_live(build_hb) \
+            else None
         sig.append((epic_slug, status, initiative,
                     member.get("slug"), member.get("state"),
-                    entry.get("stage"), entry.get("state"),
+                    entry.get("stage"), entry.get("state"), build_stage,
                     tuple(member.get("actions") or ())))
     return tuple(sig)
 

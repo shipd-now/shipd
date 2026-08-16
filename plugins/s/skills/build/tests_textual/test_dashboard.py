@@ -4561,6 +4561,42 @@ class LaneSignatureTest(unittest.TestCase):
             _one_card_board(stage=stage), "building")
         self.assertNotEqual(building_sig("build"), building_sig("test"))
 
+    def _build_board(self, stage, updated_at=None):
+        """A one-member board whose ``active`` member carries an interactive
+        build heartbeat at ``stage``, stamped ``updated_at`` (default: now).
+        The member lands in ``building`` either way — live by the heartbeat,
+        and by the plain state mapping once it ages out — so a signature
+        difference can only come from the folded-in build stage."""
+        board = _one_card_board(state="active")
+        board["epics"][0]["members"][0]["build_heartbeat"] = {
+            "slug": "m", "kind": "build", "state": "running", "stage": stage,
+            "updated_at": time.time() if updated_at is None else updated_at}
+        return board
+
+    def _building_sig(self, board):
+        # Guard that lane membership itself is unchanged, so the assertions
+        # below test the folded build stage rather than a card appearing or
+        # vanishing from the lane.
+        self.assertEqual(len(dashboard._lane_contents(board)["building"]), 1)
+        return self._sig(board, "building")
+
+    def test_differs_when_the_live_build_stage_changes(self):
+        # An `implement` -> `verify` transition keeps the member in
+        # `building`; without the build stage in the signature the lane never
+        # repaints and the card's stage suffix freezes (board-live-build-lane).
+        self.assertNotEqual(self._building_sig(self._build_board("implement")),
+                            self._building_sig(self._build_board("verify")))
+
+    def test_differs_when_the_build_heartbeat_ages_out(self):
+        # The liveness flip alone must repaint: the stale card's fallback lane
+        # is also `building`, so otherwise a dead build keeps a phantom
+        # `· implement` suffix forever.
+        stale_at = time.time() - dashboard.BUILD_FRESH_SECONDS - 1
+        self.assertNotEqual(
+            self._building_sig(self._build_board("implement")),
+            self._building_sig(self._build_board("implement",
+                                                 updated_at=stale_at)))
+
     def test_differs_across_the_three_modes(self):
         board = _kanban_board()
         sigs = {self._sig(board, "building", group_mode=mode)
