@@ -155,6 +155,33 @@ selection, not by a `ready` member ever appearing in the dry run's ordered
 list. Only member states other than `unplanned` and `ready` are left
 undriven; every `unplanned` and every `ready` member is selected and driven.
 
+### The entry walk
+
+The resolved **entry list** is the drive's script. Obtain it **once per run**
+from the status CLI's machine contract — never re-derive it in the skill, and
+never read it off the dry run's rendered labels:
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-show --json
+```
+It emits `{"source": "<source>", "entries": [...]}`; the `entries` array, in
+order, is the pipeline every driven member walks, and each entry dict carries
+exactly the options it declares.
+
+For each driven member, walk that array starting at the member's **entry
+stage** (the table above): slice the list to start at the first entry whose
+`stage` equals that stage — `unplanned` → the first `plan` entry, `ready` → the
+first `build` entry — and run the entries from there in list order. This
+mirrors `_pipeline_from_stage` in
+`plugins/s/skills/build/scripts/autopilot.py`. Every entry **before** the slice
+point — custom entries included — is already satisfied and is **not** run. If
+no entry carries the member's entry stage, walk the whole list unchanged.
+
+The dry run remains the source of the **member order** only (see Member order
+and pipeline above); its rendered entry labels are human-facing and carry no
+contract status. Each entry is then handled by its form (see Entry forms
+below), and a sub-agent is spawned only for a built-in stage entry the forms
+leave to its built-in behavior.
+
 ### Per-member setup
 
 `worktree.sh` is idempotent: it reuses a member's existing worktree (or
@@ -165,6 +192,31 @@ resume needs no guard. For each member being driven, invoke it unconditionally:
 ```
 Run every stage for that member with that worktree (`.worktrees/<member>`) as
 the working directory.
+
+### Entry forms
+
+Every entry in the walked slice is dispatched by its **form**, mirroring the
+detached driver's `drive_member` in
+`plugins/s/skills/build/scripts/autopilot.py`:
+
+| entry form | in-session handling |
+| --- | --- |
+| `custom` | run its `command` via Bash in the member's worktree, at its position in the list |
+| `skip: true` | announce the entry as skipped and run nothing for it |
+| `stage` of `research` or `epic` | note it as a pre-approval stage and ignore it |
+| `replace` declaring a `command` | run that command via Bash in the member's worktree **in place of** the built-in stage — spawn no stage sub-agent |
+| `replace` naming only a `tool` | announce that the replacement has no command, and skip the entry — the built-in behavior does **not** run |
+| a built-in `stage` (`plan`, `gate`, `build`, `review`) with none of the above | its built-in behavior, below |
+
+The rows are tested **in that order**, exactly as the driver tests them: a
+`custom` entry first (it carries no `stage`), then `skip`, then the
+pre-approval stages, then a `replace`, and only then the built-in behavior.
+
+Command entries — custom steps and replacements alike — run **directly via
+Bash** with the member's worktree as the working directory, never through a
+sub-agent; this is the same precedent as the `gate` entry, which the drive
+already runs directly. By schema a skipped entry carries no other option, so no
+option handling applies to it.
 
 ### Running a stage
 
@@ -214,16 +266,11 @@ the stage is graded on the `semantic-review` status being green AND
 
 ### Stage options declared by the resolved entry
 
-Obtain the resolved entries and their declared options from the status CLI's
-machine contract, run once per run:
-```
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-show --json
-```
-Read each entry's options from the emitted object's `entries` dicts — e.g.
-`{"stage": "build", "subagent_model": "tier-two-below", "validator": false,
-"telemetry": false}` — and never re-derive them from the config. The dry run
-remains the source of the **member order** only; its rendered entry labels are
-human-facing and carry no contract status.
+Read each entry's options from the `entries` dicts of the same
+`pipeline-show --json` object the walk consumes (The entry walk above — one
+call per run) — e.g. `{"stage": "build", "subagent_model": "tier-two-below",
+"validator": false, "telemetry": false}` — and never re-derive them from the
+config.
 
 **A declared `model` picks the stage sub-agent's model.** When the entry
 declares `model`, spawn that stage's sub-agent with the Agent tool's `model`
@@ -234,6 +281,18 @@ parameter set to the tier resolved **relative to this session**:
 | `session` | omit the parameter — the sub-agent inherits this session's model |
 | `tier-below` / `tier-two-below` | the alias one / two steps below this session's own model on the ladder `fable` → `opus` → `sonnet` → `haiku`, clamped at `haiku` |
 | anything else | a concrete model id — pass it verbatim |
+
+**A declared `tools` binding decorates the stage instruction.** When the entry
+declares `tools`, append to that stage's instruction a blank line and then this
+line, verbatim per `_stage_prompt` in
+`plugins/s/skills/build/scripts/autopilot.py`:
+```
+Preferred tools for this stage, use when available: <name> (fallback: <fallback>); <name> (fallback: <fallback>).
+```
+— one `<name> (fallback: <fallback>)` per binding in the entry's declared
+order, joined by `; `, and the line ends with a period. A `gate` entry spawns
+no sub-agent in-session, so its `tools` have no instruction to decorate —
+exactly as in the detached driver, where only stage prompts carry the suffix.
 
 **`autopilot` blocks are ignored in-session.** An entry's `autopilot.attempts`,
 `autopilot.timeout`, and `autopilot.max_resumes` are the detached driver's
@@ -287,9 +346,11 @@ A `gate` entry in the resolved pipeline is run directly (`spec_gate.py
 contract below for what happens on a rejection.
 
 Members are driven **one at a time**, in the dry run's order — no member's
-stages start before the previous member finishes or stops. No headless
-`claude -p` process is started anywhere in this mode; every stage runs as an
-Agent-tool sub-agent inside this session.
+entries start before the previous member finishes or stops. No headless
+`claude -p` process is started anywhere in this mode: every built-in stage the
+entry forms leave to its built-in behavior runs as an Agent-tool sub-agent
+inside this session, and the `gate` and command entries run directly from this
+session via Bash.
 
 ### Grading a stage
 
@@ -298,11 +359,32 @@ Agent-tool sub-agent inside this session.
 | `plan` | `spec_status.py status <member>` prints `ready` **and** `spec_lint.py <member>` exits 0 |
 | `build` | a `completed/` entry ending in `-<member>` exists **and** `gh pr view change/<member> --json url` yields a URL |
 | `review` | the PR head's `semantic-review` commit status is `success` **and** `review_gate.py resolve --check` reports `unresolved=0` |
+| a `custom` entry | the `command` the drive ran in the member's worktree exited 0 |
+| a `replace` entry declaring a `command` | that command, run by the drive in the member's worktree in place of the built-in stage, exited 0 |
 
 A stage is graded **by reading the repository through these public CLIs — never
 by trusting the sub-agent's own summary.** A sub-agent reporting success over a
 stage that has not actually met its grade — an ungraded stage — does not
 advance the drive; only a passing grade from the table above does.
+
+A **command entry** (custom or replacement) is graded on the exit code the
+drive itself observed from its own Bash run — never on a sub-agent summary,
+since no sub-agent is spawned for it. Exit 0 passes the entry and the walk
+continues to the next one.
+
+### The sub-agent reporting contract
+
+A stage sub-agent **cannot message this orchestrator mid-run**: its report
+reaches you only as the **final text of its turn**. So a stage sub-agent runs
+its stage to a terminal state within its own turn and ends that turn with its
+report; nothing it leaves running in its own context — a background process, a
+`gh pr` watch, a poll loop — is ever observed here, because no one resumes a
+sub-agent to collect it.
+
+The orchestrator therefore **grades from the repository** (the table above) the
+moment a stage sub-agent's turn ends, and **never waits** on a process or watch
+a sub-agent left running. The report is context for the grade, never a
+substitute for it.
 
 ### Failure contract: ask, never park
 
@@ -314,8 +396,14 @@ The in-session drive has a human present, so it never parks a member as
   user, naming the member and the stage that failed.
 - **A gate rejection** — `spec_gate.py <member>` exits rejecting the plan's
   context — is likewise **raised to the user**, not parked as `rejected`.
+- **A command entry exiting non-zero** — a custom step's command, or a
+  replacement's — **stops the drive** the same way, naming both the member and
+  the entry that failed (`custom:<name>` for a custom step, the replaced stage
+  for a replacement) along with the command's exit code and output. It is never
+  retried on an attempt budget (the detached driver's `attempts` are ignored
+  in-session) and the member is never parked.
 
-In both cases, **no further member is started** while the stop is unanswered;
+In every case, **no further member is started** while the stop is unanswered;
 the drive resumes with the same member and stage once the user responds.
 
 ### Resuming an interrupted run
@@ -334,8 +422,10 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/heartbeat.py" build-start <m
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/heartbeat.py" build-stage <member> --stage <stage>
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/heartbeat.py" build-finish <member> --outcome <outcome>
 ```
-Run `build-start` when the member begins, `build-stage` as each stage is
-entered, and `build-finish` with the member's outcome when it ends. These
+Run `build-start` when the member begins, `build-stage` as each entry is
+entered, and `build-finish` with the member's outcome when it ends. The
+`--stage` label mirrors the detached driver's: the entry's stage name for a
+built-in or replaced stage entry, and `custom:<name>` for a custom entry. These
 verbs are **fail-soft** — a heartbeat write failure never stops the drive.
 
 This heartbeat only makes the board's **activity indicator** report the run
