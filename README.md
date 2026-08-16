@@ -180,6 +180,10 @@ pipeline over the `research → epic → plan → gate → build → review` sta
 registry. Entries run a stage as built in, skip it, bind tools to it, replace
 its implementation, or insert a `custom` step; a declared list is wholesale
 (omitted stages do not run) and, absent the key, the full default pipeline runs.
+The key also accepts a **built-in preset name** — `default`, `eco`, or `basic` —
+so cheapening a delivery is a one-line opt-in, and
+`spec_status.py pipeline-show --expand <preset>` prints a preset's entry list as
+the starting point for a custom one.
 `spec_status.py pipeline-show` prints the effective pipeline and its provenance.
 See [`.shipd/README.md`](.shipd/README.md) for the full entry grammar.
 

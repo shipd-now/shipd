@@ -1596,37 +1596,105 @@ def cmd_config_show(root):
     return 0
 
 
+# The declared per-stage option fields rendered after a pipeline entry's form
+# label, in this order (spec-status pipeline-show-verb). `autopilot` is an
+# object and renders as `autopilot.<key>=<value>` per declared sub-key.
+_PIPELINE_OPTION_KEYS = ("model", "subagent_model", "validator", "telemetry",
+                         "parallelism", "disposition")
+
+
+def _render_option(value):
+    """Render one option value: booleans as JSON-style ``true``/``false``, so
+    the printed pair reads back as the config value it came from."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _pipeline_options_suffix(entry):
+    """Render an entry's declared per-stage options as ``key=value`` pairs
+    joined with ``", "``, empty when the entry declares none — so an entry
+    without options renders exactly as it did before options existed."""
+    pairs = []
+    for key in _PIPELINE_OPTION_KEYS:
+        if key in entry:
+            pairs.append("%s=%s" % (key, _render_option(entry[key])))
+    for key, value in (entry.get("autopilot") or {}).items():
+        pairs.append("autopilot.%s=%s" % (key, _render_option(value)))
+    return ", ".join(pairs)
+
+
 def _format_pipeline_entry(entry):
     """Render one resolved pipeline entry as a single human-readable line
-    stating its form and any bindings with their fallbacks (spec-status
-    pipeline-show-verb)."""
+    stating its form, any bindings with their fallbacks, and any declared
+    per-stage options (spec-status pipeline-show-verb)."""
     if "custom" in entry:
-        return "custom '%s'  command: %s" % (
+        label = "custom '%s'  command: %s" % (
             entry.get("custom"), entry.get("command"))
-    stage = entry.get("stage")
-    if entry.get("skip") is True:
-        return "%s  (skipped)" % stage
-    if "tools" in entry:
-        bindings = ", ".join(
-            "%s (fallback=%s)" % (t.get("name"), t.get("fallback"))
-            for t in entry["tools"])
-        return "%s  tools: %s" % (stage, bindings)
-    if "replace" in entry:
-        rep = entry["replace"]
-        kind = "command" if rep.get("command") else "tool"
-        return "%s  replaced by %s '%s' (fallback=%s)" % (
-            stage, kind, rep.get(kind), rep.get("fallback"))
-    return stage
+    else:
+        stage = entry.get("stage")
+        if entry.get("skip") is True:
+            label = "%s  (skipped)" % stage
+        elif "tools" in entry:
+            bindings = ", ".join(
+                "%s (fallback=%s)" % (t.get("name"), t.get("fallback"))
+                for t in entry["tools"])
+            label = "%s  tools: %s" % (stage, bindings)
+        elif "replace" in entry:
+            rep = entry["replace"]
+            kind = "command" if rep.get("command") else "tool"
+            label = "%s  replaced by %s '%s' (fallback=%s)" % (
+                stage, kind, rep.get(kind), rep.get("fallback"))
+        else:
+            label = stage
+    options = _pipeline_options_suffix(entry)
+    return "%s  %s" % (label, options) if options else label
 
 
-def cmd_pipeline_show(root):
+def _expand_pipeline_preset(name):
+    """Return the named preset's entry list — the exact value a config may
+    declare as its own `autonomous-pipeline` list (spec-status
+    pipeline-show-verb).
+
+    An unknown name is a :class:`StatusError` listing the known presets, raised
+    before any import; ``default`` expands from the stdlib stage registry, so it
+    needs no third-party package. Every other known name expands through
+    ``pipeline_schema``, whose absent pydantic is the same fail-closed
+    install-hint error resolution raises."""
+    if name not in sc.PIPELINE_PRESETS:
+        raise StatusError(
+            "unknown pipeline preset '%s'; known presets: %s"
+            % (name, ", ".join(sorted(sc.PIPELINE_PRESETS))))
+    if name == "default":
+        return [{"stage": stage} for stage in sc.PIPELINE_STAGES]
+    try:
+        import pipeline_schema
+    except ModuleNotFoundError:
+        raise StatusError(
+            "expanding preset '%s' requires pydantic; "
+            "pip install -r requirements.txt" % name)
+    try:
+        return pipeline_schema.expand_preset(name)
+    except ValueError as exc:
+        raise StatusError(str(exc))
+
+
+def cmd_pipeline_show(root, expand=None):
     """Print the effective autonomous pipeline: one line per resolved entry
-    (form + bindings with fallbacks) plus the provenance of the
-    ``autonomous-pipeline`` key — the supplying config file path, or
+    (form + bindings with fallbacks + declared per-stage options) plus the
+    provenance of the ``autonomous-pipeline`` key — the supplying config file
+    path, ``preset:<name>`` with that path for a preset-resolved pipeline, or
     ``[default]`` when no layer declares it (spec-status pipeline-show-verb).
     Requires no workspace and no selected change; a defaults-only resolution
     exits zero. A pipeline that fails validation raises, printing every
-    validation error and exiting non-zero."""
+    validation error and exiting non-zero.
+
+    With ``expand`` naming a preset, no config is resolved at all: the preset's
+    entry list prints as indented JSON — the value to paste as the key to fork
+    it into a custom list — and the verb exits zero."""
+    if expand is not None:
+        print(json.dumps(_expand_pipeline_preset(expand), indent=2))
+        return 0
     try:
         entries, provenance = sc.resolve_pipeline(root)
     except sc.ConfigError as exc:
@@ -2501,9 +2569,14 @@ def main(argv=None):
         "config-show",
         help="print the resolved layered configuration and its provenance")
 
-    sub.add_parser(
+    p_pipeline_show = sub.add_parser(
         "pipeline-show",
         help="print the effective autonomous pipeline and its provenance")
+    p_pipeline_show.add_argument(
+        "--expand", metavar="PRESET",
+        help="print the named built-in preset's entry list as JSON (the value "
+             "to declare to fork it into a custom list) instead of resolving "
+             "this repo's pipeline")
 
     p_cat = sub.add_parser(
         "cat",
@@ -2635,7 +2708,7 @@ def main(argv=None):
         if args.verb == "config-show":
             return cmd_config_show(root)
         if args.verb == "pipeline-show":
-            return cmd_pipeline_show(root)
+            return cmd_pipeline_show(root, expand=args.expand)
         if args.verb == "cat":
             return cmd_cat(root, args.kind, args.slug, args.personal)
         if args.verb == "initiative-show":

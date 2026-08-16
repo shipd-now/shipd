@@ -223,6 +223,41 @@ merges **nearest-wins-wholesale** — the closest layer declaring it wins the
 whole key. Inspect the effective pipeline and its provenance with
 `spec_status.py pipeline-show`.
 
+#### Preset names — the one-line form
+
+Instead of a list, the key MAY hold a **string naming a built-in preset**:
+
+```json
+{ "autonomous-pipeline": "eco" }
+```
+
+The shipped presets are:
+
+- `default` — every registry stage, bare, in canonical order: exactly the
+  pipeline you get with the key absent, resolved without pydantic.
+- `eco` — the cheap delivery: `research` and `epic` skipped, `plan` on the
+  session model, `gate` with one autopilot attempt, `build` without the
+  validator on a two-tiers-below subagent model and without telemetry,
+  `review` a tier below with `high-only` disposition.
+- `basic` — cheaper still: `eco` with the gate skipped, `build`'s subagent
+  model one tier below, and telemetry left on.
+
+Every shipped preset keeps `plan` on the session model and keeps an **unskipped
+review** — the cheap presets cheapen review through its `model` and
+`disposition`, never by dropping it.
+
+The key holds **a preset name or a list, never both**: presets do not merge
+with overrides. To start from a preset and tweak it, print it and commit the
+result as your own list — `spec_status.py pipeline-show --expand eco` prints
+the preset's entry list as JSON, which is exactly what the key accepts.
+
+An unknown preset name is an error naming the known presets and the config file
+that supplied it. Every preset but `default` expands through the same pydantic
+validation a declared list gets, so it fails closed with an install hint when
+pydantic is not importable; `default` and `--expand default` need no
+third-party package at all. A preset-resolved pipeline reports its provenance
+as `preset:<name> (<config-path>)`.
+
 ### Context economy
 
 `plan.md` and each delta spec should stay under **~2,000 tokens** (roughly

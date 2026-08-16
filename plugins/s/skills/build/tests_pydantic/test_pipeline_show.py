@@ -21,8 +21,12 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPT = os.path.normpath(
-    os.path.join(HERE, "..", "scripts", "spec_status.py"))
+SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
+SCRIPT = os.path.join(SCRIPTS, "spec_status.py")
+if SCRIPTS not in sys.path:
+    sys.path.insert(0, SCRIPTS)
+
+import pipeline_schema  # noqa: E402
 
 
 class PipelineShowDeclaredTest(unittest.TestCase):
@@ -106,6 +110,56 @@ class PipelineShowDeclaredTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("plan", r.stdout)
         self.assertIn("build", r.stdout)
+
+
+class PipelineShowPresetTest(unittest.TestCase):
+    """`pipeline-show` on a preset-resolved pipeline: the preset provenance,
+    the per-stage options suffix on each entry line, and `--expand` printing a
+    preset as a fork-ready entry list (spec-status pipeline-show-verb,
+    shipd-config pipeline-presets). Expanding a non-`default` preset validates
+    through the schema, so these cases require pydantic. Fixture plumbing —
+    isolated ``$HOME``, throwaway root, `sys.executable` CLI — is the
+    declared-pipeline case's."""
+
+    setUp = PipelineShowDeclaredTest.setUp
+    tearDown = PipelineShowDeclaredTest.tearDown
+    cli = PipelineShowDeclaredTest.cli
+    _write_config = PipelineShowDeclaredTest._write_config
+
+    def _lines(self, stdout):
+        """Map each rendered entry line to its stage/custom name."""
+        lines = {}
+        for line in stdout.splitlines():
+            stripped = line.strip()
+            if not stripped or not stripped[0].isdigit():
+                continue
+            body = stripped.split(". ", 1)[1]
+            lines[body.split()[0]] = body
+        return lines
+
+    def test_eco_prints_preset_provenance_and_options(self):
+        self._write_config(self.root, {"autonomous-pipeline": "eco"})
+        r = self.cli("pipeline-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        source = r.stdout.splitlines()[0]
+        self.assertIn("preset:eco", source)
+        self.assertIn(os.path.join(self.root, ".shipd-config.json"), source)
+        lines = self._lines(r.stdout)
+        self.assertIn("skipped", lines["research"])
+        self.assertIn("autopilot.attempts=1", lines["gate"])
+        for pair in ("validator=false", "subagent_model=tier-two-below",
+                     "telemetry=false"):
+            self.assertIn(pair, lines["build"])
+        for pair in ("model=tier-below", "disposition=high-only"):
+            self.assertIn(pair, lines["review"])
+
+    def test_expand_eco_prints_the_forkable_entry_list(self):
+        r = self.cli("pipeline-show", "--expand", "eco")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        entries = json.loads(r.stdout)
+        self.assertEqual(entries, pipeline_schema.PRESETS["eco"])
+        # And the printed value is valid as a declared list.
+        self.assertEqual(pipeline_schema.validate_entries(entries), entries)
 
 
 if __name__ == "__main__":

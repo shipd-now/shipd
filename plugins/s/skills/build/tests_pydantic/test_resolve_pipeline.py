@@ -281,5 +281,73 @@ class ResolveDeclaredPipelineTest(unittest.TestCase):
             self._assert_error(tmp, home, {"stage": "plan"}, "list")
 
 
+ECO_ENTRIES = [
+    {"stage": "research", "skip": True},
+    {"stage": "epic", "skip": True},
+    {"stage": "plan", "model": "session"},
+    {"stage": "gate", "autopilot": {"attempts": 1}},
+    {"stage": "build", "validator": False,
+     "subagent_model": "tier-two-below", "telemetry": False},
+    {"stage": "review", "model": "tier-below", "disposition": "high-only"},
+]
+
+BASIC_ENTRIES = [
+    {"stage": "research", "skip": True},
+    {"stage": "epic", "skip": True},
+    {"stage": "plan", "model": "session"},
+    {"stage": "gate", "skip": True},
+    {"stage": "build", "validator": False, "subagent_model": "tier-below"},
+    {"stage": "review", "model": "tier-below", "disposition": "high-only"},
+]
+
+
+class ResolvePresetPipelineTest(unittest.TestCase):
+    """The string form of the key: a preset name expands through the shipped
+    table and the same pydantic validation as a user-authored list (shipd-config
+    pipeline-presets). Only the ``default`` preset resolves without pydantic,
+    and that case lives in the stdlib ``tests/test_spec_common.py`` suite.
+    ``$HOME`` is always overridden to an empty directory so the real home config
+    never leaks into a test."""
+
+    _write_config = ResolveDeclaredPipelineTest._write_config
+    _resolve = ResolveDeclaredPipelineTest._resolve
+    _config_path = ResolveDeclaredPipelineTest._config_path
+
+    def test_eco_resolves_to_the_eco_table(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            entries, prov = self._resolve(tmp, home, "eco")
+            self.assertEqual(entries, ECO_ENTRIES)
+            self.assertEqual(
+                prov, "preset:eco (%s)" % self._config_path(tmp))
+
+    def test_basic_resolves_to_the_basic_table(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            entries, prov = self._resolve(tmp, home, "basic")
+            self.assertEqual(entries, BASIC_ENTRIES)
+            self.assertEqual(
+                prov, "preset:basic (%s)" % self._config_path(tmp))
+
+    def test_table_keys_mirror_the_stdlib_names(self):
+        import pipeline_schema
+        self.assertEqual(
+            sorted(pipeline_schema.PRESETS), sorted(sc.PIPELINE_PRESETS))
+
+    def test_every_preset_validates_and_resolves(self):
+        # The table cannot drift from the schema: every shipped preset's entry
+        # list passes entry validation and resolves through resolve_pipeline.
+        import pipeline_schema
+        for name in sc.PIPELINE_PRESETS:
+            with self.subTest(preset=name):
+                validated = pipeline_schema.validate_entries(
+                    pipeline_schema.PRESETS[name])
+                self.assertEqual(validated, pipeline_schema.PRESETS[name])
+                with tempfile.TemporaryDirectory() as tmp, \
+                        tempfile.TemporaryDirectory() as home:
+                    entries, _prov = self._resolve(tmp, home, name)
+                    self.assertEqual(entries, validated)
+
+
 if __name__ == "__main__":
     unittest.main()

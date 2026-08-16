@@ -470,6 +470,12 @@ PIPELINE_STAGES = ("research", "epic", "plan", "gate", "build", "review")
 # The permitted fallback values for a `tools` binding or a `replace` entry.
 PIPELINE_FALLBACKS = ("builtin", "skip")
 
+# The built-in preset names a string `autonomous-pipeline` value may take
+# (shipd-config pipeline-presets). Stdlib-side names only: the entry table
+# itself is data in `pipeline_schema.PRESETS`, keyed by exactly these names, so
+# an unknown name is rejected here without importing pydantic.
+PIPELINE_PRESETS = ("default", "eco", "basic")
+
 # The config key naming the autonomous pipeline.
 PIPELINE_KEY = "autonomous-pipeline"
 
@@ -492,15 +498,34 @@ def resolve_pipeline(root):
     from it simply do not run, which is legal (including for gates). Raises
     :class:`ConfigError` listing every validation error, each naming the
     offending entry by index and content; a declared pipeline with pydantic
-    unavailable fails closed rather than falling back to weaker validation."""
+    unavailable fails closed rather than falling back to weaker validation.
+
+    A string value names a built-in preset (shipd-config pipeline-presets).
+    The name is checked against :data:`PIPELINE_PRESETS` first, so an unknown
+    one fails naming the known presets with no import at all; ``"default"``
+    short-circuits to the absent key's pipeline, likewise stdlib-only. Every
+    other known name expands through :func:`pipeline_schema.expand_preset`,
+    which validates the table's entries exactly like a user-authored list —
+    including the fail-closed behaviour when pydantic is absent. The provenance
+    of a preset-resolved pipeline is ``preset:<name> (<config-path>)``."""
     config, prov = resolve_config(root)
     raw = config.get(PIPELINE_KEY)
     if raw is None:
         return [{"stage": name} for name in PIPELINE_STAGES], "default"
-    provenance = prov.get(PIPELINE_KEY, "default")
-    if not isinstance(raw, list):
+    source = prov.get(PIPELINE_KEY, "default")
+    provenance = source
+    if isinstance(raw, str):
+        if raw not in PIPELINE_PRESETS:
+            raise ConfigError(
+                "unknown pipeline preset '%s' (from %s); known presets: %s"
+                % (raw, source, ", ".join(sorted(PIPELINE_PRESETS))))
+        provenance = "preset:%s (%s)" % (raw, source)
+        if raw == "default":
+            return [{"stage": name} for name in PIPELINE_STAGES], provenance
+    elif not isinstance(raw, list):
         raise ConfigError(
-            "`%s` must be a JSON list (from %s)" % (PIPELINE_KEY, provenance))
+            "`%s` must be a JSON list or a preset name string (from %s)"
+            % (PIPELINE_KEY, source))
 
     # The engine's one pydantic dependency, scoped to this branch by the
     # constitution: only a *declared* pipeline pays for it. A missing package
@@ -511,10 +536,13 @@ def resolve_pipeline(root):
     except ModuleNotFoundError:
         raise ConfigError(
             "declared `%s` (from %s) requires pydantic; "
-            "pip install -r requirements.txt" % (PIPELINE_KEY, provenance))
+            "pip install -r requirements.txt" % (PIPELINE_KEY, source))
 
     try:
-        entries = pipeline_schema.validate_entries(raw)
+        if isinstance(raw, str):
+            entries = pipeline_schema.expand_preset(raw)
+        else:
+            entries = pipeline_schema.validate_entries(raw)
     except ValueError as exc:
         raise ConfigError(str(exc))
 
