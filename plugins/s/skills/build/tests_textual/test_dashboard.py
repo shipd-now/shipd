@@ -2229,6 +2229,14 @@ class TaskCardRowTest(unittest.TestCase):
             card._card_text(),
             "[$text-error]†[/] sl[$fg-muted] · stale (died 8h ago)[/]")
 
+    def test_live_build_row_appends_the_build_stage_in_muted_tier(self):
+        card = _bare_card("low", state="archived")
+        card.member["build_heartbeat"] = {
+            "slug": "sl", "kind": "build", "state": "running",
+            "stage": "review", "updated_at": time.time()}
+        self.assertEqual(card._card_text(),
+                         "[$risk-low]●[/] sl[$fg-muted] · review[/]")
+
     def test_row_css_drops_accent_bars_and_margin_adds_height_one(self):
         css = dashboard.BoardApp.CSS
         block = re.search(r"\bTaskCard\s*\{[^}]*\}", css).group(0)
@@ -3325,6 +3333,53 @@ class ParkedMemberModalTest(DashboardTestBase, unittest.IsolatedAsyncioTestCase)
             self.assertEqual(list(app.screen.query(".badge-error")), [])
             self.assertEqual(list(app.screen.query("#member-signal-callout")),
                              [])
+
+
+class LiveBuildMemberModalTest(DashboardTestBase,
+                               unittest.IsolatedAsyncioTestCase):
+    """The spec-detail modal of a member placed by a live interactive build
+    heartbeat (delivery-dashboard board-live-build-lane spec): the muted
+    ``stage:`` chip is derived from that heartbeat when no roster stage chip
+    or parked signal applies, and the lane badge follows
+    :func:`_member_column` into ``review``."""
+
+    def _push_member(self, app, stage, entry=None, state="archived"):
+        member = {"slug": "documented", "description": "d", "risk": "high",
+                  "state": state, "location": self.root,
+                  "actions": [], "session_id": None,
+                  "build_heartbeat": {"slug": "documented", "kind": "build",
+                                      "state": "running", "stage": stage,
+                                      "updated_at": time.time()}}
+        app.push_screen(
+            dashboard.MemberDetailScreen("ep", member, entry or {}, "active"))
+
+    async def test_live_build_member_shows_stage_chip_and_review_lane(self):
+        app = dashboard.BoardApp(
+            root=self.root,
+            board_fn=lambda: _detail_board(self.root, "documented"))
+        async with app.run_test(size=(120, 24)) as pilot:
+            self._push_member(app, "review")
+            await pilot.pause()
+            muted = "\n".join(
+                str(w.render()) for w in app.screen.query(".badge-muted"))
+            self.assertIn("stage: review", muted)
+            self.assertTrue(app.screen.query(".badge-lane-review"))
+            self.assertEqual(list(app.screen.query(".badge-error")), [])
+
+    async def test_parked_signal_still_wins_over_the_build_stage_chip(self):
+        app = dashboard.BoardApp(
+            root=self.root,
+            board_fn=lambda: _detail_board(self.root, "documented"))
+        async with app.run_test(size=(120, 24)) as pilot:
+            self._push_member(app, "review",
+                              entry={"slug": "documented",
+                                     "state": "needs-human"})
+            await pilot.pause()
+            chip = app.screen.query_one(".badge-error")
+            self.assertEqual(str(chip.render()), "needs-human")
+            muted = "\n".join(
+                str(w.render()) for w in app.screen.query(".badge-muted"))
+            self.assertNotIn("stage:", muted)
 
 
 class ControlHierarchyTest(DashboardTestBase, unittest.IsolatedAsyncioTestCase):
