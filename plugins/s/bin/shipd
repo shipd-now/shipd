@@ -8,12 +8,14 @@ a versioned plugin cache snapshot alike. Delegation is process replacement
 (:func:`os.execv`), so the delegate's stdout, stderr, interactivity, and exit
 code are this binary's own — nothing is reimplemented or reformatted here.
 
-Only read/inspect verbs are exposed, with one deliberate exception:
-``statusline install`` writes the statusline registration into the user's own
-Claude Code settings file — never a spec artifact, and only under that explicit
-word. The mutating verbs over the spec library (``set-status``, ``merge``,
-``emit``, ``autopilot``, ``worktree remove``) stay behind their guarded scripts
-and skills.
+Only read/inspect verbs are exposed, with two deliberate exceptions, both
+writing user-domain files and never a spec artifact, and both only under an
+explicit word: ``statusline install`` writes the statusline registration into
+the user's own Claude Code settings file, and ``copilot add`` / ``copilot
+remove`` maintain the shipd Copilot code-review skill's three files inside a
+target repository. The mutating verbs over the spec library (``set-status``,
+``merge``, ``emit``, ``autopilot``, ``worktree remove``) stay behind their
+guarded scripts and skills.
 
 Stdlib-only Python 3, per the engine's constitution.
 """
@@ -88,6 +90,7 @@ verbs:
   lint [change]              structurally validate specs and change deltas
   doctor                     preflight this environment for shipd
   statusline [install]       report or register the shipd statusline
+  copilot [add|remove]       maintain the Copilot code-review skill in a repo
 
 options:
   -h, --help                 print this banner
@@ -113,14 +116,19 @@ def _err(reason):
     sys.stderr.write("%s %s\n" % (prefix, reason))
 
 
+def _plugin_version():
+    """The version the adjacent plugin manifest declares — the shipping unit's
+    own version, so a checkout copy and a cache snapshot each report what they
+    actually are. Raises on an unreadable or malformed manifest; every caller
+    reports that through :func:`_err`."""
+    with open(MANIFEST, encoding="utf-8") as fh:
+        return json.load(fh)["version"]
+
+
 def cmd_version():
-    """Print the version the adjacent plugin manifest declares — the shipping
-    unit's own version, so a checkout copy and a cache snapshot each report
-    what they actually are."""
+    """Print the plugin manifest's version."""
     try:
-        with open(MANIFEST, encoding="utf-8") as fh:
-            data = json.load(fh)
-        version = data["version"]
+        version = _plugin_version()
     except (OSError, ValueError, KeyError, TypeError) as exc:
         _err("cannot read %s: %s" % (MANIFEST, exc))
         return 1
@@ -624,6 +632,265 @@ def cmd_statusline(args):
     return 0
 
 
+# ---------------------------------------------------------------------------
+# copilot (shipd-cli copilot-verb)
+# ---------------------------------------------------------------------------
+
+# The templates this verb installs, and the engine it bundles beside them —
+# resolved relative to this file, so a checkout and a cache snapshot behave
+# alike.
+COPILOT_TEMPLATES = PLUGIN_ROOT / "integrations" / "copilot"
+COPILOT_ENGINE = PLUGIN_ROOT / "skills" / "review" / "scripts" / "semdiff.py"
+
+# The three files the verb manages, relative to the target repository root.
+COPILOT_SKILL_DIR = os.path.join(".github", "skills", "code-review")
+COPILOT_SKILL = os.path.join(COPILOT_SKILL_DIR, "SKILL.md")
+COPILOT_SEMDIFF = os.path.join(COPILOT_SKILL_DIR, "scripts", "semdiff.py")
+COPILOT_WORKFLOW = os.path.join(".github", "workflows",
+                                "copilot-code-review.yml")
+COPILOT_MANAGED = (COPILOT_SKILL, COPILOT_SEMDIFF, COPILOT_WORKFLOW)
+
+# The two marker-bearing managed files: managed path -> (template file name,
+# ownership-marker pattern). The marker is what makes a file ours; a managed
+# path holding anything else is foreign and is never touched without --force.
+# The installed ``semdiff.py`` carries no marker of its own — it is kept
+# byte-identical to the plugin's copy so drift is a pure content comparison —
+# and is owned exactly when the SKILL.md beside it is.
+COPILOT_TEMPLATED = {
+    COPILOT_SKILL: ("SKILL.md",
+                    re.compile(r"^<!-- shipd-copilot v(\S+) -->$", re.M)),
+    COPILOT_WORKFLOW: ("copilot-code-review.yml",
+                       re.compile(r"^# shipd-copilot v(\S+)$", re.M)),
+}
+
+
+def _read_bytes(path):
+    """``path``'s bytes, or ``None`` when it cannot be read."""
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _copilot_marker(path, pattern):
+    """The ownership-marker version the file at ``path`` carries, or ``None``
+    when it carries none — including when it is unreadable or not text, which
+    a foreign file may well be."""
+    raw = _read_bytes(path)
+    if raw is None:
+        return None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    found = pattern.search(text)
+    return found.group(1) if found else None
+
+
+def copilot_states(root, version):
+    """``[(relative path, state, detail)]`` for the three managed files under
+    ``root``, in :data:`COPILOT_MANAGED` order.
+
+    ``installed`` is a marker at ``version``; ``stale`` an older marker or an
+    engine that has drifted from the plugin's; ``foreign`` a managed path this
+    install does not own; ``absent`` no file at all."""
+    engine = _read_bytes(str(COPILOT_ENGINE))
+    states = {}
+    markers = {}
+    for relative, (_template, pattern) in COPILOT_TEMPLATED.items():
+        target = os.path.join(root, relative)
+        if not os.path.exists(target):
+            states[relative] = ("absent", "not installed")
+            markers[relative] = None
+            continue
+        marker = _copilot_marker(target, pattern)
+        markers[relative] = marker
+        if marker is None:
+            states[relative] = (
+                "foreign", "exists without a shipd-copilot marker")
+        elif marker != version:
+            states[relative] = (
+                "stale", "marker v%s — `shipd copilot add` refreshes it to v%s"
+                % (marker, version))
+        else:
+            states[relative] = ("installed", "shipd-copilot v%s" % version)
+
+    target = os.path.join(root, COPILOT_SEMDIFF)
+    if not os.path.exists(target):
+        states[COPILOT_SEMDIFF] = ("absent", "not installed")
+    elif markers[COPILOT_SKILL] is None:
+        states[COPILOT_SEMDIFF] = (
+            "foreign", "the SKILL.md beside it is not shipd-owned")
+    elif engine is None or _read_bytes(target) != engine:
+        states[COPILOT_SEMDIFF] = (
+            "stale", "differs from the plugin's engine — `shipd copilot add` "
+                     "refreshes it")
+    else:
+        states[COPILOT_SEMDIFF] = (
+            "installed", "byte-identical to the plugin's engine")
+
+    # The skill is only installed when the engine it bundles is: a drifted
+    # semdiff.py is the skill's own staleness, whatever its marker says.
+    if (states[COPILOT_SKILL][0] == "installed"
+            and states[COPILOT_SEMDIFF][0] != "installed"):
+        states[COPILOT_SKILL] = (
+            "stale", "its bundled semdiff.py is %s"
+                     % states[COPILOT_SEMDIFF][0])
+    return [(relative,) + states[relative] for relative in COPILOT_MANAGED]
+
+
+def _copilot_render(relative, version):
+    """The template for managed path ``relative``, its ``{version}``
+    placeholder resolved, as bytes ready to write."""
+    name, _pattern = COPILOT_TEMPLATED[relative]
+    with open(COPILOT_TEMPLATES / name, encoding="utf-8") as fh:
+        text = fh.read()
+    return text.replace("{version}", version).encode("utf-8")
+
+
+def _copilot_write(path, data, mode):
+    """Write ``data`` to ``path`` atomically, creating its parents — the
+    same-directory temp file and rename of :func:`_write_settings`, so an
+    interrupted install can never leave a half-written file in the user's
+    repository. ``mkstemp``'s private 0600 is replaced by ``mode``."""
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".shipd-copilot-")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except OSError:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def _copilot_report(root, version, states):
+    """The bare verb's read-only report. Nothing here writes."""
+    print("copilot review skill in %s (this install: v%s)" % (root, version))
+    for relative, state, detail in states:
+        print("  %s %s — %s" % (state, relative, detail))
+    print("`shipd copilot add` installs or refreshes those files; "
+          "`shipd copilot remove` deletes the ones it owns.")
+    print("Automatic review is enabled on GitHub, not here — add a branch "
+          "ruleset requiring Copilot code review on the protected branch.")
+    print("The Copilot code-review surface exposes no repository-side model "
+          "selection, so nothing here pins a model.")
+    return 0
+
+
+def _copilot_add(root, version):
+    """Install or refresh the three managed files. Every payload is prepared
+    before the first write, so a broken template installs nothing."""
+    try:
+        engine = _read_bytes(str(COPILOT_ENGINE))
+        if engine is None:
+            _err("cannot read %s" % COPILOT_ENGINE)
+            return 1
+        payloads = [
+            (COPILOT_SKILL, _copilot_render(COPILOT_SKILL, version), 0o644),
+            (COPILOT_SEMDIFF, engine,
+             stat.S_IMODE(os.stat(COPILOT_ENGINE).st_mode)),
+            (COPILOT_WORKFLOW, _copilot_render(COPILOT_WORKFLOW, version),
+             0o644),
+        ]
+    except (OSError, ValueError) as exc:
+        _err("cannot read the copilot templates in %s: %s"
+             % (COPILOT_TEMPLATES, exc))
+        return 1
+
+    for relative, data, mode in payloads:
+        target = os.path.join(root, relative)
+        try:
+            _copilot_write(target, data, mode)
+        except OSError as exc:
+            _err("cannot write %s: %s" % (target, exc))
+            return 1
+    for relative, _data, _mode in payloads:
+        print("wrote %s" % relative)
+    print("Copilot code review reads these from a pull request's head branch. "
+          "Enable automatic review with a GitHub branch ruleset.")
+    return 0
+
+
+def _copilot_remove(root):
+    """Delete the managed files and prune the skill tree it emptied."""
+    removed = []
+    for relative in COPILOT_MANAGED:
+        target = os.path.join(root, relative)
+        try:
+            os.remove(target)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            _err("cannot remove %s: %s" % (target, exc))
+            return 1
+        removed.append(relative)
+    # Innermost first, and only while empty — a directory still holding
+    # anything of the user's stays exactly where it is.
+    for relative in (os.path.join(COPILOT_SKILL_DIR, "scripts"),
+                     COPILOT_SKILL_DIR):
+        try:
+            os.rmdir(os.path.join(root, relative))
+        except FileNotFoundError:
+            continue
+        except OSError:
+            break
+    if not removed:
+        print("nothing to remove: no shipd copilot files in %s" % root)
+        return 0
+    for relative in removed:
+        print("removed %s" % relative)
+    return 0
+
+
+def cmd_copilot(args):
+    """Report on, install, or remove the shipd Copilot code-review skill in a
+    repository. Bare it is read-only; only the explicit words ``add`` and
+    ``remove`` write, and only inside the three managed paths. Nothing here
+    runs ``gh`` or touches the network."""
+    parser = argparse.ArgumentParser(
+        prog="shipd copilot",
+        description="Maintain the shipd Copilot code-review skill in a "
+                    "repository. Bare, it reports and changes nothing.")
+    parser.add_argument(
+        "action", nargs="?", choices=["add", "remove"],
+        help="add: install or refresh the files; remove: delete them "
+             "(default: report only)")
+    parser.add_argument("--root", default=os.getcwd(),
+                        help="repository to maintain (default: cwd)")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="act on a managed path this install does not own")
+    opts = parser.parse_args(args)
+    root = os.path.abspath(opts.root)
+
+    try:
+        version = _plugin_version()
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        _err("cannot read %s: %s" % (MANIFEST, exc))
+        return 1
+
+    states = copilot_states(root, version)
+    if opts.action is None:
+        return _copilot_report(root, version, states)
+
+    foreign = [relative for relative, state, _detail in states
+               if state == "foreign"]
+    if foreign and not opts.force:
+        _err("%s: not written by shipd copilot (no ownership marker) — pass "
+             "--force to %s %s anyway"
+             % (", ".join(foreign), opts.action,
+                "them" if len(foreign) > 1 else "it"))
+        return 1
+    if opts.action == "add":
+        return _copilot_add(root, version)
+    return _copilot_remove(root)
+
+
 def main(argv):
     if not argv:
         sys.stderr.write(USAGE)
@@ -640,6 +907,8 @@ def main(argv):
         return cmd_doctor(rest)
     if verb == "statusline":
         return cmd_statusline(rest)
+    if verb == "copilot":
+        return cmd_copilot(rest)
     if verb not in VERB_TABLE:
         sys.stderr.write(USAGE)
         return 2
