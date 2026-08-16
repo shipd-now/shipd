@@ -50,6 +50,10 @@ only for declared-pipeline validation). A `warn statusline` line is the one
 you can clear in a single command — `shipd statusline install`, see step 6.
 Nothing is installed or edited by this verb.
 
+`pydantic` is what unlocks the cheap-delivery opt-in: with it installed, putting
+`{"autonomous-pipeline": "eco"}` in `.shipd-config.json` runs deliveries on the
+eco preset.
+
 ## 3. Take the guided tour: `/s:onboard`
 
 Start a Claude Code session and run:

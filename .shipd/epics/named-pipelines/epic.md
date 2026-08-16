@@ -131,14 +131,20 @@ The v1 preset table (the contract each preset change implements):
 
 ```
              default                eco                       basic
-research/epic  as-is                skip                      skip
-plan           session              session                   session
-gate           attempts 3           attempts 1                skip
-build          validator on,        validator off,            validator off,
-               subagents tier-below subagents tier-two-below, subagents tier-below
+research/epic  bare                 skip                      skip
+plan           bare                 session                   session
+gate           bare                 attempts 1                skip
+build          bare                 validator off,            validator off,
+                                    subagents tier-two-below, subagents tier-below
                                     telemetry off
-review         session, all        tier-below, high-only      tier-below, high-only
+review         bare                 tier-below, high-only     tier-below, high-only
 ```
+
+`default` is **bare stage entries**: every registry stage as-is, with no
+option declared. The schema defaults still govern the run — validator on,
+review disposition `all`, autopilot attempts 3 — but they are never injected,
+so no `subagent_model` and no review `model` is set and a resolved entry
+carries exactly `{"stage": "<name>"}`.
 
 Pieces and seams: the dependency groundwork (constitution amendment,
 requirements pin, doctor remedy) is its own change (member 1). The

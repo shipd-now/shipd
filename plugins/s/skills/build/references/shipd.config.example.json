@@ -1,5 +1,6 @@
 {
   "//": "Example ~/.shipd-config.json for /s:build. Copy to ~/.shipd-config.json and edit. All keys are optional; the build telemetry settings live under the `build` key, and unknown keys are ignored. Values shown are the defaults.",
+  "// autonomous-pipeline": "Optional top-level key declaring the delivery pipeline: a preset name (\"default\", \"eco\", \"basic\") or an ordered list of stage entries. Omitted here so copying this file declares no pipeline; the full grammar lives in the content directory's README.md ('The autonomous pipeline' section).",
   "build": {
     "logging_enabled": true,
     "log_dir": "~/.shipd/builds",
