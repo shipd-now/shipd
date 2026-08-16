@@ -1,5 +1,5 @@
 # cli-json
-Status: complete
+Status: verified
 Epic: shipd-dx
 
 ## Idea
