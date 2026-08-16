@@ -111,9 +111,10 @@ The delivery board, full-screen:
 shipd board
 ```
 
-This is the engine's one third-party dependency — `pip install 'textual>=8.2.8,<9'`
-if `shipd doctor` warned that it is not importable. Without it, the same board
-printed once:
+This is one of the engine's two third-party dependencies (the other is
+`pydantic`, used only for declared-pipeline validation) — `pip install
+'textual>=8.2.8,<9'` if `shipd doctor` warned that it is not importable.
+Without it, the same board printed once:
 
 ```bash
 shipd board text

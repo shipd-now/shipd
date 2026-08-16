@@ -339,6 +339,22 @@ def check_textual(find_spec=importlib.util.find_spec):
             "pip install -r requirements.txt")
 
 
+def check_pydantic(find_spec=importlib.util.find_spec):
+    """The engine's other scoped third-party dependency — declared-pipeline
+    validation only, so its absence is a warning. Probed, never imported, so
+    this binary stays stdlib-only."""
+    try:
+        found = find_spec("pydantic") is not None
+    except (ImportError, ValueError):
+        found = False
+    if found:
+        return ("ok", "pydantic",
+                "importable; declared pipelines can be validated")
+    return ("warn", "pydantic",
+            "not importable — only declared-pipeline validation needs it; "
+            "pip install -r requirements.txt")
+
+
 def check_snapshot(plugin_root):
     """Whether this binary is the newest installed plugin snapshot.
 
@@ -368,6 +384,7 @@ def default_checks(root):
             check_config(root),
             check_gh(),
             check_textual(),
+            check_pydantic(),
             check_snapshot(PLUGIN_ROOT)]
 
 

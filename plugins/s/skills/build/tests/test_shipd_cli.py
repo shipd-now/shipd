@@ -17,6 +17,7 @@ cache root, an explicit ``version_info`` — so every branch is deterministic an
 nothing shells out.
 """
 
+import contextlib
 import importlib.machinery
 import importlib.util
 import io
@@ -496,6 +497,47 @@ class DoctorCheckTest(unittest.TestCase):
             raise ValueError("no parent package")
         level, name, _detail = shipd.check_textual(find_spec=boom)
         self.assertEqual((level, name), ("warn", "textual"))
+
+    # -- pydantic ----------------------------------------------------------
+
+    def test_pydantic_importable_is_ok(self):
+        level, name, _detail = shipd.check_pydantic(
+            find_spec=lambda name: object())
+        self.assertEqual((level, name), ("ok", "pydantic"))
+
+    def test_pydantic_missing_warns_about_pipeline_validation_only(self):
+        level, name, detail = shipd.check_pydantic(find_spec=lambda name: None)
+        self.assertEqual((level, name), ("warn", "pydantic"))
+        self.assertIn("pipeline", detail)
+        self.assertIn("pip install -r requirements.txt", detail)
+
+    def test_pydantic_probe_failure_warns(self):
+        def boom(name):
+            raise ValueError("no parent package")
+        level, name, _detail = shipd.check_pydantic(find_spec=boom)
+        self.assertEqual((level, name), ("warn", "pydantic"))
+
+    def test_pydantic_import_error_probe_warns(self):
+        def boom(name):
+            raise ImportError("no module")
+        level, name, _detail = shipd.check_pydantic(find_spec=boom)
+        self.assertEqual((level, name), ("warn", "pydantic"))
+
+    def test_default_checks_probe_pydantic_between_textual_and_snapshot(self):
+        stubs = {}
+        for check in ("python", "git", "config", "gh", "textual", "pydantic",
+                      "snapshot"):
+            stubs[check] = unittest.mock.patch.object(
+                shipd, "check_%s" % check,
+                lambda *a, _n=check, **kw: ("ok", _n, ""))
+        with contextlib.ExitStack() as stack:
+            for patcher in stubs.values():
+                stack.enter_context(patcher)
+            names = [name for _level, name, _detail
+                     in shipd.default_checks(self.tmp)]
+        self.assertIn("pydantic", names)
+        self.assertEqual(names.index("pydantic"), names.index("textual") + 1)
+        self.assertEqual(names.index("snapshot"), names.index("pydantic") + 1)
 
     # -- snapshot ----------------------------------------------------------
 
