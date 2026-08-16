@@ -1456,8 +1456,10 @@ def _apply_tool_table(text, by_tool):
     appears inside the epic's prose is left alone and the generated section is
     appended after it, never eating the sections that follow."""
     start = _trailing_tool_table_start(text)
-    body = (text if start is None else text[:start]).rstrip("\n")
     section = build_report.render_tool_table(by_tool)
+    if start is None and not section:
+        return text  # nothing to add or remove: a pure no-op stays a no-op
+    body = (text if start is None else text[:start]).rstrip("\n")
     if not section:
         return body + "\n"
     return body + "\n\n" + section + "\n"
