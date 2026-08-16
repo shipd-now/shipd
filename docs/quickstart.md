@@ -41,8 +41,8 @@ equivalent and dev mode (running `/s:*` from a checkout).
 shipd doctor
 ```
 
-It reports one line per check — `python`, `git`, `config`, `gh`, `textual`,
-`pydantic`, `snapshot`, `statusline` — and a closing `doctor: ok` or
+It reports one line per check — `python`, `git`, `config`, `pipeline`, `gh`,
+`textual`, `pydantic`, `snapshot`, `statusline` — and a closing `doctor: ok` or
 `doctor: N problem(s)`. Only a `fail` line has to be resolved before you
 continue: `warn` lines are optional extras (`gh` is needed only when you ship
 a pull request, `textual` only for the full-screen delivery board, `pydantic`

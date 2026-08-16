@@ -318,6 +318,23 @@ def check_config(root):
             "no content directory yet at %s — /s:plan scaffolds it" % content)
 
 
+def check_pipeline(root, resolve=None):
+    """The effective autonomous pipeline at ``root``, through the engine's own
+    resolver. A declared pipeline that cannot resolve — malformed entries, an
+    unknown preset, or pydantic missing — is a hard stop for the delivery
+    surfaces that run it, so it fails the preflight carrying the resolver's own
+    error line. ``resolve`` is the injection point; it defaults to the real
+    resolver once the engine is loaded."""
+    _load_engine()
+    resolve = resolve or sc.resolve_pipeline
+    try:
+        entries, provenance = resolve(root)
+    except sc.ConfigError as exc:
+        return ("fail", "pipeline", "%s" % exc)
+    return ("ok", "pipeline",
+            "resolves: %d entries (source: %s)" % (len(entries), provenance))
+
+
 def check_gh(which=shutil.which, gh_status=_gh_auth_status):
     """The GitHub CLI. A warning, never a failure: planning and building work
     without it, and shipping is its first touchpoint."""
@@ -346,10 +363,36 @@ def check_textual(find_spec=importlib.util.find_spec):
             "pip install -r requirements.txt")
 
 
-def check_pydantic(find_spec=importlib.util.find_spec):
+def _pipeline_needs_pydantic(root):
+    """The config path declaring an ``autonomous-pipeline`` whose validation
+    imports pydantic, or ``None`` when nothing at ``root`` does.
+
+    Mirrors :func:`spec_common.resolve_pipeline`'s pydantic-import path exactly:
+    only a list value or a known preset other than ``default`` reaches the lazy
+    import. An absent key, the ``default`` preset, an unknown preset name, a
+    value of any other type, or a configuration that will not resolve all stop
+    short of it — and the last three already surface through the ``config`` and
+    ``pipeline`` checks, so they must not also escalate this one."""
+    _load_engine()
+    try:
+        config, prov = sc.resolve_config(root)
+    except sc.ConfigError:
+        return None
+    raw = config.get(sc.PIPELINE_KEY)
+    validated = isinstance(raw, list) or (
+        isinstance(raw, str) and raw != "default"
+        and raw in sc.PIPELINE_PRESETS)
+    if not validated:
+        return None
+    return prov.get(sc.PIPELINE_KEY, "default")
+
+
+def check_pydantic(root, find_spec=importlib.util.find_spec):
     """The engine's other scoped third-party dependency — declared-pipeline
-    validation only, so its absence is a warning. Probed, never imported, so
-    this binary stays stdlib-only."""
+    validation only, so its absence is a warning where nothing declares a
+    pipeline, and a failure where ``root``'s configuration declares one that
+    cannot be validated without it. Probed, never imported, so this binary
+    stays stdlib-only."""
     try:
         found = find_spec("pydantic") is not None
     except (ImportError, ValueError):
@@ -357,6 +400,12 @@ def check_pydantic(find_spec=importlib.util.find_spec):
     if found:
         return ("ok", "pydantic",
                 "importable; declared pipelines can be validated")
+    declared_by = _pipeline_needs_pydantic(root)
+    if declared_by:
+        return ("fail", "pydantic",
+                "not importable but %s declares an `%s` needing it; "
+                "pip install -r requirements.txt"
+                % (declared_by, sc.PIPELINE_KEY))
     return ("warn", "pydantic",
             "not importable — only declared-pipeline validation needs it; "
             "pip install -r requirements.txt")
@@ -410,9 +459,10 @@ def default_checks(root):
     return [check_python(),
             check_git(),
             check_config(root),
+            check_pipeline(root),
             check_gh(),
             check_textual(),
-            check_pydantic(),
+            check_pydantic(root),
             check_snapshot(PLUGIN_ROOT),
             check_statusline()]
 

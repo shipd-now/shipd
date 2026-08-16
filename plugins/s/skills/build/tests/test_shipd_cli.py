@@ -674,6 +674,59 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual((level, name), ("fail", "config"))
         self.assertIn(path, detail)
 
+    # -- pipeline ----------------------------------------------------------
+
+    def pipeline_check(self, root, **kwargs):
+        """``check_pipeline`` with ``HOME`` pointed at the throwaway home, so
+        the outermost config layer can never be the real user's."""
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            return shipd.check_pipeline(root, **kwargs)
+
+    def repo_with_config(self, name, config):
+        """A throwaway repo root whose ``.shipd-config.json`` holds ``config``;
+        the config path is returned alongside the root."""
+        root = os.path.join(self.tmp, name)
+        os.makedirs(root)
+        path = os.path.join(root, ".shipd-config.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(config, fh)
+        return root, path
+
+    def test_undeclared_pipeline_is_ok_from_the_default(self):
+        root = os.path.join(self.tmp, "nopipeline")
+        os.makedirs(root)
+        level, name, detail = self.pipeline_check(root)
+        self.assertEqual((level, name), ("ok", "pipeline"))
+        self.assertIn("default", detail)
+
+    def test_declared_pipeline_without_pydantic_fails_naming_the_config(self):
+        root, path = self.repo_with_config(
+            "declared", {"autonomous-pipeline": [{"stage": "plan"}]})
+        level, name, detail = self.pipeline_check(root)
+        self.assertEqual((level, name), ("fail", "pipeline"))
+        self.assertIn("requires pydantic", detail)
+        self.assertIn(path, detail)
+
+    def test_resolved_pipeline_names_its_entry_count_and_provenance(self):
+        level, name, detail = self.pipeline_check(
+            self.tmp,
+            resolve=lambda root: ([{"stage": "plan"}, {"stage": "build"}],
+                                  "preset:eco (/tmp/.shipd-config.json)"))
+        self.assertEqual((level, name), ("ok", "pipeline"))
+        self.assertIn("2", detail)
+        self.assertIn("preset:eco (/tmp/.shipd-config.json)", detail)
+
+    def test_unresolvable_pipeline_carries_the_resolver_error_verbatim(self):
+        shipd._load_engine()
+
+        def boom(root):
+            raise shipd.sc.ConfigError("boom")
+        level, name, detail = self.pipeline_check(self.tmp, resolve=boom)
+        self.assertEqual((level, name), ("fail", "pipeline"))
+        self.assertEqual(detail, "boom")
+
     # -- gh ----------------------------------------------------------------
 
     def test_gh_authenticated_is_ok(self):
@@ -717,13 +770,29 @@ class DoctorCheckTest(unittest.TestCase):
 
     # -- pydantic ----------------------------------------------------------
 
+    def pydantic_check(self, root, **kwargs):
+        """``check_pydantic`` with ``HOME`` pointed at the throwaway home: the
+        escalation predicate reads the layered config, so the real user's
+        outermost layer must never reach it."""
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            return shipd.check_pydantic(root, **kwargs)
+
+    def undeclared_repo(self, name="undeclared"):
+        """A throwaway repo root whose layered config declares no pipeline."""
+        root = os.path.join(self.tmp, name)
+        os.makedirs(root, exist_ok=True)
+        return root
+
     def test_pydantic_importable_is_ok(self):
-        level, name, _detail = shipd.check_pydantic(
-            find_spec=lambda name: object())
+        level, name, _detail = self.pydantic_check(
+            self.undeclared_repo(), find_spec=lambda name: object())
         self.assertEqual((level, name), ("ok", "pydantic"))
 
     def test_pydantic_missing_warns_about_pipeline_validation_only(self):
-        level, name, detail = shipd.check_pydantic(find_spec=lambda name: None)
+        level, name, detail = self.pydantic_check(
+            self.undeclared_repo(), find_spec=lambda name: None)
         self.assertEqual((level, name), ("warn", "pydantic"))
         self.assertIn("pipeline", detail)
         self.assertIn("pip install -r requirements.txt", detail)
@@ -731,19 +800,61 @@ class DoctorCheckTest(unittest.TestCase):
     def test_pydantic_probe_failure_warns(self):
         def boom(name):
             raise ValueError("no parent package")
-        level, name, _detail = shipd.check_pydantic(find_spec=boom)
+        level, name, _detail = self.pydantic_check(
+            self.undeclared_repo(), find_spec=boom)
         self.assertEqual((level, name), ("warn", "pydantic"))
 
     def test_pydantic_import_error_probe_warns(self):
         def boom(name):
             raise ImportError("no module")
-        level, name, _detail = shipd.check_pydantic(find_spec=boom)
+        level, name, _detail = self.pydantic_check(
+            self.undeclared_repo(), find_spec=boom)
         self.assertEqual((level, name), ("warn", "pydantic"))
 
-    def test_default_checks_probe_pydantic_between_textual_and_snapshot(self):
+    def test_declared_pipeline_escalates_missing_pydantic_to_a_failure(self):
+        root, path = self.repo_with_config(
+            "escalating", {"autonomous-pipeline": [{"stage": "plan"}]})
+        level, name, detail = self.pydantic_check(
+            root, find_spec=lambda name: None)
+        self.assertEqual((level, name), ("fail", "pydantic"))
+        self.assertIn(path, detail)
+        self.assertIn("pip install -r requirements.txt", detail)
+
+    def test_known_preset_escalates_missing_pydantic_to_a_failure(self):
+        root, path = self.repo_with_config(
+            "eco-preset", {"autonomous-pipeline": "eco"})
+        level, name, detail = self.pydantic_check(
+            root, find_spec=lambda name: None)
+        self.assertEqual((level, name), ("fail", "pydantic"))
+        self.assertIn(path, detail)
+
+    def test_default_preset_never_escalates_missing_pydantic(self):
+        root, _path = self.repo_with_config(
+            "default-preset", {"autonomous-pipeline": "default"})
+        level, name, detail = self.pydantic_check(
+            root, find_spec=lambda name: None)
+        self.assertEqual((level, name), ("warn", "pydantic"))
+        self.assertIn("pip install -r requirements.txt", detail)
+
+    def test_unknown_preset_never_escalates_missing_pydantic(self):
+        root, _path = self.repo_with_config(
+            "unknown-preset", {"autonomous-pipeline": "nope"})
+        level, name, _detail = self.pydantic_check(
+            root, find_spec=lambda name: None)
+        self.assertEqual((level, name), ("warn", "pydantic"))
+
+    def test_importable_pydantic_is_ok_even_with_a_declared_pipeline(self):
+        root, _path = self.repo_with_config(
+            "declared-and-installed",
+            {"autonomous-pipeline": [{"stage": "plan"}]})
+        level, name, _detail = self.pydantic_check(
+            root, find_spec=lambda name: object())
+        self.assertEqual((level, name), ("ok", "pydantic"))
+
+    def test_default_checks_run_in_the_documented_order(self):
         stubs = {}
-        for check in ("python", "git", "config", "gh", "textual", "pydantic",
-                      "snapshot", "statusline"):
+        for check in ("python", "git", "config", "pipeline", "gh", "textual",
+                      "pydantic", "snapshot", "statusline"):
             stubs[check] = unittest.mock.patch.object(
                 shipd, "check_%s" % check,
                 lambda *a, _n=check, **kw: ("ok", _n, ""))
@@ -752,9 +863,9 @@ class DoctorCheckTest(unittest.TestCase):
                 stack.enter_context(patcher)
             names = [name for _level, name, _detail
                      in shipd.default_checks(self.tmp)]
-        self.assertIn("pydantic", names)
-        self.assertEqual(names.index("pydantic"), names.index("textual") + 1)
-        self.assertEqual(names.index("snapshot"), names.index("pydantic") + 1)
+        self.assertEqual(names,
+                         ["python", "git", "config", "pipeline", "gh",
+                          "textual", "pydantic", "snapshot", "statusline"])
 
     # -- statusline --------------------------------------------------------
 
@@ -803,8 +914,8 @@ class DoctorCheckTest(unittest.TestCase):
 
     def test_default_checks_probe_statusline_after_snapshot(self):
         stubs = {}
-        for check in ("python", "git", "config", "gh", "textual", "pydantic",
-                      "snapshot", "statusline"):
+        for check in ("python", "git", "config", "pipeline", "gh", "textual",
+                      "pydantic", "snapshot", "statusline"):
             stubs[check] = unittest.mock.patch.object(
                 shipd, "check_%s" % check,
                 lambda *a, _n=check, **kw: ("ok", _n, ""))
