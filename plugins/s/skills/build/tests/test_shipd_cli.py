@@ -210,12 +210,15 @@ class DispatchTest(ShipdCliTestBase):
             self):
         # ``text`` is the only board mode word, so any other word is not
         # consumed: it reaches ``dashboard.py tui`` as a trailing argument,
-        # which argparse rejects.
+        # which argparse rejects by name. Naming it in the assertion is what
+        # makes this discriminating — a wrongly-consumed word would run
+        # ``dashboard.py board --root <root>`` cleanly instead.
         self.make_epic("ep", ["m1"])
         self.make_change(self.root, "m1", status="ready")
-        r = self.cli("board", "frobnicate", "--root", self.root, "--once")
+        r = self.cli("board", "frobnicate", "--root", self.root)
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("unrecognized arguments", r.stderr)
+        self.assertIn("frobnicate", r.stderr)
 
     def test_retired_tui_verb_is_a_usage_error(self):
         r = self.cli("tui")
