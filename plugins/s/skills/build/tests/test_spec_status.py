@@ -1967,11 +1967,13 @@ class ConfigShowTest(SpecStatusTestBase):
 
 class PipelineShowTest(SpecStatusTestBase):
     """`pipeline-show` prints the effective autonomous pipeline: one line per
-    resolved entry (form + bindings with fallbacks) plus the provenance of the
-    key, `[default]` when no layer declares it; invalid pipelines print every
-    validation error and exit non-zero (spec-status pipeline-show-verb). The
-    verb requires neither a workspace nor a selected change. ``$HOME`` is
-    isolated so the real home config never leaks in."""
+    resolved entry plus the provenance of the key, `[default]` when no layer
+    declares it (spec-status pipeline-show-verb). The verb requires neither a
+    workspace nor a selected change. Rendering a *declared* pipeline resolves
+    it through the pydantic schema, so those cases live in
+    ``tests_pydantic/test_pipeline_show.py`` and this suite keeps passing with
+    pydantic absent. ``$HOME`` is isolated so the real home config never leaks
+    in."""
 
     def setUp(self):
         super().setUp()
@@ -1988,12 +1990,6 @@ class PipelineShowTest(SpecStatusTestBase):
             ["python3", SCRIPT, "--root", self.root, *args],
             capture_output=True, text=True, env=env)
 
-    def _write_config(self, d, payload):
-        os.makedirs(d, exist_ok=True)
-        with open(os.path.join(d, ".shipd-config.json"), "w",
-                  encoding="utf-8") as fh:
-            json.dump(payload, fh)
-
     def test_defaults_only_prints_six_stages_and_default(self):
         # No layer declares the key, no workspace, no selected change.
         r = self.cli("pipeline-show")
@@ -2001,58 +1997,6 @@ class PipelineShowTest(SpecStatusTestBase):
         for stage in ("research", "epic", "plan", "gate", "build", "review"):
             self.assertIn(stage, r.stdout)
         self.assertIn("[default]", r.stdout)
-
-    def test_declared_pipeline_prints_skip_bindings_and_path(self):
-        # A repo config with a skipped gate and a replaced review carrying a
-        # fallback; the supplying config path is named as provenance.
-        self._write_config(self.root, {"autonomous-pipeline": [
-            {"stage": "plan"},
-            {"stage": "gate", "skip": True},
-            {"stage": "build"},
-            {"stage": "review",
-             "replace": {"command": "my-ci review", "fallback": "builtin"}},
-        ]})
-        r = self.cli("pipeline-show")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        out = r.stdout.lower()
-        self.assertIn("skip", out)             # gate shown as skipped
-        self.assertIn("review", r.stdout)      # the replaced stage
-        self.assertIn("builtin", r.stdout)     # its fallback
-        # provenance names the supplying config file, not `[default]`.
-        self.assertIn(
-            os.path.join(self.root, ".shipd-config.json"), r.stdout)
-        self.assertNotIn("[default]", r.stdout)
-
-    def test_tool_binding_and_fallback_printed(self):
-        self._write_config(self.root, {"autonomous-pipeline": [
-            {"stage": "plan",
-             "tools": [{"name": "mcp:sourcebot", "fallback": "builtin"}]},
-        ]})
-        r = self.cli("pipeline-show")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("mcp:sourcebot", r.stdout)
-        self.assertIn("builtin", r.stdout)
-
-    def test_invalid_pipeline_prints_every_error_and_exits_nonzero(self):
-        self._write_config(self.root, {"autonomous-pipeline": [
-            {"stage": "deploy"},
-            {"custom": "Bad_Name", "command": "x"},
-        ]})
-        r = self.cli("pipeline-show")
-        self.assertNotEqual(r.returncode, 0)
-        combined = r.stdout + r.stderr
-        self.assertIn("deploy", combined)      # the unknown stage
-        self.assertIn("Bad_Name", combined)    # the non-kebab custom name
-
-    def test_runs_without_workspace_or_change(self):
-        # A declared, valid pipeline resolves with no workspace declared and no
-        # change selected.
-        self._write_config(self.root, {"autonomous-pipeline": [
-            {"stage": "plan"}, {"stage": "build"}]})
-        r = self.cli("pipeline-show")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("plan", r.stdout)
-        self.assertIn("build", r.stdout)
 
 
 class EpicSetInitiativeTest(SpecStatusTestBase):
