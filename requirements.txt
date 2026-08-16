@@ -1,4 +1,6 @@
 # Third-party dependencies for the delivery board's `tui` verb only
 # (plugins/s/skills/build/scripts/dashboard.py). The rest of the spec engine
 # stays stdlib-only Python 3 — see .shipd/constitution.md.
+# The range below is mirrored in plugins/s/skills/doctor/SKILL.md's remedy
+# table (a marketplace consumer has no checkout to `-r` from) — change both.
 textual>=8.2.8,<9

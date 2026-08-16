@@ -51,6 +51,35 @@ re-link. Re-running the installer is safe: an already-registered marketplace or
 already-installed plugin counts as success. Set `SHIPD_PLUGIN_CACHE` to point
 the launcher at a different cache root.
 
+Claude Code can then keep the plugin current on its own, but **auto-update is
+off by default for third-party marketplaces** like `shipd`, so turn it on once.
+From a session, open `/plugin` → **Marketplaces** → `shipd` and toggle
+auto-update on; or add `"autoUpdate": true` to the `shipd` marketplace entry in
+`~/.claude/settings.json`, keeping whatever `source` that entry already has:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "shipd": {
+      "source": "<keep this entry's existing source value>",
+      "autoUpdate": true
+    }
+  }
+}
+```
+
+An entry that loses its `source` is invalid and gets ignored, so add the flag
+to the entry you already have rather than replacing it wholesale.
+
+Enabled, updates are fetched shortly after a session starts and load in the
+**next** session (or right away after `/reload-plugins`) — the launcher already
+runs the newest installed snapshot, so nothing needs re-linking. Updating by
+hand works at any time and is the fallback if you leave auto-update off:
+
+```bash
+claude plugin update s@shipd
+```
+
 Verify with:
 
 ```bash
@@ -103,6 +132,7 @@ Everything the plugin ships is invoked as `/s:<name>`.
 | Invocation | What it does |
 | --- | --- |
 | `/s:onboard` | The guided tour: a nine-step walkthrough you drive with `/s:onboard next` and `/s:onboard back`, explaining spec-driven development over a worked example in a throwaway sandbox and building it for real on the engine. Progress persists, so the tour resumes across sessions. |
+| `/s:doctor` | Diagnose and repair the environment shipd runs in: run the read-only `shipd doctor` preflight, propose one remedy per finding, run only the remedies you consent to in a single batched dialog, then re-run the preflight and report the before/after. Interpreter and config failures stay report-only, and `gh auth login` is handed to you to run. |
 | `/s:plan` | Converge context into an execution-ready spec: investigate the codebase first, ask only what can't be inferred, then emit the lean `.shipd/` artifacts (`plan.md`, delta specs, `tasks.md`) and stop. Use it to work out an approach before writing any code. |
 | `/s:build` | A spec-driven orchestrator: it plans and designs the `.shipd/` artifacts on the strongest model, then delegates the coding to execution sub-agents running one model tier below, answers their questions, verifies, and merges + archives the change with the plugin's own spec engine. Use it to build a non-trivial feature end-to-end. |
 | `/s:review` | A CodeRabbit-style, AST-aware semantic review of local changes against a base ref before they are pushed: changed files mapped into cohorts, findings reported by cohort with a high/medium/low rubric and a ship-it/fix-required verdict. Read-only, with a `--json` mode for the PR gate. |

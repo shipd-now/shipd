@@ -1,7 +1,8 @@
-# shipd-install
+## MODIFIED Requirements
 
 ### Requirement: One-command install script
 id: install-script
+base: 25861412bc0d
 
 A repo-root `install.sh` SHALL, when run on a machine with the `claude` CLI
 and `python3` present: register the `shipd-now/shipd` GitHub marketplace via
@@ -45,37 +46,9 @@ SHALL download nothing itself beyond what the `claude` CLI performs.
 - **WHEN** `install.sh` aborts on a missing prerequisite
 - **THEN** the auto-update notice is absent from the output
 
-### Requirement: Version-independent launcher
-id: cache-launcher
-
-The installed `shipd` launcher SHALL resolve the newest version directory
-under the plugin cache root (`~/.claude/plugins/cache/shipd/s/`, overridable
-via the `SHIPD_PLUGIN_CACHE` environment variable) by numeric dotted-version
-ordering — ignoring non-version directory names — and SHALL replace its
-process with that snapshot's `bin/shipd`, passing all arguments through
-verbatim so the snapshot binary's output and exit code are the launcher's
-own. If no installed snapshot exists, then the launcher SHALL exit nonzero
-with one error line naming `claude plugin install s@shipd` as the fix. A
-newly installed plugin version SHALL be picked up with no change to the
-launcher.
-
-#### Scenario: Newest snapshot wins numerically
-- **GIVEN** cache version directories `0.6.9` and `0.6.10`
-- **WHEN** the launcher runs
-- **THEN** it executes `0.6.10/bin/shipd` (a lexicographic order would pick
-  `0.6.9`)
-
-#### Scenario: Arguments and exit code pass through
-- **WHEN** the launcher runs `shipd --version` against a stub snapshot
-- **THEN** the stub's stdout and exit code are the launcher's own
-
-#### Scenario: Missing cache is an actionable error
-- **WHEN** the launcher runs with an empty or absent cache root
-- **THEN** it exits nonzero with an error naming
-  `claude plugin install s@shipd`
-
 ### Requirement: Install-mode documentation
 id: install-mode-docs
+base: 41b2661411e7
 
 The repository `README.md` SHALL lead its installation documentation with
 install mode — the advertised one-liner

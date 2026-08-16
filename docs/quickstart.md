@@ -24,6 +24,14 @@ shell:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+Then turn on auto-update once, so later versions arrive without you asking —
+Claude Code leaves it off for third-party marketplaces like `shipd`. In a
+session, open `/plugin` → **Marketplaces** → `shipd` and toggle auto-update on
+(or add `"autoUpdate": true` to the `shipd` marketplace entry in
+`~/.claude/settings.json`). Updates are fetched shortly after a session starts
+and load in the next session, or right away after `/reload-plugins`; to update
+by hand at any time, run `claude plugin update s@shipd`.
+
 The [README's install section](../README.md#install) covers the by-hand
 equivalent and dev mode (running `/s:*` from a checkout).
 
