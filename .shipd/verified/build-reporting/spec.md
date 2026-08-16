@@ -103,15 +103,29 @@ A committed example config SHALL document the available keys.
 id: usage-dedup
 
 When summing token usage from session transcripts, the aggregator SHALL count
-each assistant API response exactly once, keyed by its message id, even when
-the response spans multiple transcript records repeating the same usage; the
-timing timeline SHALL still record every timestamped record so elapsed-time
-attribution is unchanged.
+each assistant API response exactly once at its final usage snapshot: records
+are keyed by message id, and each usage field (input, output, cache write,
+cache read) accumulates only the positive delta over the highest value already
+counted for that id — so records repeating identical usage add nothing, and
+cumulative streaming snapshots (as subagent transcripts write) sum to the
+response's final value. The timing timeline SHALL still record every
+timestamped record so elapsed-time attribution is unchanged.
 
 #### Scenario: Multi-record response counts once
 - **WHEN** a transcript holds four `assistant` records sharing one message id,
   each repeating `output_tokens: 678`
 - **THEN** the per-model summary adds 678 output tokens once, not 2712
+
+#### Scenario: Cumulative snapshots count the final value
+- **WHEN** a transcript holds three `assistant` records sharing one message id
+  whose `output_tokens` snapshots are 1, 1, then 331
+- **THEN** the per-model summary adds 331 output tokens, not 1 and not 333
+
+#### Scenario: Every usage field follows its final snapshot
+- **WHEN** two records share one message id and the later record's
+  `input_tokens` and `cache_read_input_tokens` are higher than the first's
+- **THEN** the per-model summary reflects the later record's values for those
+  fields
 
 #### Scenario: Distinct responses still accumulate
 - **WHEN** a transcript holds two `assistant` records with different message
@@ -125,18 +139,23 @@ The build-report module SHALL provide dependency-free (stdlib-only) session
 activity helpers: an offset-keeping tail over a session's main transcript and
 its subagent transcripts that, on each poll, re-discovers subagent files,
 reads only bytes appended since the previous poll, defers a torn trailing
-line until it is complete, and yields one
-`(start_epoch, end_epoch, output_tokens)` interval event per assistant
-response (deduped by message id across polls and files, synthetic records
-skipped) — where `end_epoch` is the response's timestamp and `start_epoch`
-reaches back to the previous event's end in the same tail, capped at 120
-seconds, with a first event zero-length; a multi-session tail that syncs a
-keyed set of per-session tails, adding and dropping sessions between polls,
-and merges their events; and a bucketizer folding interval events into
-buckets of a given size (3, 6, or 12 seconds) by distributing each event's
-tokens across the buckets its span overlaps, proportional to overlap and
-preserving the token total exactly, so charts render continuous throughput
-and a window change re-buckets accumulated history losslessly.
+line until it is complete, and yields
+`(start_epoch, end_epoch, output_tokens)` interval events per assistant
+response, keyed by message id across polls and files (synthetic records
+skipped): a response's first record yields an event carrying its output-token
+snapshot, and a later record of the same response yields an event only for
+the positive delta over the highest snapshot already yielded, at that
+record's own timestamp — so a response's events sum exactly to its final
+snapshot whether its records repeat identical usage or carry cumulative
+streaming snapshots — where `end_epoch` is the record's timestamp and
+`start_epoch` reaches back to the previous event's end in the same tail,
+capped at 120 seconds, with a first event zero-length; a multi-session tail
+that syncs a keyed set of per-session tails, adding and dropping sessions
+between polls, and merges their events; and a bucketizer folding interval
+events into buckets of a given size (3, 6, or 12 seconds) by distributing
+each event's tokens across the buckets its span overlaps, proportional to
+overlap and preserving the token total exactly, so charts render continuous
+throughput and a window change re-buckets accumulated history losslessly.
 
 #### Scenario: Only appended records are new
 - **WHEN** a tail is polled, two records are appended to the main transcript,
@@ -147,6 +166,17 @@ and a window change re-buckets accumulated history losslessly.
 - **WHEN** a new `agent-*.jsonl` appears under the session's subagents
   directory between polls
 - **THEN** the next poll includes that file's response events
+
+#### Scenario: Cumulative snapshots yield delta events
+- **WHEN** a subagent transcript holds two records sharing one message id with
+  `output_tokens` 1 then 104
+- **THEN** the poll yields events summing 104 tokens, the delta event
+  timestamped at the later record
+
+#### Scenario: Repeated identical snapshots yield no further event
+- **WHEN** records repeating one message id's unchanged usage snapshot arrive
+  within a poll and again in a later poll
+- **THEN** only the first record yields an event
 
 #### Scenario: A torn line is deferred, not lost
 - **WHEN** the transcript ends in a partial JSON line at poll time and the

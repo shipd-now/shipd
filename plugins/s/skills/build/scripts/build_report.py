@@ -39,6 +39,14 @@ EMPTY_BUCKETS = {
     "cache_read": 0,
 }
 
+# Each bucket field and the transcript usage key it accumulates.
+USAGE_FIELDS = (
+    ("non_cached_input", "input_tokens"),
+    ("output", "output_tokens"),
+    ("cache_write", "cache_creation_input_tokens"),
+    ("cache_read", "cache_read_input_tokens"),
+)
+
 # Harness-generated assistant records carry this literal model marker (with
 # all-zero usage). They are not a real model doing work, so they are excluded
 # from both the per-model usage map and the timing timeline.
@@ -191,9 +199,16 @@ class ActivityTail:
     ``<tdir>/<session_id>.jsonl`` plus every ``subagents/agent-*.jsonl`` — that
     on each :meth:`poll` re-discovers the subagent files, reads only the bytes
     appended since the previous poll, defers a torn trailing line until it is
-    completed, dedupes each assistant response by ``message.id`` across polls
-    and files, skips synthetic records, and yields one
-    ``(start_epoch, end_epoch, output_tokens)`` interval event per response.
+    completed, keys each assistant response by ``message.id`` across polls and
+    files, skips synthetic records, and yields
+    ``(start_epoch, end_epoch, output_tokens)`` interval events per response.
+
+    A response's first record yields an event carrying its output-token
+    snapshot; a later record of the same response yields an event only for the
+    positive delta over the highest snapshot already yielded, at that record's
+    own timestamp — so a response's events sum exactly to its final snapshot
+    whether its records repeat identical usage (adding nothing) or carry the
+    cumulative streaming snapshots subagent transcripts write.
 
     ``end_epoch`` is the response's timestamp; ``start_epoch`` reaches back to
     the previous event's end in this same tail, capped at
@@ -209,7 +224,9 @@ class ActivityTail:
         self.session_id = session_id
         self.main_path = os.path.join(tdir, "%s.jsonl" % session_id)
         self._offsets = {}
-        self._seen_ids = set()
+        # message id -> the highest output_tokens snapshot already counted for
+        # that response, so a later record yields only its positive delta.
+        self._counted = {}
         # The end epoch of the previous event emitted by this tail (across
         # every file and poll); ``None`` until the first event, which is then
         # zero-length.
@@ -231,11 +248,19 @@ class ActivityTail:
             return None
         if model == SYNTHETIC_MODEL:
             return None
+        snapshot = usage.get("output_tokens") or 0
+        tokens = snapshot
         msg_id = message.get("id")
         if msg_id is not None:
-            if msg_id in self._seen_ids:
-                return None
-            self._seen_ids.add(msg_id)
+            # Count only the positive delta over the highest snapshot already
+            # counted for this response: a first sighting yields its whole
+            # snapshot, a repeated (equal or lower) snapshot yields nothing.
+            previous = self._counted.get(msg_id)
+            if previous is not None:
+                tokens = snapshot - previous
+                if tokens <= 0:
+                    return None
+            self._counted[msg_id] = max(snapshot, previous or 0)
         ts = record.get("timestamp")
         if not ts:
             return None
@@ -251,7 +276,7 @@ class ActivityTail:
             span = span if span > 0 else 0.0  # never span forward
             start = end - span
         self._prev_end = end
-        return (start, end, usage.get("output_tokens") or 0)
+        return (start, end, tokens)
 
     def poll(self):
         """Return the new ``(start_epoch, end_epoch, output_tokens)`` events
@@ -447,16 +472,19 @@ def aggregate(paths, since_dt):
     tuples — one per in-window assistant record with a parseable
     timestamp — used for elapsed-time computation (see compute_timing).
 
-    Each assistant API response is counted exactly once, keyed by its
-    ``message.id``: a multi-record response (several transcript records
-    repeating the same usage under one id) adds its usage only on the first
-    record seen (build-reporting usage-dedup). Records with no id keep the
-    prior behaviour (always counted). The timeline still records every
-    timestamped record so elapsed-time attribution is unchanged.
+    Each assistant API response is counted exactly once at its final usage
+    snapshot, keyed by its ``message.id``: every usage field accumulates only
+    the positive delta over the highest value already counted for that id, so a
+    multi-record response repeating the same usage adds nothing on its repeats
+    while the cumulative streaming snapshots subagent transcripts write sum to
+    the response's final value (build-reporting usage-dedup). Records with no
+    id keep the prior behaviour (always counted). The timeline still records
+    every timestamped record so elapsed-time attribution is unchanged.
     """
     by_model = {}
     timeline = []
-    seen_ids = set()
+    # message id -> {bucket field: highest value already counted}.
+    counted = {}
     for path in paths:
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -491,19 +519,26 @@ def aggregate(paths, since_dt):
                         if ts_dt is None or ts_dt < since_dt:
                             continue
                     bucket = by_model.setdefault(model, dict(EMPTY_BUCKETS))
-                    # Count each response once: skip usage accumulation for a
-                    # message id already seen, but still ensure the model row
-                    # exists (above) and always record the timeline entry
-                    # (below) so timing attribution stays per-record.
+                    # Count each response once at its final snapshot: add only
+                    # each field's positive delta over the highest value already
+                    # counted for this message id (so repeated usage adds
+                    # nothing and cumulative snapshots reach the final value),
+                    # while the model row still exists (above) and the timeline
+                    # entry is always recorded (below) so timing attribution
+                    # stays per-record. A record with no id counts in full.
                     msg_id = message.get("id")
-                    counted = msg_id is not None and msg_id in seen_ids
-                    if not counted:
-                        if msg_id is not None:
-                            seen_ids.add(msg_id)
-                        bucket["non_cached_input"] += usage.get("input_tokens") or 0
-                        bucket["output"] += usage.get("output_tokens") or 0
-                        bucket["cache_write"] += usage.get("cache_creation_input_tokens") or 0
-                        bucket["cache_read"] += usage.get("cache_read_input_tokens") or 0
+                    highest = None
+                    if msg_id is not None:
+                        highest = counted.setdefault(msg_id, {})
+                    for field, key in USAGE_FIELDS:
+                        value = usage.get(key) or 0
+                        if highest is not None:
+                            previous = highest.get(field, 0)
+                            if value <= previous:
+                                continue
+                            highest[field] = value
+                            value -= previous
+                        bucket[field] += value
                     if ts_dt is not None:
                         timeline.append((ts_dt, model))
         except OSError:
