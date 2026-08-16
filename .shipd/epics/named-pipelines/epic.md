@@ -1,5 +1,5 @@
 # named-pipelines
-Status: ready
+Status: active
 Theme: spec-engine
 
 ## Introduction
@@ -168,3 +168,17 @@ land.
 | review-stage-options | /s:review and review_gate honor a disposition scope (all/high-only/none with auto-replies keeping threads resolvable) and a model tier | medium | medium | low | low |
 | autopilot-stage-options | Autopilot reads autopilot.attempts per stage in place of the fixed three-strike, passes resolved model tiers to headless sessions, conveys stage options in stage prompts | medium | high | medium | medium |
 | interactive-pipeline | /s:build and /s:plan resolve the shared pipeline and honor validator, telemetry, subagent_model, and disposition in their phases, ignoring autopilot-only fields | medium | high | medium | medium |
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 56 | 19.4k |
+| Edit | 14 | 5.5k |
+| (no tool) | 0 | 5.3k |
+| Read | 19 | 2.4k |
+| ToolSearch | 1 | 921 |
+| Agent | 2 | 832 |
+| SendMessage | 1 | 499 |
+| Write | 1 | 323 |
+| **Total** | 94 | 35.2k |
