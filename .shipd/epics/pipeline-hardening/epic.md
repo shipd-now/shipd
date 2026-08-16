@@ -1,5 +1,5 @@
 # pipeline-hardening
-Status: ready
+Status: active
 Theme: reliability
 
 ## Introduction
@@ -134,3 +134,14 @@ in-session fidelity.
 | pipeline-show-json | `pipeline-show --json` machine contract (custom lists included), skills consume JSON instead of rendered labels, `/s:status pipeline` route | medium | medium | low | low |
 | worktree-branch-hygiene | Loud branch-reuse notice with ahead/behind counts, `--fresh` flag for epic-close derivations, guarded `prune-branches` verb for merged locals | medium | medium | medium | medium |
 | insession-pipeline-fidelity | In-session autopilot honors skip/replace/tools/custom entries per the detached contract; sub-agent reporting contract in the build/autopilot skills | low | high | medium | medium |
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 58 | 21.1k |
+| Edit | 11 | 6.5k |
+| (no tool) | 0 | 5.5k |
+| Read | 12 | 1.7k |
+| Agent | 1 | 439 |
+| **Total** | 82 | 35.2k |
