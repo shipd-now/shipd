@@ -9,10 +9,15 @@ so the logic is unit-testable without a network or a real repo.
 
 Subcommands:
   post <pr> --from <json|->   upsert a summary comment, post anchored inline
-                              comments, and set a `semantic-review` commit
-                              status on the PR's head SHA
+       [--disposition <scope>] comments, and set a `semantic-review` commit
+       [--model <tier>]        status on the PR's head SHA; the disposition
+                              scope selects the status mapping and both
+                              options are recorded in the summary
   reply <pr> <comment-id>     post a reply onto the finding thread rooted at
        --body <text>          the given review comment (REST in_reply_to)
+  autoreply <pr>              post the canonical policy reply onto every
+       --disposition <scope>  gate-authored, unreplied finding thread the
+       [--body <text>]        scope covers, so `resolve` has its evidence
   resolve <pr> [--check]      resolve gate-authored threads carrying
                               disposition evidence (a reply, or a later
                               commit); --check counts unresolved gate threads
@@ -43,11 +48,27 @@ MARKER = "<!-- am-semantic-review -->"
 _SEV_DOT = {"high": "\U0001F534", "medium": "\U0001F7E0", "low": "\U0001F7E1"}
 _SEV_LABEL = {"high": "high", "medium": "med", "low": "low"}
 
+# Disposition scopes — the review-stage option an invoker passes through. It
+# selects the commit-status mapping only: the findings JSON and the rendered
+# verdict stay severity-honest in every scope.
+DISPOSITIONS = ("all", "high-only", "none")
+
+# The scopes `autoreply` acts under, and the canonical reply each posts. `all`
+# is absent by design: it means per-finding judgement, which is the skill's job.
+AUTOREPLY_DISPOSITIONS = ("high-only", "none")
+_AUTOREPLY_BODY = {
+    "high-only": ("Auto-dispositioned by review policy (disposition: "
+                  "high-only): below the acting threshold; not implemented."),
+    "none": ("Auto-dispositioned by review policy (disposition: none): "
+             "findings are recorded, not dispositioned individually."),
+}
+
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
-# GraphQL: list a PR's review threads (root-comment author, comment count, and
-# creation time) plus the PR's commit dates and the authenticated viewer login,
-# so `resolve` can pick gate-authored threads and judge disposition evidence.
+# GraphQL: list a PR's review threads (root-comment author, comment count,
+# creation time, and body) plus the PR's commit dates and the authenticated
+# viewer login, so `resolve` can pick gate-authored threads and judge
+# disposition evidence, and `autoreply` can read each root's severity.
 # Pagination beyond 100 threads/comments is out of scope (the same known cap as
 # the poster's comment listing).
 _THREADS_QUERY = """
@@ -61,7 +82,7 @@ query($owner:String!, $name:String!, $number:Int!) {
           id
           isResolved
           comments(first:100) {
-            nodes { databaseId author { login } createdAt }
+            nodes { databaseId author { login } createdAt body }
           }
         }
       }
@@ -157,8 +178,21 @@ def _split_findings(findings, commentable):
 
 # --- rendering --------------------------------------------------------------
 
-def status_state(verdict):
-    """`success` iff the verdict is a clean pass, else `failure`."""
+def status_state(verdict, findings=None, disposition="all"):
+    """The `semantic-review` commit-status state under the acting ``disposition``
+    scope — the one place merge policy acts on a review.
+
+    ``all`` (the default): `success` iff the verdict is a clean pass.
+    ``high-only``: `success` iff no finding carries severity `high` — the
+    mediums and lows are auto-dispositioned, never implemented, so a red status
+    over them would never clear. ``none``: always `success`; the honesty lives
+    in the posted findings, not in a status nobody may act on.
+    """
+    if disposition == "none":
+        return "success"
+    if disposition == "high-only":
+        highs = any((f.get("severity") == "high") for f in (findings or []))
+        return "failure" if highs else "success"
     return "success" if verdict == "pass" else "failure"
 
 
@@ -174,15 +208,25 @@ def _detail_cell(f):
     return ("%s — %s" % (loc, what)).strip(" —")
 
 
-def render_summary(review, unanchored):
+def render_summary(review, unanchored, disposition="all", model=None):
     """Render the marker-tagged summary comment body: verdict header, effort,
-    the ``# | rating | details`` findings table, and an "Additional findings"
-    section carrying the ``unanchored`` findings in full (they get no inline
-    comment)."""
+    the policy provenance lines, the ``# | rating | details`` findings table,
+    and an "Additional findings" section carrying the ``unanchored`` findings in
+    full (they get no inline comment).
+
+    Provenance: a non-``all`` ``disposition`` adds a ``Disposition: <scope>``
+    line so a green status over visible findings is explained on the PR, and a
+    given ``model`` adds a ``Model: <tier>`` line recorded verbatim — symbolic
+    tiers are never resolved here."""
     verdict = review.get("verdict")
     findings = review.get("findings") or []
     out = [MARKER, "", _verdict_header(verdict), "",
-           "Effort: %s/5" % review.get("effort", "?"), ""]
+           "Effort: %s/5" % review.get("effort", "?")]
+    if disposition and disposition != "all":
+        out.append("Disposition: %s" % disposition)
+    if model:
+        out.append("Model: %s" % model)
+    out.append("")
     if findings:
         out.append("| # | rating | details |")
         out.append("| --- | --- | --- |")
@@ -207,11 +251,33 @@ def render_summary(review, unanchored):
     return "\n".join(out) + "\n"
 
 
+def _sev_marker(severity):
+    """The marker an inline finding comment opens with. The renderer below and
+    ``parse_severity`` both go through this one format, so the pair cannot
+    drift — the tests cover the render → parse round trip."""
+    return "**%s — " % severity
+
+
+# The parser side of `_sev_marker`, derived from it via a sentinel so the
+# literal format lives in exactly one place.
+_SEV_MARKER_RE = re.compile(
+    "^" + re.escape(_sev_marker("\x00")).replace(
+        "\x00", "(%s)" % "|".join(_SEV_DOT)))
+
+
+def parse_severity(body):
+    """The severity of a gate-authored inline finding comment, read back from
+    the marker ``_inline_body`` rendered, or ``None`` when ``body`` does not
+    open with one (a human's comment, or a body this gate did not write)."""
+    match = _SEV_MARKER_RE.match((body or "").lstrip())
+    return match.group(1) if match else None
+
+
 def _inline_body(f):
     """The text body of one anchored inline comment — the finding's what / why
     / fix as prose. No committable suggestion blocks, no emoji."""
     sev = f.get("severity", "low")
-    parts = ["**%s — %s**" % (sev, f.get("what") or "")]
+    parts = [_sev_marker(sev) + "%s**" % (f.get("what") or "")]
     if f.get("why"):
         parts.append("")
         parts.append(f["why"])
@@ -221,17 +287,19 @@ def _inline_body(f):
     return "\n".join(parts)
 
 
-def _status_description(review):
+def _status_description(review, disposition="all"):
     findings = review.get("findings") or []
     verdict = review.get("verdict") or "unknown"
+    suffix = ("" if not disposition or disposition == "all"
+              else " (disposition %s)" % disposition)
     if not findings:
-        return ("%s: no findings" % verdict)[:140]
+        return ("%s: no findings%s" % (verdict, suffix))[:140]
     counts = {"high": 0, "medium": 0, "low": 0}
     for f in findings:
         counts[f.get("severity", "low")] = counts.get(f.get("severity", "low"), 0) + 1
     parts = ["%d %s" % (counts[s], s) for s in ("high", "medium", "low")
              if counts.get(s)]
-    return ("%s: %s" % (verdict, ", ".join(parts)))[:140]
+    return ("%s: %s%s" % (verdict, ", ".join(parts), suffix))[:140]
 
 
 # --- gh interactions --------------------------------------------------------
@@ -314,9 +382,12 @@ def _post_review(gh, repo, number, sha, anchored):
     return rc == 0
 
 
-def post(pr, review, gh, out=_noop):
+def post(pr, review, gh, out=_noop, disposition="all", model=None):
     """Publish ``review`` (a parsed /s:review --json object) to pull request
-    ``pr`` through the ``gh`` seam. Returns a small result dict."""
+    ``pr`` through the ``gh`` seam. ``disposition`` is the acting review-stage
+    scope (see ``status_state``) and ``model`` the tier the reviewing session
+    ran on, both recorded as provenance in the summary. Returns a small result
+    dict."""
     number, sha, pr_url = _resolve_pr(gh, pr)
     repo = _resolve_repo(gh)
     files = _pr_files(gh, repo, number)
@@ -325,10 +396,12 @@ def post(pr, review, gh, out=_noop):
     findings = review.get("findings") or []
     anchored, unanchored = _split_findings(findings, commentable)
 
-    comment_url = _upsert_summary(gh, repo, number,
-                                  render_summary(review, unanchored))
-    state = status_state(review.get("verdict"))
-    _set_status(gh, repo, sha, state, _status_description(review), comment_url)
+    comment_url = _upsert_summary(
+        gh, repo, number,
+        render_summary(review, unanchored, disposition, model))
+    state = status_state(review.get("verdict"), findings, disposition)
+    _set_status(gh, repo, sha, state,
+                _status_description(review, disposition), comment_url)
     out("summary comment: %s" % (comment_url or "(created)"))
 
     if anchored:
@@ -336,12 +409,15 @@ def post(pr, review, gh, out=_noop):
             # The inline review was rejected: fold every finding into the
             # summary so nothing is lost, then retry the review with no inline.
             out("inline review rejected; folding findings into the summary")
-            _upsert_summary(gh, repo, number, render_summary(review, findings))
+            _upsert_summary(
+                gh, repo, number,
+                render_summary(review, findings, disposition, model))
             _post_review(gh, repo, number, sha, [])
 
     out("semantic-review status: %s" % state)
     return {"state": state, "summary_url": comment_url,
-            "anchored": len(anchored), "unanchored": len(unanchored)}
+            "anchored": len(anchored), "unanchored": len(unanchored),
+            "disposition": disposition}
 
 
 def _enabled(value):
@@ -486,13 +562,10 @@ def _comment_id_int(comment_id):
         _fail("invalid comment id %r" % (comment_id,))
 
 
-def reply(pr, comment_id, body, gh, out=_noop):
-    """Post ``body`` as a reply onto the finding thread rooted at review comment
-    ``comment_id`` on pull request ``pr``, through the ``gh`` seam. Uses the REST
-    ``in_reply_to`` create so the reply threads under the gate's comment. Returns
-    ``{"url": <html_url>}``; a rejected create (unknown comment id) raises."""
-    number, _sha, _url = _resolve_pr(gh, pr)
-    repo = _resolve_repo(gh)
+def _post_reply(gh, repo, number, comment_id, body):
+    """Create a threaded reply under review comment ``comment_id`` via the REST
+    ``in_reply_to`` create. Returns the new comment's html_url; a rejected
+    create (unknown comment id) raises."""
     payload = json.dumps({"body": body, "in_reply_to": _comment_id_int(comment_id)})
     rc, body_out, err = gh(
         ["api", "repos/%s/pulls/%d/comments" % (repo, number),
@@ -500,7 +573,17 @@ def reply(pr, comment_id, body, gh, out=_noop):
     if rc != 0:
         _fail("posting reply to comment %s failed: %s"
               % (comment_id, err.strip()))
-    url = json.loads(body_out or "{}").get("html_url")
+    return json.loads(body_out or "{}").get("html_url")
+
+
+def reply(pr, comment_id, body, gh, out=_noop):
+    """Post ``body`` as a reply onto the finding thread rooted at review comment
+    ``comment_id`` on pull request ``pr``, through the ``gh`` seam. Uses the REST
+    ``in_reply_to`` create so the reply threads under the gate's comment. Returns
+    ``{"url": <html_url>}``; a rejected create (unknown comment id) raises."""
+    number, _sha, _url = _resolve_pr(gh, pr)
+    repo = _resolve_repo(gh)
+    url = _post_reply(gh, repo, number, comment_id, body)
     out("reply posted: %s" % (url or "(created)"))
     return {"url": url}
 
@@ -521,8 +604,9 @@ def _graphql(gh, query, **variables):
 def _list_review_threads(gh, repo, number):
     """Return ``(viewer_login, commit_dates, threads)`` for pull request
     ``number``. Each thread is ``{"id", "isResolved", "comments"}`` where
-    ``comments`` is the ordered list of ``{"databaseId", "author", "createdAt"}``
-    (author being the login)."""
+    ``comments`` is the ordered list of
+    ``{"databaseId", "author", "createdAt", "body"}`` (author being the
+    login)."""
     owner, _, name = repo.partition("/")
     data = _graphql(gh, _THREADS_QUERY, owner=owner, name=name, number=int(number))
     viewer = (data.get("viewer") or {}).get("login")
@@ -536,7 +620,8 @@ def _list_review_threads(gh, repo, number):
         comments = [
             {"databaseId": c.get("databaseId"),
              "author": (c.get("author") or {}).get("login"),
-             "createdAt": c.get("createdAt")}
+             "createdAt": c.get("createdAt"),
+             "body": c.get("body") or ""}
             for c in ((node.get("comments") or {}).get("nodes") or [])]
         threads.append({"id": node.get("id"),
                         "isResolved": bool(node.get("isResolved")),
@@ -591,6 +676,53 @@ def resolve(pr, gh, check=False, out=_noop):
             "resolved": resolved, "undispositioned": undispositioned}
 
 
+def autoreply(pr, gh, disposition, body=None, out=_noop):
+    """Post the canonical policy reply onto the gate-authored finding threads a
+    cheapened review never dispositions individually, so ``resolve`` finds its
+    evidence without per-finding judgement.
+
+    A thread is eligible when it is unresolved, rooted at a comment authored by
+    the authenticated viewer (the account the gate posts as — human threads are
+    never touched), and carries no reply yet, which makes re-runs idempotent.
+    Under ``high-only`` only ``medium``/``low`` roots are replied to: ``high``
+    findings are the ones the flow still acts on, and a root whose severity
+    cannot be parsed is left for judgement and reported. Under ``none``
+    severity is not consulted and every eligible thread is replied to.
+
+    Returns ``{"replied": n, "threads": [...], "unparsed": [...]}``."""
+    if disposition not in AUTOREPLY_DISPOSITIONS:
+        _fail("autoreply needs disposition %s, got %r"
+              % (" or ".join(AUTOREPLY_DISPOSITIONS), disposition))
+    number, _sha, _url = _resolve_pr(gh, pr)
+    repo = _resolve_repo(gh)
+    viewer, _commit_dates, threads = _list_review_threads(gh, repo, number)
+    text = body or _AUTOREPLY_BODY[disposition]
+
+    replied, unparsed = [], []
+    for t in threads:
+        comments = t["comments"]
+        if t["isResolved"] or not comments:
+            continue
+        root = comments[0]
+        if root["author"] != viewer:
+            continue                      # human-authored: never touched
+        if len(comments) > 1:
+            continue                      # already dispositioned
+        if disposition == "high-only":
+            severity = parse_severity(root.get("body"))
+            if severity is None:
+                unparsed.append(t["id"])
+                out("unparsed severity, left for judgment: %s" % t["id"])
+                continue
+            if severity == "high":
+                continue
+        _post_reply(gh, repo, number, root["databaseId"], text)
+        replied.append(t["id"])
+        out("replied %s" % t["id"])
+    out("replied=%d" % len(replied))
+    return {"replied": len(replied), "threads": replied, "unparsed": unparsed}
+
+
 # --- CLI --------------------------------------------------------------------
 
 def _load_review(src):
@@ -602,7 +734,8 @@ def _load_review(src):
 
 def _cmd_post(args, gh):
     review = _load_review(args.from_)
-    result = post(args.pr, review, gh, out=lambda m: print(m, file=sys.stderr))
+    result = post(args.pr, review, gh, out=lambda m: print(m, file=sys.stderr),
+                  disposition=args.disposition, model=args.model)
     print(json.dumps(result))
     return 0
 
@@ -611,6 +744,12 @@ def _cmd_reply(args, gh):
     result = reply(args.pr, args.comment_id, args.body, gh,
                    out=lambda m: print(m, file=sys.stderr))
     print(json.dumps(result))
+    return 0
+
+
+def _cmd_autoreply(args, gh):
+    # ``replied=<n>`` goes to stdout so a driving flow can read the count.
+    autoreply(args.pr, gh, args.disposition, body=args.body, out=print)
     return 0
 
 
@@ -637,6 +776,12 @@ def main(argv=None, gh=None):
     p.add_argument("pr", help="PR number, URL, or branch")
     p.add_argument("--from", dest="from_", required=True,
                    help="path to the /s:review --json object, or - for stdin")
+    p.add_argument("--disposition", choices=DISPOSITIONS, default="all",
+                   help="review-stage disposition scope selecting the commit "
+                        "status mapping (default: all)")
+    p.add_argument("--model", default=None,
+                   help="the model tier the reviewing session ran on, recorded "
+                        "verbatim in the summary comment")
     p.set_defaults(func=_cmd_post)
 
     rp = sub.add_parser("reply", help="reply onto a finding thread")
@@ -644,6 +789,18 @@ def main(argv=None, gh=None):
     rp.add_argument("comment_id", help="the review comment id rooting the thread")
     rp.add_argument("--body", required=True, help="the reply text")
     rp.set_defaults(func=_cmd_reply)
+
+    ar = sub.add_parser(
+        "autoreply", help="post the canonical policy reply onto the gate "
+                          "threads a disposition scope does not judge")
+    ar.add_argument("pr", help="PR number, URL, or branch")
+    ar.add_argument("--disposition", choices=AUTOREPLY_DISPOSITIONS,
+                    required=True,
+                    help="the acting disposition scope (high-only replies to "
+                         "medium/low roots; none replies to every gate thread)")
+    ar.add_argument("--body", default=None,
+                    help="override the canonical policy reply text")
+    ar.set_defaults(func=_cmd_autoreply)
 
     rs = sub.add_parser(
         "resolve", help="resolve gate-authored threads carrying disposition "

@@ -119,7 +119,8 @@ class FakeGh:
                 "comments": {"nodes": [
                     {"databaseId": c["databaseId"],
                      "author": {"login": c["author"]},
-                     "createdAt": c["createdAt"]}
+                     "createdAt": c["createdAt"],
+                     "body": c.get("body", "")}
                     for c in t["comments"]]}})
         data = {"data": {
             "viewer": {"login": self.viewer},
@@ -150,7 +151,8 @@ class FakeGh:
             self._next_comment_id += 1
             target["comments"].append(
                 {"databaseId": cid, "author": self.viewer,
-                 "createdAt": "2099-01-01T00:00:00Z"})
+                 "createdAt": "2099-01-01T00:00:00Z",
+                 "body": payload["body"]})
             reply = {"id": cid, "in_reply_to_id": root_id,
                      "html_url": "%s#discussion_r%d" % (self.pr_url, cid),
                      "body": payload["body"]}
@@ -336,6 +338,104 @@ class PostTest(unittest.TestCase):
         self.assertEqual(gh.review_posts, [])
 
 
+class PostDispositionTest(unittest.TestCase):
+    """`post --disposition <scope>` maps the commit status by merge policy while
+    the summary body and verdict stay severity-honest."""
+
+    HIGH = {"id": "f1", "severity": "high", "location": "z.py:1",
+            "what": "high boom", "why": "w", "fix": "x"}
+    MEDIUM = {"id": "f2", "severity": "medium", "location": "z.py:2",
+              "what": "medium boom", "why": "w", "fix": "x"}
+    LOW = {"id": "f3", "severity": "low", "location": "z.py:3",
+           "what": "low boom", "why": "w", "fix": "x"}
+
+    def test_all_scope_keeps_verdict_mapping(self):
+        gh = FakeGh()
+        review_gate.post("7", _review(verdict="pass"), gh, disposition="all")
+        self.assertEqual(gh.posted_status["state"], "success")
+
+        gh = FakeGh()
+        review_gate.post("7", _review(verdict="changes-requested",
+                                      findings=[self.MEDIUM]), gh,
+                         disposition="all")
+        self.assertEqual(gh.posted_status["state"], "failure")
+
+    def test_omitted_scope_defaults_to_all(self):
+        gh = FakeGh()
+        review_gate.post(
+            "7", _review(verdict="changes-requested", findings=[self.LOW]), gh)
+        self.assertEqual(gh.posted_status["state"], "failure")
+        # Default scope leaves the summary free of policy provenance.
+        self.assertNotIn("Disposition:", gh.summary_body())
+        self.assertNotIn("Model:", gh.summary_body())
+
+    def test_high_only_greens_over_medium_and_low(self):
+        gh = FakeGh()
+        result = review_gate.post(
+            "7", _review(verdict="changes-requested",
+                         findings=[self.MEDIUM, self.LOW]), gh,
+            disposition="high-only")
+        self.assertEqual(gh.posted_status["state"], "success")
+        self.assertEqual(result["state"], "success")
+        # The status description names the acting scope ...
+        self.assertIn("high-only", gh.posted_status["description"])
+        # ... and the summary stays severity-honest about the findings.
+        body = gh.summary_body()
+        self.assertIn("Disposition: high-only", body)
+        self.assertIn("medium boom", body)
+        self.assertIn("low boom", body)
+        self.assertIn("Fix required", body)
+
+    def test_high_only_stays_red_on_a_high(self):
+        gh = FakeGh()
+        review_gate.post(
+            "7", _review(verdict="changes-requested",
+                         findings=[self.HIGH, self.MEDIUM]), gh,
+            disposition="high-only")
+        self.assertEqual(gh.posted_status["state"], "failure")
+        self.assertIn("Disposition: high-only", gh.summary_body())
+
+    def test_none_is_always_green_and_stays_honest(self):
+        gh = FakeGh()
+        review_gate.post(
+            "7", _review(verdict="changes-requested", findings=[self.HIGH]),
+            gh, disposition="none", model="tier-below")
+        self.assertEqual(gh.posted_status["state"], "success")
+        self.assertIn("none", gh.posted_status["description"])
+        body = gh.summary_body()
+        self.assertIn("high boom", body)          # the finding is still there
+        self.assertIn("Disposition: none", body)
+        self.assertIn("Model: tier-below", body)
+
+    def test_model_recorded_verbatim_and_absent_when_omitted(self):
+        gh = FakeGh()
+        review_gate.post("7", _review(verdict="pass"), gh, model="tier-below")
+        self.assertIn("Model: tier-below", gh.summary_body())
+
+        gh = FakeGh()
+        review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertNotIn("Model:", gh.summary_body())
+
+    def test_cli_passes_disposition_and_model_through(self):
+        import tempfile
+        gh = FakeGh()
+        with tempfile.NamedTemporaryFile("w", suffix=".json",
+                                         delete=False) as fh:
+            json.dump(_review(verdict="changes-requested",
+                              findings=[self.MEDIUM]), fh)
+            path = fh.name
+        try:
+            code, out = _run_main(
+                ["post", "7", "--from", path,
+                 "--disposition", "high-only", "--model", "tier-two-below"], gh)
+        finally:
+            os.unlink(path)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["state"], "success")
+        self.assertEqual(gh.posted_status["state"], "success")
+        self.assertIn("Model: tier-two-below", gh.summary_body())
+
+
 class ProtectTest(unittest.TestCase):
     def test_adds_context_and_conversation_resolution(self):
         gh = FakeGh(contexts=("ci",), conversation_resolution=False)
@@ -396,15 +496,16 @@ class ProtectTest(unittest.TestCase):
 
 
 def _thread(tid, *, resolved=False, author="gate-bot", created="2024-01-01T00:00:00Z",
-            replies=0, root_id=None):
+            replies=0, root_id=None, body=""):
     """Build a FakeGh review-thread dict: a root comment authored by ``author``
-    at ``created``, plus ``replies`` follow-up comments."""
+    at ``created`` carrying ``body``, plus ``replies`` follow-up comments."""
     root = {"databaseId": root_id if root_id is not None else 10000 + tid_num(tid),
-            "author": author, "createdAt": created}
+            "author": author, "createdAt": created, "body": body}
     comments = [root]
     for i in range(replies):
         comments.append({"databaseId": root["databaseId"] + 1 + i,
-                         "author": author, "createdAt": created})
+                         "author": author, "createdAt": created,
+                         "body": "a reply"})
     return {"id": "T%s" % tid, "isResolved": resolved, "comments": comments}
 
 
@@ -532,6 +633,119 @@ class ResolveTest(unittest.TestCase):
         code, out = _run_main(["resolve", "7", "--check"], gh)
         self.assertIn("unresolved=0", out)
         self.assertEqual(code, 0)
+
+
+def _gate_thread(tid, severity, *, what="boom", **kw):
+    """A gate-authored thread whose root body is what the poster would render
+    for a finding of ``severity`` — so the parser is exercised against the real
+    renderer, never a hand-written imitation."""
+    body = review_gate._inline_body(
+        {"severity": severity, "what": what, "why": "w", "fix": "x"})
+    return _thread(tid, body=body, **kw)
+
+
+class SeverityParseTest(unittest.TestCase):
+    def test_round_trips_every_rendered_severity(self):
+        for sev in ("high", "medium", "low"):
+            body = review_gate._inline_body(
+                {"severity": sev, "what": "something", "why": "w", "fix": "x"})
+            self.assertEqual(review_gate.parse_severity(body), sev)
+
+    def test_unparseable_body_yields_none(self):
+        self.assertIsNone(review_gate.parse_severity("just some prose"))
+        self.assertIsNone(review_gate.parse_severity(""))
+
+
+class AutoreplyTest(unittest.TestCase):
+    def test_high_only_replies_below_the_threshold(self):
+        threads = [_gate_thread(1, "high"), _gate_thread(2, "medium"),
+                   _gate_thread(3, "low")]
+        gh = FakeGh(review_threads=threads)
+        result = review_gate.autoreply("7", gh, "high-only")
+        self.assertEqual(result["replied"], 2)
+        # The high thread keeps its lone root comment; the others gained one.
+        self.assertEqual(len(threads_from(gh, "T1")["comments"]), 1)
+        self.assertEqual(len(threads_from(gh, "T2")["comments"]), 2)
+        self.assertEqual(len(threads_from(gh, "T3")["comments"]), 2)
+        # Each reply names the acting policy scope.
+        for reply in gh.reply_posts:
+            self.assertIn("high-only", reply["body"])
+
+    def test_high_only_prints_replied_count(self):
+        threads = [_gate_thread(1, "high"), _gate_thread(2, "medium"),
+                   _gate_thread(3, "low")]
+        gh = FakeGh(review_threads=threads)
+        code, out = _run_main(
+            ["autoreply", "7", "--disposition", "high-only"], gh)
+        self.assertEqual(code, 0)
+        self.assertIn("replied=2", out)
+
+    def test_none_replies_to_every_gate_thread(self):
+        threads = [_gate_thread(1, "high"), _gate_thread(2, "medium"),
+                   _gate_thread(3, "low")]
+        gh = FakeGh(review_threads=threads)
+        code, out = _run_main(["autoreply", "7", "--disposition", "none"], gh)
+        self.assertEqual(code, 0)
+        self.assertIn("replied=3", out)
+        for tid in ("T1", "T2", "T3"):
+            self.assertEqual(len(threads_from(gh, tid)["comments"]), 2)
+
+    def test_none_replies_to_an_unparseable_root_too(self):
+        # Under `none` severity is never consulted, so a body the parser cannot
+        # read is still covered.
+        threads = [_thread(1, body="free-form prose with no marker")]
+        gh = FakeGh(review_threads=threads)
+        result = review_gate.autoreply("7", gh, "none")
+        self.assertEqual(result["replied"], 1)
+
+    def test_rerun_is_idempotent(self):
+        threads = [_gate_thread(1, "medium"), _gate_thread(2, "low")]
+        gh = FakeGh(review_threads=threads)
+        review_gate.autoreply("7", gh, "none")
+        code, out = _run_main(["autoreply", "7", "--disposition", "none"], gh)
+        self.assertEqual(code, 0)
+        self.assertIn("replied=0", out)
+        # No thread grew a second reply.
+        self.assertEqual(len(threads_from(gh, "T1")["comments"]), 2)
+        self.assertEqual(len(threads_from(gh, "T2")["comments"]), 2)
+
+    def test_unparseable_root_is_left_for_judgment(self):
+        threads = [_thread(1, body="free-form prose with no marker"),
+                   _gate_thread(2, "low")]
+        gh = FakeGh(review_threads=threads)
+        lines = []
+        result = review_gate.autoreply("7", gh, "high-only", out=lines.append)
+        self.assertEqual(result["replied"], 1)
+        self.assertEqual(result["unparsed"], ["T1"])
+        self.assertEqual(len(threads_from(gh, "T1")["comments"]), 1)
+        self.assertIn("T1", "\n".join(lines))
+        self.assertIn("unparsed", "\n".join(lines))
+
+    def test_never_touches_human_or_resolved_threads(self):
+        threads = [_gate_thread(1, "medium", author="a-human"),
+                   _gate_thread(2, "medium", resolved=True),
+                   _gate_thread(3, "medium", replies=1)]
+        gh = FakeGh(review_threads=threads)
+        result = review_gate.autoreply("7", gh, "none")
+        self.assertEqual(result["replied"], 0)
+        self.assertEqual(gh.reply_posts, [])
+        self.assertEqual(len(threads_from(gh, "T1")["comments"]), 1)
+        self.assertEqual(len(threads_from(gh, "T2")["comments"]), 1)
+        self.assertEqual(len(threads_from(gh, "T3")["comments"]), 2)
+
+    def test_body_override_replaces_the_canonical_text(self):
+        gh = FakeGh(review_threads=[_gate_thread(1, "low")])
+        code, _out = _run_main(
+            ["autoreply", "7", "--disposition", "none", "--body", "custom text"],
+            gh)
+        self.assertEqual(code, 0)
+        self.assertEqual(gh.reply_posts[0]["body"], "custom text")
+
+    def test_all_scope_is_rejected_by_the_cli(self):
+        # `all` means per-finding judgment; there is nothing to auto-reply.
+        gh = FakeGh(review_threads=[_gate_thread(1, "low")])
+        with self.assertRaises(SystemExit):
+            _run_main(["autoreply", "7", "--disposition", "all"], gh)
 
 
 if __name__ == "__main__":
