@@ -196,6 +196,45 @@ for a copyable template. Each build appends one record to
 `~/.shipd/builds/builds.jsonl` plus a per-build file under the configured
 `log_dir`.
 
+## CI: lint your specs on every PR
+
+The repository root carries `action.yml`, a composite GitHub Action that runs
+shipd's structural spec lint against **your** repository: first the master
+library, then every in-flight change under your resolved `planned/`
+directory. Any lint finding fails the step, so a malformed spec or delta never
+reaches `main`.
+
+Add it to a workflow — check out your repo, then use the action:
+
+```yaml
+name: specs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  spec-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shipd-now/shipd@main
+```
+
+Prefer a pinned ref over `@main` — `shipd-now/shipd@<tag-or-sha>`, where
+`<tag-or-sha>` is a release tag or commit SHA — so a change to the engine can
+never move your CI underneath you.
+
+- **`path`** — the directory to lint, defaulting to `.` (the checked-out
+  repository root). Point it at a subdirectory when your specs live in one:
+  `with: { path: services/api }`. The content directory itself is resolved
+  from your `.shipd-config.json`, so a custom `dir` needs no extra input.
+- **Runner requirement: `python3` on `PATH`** — the only one. GitHub-hosted
+  runners ship it. The engine scripts are stdlib-only Python 3 and travel
+  inside the action's own checkout, so the action installs nothing, downloads
+  nothing, caches nothing, and uses no third-party action steps.
+
 ## Structure
 
 ```
