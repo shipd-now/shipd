@@ -1,0 +1,36 @@
+name: "shipd spec lint"
+description: >-
+  Structurally lint a shipd spec library and every in-flight change in a
+  consumer repository. Runs the engine's stdlib-only spec_lint.py from this
+  action's own checkout with the runner's python3 — no downloads, no cache,
+  no third-party action steps.
+
+inputs:
+  path:
+    description: "Directory of the repository to lint (its content directory is resolved from .shipd-config.json)."
+    required: false
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Lint master spec library
+      shell: bash
+      env:
+        SHIPD_TARGET: ${{ inputs.path }}
+      run: |
+        python3 "$GITHUB_ACTION_PATH/plugins/s/skills/build/scripts/spec_lint.py" --root "$SHIPD_TARGET"
+
+    - name: Lint in-flight changes
+      shell: bash
+      env:
+        SHIPD_TARGET: ${{ inputs.path }}
+      run: |
+        scripts="$GITHUB_ACTION_PATH/plugins/s/skills/build/scripts"
+        # Resolve the consumer's content directory the way the engine does,
+        # so a custom `dir` in .shipd-config.json is honored here too.
+        content="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import spec_common as sc; config, _prov = sc.resolve_config(sys.argv[2]); sys.stdout.write(sc.specs_dirname(config))' "$scripts" "$SHIPD_TARGET")"
+        for d in "$SHIPD_TARGET/$content"/planned/*/; do
+          [ -d "$d" ] || continue
+          python3 "$scripts/spec_lint.py" "$(basename "$d")" --root "$SHIPD_TARGET"
+        done

@@ -46,6 +46,7 @@ SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
+import cli_common as cc  # noqa: E402
 import spec_common as sc  # noqa: E402
 import spec_status as ss  # noqa: E402
 
@@ -1796,13 +1797,13 @@ def _cmd_forecast(args):
         try:
             target = _dt.date.fromisoformat(args.by_date)
         except ValueError:
-            print("forecast: --by-date must be YYYY-MM-DD (got %r)"
-                  % args.by_date, file=sys.stderr)
+            cc.err("forecast: --by-date must be YYYY-MM-DD (got %r)"
+                   % args.by_date)
             return 2
         horizon_days = (target - now.date()).days
         if horizon_days <= 0:
-            print("forecast: --by-date must be after today (%s)"
-                  % now.date().isoformat(), file=sys.stderr)
+            cc.err("forecast: --by-date must be after today (%s)"
+                   % now.date().isoformat())
             return 2
         result = build_forecast_result(
             daily_counts, now, "how_many", by_date=args.by_date,
@@ -1813,7 +1814,7 @@ def _cmd_forecast(args):
         if args.epic is not None:
             remaining = epic_remaining(root, args.epic)
             if remaining is None:
-                print("forecast: no such epic %r" % args.epic, file=sys.stderr)
+                cc.err("forecast: no such epic %r" % args.epic)
                 return 2
             epic = args.epic
             items = len(remaining)
@@ -1906,7 +1907,14 @@ def main(argv=None):
     p_rollup.set_defaults(func=_cmd_rollup)
 
     args = parser.parse_args(argv)
-    return args.func(args)
+    # A malformed `.shipd-config.json` under `--root` is a user-facing failure,
+    # not a bug: report it as the one-line `Error:` the CLI convention requires
+    # rather than a traceback.
+    try:
+        return args.func(args)
+    except sc.ConfigError as exc:
+        cc.err(str(exc))
+        return 1
 
 
 if __name__ == "__main__":

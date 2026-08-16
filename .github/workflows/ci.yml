@@ -45,6 +45,7 @@ jobs:
 
       - name: Shell syntax checks
         run: |
+          bash -n install.sh
           bash -n plugins/s/integrations/statusline.sh
           bash -n plugins/s/skills/build/scripts/claim_task.sh
           bash -n plugins/s/skills/build/scripts/worktree.sh

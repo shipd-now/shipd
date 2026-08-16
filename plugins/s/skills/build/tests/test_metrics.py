@@ -1262,6 +1262,29 @@ class SummaryCliTest(unittest.TestCase):
         self.assertEqual(proc.stdout, "")
 
 
+class SummaryCliMalformedConfigTest(unittest.TestCase):
+    """A `.shipd-config.json` that is not parseable JSON is a user-facing
+    failure: one `Error:` line on stderr and exit 1, never a traceback (an
+    uncaught ConfigError would propagate out of main() and fail this test)."""
+
+    def setUp(self):
+        self.fx = _Fixture()
+        self.addCleanup(self.fx.cleanup)
+        _write(os.path.join(self.fx.root, ".shipd-config.json"), "{ not json")
+
+    def test_malformed_config_is_one_error_line(self):
+        import contextlib
+        import io
+        buf, errbuf = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), \
+                contextlib.redirect_stderr(errbuf):
+            code = metrics.main(["summary", "--root", self.fx.root])
+        self.assertEqual(code, 1)
+        lines = errbuf.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, errbuf.getvalue())
+        self.assertTrue(lines[0].startswith("Error: "), errbuf.getvalue())
+
+
 # ---------------------------------------------------------------------------
 # 5. Flow time-series capture (delivery-metrics flow-timeseries)
 # ---------------------------------------------------------------------------

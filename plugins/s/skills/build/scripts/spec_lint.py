@@ -34,14 +34,20 @@ CLI:  spec_lint.py [<change>] [--epic <slug>] [--initiative <slug>] [--root DIR]
       discoverable workspace's initiatives/<slug>/ (non-zero when no workspace
       is found). Without any, lints the whole master library under .shipd/verified/
       plus every epic under .shipd/epics/.
+
+      With --json, the findings are emitted as one JSON object on stdout —
+      `ok`, `errors`, `warnings` — carrying the same strings the text mode
+      prints, with the same exit code, instead of the text report.
 """
 
 import argparse
+import json
 import os
 import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import cli_common as cc  # noqa: E402
 import spec_common as sc  # noqa: E402
 
 SHALL_MUST_RE = re.compile(r"\b(SHALL|MUST)\b")
@@ -1362,56 +1368,77 @@ def main(argv=None):
                              "(<content-dir>/wiki)")
     parser.add_argument("--root", default=os.getcwd(),
                         help="repo root containing the .shipd/ content directory (default: cwd)")
+    parser.add_argument("--json", action="store_true", dest="json",
+                        help="emit one JSON object on stdout — ok, errors, "
+                             "warnings — instead of the text report")
     args = parser.parse_args(argv)
 
     warnings = []
-    if args.wiki:
-        errors = []
-        ws_root = sc.find_workspace_root(args.root)
-        if ws_root is None:
-            errors.append(LintError(
-                "no workspace found from %s; `--wiki` requires a "
-                "discoverable workspace root" % os.path.abspath(args.root)))
-        else:
-            lint_wiki(ws_root, errors)
-        target = "wiki"
-    elif args.workspace:
-        errors = []
-        ws_root = sc.find_workspace_root(args.root)
-        if ws_root is None:
-            errors.append(LintError(
-                "no workspace found from %s; `--workspace` requires a "
-                "discoverable workspace root" % os.path.abspath(args.root)))
-        else:
-            try:
-                registry = sc.load_workspace(ws_root)
-            except sc.ConfigError as exc:
-                errors.append(LintError(str(exc)))
+    # A malformed layered config is a fatal error, not a lint finding:
+    # report it as the convention's one `Error:` line and exit 1.
+    try:
+        if args.wiki:
+            errors = []
+            ws_root = sc.find_workspace_root(args.root)
+            if ws_root is None:
+                errors.append(LintError(
+                    "no workspace found from %s; `--wiki` requires a "
+                    "discoverable workspace root" % os.path.abspath(args.root)))
             else:
-                for msg in sc.validate_workspace(registry):
-                    errors.append(LintError(msg, sc.CONFIG_FILENAME))
-        target = "workspace"
-    elif args.initiative:
-        errors = []
-        ws_root = sc.find_workspace_root(args.root)
-        if ws_root is None:
-            errors.append(LintError(
-                "no workspace found from %s; `--initiative` requires a "
-                "discoverable workspace root"
-                % os.path.abspath(args.root)))
+                lint_wiki(ws_root, errors)
+            target = "wiki"
+        elif args.workspace:
+            errors = []
+            ws_root = sc.find_workspace_root(args.root)
+            if ws_root is None:
+                errors.append(LintError(
+                    "no workspace found from %s; `--workspace` requires a "
+                    "discoverable workspace root" % os.path.abspath(args.root)))
+            else:
+                try:
+                    registry = sc.load_workspace(ws_root)
+                except sc.ConfigError as exc:
+                    errors.append(LintError(str(exc)))
+                else:
+                    for msg in sc.validate_workspace(registry):
+                        errors.append(LintError(msg, sc.CONFIG_FILENAME))
+            target = "workspace"
+        elif args.initiative:
+            errors = []
+            ws_root = sc.find_workspace_root(args.root)
+            if ws_root is None:
+                errors.append(LintError(
+                    "no workspace found from %s; `--initiative` requires a "
+                    "discoverable workspace root"
+                    % os.path.abspath(args.root)))
+            else:
+                lint_initiative(ws_root, args.initiative, errors)
+            target = "initiative '%s'" % args.initiative
+        elif args.epic:
+            errors = []
+            lint_epic(args.root, args.epic, errors, warnings)
+            target = "epic '%s'" % args.epic
+        elif args.change:
+            errors = lint_change(args.root, args.change, warnings)
+            target = "change '%s'" % args.change
         else:
-            lint_initiative(ws_root, args.initiative, errors)
-        target = "initiative '%s'" % args.initiative
-    elif args.epic:
-        errors = []
-        lint_epic(args.root, args.epic, errors, warnings)
-        target = "epic '%s'" % args.epic
-    elif args.change:
-        errors = lint_change(args.root, args.change, warnings)
-        target = "change '%s'" % args.change
-    else:
-        errors = lint_library(args.root)
-        target = "master library"
+            errors = lint_library(args.root)
+            target = "master library"
+    except sc.ConfigError as exc:
+        cc.err(str(exc))
+        return 1
+
+    # The machine rendering of the very same findings, carrying the strings the
+    # text report prints below (shipd-spec-lint lint-json). The exit code is
+    # computed from the same errors either way, so the two modes gate
+    # identically; the fatal `Error:` path above is untouched by the flag.
+    if args.json:
+        print(json.dumps({
+            "ok": not errors,
+            "errors": [str(err) for err in errors],
+            "warnings": [str(warning) for warning in warnings],
+        }))
+        return 1 if errors else 0
 
     for warning in warnings:
         print("WARNING: %s" % warning, file=sys.stderr)

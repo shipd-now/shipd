@@ -397,5 +397,21 @@ class ReportShapeTest(SpecGateTestBase):
         self.assertNotIn("Status: draft", text)
 
 
+class MalformedConfigTest(SpecGateTestBase):
+    def test_malformed_config_is_one_error_line(self):
+        # A `.shipd-config.json` that is not parseable JSON is a user-facing
+        # failure: one `Error:` line on stderr, exit 1, never a traceback.
+        self.make_clean_change("feat", status="draft")
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("{ not json")
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 1, self.out(r))
+        lines = r.stderr.splitlines()
+        self.assertEqual(len(lines), 1, r.stderr)
+        self.assertTrue(lines[0].startswith("Error: "), r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

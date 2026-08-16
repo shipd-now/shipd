@@ -36,6 +36,7 @@ import time
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPTS_DIR)
 
+import cli_common as cc  # noqa: E402
 import spec_common as sc  # noqa: E402
 import spec_status as ss  # noqa: E402
 import build_report as br  # noqa: E402
@@ -748,15 +749,22 @@ LANE_EMPTY_TEXTS = {
 GROUP_MODES = ("epic", "initiative", "none")
 
 
-def _member_column(member, entry, dead=False):
+def _member_column(member, entry, dead=False, now=None):
     """The lane a member's card belongs in, from its live heartbeat entry and
     worktree-aware board state. A member being driven lands in ``building``
     (or ``review`` while its review stage runs) — unless its run is ``dead``
     (delivery-dashboard board-dead-run-detection spec), in which case it
-    lands in ``building`` regardless of stage; a shipped/archived member in
-    ``shipped``; a parked (needs-human/rejected) member stays in ``building``
-    where it needs attention; otherwise its lifecycle state maps straight
-    through."""
+    lands in ``building`` regardless of stage; a member whose attached
+    interactive build heartbeat is live per :func:`_build_is_live` (as of
+    ``now``) is placed by that heartbeat's stage instead — ``review`` while
+    the stage is ``review``, else ``building`` — overriding the state mapping
+    below, since an interactive build archives its change before the review
+    stage runs (delivery-dashboard board-live-build-lane spec); a
+    shipped/archived member in ``shipped``; a parked (needs-human/rejected)
+    member stays in ``building`` where it needs attention; otherwise its
+    lifecycle state maps straight through. A stale (aged-out or finished)
+    build heartbeat is simply ignored — no stale treatment, which stays
+    autopilot-roster-only."""
     entry = entry or {}
     live = entry.get("state")
     stage = entry.get("stage")
@@ -765,6 +773,9 @@ def _member_column(member, entry, dead=False):
         if dead:
             return "building"
         return "review" if stage == "review" else "building"
+    build_hb = member.get("build_heartbeat")
+    if _build_is_live(build_hb, now):
+        return "review" if build_hb.get("stage") == "review" else "building"
     if live == "shipped" or state == "archived":
         return "shipped"
     if live in ("needs-human", "rejected") or state == "rejected":
@@ -817,7 +828,10 @@ def _lane_contents(board, now=None):
     ``building`` as a stale card instead: its returned ``entry`` is a copy
     carrying ``stale: True`` and its ``stage`` overwritten with the run's
     death age (via :func:`_age`) in place of the live stage. A live run's
-    ``driving`` member is unaffected."""
+    ``driving`` member is unaffected. ``now`` is threaded into
+    :func:`_member_column` so a member's live build heartbeat is judged
+    against the same clock (delivery-dashboard board-live-build-lane
+    spec)."""
     contents = {name: [] for name in LANES}
     for epic in board.get("epics", []):
         hb = epic.get("heartbeat")
@@ -828,7 +842,7 @@ def _lane_contents(board, now=None):
         for member in epic.get("members", []):
             entry = roster.get(member["slug"], {})
             stale = run_dead and entry.get("state") == "driving"
-            lane_name = _member_column(member, entry, dead=stale)
+            lane_name = _member_column(member, entry, dead=stale, now=now)
             if stale:
                 entry = dict(entry)
                 entry["stale"] = True
@@ -841,7 +855,7 @@ def _lane_contents(board, now=None):
     # (delivery-dashboard board-standalone-changes spec).
     for member in board.get("standalone", []):
         entry = {}
-        lane_name = _member_column(member, entry)
+        lane_name = _member_column(member, entry, now=now)
         contents[lane_name].append(("standalone", None, member, entry))
     return contents
 
@@ -1287,7 +1301,8 @@ def _lane_signature(cards, group_mode, search_query, initiative_by_epic=None,
     grouping mode (``epic``/``initiative``/``none``), the active
     ``search_query``, and the active ``filters`` (an ordered tuple of
     ``(kind, value)`` chips) — equal when every card's epic slug/status, member
-    slug/state, live stage, and eligible actions match in the same order *and*
+    slug/state, live stage (from the roster entry and from a live build
+    heartbeat), and eligible actions match in the same order *and*
     ``group_mode``, the query, and the filter chips are unchanged; differs
     otherwise. Folding the query in means a query edit always repaints (the
     highlight span changes even when the filtered set does not), while an idle
@@ -1308,9 +1323,18 @@ def _lane_signature(cards, group_mode, search_query, initiative_by_epic=None,
         entry = entry or {}
         initiative = (initiative_by_epic.get(epic_slug)
                       if group_mode != "none" else None)
+        # A live interactive build heartbeat drives both the card's lane and
+        # its stage suffix, so its stage folds in too — a stage transition
+        # that keeps the member in one lane, or a heartbeat ageing past
+        # `BUILD_FRESH_SECONDS` into the same lane, still repaints
+        # (delivery-dashboard board-live-build-lane spec). Judged against the
+        # wall clock: this is the render path, which has no injected clock.
+        build_hb = member.get("build_heartbeat")
+        build_stage = build_hb.get("stage") if _build_is_live(build_hb) \
+            else None
         sig.append((epic_slug, status, initiative,
                     member.get("slug"), member.get("state"),
-                    entry.get("stage"), entry.get("state"),
+                    entry.get("stage"), entry.get("state"), build_stage,
                     tuple(member.get("actions") or ())))
     return tuple(sig)
 
@@ -1870,6 +1894,13 @@ class MemberDetailScreen(ModalScreen):
         # entry carries a reason, surfaces it in a tinted callout above the
         # artifact tabs.
         signal = member_signal(m, entry)
+        # A member carried by a live interactive build heartbeat surfaces that
+        # heartbeat's stage instead, so the chip matches the lane
+        # `_member_column` placed it in (delivery-dashboard
+        # board-live-build-lane spec).
+        build_hb = m.get("build_heartbeat")
+        build_stage = build_hb.get("stage") if _build_is_live(build_hb) \
+            else None
 
         with Container():
             # Accent title bar naming the member's slug with the inline `✕`
@@ -1883,8 +1914,9 @@ class MemberDetailScreen(ModalScreen):
             # lane chip, no `?` placeholder), a lane chip (via `_member_column`,
             # so it never disagrees with the board), a muted live-stage chip
             # while actually being driven (never for a parked member whose
-            # stage is a stale leftover), an error-tier state chip for a
-            # parked member, and the muted epic ref.
+            # stage is a stale leftover) or, failing that, from a live build
+            # heartbeat, an error-tier state chip for a parked member, and the
+            # muted epic ref.
             with Horizontal(classes="modal-badge-row"):
                 if m.get("risk"):
                     yield _risk_badge(m.get("risk"))
@@ -1898,6 +1930,10 @@ class MemberDetailScreen(ModalScreen):
                     stage_text = ("%s#%s" % (stage, attempt) if attempt
                                   else stage)
                     yield Static("stage: %s" % stage_text,
+                                 classes="modal-badge badge-muted",
+                                 markup=False)
+                elif build_stage:
+                    yield Static("stage: %s" % build_stage,
                                  classes="modal-badge badge-muted",
                                  markup=False)
                 yield Static(
@@ -2577,9 +2613,18 @@ class TaskCard(Static):
             else "$fg-muted"
         text = "[%s]●[/] %s" % (glyph_var, slug)
         # While the member is being driven its live stage is appended in the
-        # muted tier after the slug.
+        # muted tier after the slug; failing that, a live interactive build
+        # heartbeat — the lane placement `_member_column` already honours —
+        # appends its own stage the same way (delivery-dashboard
+        # board-live-build-lane spec).
         if self.entry.get("state") == "driving":
             stage = self.entry.get("stage")
+            if stage:
+                text += "[$fg-muted] · %s[/]" % stage
+            return text
+        build_hb = self.member.get("build_heartbeat")
+        if _build_is_live(build_hb):
+            stage = build_hb.get("stage")
             if stage:
                 text += "[$fg-muted] · %s[/]" % stage
         return text
@@ -4390,7 +4435,7 @@ def main(argv=None):
     try:
         return args.func(args)
     except ValueError as exc:
-        print(str(exc), file=sys.stderr)
+        cc.err(str(exc))
         return 1
 
 
