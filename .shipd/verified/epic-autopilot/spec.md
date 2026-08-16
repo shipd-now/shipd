@@ -134,7 +134,7 @@ When the pipeline instead completes with the member's worktree still present, th
 - **THEN** the member parks as needs-human with a worktree-vanished
   reason and the most recent session id, and the run continues
 
-### Requirement: Three-strike failure handling
+### Requirement: Attempt-budget failure handling
 id: three-strike-parking
 
 When a driven stage fails for a non-gate reason — session error or timeout,

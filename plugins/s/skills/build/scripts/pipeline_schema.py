@@ -2,12 +2,13 @@
 """pipeline_schema.py — pydantic models for `autonomous-pipeline` entries
 (shipd-config pipeline-entry-validation, pipeline-stage-options).
 
-This is the engine's one pydantic-dependent module besides ``dashboard.py``'s
-``tui`` verb, and the constitution scopes that exception to exactly this path:
-``spec_common.resolve_pipeline`` imports this module **lazily**, and only when a
-config layer actually declares the ``autonomous-pipeline`` key. Nothing else
-imports it, so the no-key default pipeline — and every other engine script —
-resolves with pydantic absent.
+This is the engine's **only** pydantic-dependent path, and the constitution
+scopes that exception to exactly this module: ``spec_common.resolve_pipeline``
+imports it **lazily**, and only when a config layer actually declares the
+``autonomous-pipeline`` key. Nothing else imports it, so the no-key default
+pipeline — and every other engine script — resolves with pydantic absent. (The
+engine's other third-party exception is ``textual``, used by ``dashboard.py``'s
+``tui`` verb, which does not depend on pydantic.)
 
 The grammar it enforces is the closed one documented in the shipd-config spec:
 an entry is either a stage entry (``{"stage": <registry name>}``, optionally
