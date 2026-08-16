@@ -1,5 +1,5 @@
 # statusline-verb
-Status: ready
+Status: verified
 
 ## Idea
 
@@ -24,7 +24,8 @@ with `shipd doctor` surfacing the gap.
 - New `statusline` doctor check: `warn` when the settings file carries no
   `statusLine` key, hinting `shipd statusline install`; never a failure.
 - `/s:doctor` remedy table gains the matching consent-gated remedy row.
-- `README.md` Statusline section and `docs/getting-started.md` lead with the
+- `README.md` Statusline section, `docs/getting-started.md`, and
+  `docs/quickstart.md` (doctor check list + watch section) lead with the
   one-command path, keeping the manual snippet as the fallback.
 
 Affected capabilities: `shipd-cli` (modified — `cli-dispatch`, `doctor-verb`;
@@ -32,7 +33,8 @@ added — `statusline-verb`), `shipd-doctor` (modified —
 `doctor-remedy-boundaries`). Impact: `plugins/s/bin/shipd`,
 `plugins/s/skills/build/tests/test_shipd_cli.py`,
 `plugins/s/skills/doctor/SKILL.md`, `README.md`, `docs/getting-started.md`,
-and the version bump in `plugins/s/.claude-plugin/plugin.json`.
+`docs/quickstart.md`, and the version bump in
+`plugins/s/.claude-plugin/plugin.json`.
 
 ### Non-goals
 

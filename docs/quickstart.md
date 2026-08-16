@@ -42,10 +42,13 @@ shipd doctor
 ```
 
 It reports one line per check — `python`, `git`, `config`, `gh`, `textual`,
-`snapshot` — and a closing `doctor: ok` or `doctor: N problem(s)`. Only a
-`fail` line has to be resolved before you continue: `warn` lines are optional
-extras (`gh` is needed only when you ship a pull request, `textual` only for
-the full-screen delivery board). Nothing is installed or edited by this verb.
+`pydantic`, `snapshot`, `statusline` — and a closing `doctor: ok` or
+`doctor: N problem(s)`. Only a `fail` line has to be resolved before you
+continue: `warn` lines are optional extras (`gh` is needed only when you ship
+a pull request, `textual` only for the full-screen delivery board, `pydantic`
+only for declared-pipeline validation). A `warn statusline` line is the one
+you can clear in a single command — `shipd statusline install`, see step 6.
+Nothing is installed or edited by this verb.
 
 ## 3. Take the guided tour: `/s:onboard`
 
@@ -132,6 +135,19 @@ And everything in flight across the repository and its worktrees:
 ```bash
 shipd list
 ```
+
+To keep that status in front of you without asking, register the ☕
+statusline:
+
+```bash
+shipd statusline install
+```
+
+It writes the `statusLine` entry into `~/.claude/settings.json`, and from your
+next session the bottom line of every session carries the change's name,
+lifecycle status, and task progress —
+[getting started](getting-started.md#1-set-up-the-statusline) explains what
+each part of the line shows.
 
 The read verbs `list`, `status`, `locate`, `epic`, `workspace`, and `lint` all
 take `--json` when you want to feed the output to something else. `shipd

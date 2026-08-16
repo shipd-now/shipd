@@ -39,13 +39,15 @@ The skill's remedy table SHALL be: a `textual` warning →
 `requirements.txt`); a `pydantic` warning →
 `python3 -m pip install "pydantic>=2.12,<3"` (the range likewise mirrored
 from `requirements.txt`); a stale `snapshot` warning →
-`claude plugin update s@shipd` with the restart-to-apply note; a missing
-`gh` or `git` → the platform-appropriate install command, stated before it
-runs. An unauthenticated `gh` SHALL be handed to the user as
-`! gh auth login` and never run by the skill; a failing `python` version
-check and a failing `config` check SHALL be report-only — the skill SHALL
-never install an interpreter and never edit a `.shipd-config.json`. The
-`shipd doctor` CLI verb itself SHALL remain unmodified by this capability.
+`claude plugin update s@shipd` with the restart-to-apply note; a
+`statusline` warning → `shipd statusline install` (the binary resolved
+exactly as the preflight resolved it); a missing `gh` or `git` → the
+platform-appropriate install command, stated before it runs. An
+unauthenticated `gh` SHALL be handed to the user as `! gh auth login` and
+never run by the skill; a failing `python` version check and a failing
+`config` check SHALL be report-only — the skill SHALL never install an
+interpreter and never edit a `.shipd-config.json`. The `shipd doctor` CLI
+verb itself SHALL remain unmodified by this capability.
 
 #### Scenario: Interactive auth is handed off
 - **WHEN** the findings include an unauthenticated `gh`
@@ -62,6 +64,12 @@ never install an interpreter and never edit a `.shipd-config.json`. The
   to its remedy
 - **THEN** the skill runs `python3 -m pip install "pydantic>=2.12,<3"`, then
   re-runs the preflight and reports the before/after states
+
+#### Scenario: Statusline remedy runs only on consent
+- **WHEN** the findings include a `warn statusline` line and the user
+  consents to its remedy
+- **THEN** the skill runs `shipd statusline install`, then re-runs the
+  preflight and reports the before/after states
 
 ### Requirement: Doctor skill registration
 id: doctor-skill-registration

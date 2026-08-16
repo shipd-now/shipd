@@ -4,10 +4,10 @@
 id: cli-dispatch
 
 The `shipd` binary SHALL expose exactly the curated verbs `list`, `status`,
-`locate`, `epic`, `workspace`, `board`, `metrics`, `lint`, and `doctor`, and
-for every verb except `list` and `doctor` SHALL delegate by replacing its
-own process with the
-mapped engine script invocation (`status` → `spec_status.py show`, `locate` →
+`locate`, `epic`, `workspace`, `board`, `metrics`, `lint`, `doctor`, and
+`statusline`, and for every verb except `list`, `doctor`, and `statusline`
+SHALL delegate by replacing its own process with the mapped engine script
+invocation (`status` → `spec_status.py show`, `locate` →
 `spec_status.py locate`, `epic` → `spec_status.py epic-show`, `workspace` →
 `spec_status.py workspace-show`, `board` → `dashboard.py` per the board-mode
 mapping below, `metrics` → `metrics.py`, `lint` → `spec_lint.py`), passing
@@ -61,6 +61,10 @@ same banner to stdout and exit `0`.
 #### Scenario: Doctor is a curated verb
 - **WHEN** `shipd --help` runs
 - **THEN** the usage banner lists `doctor` among the verbs
+
+#### Scenario: Statusline is a curated verb
+- **WHEN** `shipd --help` runs
+- **THEN** the usage banner lists `statusline` among the verbs
 
 ### Requirement: List in-flight changes
 id: cli-list
@@ -127,10 +131,14 @@ directory; a missing content directory is reported `ok` with a note). The
 warning checks — never affecting the exit code — SHALL be: `gh` (present on
 PATH and `gh auth status` exiting 0), `textual` (importable), `pydantic`
 (importable, probed via `importlib.util.find_spec` without importing it, so
-the binary itself stays stdlib-only), and `snapshot` (when the binary runs
+the binary itself stays stdlib-only), `snapshot` (when the binary runs
 from a plugin cache snapshot that is not the newest version directory in the
 cache; when the binary runs from a repository checkout, the check SHALL
-report dev mode as `ok`). The verb SHALL mutate nothing.
+report dev mode as `ok`), and `statusline` (when the Claude Code user
+settings file — default `~/.claude/settings.json` — is absent or carries no
+`statusLine` key, probed read-only; the warning detail SHALL name
+`shipd statusline install` as the remedy, and a present registration SHALL
+report `ok`). The verb SHALL mutate nothing.
 
 #### Scenario: Healthy environment reports ok
 - **WHEN** `shipd doctor` runs with python >= 3.9, git present, a resolvable
@@ -167,6 +175,17 @@ report dev mode as `ok`). The verb SHALL mutate nothing.
 - **THEN** a `warn snapshot — ` line names the newer version and the exit
   code is `0`
 
+#### Scenario: Unregistered statusline only warns
+- **WHEN** `shipd doctor` runs against a settings file with no `statusLine`
+  key, all required checks passing
+- **THEN** a `warn statusline — ` line names `shipd statusline install` as
+  the remedy and the exit code is `0`
+
+#### Scenario: Registered statusline reports ok
+- **WHEN** `shipd doctor` runs against a settings file whose `statusLine`
+  key holds a command
+- **THEN** the `statusline` check line begins `ok`
+
 ### Requirement: List JSON output
 id: list-json
 
@@ -192,3 +211,72 @@ through to their engine scripts verbatim.
 - **WHEN** `shipd epic <slug> --json` runs
 - **THEN** the output is exactly `spec_status.py epic-show <slug> --json`'s
   output
+
+### Requirement: Statusline registration verb
+id: statusline-verb
+
+The `shipd` binary SHALL provide a `statusline` verb over the Claude Code
+user settings file, defaulting to `~/.claude/settings.json` and overridable
+with `--settings <path>`. When invoked bare, the verb SHALL be read-only:
+report whether the settings file registers a `statusLine` command, print the
+registered command when one exists, and print the command this installation
+would register. When invoked as `statusline install`, the verb SHALL write
+the entry `"statusLine": {"type": "command", "command": <cmd>}` into the
+settings file — creating the file and its parent directory when absent, and
+preserving every other key on rewrite via an atomic same-directory
+temp-file-and-rename. The registered command SHALL be: when the binary runs
+from a repository checkout, `bash <plugin-root>/integrations/statusline.sh`
+with the absolute resolved plugin root; when the binary runs from a plugin
+cache snapshot, a shell command that at render time lists the snapshot's
+parent directory, orders the version directories with `sort -V`, and runs
+the newest snapshot's `integrations/statusline.sh`. If the settings file
+already carries a `statusLine` entry whose command differs, then `install`
+SHALL refuse with exit `1` naming the existing command unless `--force` is
+given; an identical existing registration SHALL succeed idempotently. If
+the settings file exists but does not parse as JSON, then the verb SHALL
+report an error and exit `1` without writing. On success `install` SHALL
+print the registered command and note that it takes effect in the next
+session.
+
+#### Scenario: Install registers into fresh settings
+- **WHEN** `shipd statusline install --settings <path>` runs and `<path>`
+  does not exist
+- **THEN** the file is created with a `statusLine` entry of type `command`
+  and the exit code is `0`
+
+#### Scenario: Other settings keys survive the write
+- **WHEN** `install` runs against a settings file carrying unrelated keys
+- **THEN** the rewritten file carries the same unrelated keys unchanged plus
+  the `statusLine` entry
+
+#### Scenario: Different existing registration refuses without force
+- **WHEN** `install` runs against a settings file whose `statusLine.command`
+  differs and `--force` is absent
+- **THEN** the verb exits `1` naming the existing command and the file is
+  unchanged; with `--force` the entry is replaced and the exit code is `0`
+
+#### Scenario: Identical registration is idempotent
+- **WHEN** `install` runs twice with the same settings path
+- **THEN** the second run succeeds with exit `0` and the file content is
+  unchanged
+
+#### Scenario: Checkout registers the repo script path
+- **WHEN** the binary runs from a repository checkout and `install` runs
+- **THEN** the registered command is `bash` followed by the absolute
+  checkout path to `integrations/statusline.sh`
+
+#### Scenario: Snapshot registration survives plugin updates
+- **WHEN** the binary runs from a versioned cache snapshot and `install`
+  runs
+- **THEN** the registered command resolves the newest version directory
+  under the snapshot's parent at render time via `sort -V`, not a pinned
+  version path
+
+#### Scenario: Bare verb mutates nothing
+- **WHEN** `shipd statusline --settings <path>` runs without `install`
+- **THEN** the report is printed and `<path>` is not created or modified
+
+#### Scenario: Malformed settings are never overwritten
+- **WHEN** `install` runs against a settings file that is not valid JSON
+- **THEN** the verb exits `1` reporting the parse problem and the file is
+  byte-identical afterwards

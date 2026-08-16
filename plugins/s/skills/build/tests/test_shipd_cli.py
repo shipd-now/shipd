@@ -24,6 +24,7 @@ import io
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -37,7 +38,7 @@ BIN = os.path.normpath(os.path.join(HERE, "..", "..", "..", "bin", "shipd"))
 
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
 VERBS = ("list", "status", "locate", "epic", "workspace", "board", "metrics",
-         "lint", "doctor")
+         "lint", "doctor", "statusline")
 
 
 def _load_binary():
@@ -368,6 +369,222 @@ class VersionTest(ShipdCliTestBase):
         self.assertEqual(r.stdout.strip(), expected)
 
 
+class StatuslineVerbTest(unittest.TestCase):
+    """``shipd statusline`` (shipd-cli statusline-verb).
+
+    The binary's first mutating verb, so it is driven in-process against an
+    injected ``--settings`` path under a throwaway temp directory — the real
+    ``~/.claude/settings.json`` is never read and never written by this suite.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="shipd-statusline-test-")
+        self.settings = os.path.join(self.tmp, "claude", "settings.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    # -- runners -----------------------------------------------------------
+
+    def run_verb(self, *args, plugin_root=None):
+        """``cmd_statusline`` with stdout/stderr captured; the registered
+        command's source root is injected so the verdict never depends on
+        where this checkout lives."""
+        out, err = io.StringIO(), io.StringIO()
+        root = plugin_root if plugin_root is not None else self.checkout()
+        with unittest.mock.patch.object(shipd, "PLUGIN_ROOT", root):
+            with redirect_stdout(out), redirect_stderr(err):
+                code = shipd.cmd_statusline(list(args))
+        return out.getvalue(), err.getvalue(), code
+
+    def install(self, *args, plugin_root=None):
+        return self.run_verb("install", "--settings", self.settings, *args,
+                             plugin_root=plugin_root)
+
+    def checkout(self):
+        """A fabricated repository checkout's ``plugins/s``."""
+        root = os.path.join(self.tmp, "repo", "plugins", "s")
+        os.makedirs(os.path.join(root, "integrations"), exist_ok=True)
+        return root
+
+    def snapshot(self, versions=("0.6.9", "0.6.10")):
+        """A fabricated plugin cache; the *first* version directory is
+        returned, so callers run from a snapshot with a newer sibling."""
+        base = os.path.join(self.tmp, "cache", "shipd", "s")
+        for version in versions:
+            os.makedirs(os.path.join(base, version, "integrations"),
+                        exist_ok=True)
+        return os.path.join(base, versions[0])
+
+    def write_settings(self, text):
+        os.makedirs(os.path.dirname(self.settings), exist_ok=True)
+        with open(self.settings, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def read_settings(self):
+        with open(self.settings, encoding="utf-8") as fh:
+            return fh.read()
+
+    def registration(self):
+        return json.loads(self.read_settings())["statusLine"]
+
+    # -- the registered command -------------------------------------------
+
+    def test_checkout_registers_the_absolute_repo_script_path(self):
+        root = self.checkout()
+        command = shipd.statusline_command(root)
+        self.assertEqual(
+            command,
+            "bash %s" % os.path.join(root, "integrations", "statusline.sh"))
+        self.assertTrue(os.path.isabs(command.split(None, 1)[1]))
+
+    def test_this_checkout_registers_its_own_integrations_script(self):
+        # Against the real plugin root, the command must name the checkout's
+        # own script — the file the statusline actually renders from.
+        command = shipd.statusline_command(shipd.PLUGIN_ROOT)
+        self.assertEqual(
+            command,
+            "bash %s" % os.path.join(str(shipd.PLUGIN_ROOT), "integrations",
+                                     "statusline.sh"))
+
+    def test_snapshot_registers_a_version_resolving_command(self):
+        root = self.snapshot()
+        command = shipd.statusline_command(root)
+        # Resolved at render time from the cache directory, ordered by
+        # ``sort -V`` — never a pinned version path, which a plugin update
+        # would strand.
+        self.assertIn("sort -V", command)
+        self.assertIn(os.path.dirname(root), command)
+        self.assertIn("integrations/statusline.sh", command)
+        self.assertNotIn("0.6.9", command)
+        self.assertNotIn("0.6.10", command)
+
+    # -- install -----------------------------------------------------------
+
+    def test_install_creates_a_fresh_settings_file(self):
+        self.assertFalse(os.path.exists(self.settings))
+        out, _err, code = self.install()
+        self.assertEqual(code, 0)
+        entry = self.registration()
+        self.assertEqual(entry["type"], "command")
+        self.assertEqual(entry["command"],
+                         shipd.statusline_command(self.checkout()))
+        self.assertIn(entry["command"], out)
+
+    def test_install_creates_the_parent_directory(self):
+        self.assertFalse(os.path.isdir(os.path.dirname(self.settings)))
+        _out, _err, code = self.install()
+        self.assertEqual(code, 0)
+        self.assertTrue(os.path.isfile(self.settings))
+
+    def test_unrelated_keys_survive_the_write(self):
+        self.write_settings(json.dumps(
+            {"model": "opus", "env": {"FOO": "bar"}}))
+        _out, _err, code = self.install()
+        self.assertEqual(code, 0)
+        data = json.loads(self.read_settings())
+        self.assertEqual(data["model"], "opus")
+        self.assertEqual(data["env"], {"FOO": "bar"})
+        self.assertEqual(data["statusLine"]["type"], "command")
+
+    def test_differing_registration_refuses_without_force(self):
+        self.write_settings(json.dumps(
+            {"statusLine": {"type": "command", "command": "bash /elsewhere"}}))
+        before = self.read_settings()
+        _out, err, code = self.install()
+        self.assertEqual(code, 1)
+        self.assertIn("bash /elsewhere", err)
+        self.assertEqual(self.read_settings(), before)
+
+    def test_force_replaces_a_differing_registration(self):
+        self.write_settings(json.dumps(
+            {"statusLine": {"type": "command", "command": "bash /elsewhere"},
+             "model": "opus"}))
+        _out, _err, code = self.install("--force")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.registration()["command"],
+                         shipd.statusline_command(self.checkout()))
+        self.assertEqual(json.loads(self.read_settings())["model"], "opus")
+
+    def test_existing_settings_keep_their_permission_mode(self):
+        # The atomic write renames a temp file over the original, and
+        # ``mkstemp`` creates its file 0600 — an existing world-readable
+        # settings file must not be quietly tightened by an install.
+        self.write_settings(json.dumps(
+            {"statusLine": {"type": "command", "command": "bash /elsewhere"}}))
+        os.chmod(self.settings, 0o644)
+        _out, _err, code = self.install("--force")
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            stat.S_IMODE(os.stat(self.settings).st_mode), 0o644)
+
+    def test_identical_registration_is_idempotent(self):
+        _out, _err, first = self.install()
+        self.assertEqual(first, 0)
+        after_first = self.read_settings()
+        _out, _err, second = self.install()
+        self.assertEqual(second, 0)
+        self.assertEqual(self.read_settings(), after_first)
+
+    def test_malformed_settings_are_never_overwritten(self):
+        self.write_settings("{not json")
+        _out, err, code = self.install()
+        self.assertEqual(code, 1)
+        self.assertIn(self.settings, err)
+        self.assertEqual(self.read_settings(), "{not json")
+
+    # -- the bare report ---------------------------------------------------
+
+    def test_bare_verb_creates_nothing(self):
+        out, _err, code = self.run_verb("--settings", self.settings)
+        self.assertEqual(code, 0)
+        self.assertFalse(os.path.exists(self.settings))
+        self.assertIn(shipd.statusline_command(self.checkout()), out)
+
+    def test_bare_verb_leaves_an_existing_file_byte_identical(self):
+        self.write_settings(json.dumps(
+            {"statusLine": {"type": "command", "command": "bash /elsewhere"},
+             "model": "opus"}))
+        before = self.read_settings()
+        out, _err, code = self.run_verb("--settings", self.settings)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.read_settings(), before)
+        # The report names both the live registration and what this install
+        # would register, so a mismatch is visible without mutating anything.
+        self.assertIn("bash /elsewhere", out)
+        self.assertIn(shipd.statusline_command(self.checkout()), out)
+
+    # -- dispatch ----------------------------------------------------------
+
+    def test_statusline_dispatches_in_binary_without_delegating(self):
+        """Like ``list`` and ``doctor``, the verb is handled here: it writes
+        the user's settings, which no engine script touches, so it is not in
+        the delegating verb table and never replaces the process."""
+        self.assertNotIn("statusline", shipd.VERB_TABLE)
+        seen = []
+
+        def fake_statusline(args):
+            seen.append(args)
+            return 0
+
+        def no_exec(*args):
+            self.fail("statusline must not exec-delegate")
+
+        with unittest.mock.patch.object(
+                shipd, "cmd_statusline", fake_statusline), \
+                unittest.mock.patch.object(shipd.os, "execv", no_exec):
+            code = shipd.main(["statusline", "install", "--force"])
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, [["install", "--force"]])
+
+    def test_bare_verb_on_malformed_settings_reports_and_exits_one(self):
+        self.write_settings("{not json")
+        _out, err, code = self.run_verb("--settings", self.settings)
+        self.assertEqual(code, 1)
+        self.assertIn(self.settings, err)
+        self.assertEqual(self.read_settings(), "{not json")
+
+
 class DoctorCheckTest(unittest.TestCase):
     """The individual preflight checks (shipd-cli doctor-verb), each driven
     through its injection points so no branch depends on this machine."""
@@ -526,7 +743,7 @@ class DoctorCheckTest(unittest.TestCase):
     def test_default_checks_probe_pydantic_between_textual_and_snapshot(self):
         stubs = {}
         for check in ("python", "git", "config", "gh", "textual", "pydantic",
-                      "snapshot"):
+                      "snapshot", "statusline"):
             stubs[check] = unittest.mock.patch.object(
                 shipd, "check_%s" % check,
                 lambda *a, _n=check, **kw: ("ok", _n, ""))
@@ -538,6 +755,66 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertIn("pydantic", names)
         self.assertEqual(names.index("pydantic"), names.index("textual") + 1)
         self.assertEqual(names.index("snapshot"), names.index("pydantic") + 1)
+
+    # -- statusline --------------------------------------------------------
+
+    def settings_with(self, text):
+        """A settings file under the throwaway temp root holding ``text`` —
+        the real ``~/.claude/settings.json`` is never touched."""
+        path = os.path.join(self.tmp, "claude", "settings.json")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def test_absent_settings_file_warns_with_the_install_remedy(self):
+        missing = os.path.join(self.tmp, "nowhere", "settings.json")
+        level, name, detail = shipd.check_statusline(missing)
+        self.assertEqual((level, name), ("warn", "statusline"))
+        self.assertIn("shipd statusline install", detail)
+
+    def test_settings_without_a_statusline_key_warns(self):
+        path = self.settings_with(json.dumps({"model": "opus"}))
+        level, name, detail = shipd.check_statusline(path)
+        self.assertEqual((level, name), ("warn", "statusline"))
+        self.assertIn("shipd statusline install", detail)
+
+    def test_registered_statusline_is_ok_naming_its_command(self):
+        path = self.settings_with(json.dumps(
+            {"statusLine": {"type": "command",
+                            "command": "bash /plugins/s/statusline.sh"}}))
+        level, name, detail = shipd.check_statusline(path)
+        self.assertEqual((level, name), ("ok", "statusline"))
+        self.assertIn("bash /plugins/s/statusline.sh", detail)
+
+    def test_unparseable_settings_only_warn(self):
+        path = self.settings_with("{not json")
+        level, name, detail = shipd.check_statusline(path)
+        self.assertEqual((level, name), ("warn", "statusline"))
+        self.assertIn(path, detail)
+
+    def test_statusline_check_never_writes(self):
+        path = self.settings_with(json.dumps({"model": "opus"}))
+        before = os.stat(path)
+        shipd.check_statusline(path)
+        after = os.stat(path)
+        self.assertEqual((before.st_size, before.st_mtime),
+                         (after.st_size, after.st_mtime))
+
+    def test_default_checks_probe_statusline_after_snapshot(self):
+        stubs = {}
+        for check in ("python", "git", "config", "gh", "textual", "pydantic",
+                      "snapshot", "statusline"):
+            stubs[check] = unittest.mock.patch.object(
+                shipd, "check_%s" % check,
+                lambda *a, _n=check, **kw: ("ok", _n, ""))
+        with contextlib.ExitStack() as stack:
+            for patcher in stubs.values():
+                stack.enter_context(patcher)
+            names = [name for _level, name, _detail
+                     in shipd.default_checks(self.tmp)]
+        self.assertEqual(names.index("statusline"),
+                         names.index("snapshot") + 1)
 
     # -- snapshot ----------------------------------------------------------
 
