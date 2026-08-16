@@ -1,6 +1,6 @@
-# What is shipd?
+# ☕ What is shipd?
 
-**shipd** ([shipd.now](https://shipd.now)) is a spec-driven delivery system
+☕ **shipd** ([shipd.now](https://shipd.now)) is a spec-driven delivery system
 for AI coding agents. Instead of prompting an agent and hoping the result
 matches what you meant, shipd makes the agent **converge on a specification
 first**: it investigates your codebase, asks only the questions it genuinely

@@ -941,6 +941,17 @@ class AppMountTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app.query("#hierarchy-panel"))
             bar = app.query_one("#header-bar")
             self.assertTrue(bar.query("#brand"))
+            # The brand block opens with the ☕ mark directly before the
+            # accent `shipd` label (delivery-dashboard board-brand-mark spec).
+            brand = str(bar.query_one("#brand", dashboard.Static).content)
+            self.assertTrue(
+                brand.startswith("☕ "),
+                "brand block does not open with the ☕ mark: %r" % brand)
+            # With the style tags stripped, the mark is directly followed by
+            # the `shipd` label, then the muted `delivery board` label.
+            plain = re.sub(r"\[/?[^\]]*\]", "", brand)
+            self.assertTrue(plain.startswith("☕ shipd"), plain)
+            self.assertIn("delivery board", plain)
             self.assertTrue(bar.query("#board-search-input"))
             self.assertTrue(bar.query("#board-search-clear"))
             self.assertTrue(bar.query("#board-search-count"))

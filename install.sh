@@ -138,7 +138,7 @@ run_claude "installing the s plugin" \
 mkdir -p "$BIN_DIR"
 write_launcher "$LAUNCHER"
 
-printf '%s\n' "Installed the shipd launcher at $LAUNCHER"
+printf '%s\n' "Installed the ☕ shipd launcher at $LAUNCHER"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *)

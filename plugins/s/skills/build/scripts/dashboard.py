@@ -3691,9 +3691,10 @@ class BoardApp(App):
         # previous controls strip, laid out left to right in three zones
         # (delivery-dashboard board-tui spec).
         with Horizontal(id="header-bar"):
-            # Brand block: an accent `shipd` beside a muted `delivery board`.
+            # Brand block: the ☕ mark, then an accent `shipd` beside a muted
+            # `delivery board`.
             yield Static(
-                "[$accent bold]shipd[/] [$fg-muted]delivery board[/]",
+                "☕ [$accent bold]shipd[/] [$fg-muted]delivery board[/]",
                 id="brand")
             # The centered live-search cluster re-homes the search widgets from
             # the removed controls strip unchanged — ids and handlers intact —

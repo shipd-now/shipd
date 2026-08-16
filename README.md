@@ -7,7 +7,9 @@
             /_/
 ```
 
-**shipd** ([shipd.now](https://shipd.now)) is a spec-driven delivery system for
+<img src="icon.svg" align="right" width="160" alt="☕ shipd">
+
+☕ **shipd** ([shipd.now](https://shipd.now)) is a spec-driven delivery system for
 AI coding agents, distributed as a Claude Code plugin — everything is invoked as
 `/s:<name>`. Instead of prompting an agent and hoping the result matches what you
 meant, it makes the agent converge on a specification first — a plan, testable
