@@ -7,16 +7,127 @@
             /_/
 ```
 
-A personal Claude Code plugin marketplace — shipd.now — everything is invoked as
-`/s:<name>`.
+**shipd** ([shipd.now](https://shipd.now)) is a spec-driven delivery system for
+AI coding agents, distributed as a Claude Code plugin — everything is invoked as
+`/s:<name>`. Instead of prompting an agent and hoping the result matches what you
+meant, it makes the agent converge on a specification first — a plan, testable
+requirement deltas, and a task checklist, all checked into your repository — and
+only then build the change, validate it against those requirements, and ship it
+as a pull request. For the longer version, see
+[What is shipd?](docs/what-is-shipd.md).
+
+## Install
+
+### Install mode
+
+One command, no checkout:
+
+```bash
+curl -fsSL https://shipd.now/install | sh
+```
+
+That URL redirects to this repo's [`install.sh`](install.sh); the raw form is
+the documented equivalent, and works the same:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/shipd-now/shipd/main/install.sh | sh
+```
+
+The script needs `claude` and `python3` on your PATH and downloads nothing
+itself — it registers the marketplace and installs the plugin through the
+Claude Code CLI, which you can equally run by hand:
+
+```bash
+claude plugin marketplace add shipd-now/shipd
+claude plugin install s@shipd
+```
+
+Then it writes the `shipd` launcher to **`~/.local/bin/shipd`** and prints a
+hint if that directory is not on your PATH. The launcher resolves the newest
+plugin snapshot under `~/.claude/plugins/cache/shipd/s/<version>/` at every
+invocation (dotted-version ordering, so `0.6.10` beats `0.6.9`) and hands off
+to it, so `claude plugin update s@shipd` upgrades the CLI too — nothing to
+re-link. Re-running the installer is safe: an already-registered marketplace or
+already-installed plugin counts as success. Set `SHIPD_PLUGIN_CACHE` to point
+the launcher at a different cache root.
+
+Verify with:
+
+```bash
+shipd doctor
+```
+
+### Dev mode (working on shipd itself)
+
+Clone the repo and register **the checkout** as a local directory marketplace,
+so `/s:*` runs from your working tree instead of GitHub:
+
+```bash
+git clone https://github.com/shipd-now/shipd.git
+cd shipd
+claude plugin marketplace add "$PWD"
+claude plugin install s@shipd
+```
+
+The same two steps from inside a Claude Code session:
+
+```
+/plugin marketplace add <path-to-your-checkout>
+/plugin install s@shipd
+```
+
+For the CLI, symlink the copy in your **repo checkout** into a PATH directory:
+
+```
+ln -s "$PWD/plugins/s/bin/shipd" ~/bin/shipd
+```
+
+Never symlink the versioned plugin cache
+(`~/.claude/plugins/cache/shipd/s/<version>/…`) — that path changes on every
+version bump, so the link breaks the next time the plugin updates. (Install
+mode's launcher exists precisely to avoid that.)
+
+## Quickstart
+
+New here? [**docs/quickstart.md**](docs/quickstart.md) walks from the install
+above to your first shipd-built change in six steps — `shipd doctor`, the
+guided `/s:onboard` tour, a first `/s:plan` and `/s:build` in your own
+repository, and watching the result on the delivery board.
 
 ## Skills
 
+Everything the plugin ships is invoked as `/s:<name>`.
+
+**The core loop** — take one change from idea to merged.
+
 | Invocation | What it does |
 | --- | --- |
+| `/s:onboard` | The guided tour: a nine-step walkthrough you drive with `/s:onboard next` and `/s:onboard back`, explaining spec-driven development over a worked example in a throwaway sandbox and building it for real on the engine. Progress persists, so the tour resumes across sessions. |
 | `/s:plan` | Converge context into an execution-ready spec: investigate the codebase first, ask only what can't be inferred, then emit the lean `.shipd/` artifacts (`plan.md`, delta specs, `tasks.md`) and stop. Use it to work out an approach before writing any code. |
 | `/s:build` | A spec-driven orchestrator: it plans and designs the `.shipd/` artifacts on the strongest model, then delegates the coding to execution sub-agents running one model tier below, answers their questions, verifies, and merges + archives the change with the plugin's own spec engine. Use it to build a non-trivial feature end-to-end. |
+| `/s:review` | A CodeRabbit-style, AST-aware semantic review of local changes against a base ref before they are pushed: changed files mapped into cohorts, findings reported by cohort with a high/medium/low rubric and a ship-it/fix-required verdict. Read-only, with a `--json` mode for the PR gate. |
 | `/s:status` | Report or change a spec's lifecycle status through the guarded status CLI: print the bare status, validate a change's structure, or run a guarded `set-status` transition that asks before forcing past a guard. |
+
+**Bigger than one change** — decompose, deliver, and track work at scale.
+
+| Invocation | What it does |
+| --- | --- |
+| `/s:epic` | Decompose a feature into an epic: investigate the codebase, ask one batched round of what can't be inferred, record the epic's Decisions and Design, and emit the stub table of member changes with complexity ratings — then stop. Members are planned later, one at a time, via `/s:plan`. |
+| `/s:autopilot` | Drive an approved epic's unplanned members to shipped PRs unattended — plan → gate → build → auto-merging PR per member, in risk-ascending order, one worktree and branch each. Reports back with resume pointers for any parked member. |
+| `/s:research` | Turn a question into a cited research report: bounded sub-questions, web search and fetch, anchored findings, and a numbered `## Sources` list — installed through the spec engine so an epic can link it. |
+| `/s:video-ingest` | Turn a screen recording into an intent brief: transcribe and index the video, extract candidate intents anchored on transcript words, ground each on its nearest frame, and install a cited brief that flows straight into planning. |
+| `/s:initiative` | Drive workspace initiatives through their CLIs: create a lint-clean brief from a workspace-first interview, report every initiative's status and requirement progress, walk a brief's outcomes and sync its status, or tag an epic with exactly one initiative via a PR. |
+| `/s:workspace` | Set up and inspect the shipd workspace: create the workspace marker with a guided target-root choice, report the roster of projects and initiatives, bootstrap a job workspace from its repository URL, or materialize its members with real git. |
+
+**Knowledge** — so a decision made once is never asked twice.
+
+| Invocation | What it does |
+| --- | --- |
+| `/s:ask` | Query the ask-mikk oracle before interrupting a human: shape a request into one compact decision, consult the workspace wiki and the repo's spec surfaces, and relay the verdict — a cited recommendation, or a question queued for a person to answer later. |
+| `/s:teach` | Distill the repo's spec artifacts and answered queue entries into the workspace wiki: scan the spec surfaces, interview only on the gaps and contradictions the scan surfaces, and ingest through the store's staged, lint-gated emit verb. |
+| `/s:remember` | Capture durable preferences into the personal memory store: extract candidates from the invocation or the session, reconcile each against existing `memory-*` pages, confirm the set, and install it in one staged call. |
+| `/s:memory` | List the durable preferences captured in the personal memory store — the read-only browse counterpart to `/s:remember`. |
+| `/s:forget` | Remove a captured preference from the personal memory store: locate the matching `memory-*` page from a free-text description, confirm with a single dialog, and delete it. |
 
 ## The spec engine
 
@@ -252,98 +363,30 @@ shipd/
 └── plugins/
     └── s/                        # the plugin (name: "s" → /s: prefix)
         ├── .claude-plugin/
-        │   └── plugin.json
-        ├── commands/             # slash commands → /s:<file-basename>
-        │   └── hello.md
+        │   └── plugin.json       # plugin manifest (carries the version)
+        ├── agents/               # sub-agent definitions (s:sub-agent, s:validator, s:oracle)
+        ├── bin/
+        │   └── shipd             # the CLI
         ├── integrations/
         │   └── statusline.sh     # ☕ spec statusline
-        └── skills/               # skills → /s:<skill-name>
+        └── skills/               # skills → /s:<skill-name>, one folder each
             ├── plan/
             │   └── SKILL.md
-            ├── status/
-            │   └── SKILL.md
-            └── build/
-                ├── SKILL.md
-                ├── references/   # config example + sub-agent prompt
-                └── scripts/      # spec engine, coordinator, reporting
+            ├── build/
+            │   ├── SKILL.md
+            │   ├── references/   # config example + sub-agent prompt
+            │   └── scripts/      # spec engine, coordinator, reporting
+            └── …                 # every other skill in the table above
 ```
+
+Slash commands, when the plugin ships any, live in a sibling `commands/`
+directory (see [Adding a command](#adding-a-command)).
 
 The `/s:` prefix comes from the **plugin** name (`s`), not the marketplace name.
 
-## Install
-
-### Install mode
-
-One command, no checkout:
-
-```bash
-curl -fsSL https://shipd.now/install | sh
-```
-
-That URL redirects to this repo's [`install.sh`](install.sh); the raw form is
-the documented equivalent, and works the same:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/shipd-now/shipd/main/install.sh | sh
-```
-
-The script needs `claude` and `python3` on your PATH and downloads nothing
-itself — it registers the marketplace and installs the plugin through the
-Claude Code CLI, which you can equally run by hand:
-
-```bash
-claude plugin marketplace add shipd-now/shipd
-claude plugin install s@shipd
-```
-
-Then it writes the `shipd` launcher to **`~/.local/bin/shipd`** and prints a
-hint if that directory is not on your PATH. The launcher resolves the newest
-plugin snapshot under `~/.claude/plugins/cache/shipd/s/<version>/` at every
-invocation (dotted-version ordering, so `0.6.10` beats `0.6.9`) and hands off
-to it, so `claude plugin update s@shipd` upgrades the CLI too — nothing to
-re-link. Re-running the installer is safe: an already-registered marketplace or
-already-installed plugin counts as success. Set `SHIPD_PLUGIN_CACHE` to point
-the launcher at a different cache root.
-
-Verify with:
-
-```bash
-shipd doctor
-```
-
-### Dev mode (working on shipd itself)
-
-Clone the repo and register **the checkout** as a local directory marketplace,
-so `/s:*` runs from your working tree instead of GitHub:
-
-```bash
-git clone https://github.com/shipd-now/shipd.git
-cd shipd
-claude plugin marketplace add "$PWD"
-claude plugin install s@shipd
-```
-
-The same two steps from inside a Claude Code session:
-
-```
-/plugin marketplace add <path-to-your-checkout>
-/plugin install s@shipd
-```
-
-For the CLI, symlink the copy in your **repo checkout** into a PATH directory:
-
-```
-ln -s "$PWD/plugins/s/bin/shipd" ~/bin/shipd
-```
-
-Never symlink the versioned plugin cache
-(`~/.claude/plugins/cache/shipd/s/<version>/…`) — that path changes on every
-version bump, so the link breaks the next time the plugin updates. (Install
-mode's launcher exists precisely to avoid that.)
-
 ## Adding a command
 
-Drop a `<name>.md` file into `plugins/s/commands/`. It becomes `/s:<name>`.
+Create `plugins/s/commands/<name>.md`. It becomes `/s:<name>`.
 Frontmatter supports `description`, `argument-hint`, `model`, and `allowed-tools`.
 Use `$ARGUMENTS` (or `$1`, `$2`, …) in the body to interpolate what the user typed.
 
