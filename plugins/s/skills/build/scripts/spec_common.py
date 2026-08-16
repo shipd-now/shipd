@@ -474,96 +474,6 @@ PIPELINE_FALLBACKS = ("builtin", "skip")
 PIPELINE_KEY = "autonomous-pipeline"
 
 
-def _validate_pipeline_entry(index, entry):
-    """Validate one autonomous-pipeline entry against the closed grammar.
-
-    Returns ``None`` when the entry is well formed, else a human-readable error
-    string naming the offending entry by index and content. Only per-entry
-    grammar is checked here; the cross-entry canonical-order check lives in
-    :func:`resolve_pipeline`."""
-    label = "entry %d (%s)" % (index, json.dumps(entry, sort_keys=True))
-    if not isinstance(entry, dict):
-        return "%s is not a JSON object" % label
-
-    has_custom = "custom" in entry
-    has_stage = "stage" in entry
-
-    if has_custom and has_stage:
-        return ("%s matches no form: an entry declares either `stage` or "
-                "`custom`, never both" % label)
-
-    if has_custom:
-        name = entry.get("custom")
-        allowed = {"custom", "command"}
-        extra = set(entry.keys()) - allowed
-        if extra:
-            return ("%s matches no form: a `custom` entry allows only "
-                    "`custom` and `command`, got extra %s"
-                    % (label, ", ".join(sorted(extra))))
-        if not isinstance(name, str) or not KEBAB_RE.match(name):
-            return ("%s custom name %r is not a kebab-case slug"
-                    % (label, name))
-        command = entry.get("command")
-        if not isinstance(command, str) or not command:
-            return "%s custom step is missing a non-empty `command`" % label
-        return None
-
-    if has_stage:
-        stage = entry.get("stage")
-        if stage not in PIPELINE_STAGES:
-            return ("%s names unknown stage %r; known stages are %s"
-                    % (label, stage, ", ".join(PIPELINE_STAGES)))
-        modifiers = [k for k in ("skip", "tools", "replace") if k in entry]
-        allowed = {"stage", "skip", "tools", "replace"}
-        extra = set(entry.keys()) - allowed
-        if extra:
-            return ("%s matches no form: unexpected key(s) %s"
-                    % (label, ", ".join(sorted(extra))))
-        if len(modifiers) > 1:
-            return ("%s combines %s; `skip`, `tools`, and `replace` are "
-                    "mutually exclusive" % (label, ", ".join(modifiers)))
-        if "skip" in entry:
-            if entry["skip"] is not True:
-                return "%s `skip` must be true when present" % label
-            return None
-        if "tools" in entry:
-            tools = entry["tools"]
-            if not isinstance(tools, list) or not tools:
-                return "%s `tools` must be a non-empty list" % label
-            for tool in tools:
-                if not isinstance(tool, dict) or not isinstance(
-                        tool.get("name"), str) or not tool.get("name"):
-                    return ("%s each `tools` item needs a non-empty `name`"
-                            % label)
-                fb = tool.get("fallback")
-                if fb not in PIPELINE_FALLBACKS:
-                    return ("%s tool %r needs a `fallback` of %s"
-                            % (label, tool.get("name"),
-                               " or ".join(PIPELINE_FALLBACKS)))
-            return None
-        if "replace" in entry:
-            replace = entry["replace"]
-            if not isinstance(replace, dict):
-                return "%s `replace` must be a JSON object" % label
-            has_command = isinstance(replace.get("command"), str) and \
-                replace.get("command")
-            has_tool = isinstance(replace.get("tool"), str) and \
-                replace.get("tool")
-            if not has_command and not has_tool:
-                return ("%s `replace` must name a `command` or a `tool`"
-                        % label)
-            fb = replace.get("fallback")
-            if fb not in PIPELINE_FALLBACKS:
-                return ("%s `replace` needs a `fallback` of %s"
-                        % (label, " or ".join(PIPELINE_FALLBACKS)))
-            return None
-        # Bare {"stage": name}: a plain built-in.
-        return None
-
-    return ("%s matches no form: an entry declares `stage` or `custom`"
-            % label)
-
-
 def resolve_pipeline(root):
     """Resolve the effective autonomous pipeline for ``root`` (shipd-config
     autonomous-pipeline-key, pipeline-stage-registry, pipeline-entry-validation).
@@ -571,14 +481,18 @@ def resolve_pipeline(root):
     Reads the ``autonomous-pipeline`` key from ``root``'s layered configuration
     (nearest-wins-wholesale, via :func:`resolve_config`). When no layer declares
     the key, returns the built-in default: every :data:`PIPELINE_STAGES` stage in
-    canonical order as a plain built-in, with provenance ``"default"``. When a
-    layer declares it, validates every entry against the closed grammar and the
-    canonical relative order of built-in stages, then returns the ordered
-    effective entries together with the provenance (the supplying config file
-    path). A declared list is wholesale: stages absent from it simply do not
-    run, which is legal (including for gates). Raises :class:`ConfigError`
-    listing every validation error, each naming the offending entry by index and
-    content."""
+    canonical order as a plain built-in, with provenance ``"default"`` —
+    resolved without importing any third-party package. When a layer declares
+    it, validates every entry against the pydantic models in
+    :mod:`pipeline_schema` (imported lazily here, so the default path never
+    needs pydantic) and against the canonical relative order of built-in
+    stages, then returns the ordered effective entries — plain dicts carrying
+    exactly the keys each entry declared — together with the provenance (the
+    supplying config file path). A declared list is wholesale: stages absent
+    from it simply do not run, which is legal (including for gates). Raises
+    :class:`ConfigError` listing every validation error, each naming the
+    offending entry by index and content; a declared pipeline with pydantic
+    unavailable fails closed rather than falling back to weaker validation."""
     config, prov = resolve_config(root)
     raw = config.get(PIPELINE_KEY)
     if raw is None:
@@ -588,19 +502,28 @@ def resolve_pipeline(root):
         raise ConfigError(
             "`%s` must be a JSON list (from %s)" % (PIPELINE_KEY, provenance))
 
-    errors = []
-    for index, entry in enumerate(raw):
-        err = _validate_pipeline_entry(index, entry)
-        if err:
-            errors.append(err)
+    # The engine's one pydantic dependency, scoped to this branch by the
+    # constitution: only a *declared* pipeline pays for it. A missing package
+    # is a fail-closed configuration error naming the remedy; anything else
+    # propagates, because it is a real bug rather than an absent dependency.
+    try:
+        import pipeline_schema
+    except ModuleNotFoundError:
+        raise ConfigError(
+            "declared `%s` (from %s) requires pydantic; "
+            "pip install -r requirements.txt" % (PIPELINE_KEY, provenance))
 
-    # Canonical relative order for the built-in stages that parsed to a known
-    # name; custom entries may sit anywhere and are skipped here.
+    try:
+        entries = pipeline_schema.validate_entries(raw)
+    except ValueError as exc:
+        raise ConfigError(str(exc))
+
+    # Canonical relative order for the built-in stages; custom entries may sit
+    # anywhere and are skipped here.
+    errors = []
     last_pos = -1
     last_stage = None
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
+    for entry in entries:
         stage = entry.get("stage")
         if stage not in PIPELINE_STAGES:
             continue
@@ -615,7 +538,7 @@ def resolve_pipeline(root):
 
     if errors:
         raise ConfigError("\n".join(errors))
-    return list(raw), provenance
+    return entries, provenance
 
 
 # ---------------------------------------------------------------------------
