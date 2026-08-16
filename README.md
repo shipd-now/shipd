@@ -222,15 +222,14 @@ shipd epic <slug>              an epic's status, metadata, and member states
 shipd workspace                the workspace root, its projects, and initiatives
 shipd board                    the interactive delivery board, full-screen
 shipd board text               the delivery board, printed once
-shipd board html --out <file>  the delivery board as a self-refreshing HTML page
 shipd metrics                  delivery metrics (default: summary)
 shipd lint [change]            structurally validate specs and change deltas
 ```
 
 Every verb but `list` delegates straight to the engine script, so output, exit
 codes, and trailing flags (`--root`, slugs) behave exactly as they do against
-the script itself. `board`'s optional mode word — `text` or `html`, and only as
-the first argument — is the one thing consumed on the way through; everything
+the script itself. `board`'s optional mode word — `text`, and only as the
+first argument — is the one thing consumed on the way through; everything
 after it still passes verbatim. Mutating verbs (`set-status`, `merge`, `emit`, `autopilot`,
 `worktree remove`) stay behind their guarded scripts and skills.
 

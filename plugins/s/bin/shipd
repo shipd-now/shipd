@@ -63,7 +63,6 @@ VERB_TABLE = {
 BOARD_MODES = {
     None: ("dashboard.py", ["tui"]),
     "text": ("dashboard.py", ["board"]),
-    "html": ("dashboard.py", ["html"]),
 }
 
 USAGE = """\
@@ -78,7 +77,7 @@ verbs:
   locate [change]            where an installed change lives
   epic <slug>                an epic's status, metadata, and member states
   workspace                  the workspace root, its projects, and initiatives
-  board [text|html] [args]   the delivery board (default: full-screen)
+  board [text] [args]        the delivery board (default: full-screen)
   metrics [subverb]          delivery metrics (default: summary)
   lint [change]              structurally validate specs and change deltas
   doctor                     preflight this environment for shipd

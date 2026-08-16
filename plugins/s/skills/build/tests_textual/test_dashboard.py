@@ -5,7 +5,7 @@ Requires `textual` (``pip install -r requirements.txt``) — this suite lives
 apart from ``plugins/s/skills/build/tests/`` precisely because importing
 ``dashboard`` now pulls it in. Two layers: the ``board`` aggregation over a
 fixture root (root and worktree-parked members) plus the pure renderers
-(shared line renderer + HTML page) — unchanged data-layer contracts — and the
+(the shared line renderer) — unchanged data-layer contracts — and the
 `textual` App itself, driven headless via ``App.run_test``/``Pilot``. The
 ``RunHeartbeat`` writer's own tests live in
 ``plugins/s/skills/build/tests/test_heartbeat.py``.
@@ -648,43 +648,6 @@ class InitiativeGroupTitleTest(unittest.TestCase):
 
     def test_none_renders_workspace(self):
         self.assertEqual(dashboard.initiative_group_title(None), "workspace")
-
-
-# ---------------------------------------------------------------------------
-# HTML renderer and the html verb
-# ---------------------------------------------------------------------------
-
-class HtmlTest(DashboardTestBase):
-    def test_render_board_html_self_refreshes_and_lists_members(self):
-        page = dashboard.render_board_html(_sample_board(), 3)
-        self.assertIn('<meta http-equiv="refresh" content="3">', page)
-        # A row per member carrying its state.
-        self.assertIn("driver", page)
-        self.assertIn("driving", page)
-        self.assertIn("parked", page)
-        self.assertIn("needs-human", page)
-
-    def test_render_board_html_escapes_dynamic_values(self):
-        board = _sample_board()
-        board["epics"][0]["members"][0]["description"] = \
-            "<script>alert(1)</script>"
-        page = dashboard.render_board_html(board, 2)
-        self.assertNotIn("<script>alert(1)</script>", page)
-        self.assertIn("&lt;script&gt;", page)
-
-    def test_html_once_writes_file_once_and_exits_zero(self):
-        _make_epic(self.root, "ep", [("m", "a member", "low")],
-                   status="active")
-        out_path = os.path.join(self.root, "board.html")
-        # --once must not loop: a returning call proves the single snapshot.
-        rc = dashboard.main(["html", "--root", self.root, "--out", out_path,
-                             "--once"])
-        self.assertEqual(rc, 0)
-        self.assertTrue(os.path.isfile(out_path))
-        with open(out_path, encoding="utf-8") as fh:
-            content = fh.read()
-        self.assertIn("<html", content.lower())
-        self.assertIn("ep", content)
 
 
 # ---------------------------------------------------------------------------
