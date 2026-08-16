@@ -1,5 +1,5 @@
 # named-pipelines
-Status: active
+Status: complete
 Theme: spec-engine
 
 ## Introduction
@@ -173,12 +173,12 @@ land.
 
 | Tool | Calls | Output tokens |
 | --- | --- | --- |
-| Bash | 56 | 19.4k |
-| Edit | 14 | 5.5k |
-| (no tool) | 0 | 5.3k |
-| Read | 19 | 2.4k |
-| ToolSearch | 1 | 921 |
-| Agent | 2 | 832 |
-| SendMessage | 1 | 499 |
-| Write | 1 | 323 |
-| **Total** | 94 | 35.2k |
+| Bash | 459 | 157.6k |
+| Edit | 141 | 103.6k |
+| Write | 19 | 50.3k |
+| (no tool) | 0 | 46.3k |
+| Read | 114 | 23.3k |
+| Agent | 19 | 11.5k |
+| SendMessage | 5 | 4.2k |
+| ToolSearch | 6 | 1.7k |
+| **Total** | 763 | 398.6k |
