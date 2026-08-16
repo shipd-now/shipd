@@ -167,10 +167,12 @@ class AggregateSyntheticTest(unittest.TestCase):
 
 
 class AggregateDedupTest(unittest.TestCase):
-    """aggregate() counts each assistant API response exactly once, keyed by
-    its message id, even when the response spans several transcript records
-    repeating the same usage — while the timing timeline still records every
-    timestamped record (build-reporting usage-dedup)."""
+    """aggregate() counts each assistant API response exactly once at its final
+    usage snapshot, keyed by its message id: every usage field accumulates only
+    the positive delta over the highest value already counted, so records
+    repeating identical usage add nothing and cumulative streaming snapshots sum
+    to the response's final value — while the timing timeline still records
+    every timestamped record (build-reporting usage-dedup)."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -184,7 +186,8 @@ class AggregateDedupTest(unittest.TestCase):
         return path
 
     @staticmethod
-    def _assistant(msg_id, ts, output=0, input_tokens=0, model="model-a"):
+    def _assistant(msg_id, ts, output=0, input_tokens=0, model="model-a",
+                   cache_write=0, cache_read=0):
         return {
             "type": "assistant",
             "timestamp": ts,
@@ -194,8 +197,8 @@ class AggregateDedupTest(unittest.TestCase):
                 "usage": {
                     "input_tokens": input_tokens,
                     "output_tokens": output,
-                    "cache_creation_input_tokens": 0,
-                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": cache_write,
+                    "cache_read_input_tokens": cache_read,
                 },
             },
         }
@@ -224,6 +227,38 @@ class AggregateDedupTest(unittest.TestCase):
         # Every timestamped record still appears in the timing timeline.
         self.assertEqual(len(timeline), 5)
 
+    def test_cumulative_snapshots_count_the_final_value(self):
+        # A subagent response's records carry cumulative snapshots under one
+        # id (1, 1, then 331): the response counts at its final snapshot.
+        records = [
+            self._assistant("msg-stream", "2026-01-01T00:00:10Z", output=1),
+            self._assistant("msg-stream", "2026-01-01T00:00:11Z", output=1),
+            self._assistant("msg-stream", "2026-01-01T00:00:12Z", output=331),
+        ]
+        path = self._write_transcript(records)
+        since = br.parse_since("2026-01-01T00:00:00Z")
+        by_model, timeline = br.aggregate([path], since)
+        self.assertEqual(by_model["model-a"]["output"], 331)
+        # Every timestamped record still appears in the timing timeline.
+        self.assertEqual(len(timeline), 3)
+
+    def test_every_usage_field_follows_its_final_snapshot(self):
+        records = [
+            self._assistant("msg-stream", "2026-01-01T00:00:10Z", output=1,
+                            input_tokens=4, cache_write=100, cache_read=2000),
+            self._assistant("msg-stream", "2026-01-01T00:00:12Z", output=331,
+                            input_tokens=9, cache_write=100, cache_read=5000),
+        ]
+        path = self._write_transcript(records)
+        since = br.parse_since("2026-01-01T00:00:00Z")
+        by_model, timeline = br.aggregate([path], since)
+        bucket = by_model["model-a"]
+        self.assertEqual(bucket["non_cached_input"], 9)
+        self.assertEqual(bucket["output"], 331)
+        self.assertEqual(bucket["cache_write"], 100)
+        self.assertEqual(bucket["cache_read"], 5000)
+        self.assertEqual(len(timeline), 2)
+
     def test_distinct_message_ids_still_accumulate(self):
         records = [
             self._assistant("msg-a", "2026-01-01T00:00:10Z", output=100),
@@ -238,9 +273,10 @@ class AggregateDedupTest(unittest.TestCase):
 class ActivityTailTest(unittest.TestCase):
     """ActivityTail.poll(): an offset-keeping tail over a session's main and
     subagent transcripts that reads only appended bytes, defers a torn
-    trailing line, re-discovers subagent files each poll, dedupes by message
-    id across polls/files, skips synthetic records, and yields one
-    ``(start_epoch, end_epoch, output_tokens)`` interval event per response —
+    trailing line, re-discovers subagent files each poll, keys responses by
+    message id across polls/files (a later record yielding only its positive
+    output-token delta), skips synthetic records, and yields
+    ``(start_epoch, end_epoch, output_tokens)`` interval events per response —
     ``end`` the response's timestamp, ``start`` reaching back to the previous
     event's end in the same tail (capped at 120s, first event zero-length)
     (build-reporting session-activity-sampling). Fixtures live in a private
@@ -325,6 +361,45 @@ class ActivityTailTest(unittest.TestCase):
         # The same message id reappears (a multi-record response spanning polls).
         self._append(self.main, [self._rec("dup", "2026-01-01T00:00:11Z", 100)])
         self.assertEqual(tail.poll(), [])
+
+    def test_cumulative_snapshots_yield_delta_events(self):
+        # A subagent response streams cumulative snapshots under one id: the
+        # first record yields its snapshot, the later record yields only the
+        # positive delta, timestamped at that later record — so the response's
+        # events sum exactly to its final snapshot.
+        sub = os.path.join(self.tmp, self.session, "subagents",
+                           "agent-abc.jsonl")
+        self._append(sub, [self._rec("s1", "2026-01-01T00:00:10Z", 1),
+                           self._rec("s1", "2026-01-01T00:00:40Z", 104)])
+        tail = br.ActivityTail(self.tmp, self.session)
+        events = tail.poll()
+        self.assertEqual(sum(tok for _s, _e, tok in events), 104)
+        self.assertEqual([tok for _s, _e, tok in events], [1, 103])
+        later = br.parse_timestamp("2026-01-01T00:00:40Z").timestamp()
+        self.assertEqual(events[-1][1], later)
+
+    def test_repeated_identical_snapshots_yield_no_further_event(self):
+        # Records repeating one id's unchanged snapshot — within a poll and
+        # again in a later poll — yield an event only for the first record.
+        self._append(self.main, [self._rec("dup", "2026-01-01T00:00:10Z", 955),
+                                 self._rec("dup", "2026-01-01T00:00:11Z", 955)])
+        tail = br.ActivityTail(self.tmp, self.session)
+        first = tail.poll()
+        self.assertEqual([tok for _s, _e, tok in first], [955])
+        self._append(self.main, [self._rec("dup", "2026-01-01T00:00:12Z", 955)])
+        self.assertEqual(tail.poll(), [])
+
+    def test_cross_poll_higher_snapshot_yields_delta(self):
+        # A response still streaming when the poll boundary falls: the higher
+        # snapshot in the next poll yields the delta, so the response's events
+        # still sum to its final value.
+        self._append(self.main, [self._rec("m1", "2026-01-01T00:00:10Z", 1)])
+        tail = br.ActivityTail(self.tmp, self.session)
+        self.assertEqual([tok for _s, _e, tok in tail.poll()], [1])
+        self._append(self.main, [self._rec("m1", "2026-01-01T00:00:20Z", 331)])
+        second = tail.poll()
+        self.assertEqual([tok for _s, _e, tok in second], [330])
+        self.assertEqual(1 + sum(tok for _s, _e, tok in second), 331)
 
     def test_synthetic_records_skipped(self):
         self._append(self.main, [
