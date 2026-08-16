@@ -1,5 +1,5 @@
 # pipeline-hardening
-Status: active
+Status: complete
 Theme: reliability
 
 ## Introduction
@@ -139,9 +139,14 @@ in-session fidelity.
 
 | Tool | Calls | Output tokens |
 | --- | --- | --- |
-| Bash | 58 | 21.1k |
-| Edit | 11 | 6.5k |
-| (no tool) | 0 | 5.5k |
-| Read | 12 | 1.7k |
-| Agent | 1 | 439 |
-| **Total** | 82 | 35.2k |
+| Bash | 308 | 105.9k |
+| Edit | 72 | 51.7k |
+| (no tool) | 0 | 26.2k |
+| Read | 67 | 10.9k |
+| Agent | 8 | 7.6k |
+| WebSearch | 5 | 2.6k |
+| WebFetch | 2 | 2.3k |
+| SendMessage | 3 | 1.1k |
+| Write | 1 | 944 |
+| ToolSearch | 4 | 705 |
+| **Total** | 470 | 210.0k |
