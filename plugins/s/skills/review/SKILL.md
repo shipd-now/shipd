@@ -31,8 +31,8 @@ python3 "$CLAUDE_PLUGIN_ROOT/skills/review/scripts/semdiff.py" <subcommand> ...
 
 Subcommands: `diff`, `files`, `context`, `change`, `doctor`. All review
 subcommands are read-only and never touch the network; only `doctor --fix`
-installs software or reaches the network, and it runs only on the user's
-explicit say-so (see Degradation).
+installs software or reaches the network, and the single place this skill runs
+it is the review-start difftastic repair (see Degradation).
 
 ## Determine what to review
 
@@ -48,6 +48,9 @@ explicit say-so (see Degradation).
   `base`/`head`/`mode` so you can state precisely what was compared.
 
 ## Workflow
+
+Before step 1, run the review-start difftastic check (see Degradation) — it is
+the only step that may install anything, and it runs before any analysis.
 
 ### 1. Map the change
 Run `files <base> [<head>]` to see changed files grouped into architectural
@@ -325,11 +328,42 @@ resolves.
 ## Degradation
 
 `semdiff diff` works even without difftastic — it degrades to a structural-text
-engine and stamps `engine: "text"`. When you see the text engine (or a missing
-tool), say so, and do **not** fall back to dumping raw files. Run
-`doctor` to report what is available; if the user wants sharper syntax-aware
-diffs, **offer** `doctor --fix` and run it **only after the user agrees** — it
-installs software and reaches the network. git is the one hard requirement.
+engine and stamps `engine: "text"`. A degraded review is never a silent one, and
+a missing difftastic is repaired before it costs you accuracy.
+
+**At review start, before any analysis**, check whether `difft` is on PATH:
+
+```
+command -v difft
+```
+
+- **Present** → proceed directly, syntax-aware. Do **not** invoke the installer.
+- **Missing** → run the tiered installer **once**, automatically:
+
+  ```
+  python3 "$CLAUDE_PLUGIN_ROOT/skills/review/scripts/semdiff.py" doctor --fix
+  ```
+
+  then re-probe with `command -v difft`. This is the one place the skill reaches
+  the network, and it reaches it solely through `--fix`. Attempt it **at most
+  once per review** — never retry, never loop.
+  - **Now present** → proceed syntax-aware with no degradation notice and no
+    further ceremony; the repair is not a finding.
+  - **Still missing** → the install failed. Then, all three of:
+    1. **Tell the user prominently**, before the review body — that difftastic
+       could not be installed, that this review therefore runs on the
+       structural-text engine (`engine: "text"`) with reduced syntax-aware
+       accuracy, and how to install it by hand (e.g.
+       `brew install difftastic`).
+    2. **Record it as a could-not-verify entry** — in the human mode's
+       "what you could not verify" list *and* in `--json`'s `could_not_verify`
+       array — naming the text-engine degradation.
+    3. **Complete the review anyway** on the text engine. A missing difftastic
+       never blocks a review.
+
+Whenever you are on the text engine (or any tool is missing), say so, and do
+**not** fall back to dumping raw files. `doctor` (without `--fix`) reports what
+is available and touches nothing. git is the one hard requirement.
 
 ## Guardrails
 
