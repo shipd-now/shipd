@@ -729,6 +729,151 @@ class EpicVerbTest(SpecStatusTestBase):
         self.assertEqual(r.stdout.strip(), "draft")
         self.assertIn("Status: draft", self.read_epic("e"))
 
+    # -- epic-sync's token breakdown aggregation ---------------------------
+
+    def make_completed_tasks(self, slug, table=None, date="2026-01-01"):
+        """An archived change whose ``tasks.md`` optionally ends with a
+        ``## Token usage breakdown`` section. ``table`` is a list of
+        ``(tool, calls, output)`` rows; ``None`` writes no section at all."""
+        cdir = os.path.join(self.root, ".shipd", "completed",
+                            "%s-%s" % (date, slug))
+        os.makedirs(cdir, exist_ok=True)
+        body = "## 1. Work\n\n- [x] 1.1 [req: r] Do it\n"
+        if table is not None:
+            lines = ["## Token usage breakdown", "",
+                     "| Tool | Calls | Output tokens |", "| --- | --- | --- |"]
+            total_calls = 0
+            total_output = 0
+            for tool, calls, output in table:
+                total_calls += calls
+                total_output += output
+                lines.append("| %s | %d | %d |" % (tool, calls, output))
+            lines.append("| **Total** | %d | %d |" % (total_calls, total_output))
+            body += "\n" + "\n".join(lines) + "\n"
+        with open(os.path.join(cdir, "tasks.md"), "w", encoding="utf-8") as fh:
+            fh.write(body)
+        return cdir
+
+    def test_epic_sync_sums_member_tables_into_the_epic(self):
+        self.make_epic(
+            "e", status="active",
+            rows=[("member-a", "A", ("low",) * 4),
+                  ("member-b", "B", ("low",) * 4)])
+        self.make_completed_tasks("member-a", table=[("Bash", 1, 100)])
+        self.make_completed_tasks("member-b", table=[("Bash", 1, 100)])
+        r = self.cli("epic-sync", "e")
+        self.assertEqual(r.returncode, 0)
+        text = self.read_epic("e")
+        self.assertIn("## Token usage breakdown", text)
+        self.assertIn("| Bash | 2 | 200 |", text)
+        self.assertIn("| **Total** | 2 | 200 |", text)
+        # The section is trailing: nothing follows it.
+        self.assertLess(text.index("## Changes"),
+                        text.index("## Token usage breakdown"))
+
+    def test_epic_sync_breakdown_is_idempotent(self):
+        self.make_epic(
+            "e", status="active",
+            rows=[("member-a", "A", ("low",) * 4),
+                  ("member-b", "B", ("low",) * 4)])
+        self.make_completed_tasks("member-a", table=[("Bash", 1, 100),
+                                                     ("Read", 2, 40)])
+        self.make_completed_tasks("member-b", table=[("Bash", 1, 100)])
+        self.cli("epic-sync", "e")
+        first = self.read_epic("e")
+        self.cli("epic-sync", "e")
+        self.assertEqual(self.read_epic("e"), first)
+
+    def test_epic_sync_member_without_a_table_contributes_nothing(self):
+        self.make_epic(
+            "e", status="active",
+            rows=[("member-a", "A", ("low",) * 4),
+                  ("member-b", "B", ("low",) * 4)])
+        self.make_completed_tasks("member-a", table=[("Bash", 1, 100)])
+        self.make_completed_tasks("member-b", table=None)
+        r = self.cli("epic-sync", "e")
+        self.assertEqual(r.returncode, 0)
+        text = self.read_epic("e")
+        self.assertIn("| Bash | 1 | 100 |", text)
+        self.assertIn("| **Total** | 1 | 100 |", text)
+
+    def test_epic_sync_removes_the_section_when_no_member_has_a_table(self):
+        self.make_epic(
+            "e", status="active",
+            rows=[("member-a", "A", ("low",) * 4)])
+        self.make_completed_tasks("member-a", table=[("Bash", 1, 100)])
+        self.cli("epic-sync", "e")
+        self.assertIn("## Token usage breakdown", self.read_epic("e"))
+        # The member's table goes away; the epic's section goes with it.
+        self.make_completed_tasks("member-a", table=None)
+        r = self.cli("epic-sync", "e")
+        self.assertEqual(r.returncode, 0)
+        text = self.read_epic("e")
+        self.assertNotIn("## Token usage breakdown", text)
+        self.assertIn("## Changes", text)
+
+    def test_epic_sync_preserves_sections_after_a_prose_heading(self):
+        # The literal heading appears mid-prose in ## Introduction, with real
+        # sections after it. The rewrite must not treat that as the trailing
+        # section and swallow ## Decisions / ## Design / ## Changes.
+        self.write_epic_raw("e", (
+            "# e\n"
+            "Status: active\n\n"
+            "## Introduction\n\n"
+            "Why it matters. The build writes a section titled\n"
+            "## Token usage breakdown\n"
+            "into every change's tasks.md.\n\n"
+            "### Non-goals\n\n- Not that.\n\n"
+            "## Decisions\n\nWhy.\n\n"
+            "## Design\n\nHow.\n\n"
+            "## Changes\n\n"
+            "| Change | Description | Code | Integration | Unknowns | Risk |\n"
+            "| --- | --- | --- | --- | --- | --- |\n"
+            "| member-a | A | low | low | low | low |\n"))
+        self.make_completed_tasks("member-a", table=[("Bash", 1, 100)])
+        r = self.cli("epic-sync", "e")
+        self.assertEqual(r.returncode, 0)
+        text = self.read_epic("e")
+        for section in ("## Introduction", "### Non-goals", "## Decisions",
+                        "## Design", "## Changes"):
+            self.assertIn(section, text)
+        self.assertIn("| member-a | A | low | low | low | low |", text)
+        # The generated table is appended as the trailing section, after the
+        # prose mention — which is left exactly where it was.
+        self.assertIn("| Bash | 1 | 100 |", text)
+        self.assertLess(text.index("## Changes"), text.rindex("| Bash | 1 | 100 |"))
+        self.assertTrue(text.rstrip().endswith("| **Total** | 1 | 100 |"))
+        # And a re-run is still idempotent against that document.
+        first = self.read_epic("e")
+        self.cli("epic-sync", "e")
+        self.assertEqual(self.read_epic("e"), first)
+
+    def test_epic_sync_ignores_a_members_prose_heading(self):
+        # The same conservative rule on the read side: a member's tasks.md that
+        # mentions the heading mid-document contributes nothing, rather than
+        # parsing whatever follows.
+        self.make_epic(
+            "e", status="active", rows=[("member-a", "A", ("low",) * 4)])
+        cdir = os.path.join(self.root, ".shipd", "completed",
+                            "2026-01-01-member-a")
+        os.makedirs(cdir, exist_ok=True)
+        with open(os.path.join(cdir, "tasks.md"), "w", encoding="utf-8") as fh:
+            fh.write("## Token usage breakdown\n\nnot a table at all\n\n"
+                     "## 1. Work\n\n- [x] 1.1 [req: r] Do it\n")
+        r = self.cli("epic-sync", "e")
+        self.assertEqual(r.returncode, 0)
+        self.assertNotIn("## Token usage breakdown", self.read_epic("e"))
+
+    def test_epic_sync_draft_epic_file_untouched_by_the_breakdown(self):
+        self.make_epic(
+            "e", status="draft",
+            rows=[("member-a", "A", ("low",) * 4)])
+        self.make_completed_tasks("member-a", table=[("Bash", 1, 100)])
+        before = self.read_epic("e")
+        r = self.cli("epic-sync", "e")
+        self.assertEqual(r.stdout.strip(), "draft")
+        self.assertEqual(self.read_epic("e"), before)
+
     # -- epic-set-status ---------------------------------------------------
 
     def test_epic_set_status_ready_refused_on_invalid_epic(self):
