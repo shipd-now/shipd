@@ -212,6 +212,70 @@ the stage is graded on the `semantic-review` status being green AND
 `resolve --check` reporting `unresolved=0`.
 ```
 
+### Stage options declared by the resolved entry
+
+The dry run's entry labels render each entry's declared options — `gate
+[attempts 1]`, `build [subagent_model tier-two-below, validator off,
+telemetry off]`, `review [model tier-below, disposition high-only]`. Read the
+options from those labels; never re-derive them from the config.
+
+**A declared `model` picks the stage sub-agent's model.** When the entry
+declares `model`, spawn that stage's sub-agent with the Agent tool's `model`
+parameter set to the tier resolved **relative to this session**:
+
+| declared `model` | Agent tool `model` |
+| --- | --- |
+| `session` | omit the parameter — the sub-agent inherits this session's model |
+| `tier-below` / `tier-two-below` | the alias one / two steps below this session's own model on the ladder `fable` → `opus` → `sonnet` → `haiku`, clamped at `haiku` |
+| anything else | a concrete model id — pass it verbatim |
+
+**`autopilot` blocks are ignored in-session.** An entry's `autopilot.attempts`,
+`autopilot.timeout`, and `autopilot.max_resumes` are the detached driver's
+retry and session budgets. Interactively the human is the retry loop, so
+enforce no budget from them: a failed stage stops and asks the user exactly as
+the failure contract below prescribes.
+
+**Declared build options append one line each** to the build instruction above
+(an entry declaring none leaves that block unchanged), mirroring the detached
+driver's prompt verbatim:
+```
+Stage options for this build, overriding the skill's defaults:
+- Skip the adversarial validator phase: do not spawn the `s:validator`
+  sub-agent; the mechanical verification still runs.
+- Skip the token telemetry: do not persist the per-tool token breakdown and
+  do not render the token report.
+- Cap concurrent execution sub-agents at <parallelism>.
+- Spawn execution sub-agents with the Agent tool's `model` set to
+  `<resolved>` (the pipeline's `<subagent_model>`).
+```
+Include the validator line only when the entry declares `validator` false, the
+telemetry line only when it declares `telemetry` false, the cap line only when
+it declares `parallelism`, and the sub-agent-model line only when it declares
+`subagent_model` — resolved by the table above, anchored on this stage's own
+model.
+
+**Declared review options** change the review instruction in two places. The
+poster invocation gains ` --disposition <scope>` when the entry declares
+`disposition` and ` --model <tier>` (the symbolic tier verbatim — the poster
+records it in the summary comment) when it declares `model`. The disposition
+paragraph then matches the scope: `all` keeps the paragraph above, while
+`high-only` and `none` replace it with, respectively:
+```
+Then run the disposition loop under the `high-only` scope: implement every
+high-severity finding (edit, commit, push, and re-review so the status tracks
+the new head), then dispose of the rest in one call — `review_gate.py
+autoreply change/<member> --disposition high-only` — which posts the canonical
+policy reply onto every medium and low gate thread.
+```
+```
+Then dispose of every posted finding by policy rather than by judgement: run
+`review_gate.py autoreply change/<member> --disposition none`, which posts the
+canonical policy reply onto every gate thread; implement nothing.
+```
+The grade is unchanged in every scope — the `semantic-review` status green
+**and** `resolve --check` reporting `unresolved=0`; `autoreply` is what gets a
+cheapened scope there.
+
 A `gate` entry in the resolved pipeline is run directly (`spec_gate.py
 <member>` in the member's worktree), not via a sub-agent; see the failure
 contract below for what happens on a rejection.
@@ -297,8 +361,15 @@ phase instead.
 Run the driver with the confirmed knobs and **wait for it to finish** — never
 background it:
 ```
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> [--max-members N] [--timeout S] [--max-resumes R]
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> [--max-members N] [--timeout S] [--max-resumes R] [--session-model MODEL]
 ```
+A detached run cannot see this session's model, so the symbolic tiers in the
+pipeline (`session`, `tier-below`, `tier-two-below`) resolve against an
+**anchor**: the ladder top (`fable`) unless `--session-model` names another.
+The dry run prints the acting anchor as its `Model tier anchor:` line and the
+run report records it as `tier_anchor` — surface that line when confirming the
+run, and pass `--session-model <alias>` when the user wants the stages
+anchored on a weaker model than the ladder top.
 The autopilot creates a worktree per member, drives plan → gate → build (honoring
 skips, replacements, custom steps, and tool bindings), and — on a gate context
 rejection — drives a single oracle-backed enrichment session and re-runs the gate
