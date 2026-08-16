@@ -28,6 +28,12 @@ Every `/s:build` run SHALL end with a report in this fixed structure and order:
 7. An `Observations` section listing anything the user can act on or find
    interesting; when there is genuinely nothing, it SHALL say `nothing to note`.
 
+Where the resolved pipeline's `build` entry declares `telemetry` false, the
+report SHALL omit its token blocks — item 1's token summary (the first line
+reads `Build complete.` followed by the summary sentence), the per-model
+table, and the total-runtime line — and SHALL keep every other item in
+order; the persistent build log remains best-effort and unaffected.
+
 #### Scenario: Report shape
 - **WHEN** a build finishes
 - **THEN** the orchestrator prints the token line, then the change header, then
@@ -61,6 +67,13 @@ Every `/s:build` run SHALL end with a report in this fixed structure and order:
 - **WHEN** there is nothing actionable or interesting to surface
 - **THEN** the Observations section reads `nothing to note` rather than being
   omitted or padded
+
+#### Scenario: Telemetry opt-out drops only the token blocks
+- **GIVEN** a resolved build entry declaring `telemetry` false
+- **WHEN** the build finishes
+- **THEN** the report carries no token summary, per-model table, or
+  total-runtime line, while the change header, any warnings, the
+  description with the commit hash, and Observations still print in order
 
 ### Requirement: Persistent build log
 id: persistent-build-log

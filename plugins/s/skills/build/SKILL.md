@@ -35,6 +35,23 @@ sub-agents** running on the next tier down (the second-most-powerful model).
     if the user asks to optimize for cost on simple tasks.
   This keeps the skill correct as new models ship — the roles are "strongest" and
   "one below," not fixed names.
+- **A declared `subagent_model` overrides the tier policy.** When the pipeline
+  resolved in Phase 0 gives the `build` entry a `subagent_model`, spawn the
+  worker sub-agents — both `s:sub-agent` executors (Phase 3) and the
+  `s:validator` (Phase 5), which stays on the executors' tier — with the Agent
+  tool's `model` parameter set to the tier resolved **relative to this
+  session**:
+
+  | declared `subagent_model` | Agent tool `model` |
+  | --- | --- |
+  | `session` | omit the parameter — the sub-agent inherits this session's model |
+  | `tier-below` / `tier-two-below` | the alias one / two steps below this session's own model on the ladder `fable` → `opus` → `sonnet` → `haiku`, clamped at `haiku` |
+  | anything else | a concrete model id — pass it verbatim |
+
+  When the resolved entry declares no `subagent_model` (the default pipeline
+  declares none), the one-step-below policy above stands unchanged. The `build`
+  entry's own `model` is ignored interactively — you are the session the user
+  chose.
 
 Requirements: this repo uses the plugin's own homegrown spec engine under
 `.shipd/` — no external CLI. The spec lives in `.shipd/verified/` (master
@@ -71,7 +88,46 @@ planning already answered. Before authoring anything, gate on context:
    read it now and treat its rules as binding constraints on every design and
    implementation that follows in this build. When it is absent, proceed
    unchanged.
-1. **Already-planned short-circuit.** If a linted change for this request
+1. **Resolve the pipeline — once, at flow start.** Before anything else, run
+   the status CLI's `pipeline-show` verb exactly once and honor the entries it
+   resolves for the rest of this build:
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-show
+   ```
+   - **Non-zero exit stops the flow.** A validation error (e.g. `entry 4
+     ({"stage": "build", "validater": false}): build.validater: Extra inputs
+     are not permitted`) or a
+     missing pydantic (`… requires pydantic; pip install -r requirements.txt`)
+     means the declared pipeline is unusable: report the engine's own error
+     text and **stop before any spec work** — nothing authored, no sub-agent
+     spawned. A declared pipeline never half-runs.
+   - **The rendered labels are the API.** Read each entry's declared options
+     from its printed line — the stage followed by its options as `key=value`
+     pairs, e.g.
+     `5. build  subagent_model=tier-two-below, validator=false, telemetry=false`
+     — and never re-derive them from configuration files. The header line
+     names the provenance (a config path, `preset:<name> (<config-path>)`, or
+     `[default]`); a `[default]` pipeline declares no options and changes
+     nothing about this build.
+   - **What this flow honors:** the resolved `build` entry's `subagent_model`
+     and `parallelism` (Phase 3), its `validator` (Phase 5), its `telemetry`
+     (Phases 6–7), and the resolved `review` entry's `disposition` and `model`
+     (Phase 6's gate posting).
+   - **What this flow ignores.** Every `autopilot` block (`attempts`,
+     `timeout`, `max_resumes`) — those are the detached driver's budgets, and
+     interactively the human is the retry loop, so a failed stage stops and
+     asks the user exactly as it does today. Also ignored: `replace` bindings,
+     custom steps, the `build` entry's own `model` (the session's model is the
+     user's choice), and a `skip` on the stage the user explicitly invoked —
+     an explicit `/s:build` always builds.
+   - **Conveyed options supersede self-resolution.** When the prompt that
+     started this flow conveys stage-option instructions (a driving invoker
+     such as the autopilot's build stage does exactly that), follow those
+     instructions instead of what you resolved here. Both read the same
+     config, so they normally coincide; where a detached driver resolved a
+     symbolic tier against its own anchor, its concrete value is the
+     authoritative one.
+2. **Already-planned short-circuit.** If a linted change for this request
    already exists under `.shipd/planned/<change>/` (its artifacts are present
    and `spec_lint.py <change>` exits 0), adopt it and skip straight to
    execution (Phase 3) — do not re-plan or re-ask. Do the Phase 1 discovery
@@ -114,7 +170,7 @@ planning already answered. Before authoring anything, gate on context:
    have touched the same requirement ids), so the Phase 1 discovery read below
    remains the judgment backstop — the verb only mechanizes the common case of
    deltas colliding with moved masters.
-2. **Readiness evaluation.** Otherwise, evaluate the request plus the repository
+3. **Readiness evaluation.** Otherwise, evaluate the request plus the repository
    against the plan readiness checklist
    (`${CLAUDE_PLUGIN_ROOT}/skills/plan/references/readiness.md`): is the problem
    clear, is scope/non-goals bounded, are the affected capabilities/files
@@ -127,7 +183,7 @@ planning already answered. Before authoring anything, gate on context:
      batched AskUserQuestion round, emit the lean artifacts, and lint
      them clean. Do **not** author spec artifacts or spawn sub-agents until plan
      has emitted a linted change.
-3. **Consume, don't repeat.** When plan finishes, continue from the artifacts it
+4. **Consume, don't repeat.** When plan finishes, continue from the artifacts it
    emitted under `.shipd/planned/<change>/`. Do not re-ask anything the user
    already answered and do not re-run the investigation plan already did — pick
    up at Phase 2's validation gate (the change is already authored and
@@ -218,7 +274,10 @@ a typed reply. Only an explicitly selected or typed stop/decline ends the flow.
 
 Spawn sub-agents with the **Agent tool**, `subagent_type: s:sub-agent`, and
 `model` set to the **second-most-powerful** tier per the model policy above (one
-step below the orchestrator). The `s:sub-agent` definition
+step below the orchestrator) — or, when the pipeline resolved in Phase 0
+declares a `subagent_model` on its `build` entry, to the tier that policy's
+session-relative table resolves for it (omitting the parameter entirely for
+`session`). The `s:sub-agent` definition
 (`${CLAUDE_PLUGIN_ROOT}/agents/sub-agent.md`) already carries the full role
 contract, so there is no template to build or substitute: the spawn message
 supplies only the change name, the absolute `<CLAIM_SCRIPT>` path (resolve
@@ -284,10 +343,12 @@ it, and `claim` only ever hands out tasks whose group is ready. So:
 
 - **Count the currently-claimable tasks** — the ready group's members (peek with
   `bash <CLAIM_SCRIPT> next <change-name>`, or read the tags in `tasks.md`).
-- **Spawn one sub-agent per claimable task, up to a cap.** The cap defaults to
-  **3** and is overridable via a `parallelism` key in
-  `~/.shipd-config.json`. Beyond the cap, spawn the cap's worth — the extra
-  ready tasks are picked up as sub-agents finish and re-`claim`.
+- **Spawn one sub-agent per claimable task, up to a cap.** The cap is the first
+  of these that is declared: the `parallelism` of the pipeline's resolved
+  `build` entry (the most specific declaration — a per-repo pipeline), then a
+  `parallelism` key in `~/.shipd-config.json`, then the default of **3**.
+  Beyond the cap, spawn the cap's worth — the extra ready tasks are picked up
+  as sub-agents finish and re-`claim`.
 - **The safety is the script, not your judgment.** `claim` is atomic
   (mkdir-lock, `[~]` marks) and group-aware: concurrent sub-agents each get a
   distinct ready task, and none is handed a task whose barrier/earlier group is
@@ -339,10 +400,19 @@ actually satisfies the spec:
    It must still exit `0`.
 4. If anything fails, spawn a sub-agent (second-most-powerful tier) to fix it, or fix the spec
    yourself if the contract was wrong — then re-verify.
-5. **Adversarial validation gate.** With the task list complete and the suite
+5. **Adversarial validation gate** — unless the pipeline opted out. When the
+   `build` entry resolved in Phase 0 declares `validator` false, **skip this
+   step entirely**: spawn no `s:validator`, and let the mechanical
+   verification above (every task complete, the suite green, `spec_lint.py`
+   exiting 0) alone clear the way to `set-status verified` in step 6. An entry
+   that declares nothing, and the default pipeline, run the gate as follows.
+
+   With the task list complete and the suite
    green, spawn an **independent validator sub-agent** with `subagent_type:
-   s:validator` — same tier as the execution sub-agents (one step below the
-   orchestrator) — and a description of `validator · <change>`. The
+   s:validator` — same tier as the execution sub-agents, i.e. the Agent
+   `model` the model policy resolves for the workers: the declared
+   `subagent_model` when the resolved `build` entry carries one, otherwise one
+   step below the orchestrator — and a description of `validator · <change>`. The
    `s:validator` definition (`${CLAUDE_PLUGIN_ROOT}/agents/validator.md`)
    carries its full role contract, so its spawn message supplies only the change
    name; it gets a **clean context**. Its inputs are the change's delta specs,
@@ -357,7 +427,9 @@ actually satisfies the spec:
    proceed to `set-status verified` while any scenario is refuted. Only a fully
    confirmed report clears this gate.
 6. **When verification passes and the validator's report is fully confirmed,
-   stamp the status `verified`** — before the Phase 6 merge and archive:
+   stamp the status `verified`** — before the Phase 6 merge and archive. Where
+   step 5 was skipped by a `validator` false entry, passing the mechanical
+   verification is what clears this stamp:
    ```
    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" set-status verified <change-name>
    ```
@@ -369,7 +441,10 @@ apply the change with the merge engine.
 
 **First, persist the per-tool token breakdown into the change** — the archive is
 immutable, so this has to land *before* the merge, while `tasks.md` is still
-under `.shipd/planned/`. Generate the section and write it as the trailing
+under `.shipd/planned/`. **Skip this persist entirely when the `build` entry
+resolved in Phase 0 declares `telemetry` false** — no `--tool-table` run, no
+`## Token usage breakdown` section written — and go straight to applying the
+change below. Generate the section and write it as the trailing
 section of the change's `tasks.md`, replacing an existing one so a re-run is
 idempotent:
 
@@ -451,7 +526,9 @@ Phase 7's watch. `BLOCKED` when the branch is **neither `BEHIND` nor `DIRTY`**
 means it is merely waiting on required checks (in this repo, the
 `semantic-review` gate has not been posted yet, or `ci` is still running) — do
 **not** merge `main`; post the gate (the `/s:review` post flow from AGENTS.md)
-and let the checks run, then move on to Phase 7's watch. Only a `DIRTY` or
+— unless the resolved pipeline skips or omits the `review` stage, in which
+case post nothing (see "A skipped or absent `review` stage posts no gate"
+below) — and let the checks run, then move on to Phase 7's watch. Only a `DIRTY` or
 `BEHIND` state (or a `BLOCKED` that a behind/conflicting branch caused) means it
 cannot merge as armed, so reconcile now rather than leave `--auto` waiting on an
 impossible merge:
@@ -466,6 +543,26 @@ AGENTS.md), then return to Phase 7's watch. A **non-trivial conflict**:
 surface it as a blocker instead of guessing at a resolution — an interactive
 build stops and asks the human; an unattended autopilot-driven build (no human
 to ask) parks the member needs-human.
+
+**The gate posting carries the review entry's declared options.** Whenever you
+post the `semantic-review` gate above — the first posting and every re-post on
+a new head — pass the `review` entry resolved in Phase 0 through to the
+`/s:review` post flow's **Review stage options**: `disposition=<scope>` when
+the entry declares `disposition`, `model=<tier>` (the symbolic tier verbatim —
+the poster records it as provenance) when it declares `model`. Then run that
+flow's disposition loop **for the scope you passed**, not the default one: the
+`all` loop dispositions every finding by judgement, `high-only` implements the
+high-severity findings and clears the rest with one
+`review_gate.py autoreply … --disposition high-only`, and `none` clears every
+thread with `--disposition none` and implements nothing. An entry declaring
+neither option leaves the posting exactly as it is today.
+
+**A skipped or absent `review` stage posts no gate.** Where the resolved
+pipeline marks `review` skipped, or omits the stage altogether, do not post
+the gate at all — the pipeline is the declaration that this change is not
+worth a review pass. The check may still be required on the repo, so a PR left
+`BLOCKED` on it does not silently stall: Phase 7's watch treats a PR still
+blocked on a required check as a blocker and surfaces it to the user.
 
 **No follow-up PR on a squash-merged branch.** Once this PR has squash-merged,
 its branch is gone — a review finding that surfaces after that point can no
@@ -492,6 +589,11 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
    by a `Total time: {duration}` line; it degrades gracefully (dropping the Time
    columns, or the whole table, if timing/tokens are unavailable) and never fails
    the build.
+
+   **When the `build` entry resolved in Phase 0 declares `telemetry` false,
+   skip this generation** — run neither `--summary-only` nor `--table`, leave
+   `TOKENS` and `TABLE` unset, and render only the warnings block below. Step 3
+   then prints the report without its token blocks.
 
    Render the **spec-merge warnings block** from the `WARN_JSON` captured in
    Phase 6 (feed it on stdin):
@@ -542,6 +644,16 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
    includes the `Total time:` line — do not print it again separately). If
    `TABLE` is empty or is the `Tokens: unavailable (transcripts not found)`
    sentinel, omit that block. Keep the description to a few sentences.
+
+   **Telemetry opt-out shape.** When the resolved `build` entry declares
+   `telemetry` false, print the same report **without its token blocks**: the
+   first line is `Build complete. <summary sentence>` (your own one-line
+   summary of what shipped — no `Tokens:` prefix, since step 1 generated
+   none), and the per-model table and its `Total time:` line are omitted
+   entirely. Everything else keeps its place and order — the change header,
+   the PR line, any `⚠ spec:` warnings, the description paragraph with the
+   commit hash, and Observations. Step 2's build-log append is unaffected: it
+   still runs, still best-effort.
 4. **Watch this PR to a terminal state.** Poll this PR's `state` together with
    `mergeStateStatus` on every cycle — never another change's PR:
    ```
@@ -551,8 +663,11 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
    `mergeStateStatus` transition to `DIRTY`, `BEHIND`, or `BLOCKED` on any
    cycle is acted on **within that same cycle**, exactly as `MERGED` ends the
    watch: reconcile (Phase 6's merge-`origin/main`-and-re-push, re-posting the
-   gate on the new head) or surface the blocker — never keep polling on a merge
-   that cannot complete. This close-out waits only on this PR; a second shipped
+   gate on the new head with the review entry's declared options) or surface
+   the blocker — never keep polling on a merge that cannot complete. A PR
+   still blocked on a required check that this run posted no gate for (a
+   pipeline that skips or omits `review`) is exactly such a blocker: surface
+   it to the user rather than waiting for a status that is never coming. This close-out waits only on this PR; a second shipped
    change's stuck PR never delays this one, and this one never delays it.
 5. **Close the build from the main checkout, now that the PR has merged.**
    Return to the main checkout and:
