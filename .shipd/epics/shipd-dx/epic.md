@@ -1,5 +1,5 @@
 # shipd-dx
-Status: active
+Status: complete
 Theme: developer-experience
 
 ## Introduction
