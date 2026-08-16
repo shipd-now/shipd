@@ -125,15 +125,11 @@ after it still passes verbatim. Mutating verbs (`set-status`, `merge`, `emit`, `
 
 ### Put `shipd` on your PATH
 
-Symlink the copy in your **repo checkout** into a PATH directory:
-
-```
-ln -s "$PWD/plugins/s/bin/shipd" ~/bin/shipd
-```
-
-Never symlink the versioned plugin cache
-(`~/.claude/plugins/cache/shipd/s/<version>/…`) — that path changes on every
-version bump, so the link breaks the next time the plugin updates.
+[Install mode](#install-mode) already did this: the installer writes a
+version-independent launcher to `~/.local/bin/shipd` that re-resolves the newest
+installed plugin snapshot on every run, so `claude plugin update s@shipd` is all
+an upgrade ever takes. Working on shipd itself instead? See
+[dev mode](#dev-mode-working-on-shipd-itself).
 
 ## Statusline
 
@@ -237,25 +233,74 @@ The `/s:` prefix comes from the **plugin** name (`s`), not the marketplace name.
 
 ## Install
 
-From a Claude Code session, add this directory as a marketplace and install the plugin:
+### Install mode
 
-```
-/plugin marketplace add /Users/mikkelbergmann/projects/shipd
-/plugin install s@shipd
-```
-
-Or from the CLI:
+One command, no checkout:
 
 ```bash
-claude plugin marketplace add /Users/mikkelbergmann/projects/shipd
+curl -fsSL https://shipd.now/install | sh
+```
+
+That URL redirects to this repo's [`install.sh`](install.sh); the raw form is
+the documented equivalent, and works the same:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/shipd-now/shipd/main/install.sh | sh
+```
+
+The script needs `claude` and `python3` on your PATH and downloads nothing
+itself — it registers the marketplace and installs the plugin through the
+Claude Code CLI, which you can equally run by hand:
+
+```bash
+claude plugin marketplace add shipd-now/shipd
 claude plugin install s@shipd
 ```
 
-Or add it straight from GitHub, no local checkout needed:
+Then it writes the `shipd` launcher to **`~/.local/bin/shipd`** and prints a
+hint if that directory is not on your PATH. The launcher resolves the newest
+plugin snapshot under `~/.claude/plugins/cache/shipd/s/<version>/` at every
+invocation (dotted-version ordering, so `0.6.10` beats `0.6.9`) and hands off
+to it, so `claude plugin update s@shipd` upgrades the CLI too — nothing to
+re-link. Re-running the installer is safe: an already-registered marketplace or
+already-installed plugin counts as success. Set `SHIPD_PLUGIN_CACHE` to point
+the launcher at a different cache root.
+
+Verify with:
+
+```bash
+shipd doctor
+```
+
+### Dev mode (working on shipd itself)
+
+Clone the repo and register **the checkout** as a local directory marketplace,
+so `/s:*` runs from your working tree instead of GitHub:
+
+```bash
+git clone https://github.com/shipd-now/shipd.git
+cd shipd
+claude plugin marketplace add "$PWD"
+claude plugin install s@shipd
+```
+
+The same two steps from inside a Claude Code session:
 
 ```
-/plugin marketplace add mikkel-bergmann/shipd
+/plugin marketplace add <path-to-your-checkout>
+/plugin install s@shipd
 ```
+
+For the CLI, symlink the copy in your **repo checkout** into a PATH directory:
+
+```
+ln -s "$PWD/plugins/s/bin/shipd" ~/bin/shipd
+```
+
+Never symlink the versioned plugin cache
+(`~/.claude/plugins/cache/shipd/s/<version>/…`) — that path changes on every
+version bump, so the link breaks the next time the plugin updates. (Install
+mode's launcher exists precisely to avoid that.)
 
 ## Adding a command
 
