@@ -107,6 +107,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import build_report  # noqa: E402
 import cli_common as cc  # noqa: E402
 import spec_common as sc  # noqa: E402
 import spec_merge  # noqa: E402
@@ -1295,6 +1296,190 @@ def cmd_epic_show(root, slug, as_json=False):
     return _emit(data, _epic_report_lines(data), as_json)
 
 
+# --- the epic's per-tool token breakdown (spec-status epic-token-breakdown) --
+#
+# Each built change persists a trailing ``## Token usage breakdown`` section in
+# its ``tasks.md`` before the merge archives it; ``epic-sync`` sums its members'
+# archived tables into the same section at the bottom of ``epic.md``. The
+# grammar is exactly what ``build_report.render_tool_table`` writes, so the
+# rendering (and its number formatting) is reused rather than re-invented.
+
+_TOKEN_ROW_RE = re.compile(
+    r"^\|\s*(?P<tool>.+?)\s*\|\s*(?P<calls>\d[\d,]*)\s*\|"
+    r"\s*(?P<output>[\d,]+(?:\.\d+)?\s*[kMB]?)\s*\|\s*$")
+
+_TOKEN_SUFFIXES = {"k": 1_000, "M": 1_000_000, "B": 1_000_000_000}
+
+
+def _parse_token_count(text):
+    """Invert ``build_report.human``: ``'962'`` -> 962, ``'5.6k'`` -> 5600.
+
+    Returns ``None`` when the cell is not a number the writer could have
+    produced, so an unparseable row disqualifies its whole table."""
+    cell = text.strip().replace(",", "")
+    if not cell:
+        return None
+    multiplier = 1
+    if cell[-1] in _TOKEN_SUFFIXES:
+        multiplier = _TOKEN_SUFFIXES[cell[-1]]
+        cell = cell[:-1]
+    try:
+        value = float(cell)
+    except ValueError:
+        return None
+    return int(round(value * multiplier))
+
+
+def _trailing_tool_table_start(text):
+    """The offset at which ``text``'s **trailing** ``## Token usage breakdown``
+    section begins, or ``None`` when it has none.
+
+    Deliberately conservative: a heading match counts only when everything from
+    it to EOF is the breakdown block itself — blank lines and table lines
+    (starting with ``|``) and nothing else. A document that merely *mentions*
+    the heading mid-prose, with real sections after it, therefore reports no
+    trailing section, so the rewrite below can never swallow content it did not
+    write. Only the last occurrence is tested: an earlier one's tail would
+    contain the later heading, which is not a table line."""
+    heading = build_report.TOOL_TABLE_HEADING
+    if text.startswith(heading):
+        index = 0
+    else:
+        found = text.rfind("\n" + heading)
+        if found < 0:
+            return None
+        index = found + 1
+    # The heading must be a whole line of its own, not a prefix of a longer one.
+    line_end = text.find("\n", index)
+    first = text[index:] if line_end < 0 else text[index:line_end]
+    if first.strip() != heading:
+        return None
+    tail = "" if line_end < 0 else text[line_end + 1:]
+    for line in tail.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("|"):
+            return None
+    return index
+
+
+def _parse_tool_table(text):
+    """Parse the trailing ``## Token usage breakdown`` table out of a change's
+    ``tasks.md`` body into ``{tool: {"calls": int, "output": int}}``.
+
+    Returns ``{}`` when the section is absent, and ``None`` when it is present
+    but unparseable — a hand-edited table contributes nothing rather than
+    failing the sync. The bold ``**Total**`` row is a rendered aggregate, not an
+    input, so it is skipped."""
+    start = _trailing_tool_table_start(text)
+    if start is None:
+        return {}
+    section = text[start:]
+    by_tool = {}
+    seen_header = False
+    # The locator guarantees every remaining line is blank or a table line.
+    for line in section.splitlines()[1:]:
+        line = line.strip()
+        if not line:
+            continue
+        if not seen_header:
+            # The column header and its separator, in that order.
+            if line.startswith("| Tool "):
+                seen_header = True
+                continue
+            return None
+        if set(line) <= set("| -:"):
+            continue                    # the header separator row
+        match = _TOKEN_ROW_RE.match(line)
+        if match is None:
+            return None
+        tool = match.group("tool")
+        if tool.startswith("**"):
+            continue                    # the rendered **Total** row
+        output = _parse_token_count(match.group("output"))
+        if output is None:
+            return None
+        row = by_tool.setdefault(tool, {"calls": 0, "output": 0})
+        row["calls"] += int(match.group("calls").replace(",", ""))
+        row["output"] += output
+    if not seen_header:
+        return None
+    return by_tool
+
+
+def _member_tool_table(root, slug):
+    """The per-tool breakdown a member contributes: its archived change's
+    ``tasks.md`` table, or ``{}`` when the member is not archived, carries no
+    table, or its table cannot be parsed.
+
+    The member is resolved exactly the way :func:`_member_state_with_root`
+    resolves its state, so the archive read follows the same root-first,
+    then-each-worktree precedence the status derivation uses."""
+    state, hosting_root = _member_state_with_root(root, slug)
+    if state != "archived":
+        return {}
+    try:
+        specs_dir = sc.specs_dir(hosting_root)
+    except sc.ConfigError:
+        return {}
+    for path in sorted(glob.glob(
+            os.path.join(specs_dir, "completed", "*-" + slug))):
+        tasks = os.path.join(path, "tasks.md")
+        try:
+            with open(tasks, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        return _parse_tool_table(text) or {}
+    return {}
+
+
+def _epic_tool_table(root, slug):
+    """Sum every member's archived per-tool table into one
+    ``{tool: {"calls": int, "output": int}}`` map for the epic."""
+    totals = {}
+    for mslug, _desc, _ratings in _epic_rows(root, slug):
+        for tool, row in _member_tool_table(root, mslug).items():
+            entry = totals.setdefault(tool, {"calls": 0, "output": 0})
+            entry["calls"] += row["calls"]
+            entry["output"] += row["output"]
+    return totals
+
+
+def _apply_tool_table(text, by_tool):
+    """Return ``text`` with its trailing ``## Token usage breakdown`` section
+    replaced by the one rendered from ``by_tool`` — or removed entirely when
+    ``by_tool`` is empty. Every other byte of the epic file is preserved, so a
+    re-run over unchanged members is byte-identical.
+
+    The section to replace comes from :func:`_trailing_tool_table_start`, which
+    only ever matches a verified trailing table block — so a heading that merely
+    appears inside the epic's prose is left alone and the generated section is
+    appended after it, never eating the sections that follow."""
+    start = _trailing_tool_table_start(text)
+    body = (text if start is None else text[:start]).rstrip("\n")
+    section = build_report.render_tool_table(by_tool)
+    if not section:
+        return body + "\n"
+    return body + "\n\n" + section + "\n"
+
+
+def _sync_epic_tool_table(root, slug):
+    """Rewrite the epic file's trailing breakdown section from its members'
+    archived tables. Best-effort: any failure leaves the file untouched, so a
+    hand-edited member table never fails the status derivation."""
+    path = _epic_path(root, slug)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        updated = _apply_tool_table(text, _epic_tool_table(root, slug))
+    except (OSError, sc.ConfigError):
+        return
+    if updated == text:
+        return
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(updated)
+
+
 def cmd_epic_sync(root, slug):
     path = _epic_path(root, slug)
     if not os.path.isfile(path):
@@ -1311,6 +1496,10 @@ def cmd_epic_sync(root, slug):
     # file untouched (and stays silent about a main-checkout write).
     if derived != current:
         write_epic_status(root, slug, derived)
+    # Then the members' persisted per-tool token tables, summed into the epic's
+    # own trailing section (epic-token-breakdown). Idempotent, and skipped
+    # entirely for a draft epic by the guard above.
+    _sync_epic_tool_table(root, slug)
     print(derived)
     return 0
 

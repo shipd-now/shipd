@@ -6,6 +6,7 @@ the Total row, degradation, and the zero-output edge case."""
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -691,6 +692,175 @@ class BuildConfigTest(unittest.TestCase):
         br.write_log_entry({"change": "c"}, cfg)
         self.assertFalse(os.path.exists(os.path.join(self.home, ".am")))
         self.assertFalse(os.path.exists(os.path.join(self.home, ".automikk")))
+
+
+class AggregateToolsTest(unittest.TestCase):
+    """aggregate_tools()/render_tool_table(): the per-tool breakdown counts each
+    assistant response once at its final usage snapshot (keyed by message id,
+    synthetic records skipped) and splits its output tokens evenly across the
+    ``tool_use`` blocks its records carry, merging main and subagent transcripts
+    into the same rows, with a ``(no tool)`` row for tool-less responses, rows
+    sorted by output tokens descending, and a bold ``**Total**`` row equal to the
+    deduplicated sum (build-reporting tool-usage-breakdown)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="br-tools-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _write_transcript(self, records, name="transcript.jsonl"):
+        path = os.path.join(self.tmp, name)
+        with open(path, "w", encoding="utf-8") as f:
+            for rec in records:
+                f.write(json.dumps(rec) + "\n")
+        return path
+
+    @staticmethod
+    def _assistant(msg_id, ts, output=0, tools=(), model="model-a"):
+        content = [{"type": "text", "text": "hi"}]
+        for name in tools:
+            content.append({"type": "tool_use", "id": "tu-%s" % name,
+                            "name": name, "input": {}})
+        return {
+            "type": "assistant",
+            "timestamp": ts,
+            "message": {
+                "id": msg_id,
+                "model": model,
+                "content": content,
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": output,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                },
+            },
+        }
+
+    @staticmethod
+    def _since():
+        return br.parse_since("2026-01-01T00:00:00Z")
+
+    def test_multi_tool_response_splits_evenly(self):
+        path = self._write_transcript([
+            self._assistant("msg-1", "2026-01-01T00:00:10Z", output=100,
+                            tools=("Bash", "Read")),
+        ])
+        by_tool = br.aggregate_tools([path], self._since())
+        self.assertEqual(by_tool["Bash"], {"calls": 1, "output": 50})
+        self.assertEqual(by_tool["Read"], {"calls": 1, "output": 50})
+
+    def test_tool_less_response_lands_in_no_tool_row(self):
+        path = self._write_transcript([
+            self._assistant("msg-1", "2026-01-01T00:00:10Z", output=80),
+        ])
+        by_tool = br.aggregate_tools([path], self._since())
+        self.assertEqual(by_tool[br.NO_TOOL_LABEL],
+                         {"calls": 0, "output": 80})
+        rendered = br.render_tool_table(by_tool)
+        self.assertIn("| %s | 0 | 80 |" % br.NO_TOOL_LABEL, rendered)
+
+    def test_subagent_tool_calls_merge_natively(self):
+        main = self._write_transcript([
+            self._assistant("msg-main", "2026-01-01T00:00:10Z", output=100,
+                            tools=("Bash",)),
+        ], name="main.jsonl")
+        sub = self._write_transcript([
+            self._assistant("msg-sub", "2026-01-01T00:00:20Z", output=40,
+                            tools=("Bash",)),
+        ], name="agent-1.jsonl")
+        by_tool = br.aggregate_tools([main, sub], self._since())
+        self.assertEqual(list(by_tool), ["Bash"])
+        self.assertEqual(by_tool["Bash"], {"calls": 2, "output": 140})
+
+    def test_cumulative_snapshots_attribute_the_final_value_once(self):
+        # One message id spanning snapshots 1, 1, 331 — the last carrying the
+        # tool_use block — attributes 331, not 333.
+        path = self._write_transcript([
+            self._assistant("msg-stream", "2026-01-01T00:00:10Z", output=1),
+            self._assistant("msg-stream", "2026-01-01T00:00:11Z", output=1),
+            self._assistant("msg-stream", "2026-01-01T00:00:12Z", output=331,
+                            tools=("Bash",)),
+        ])
+        by_tool = br.aggregate_tools([path], self._since())
+        self.assertEqual(by_tool, {"Bash": {"calls": 1, "output": 331}})
+
+    def test_total_preserves_the_deduplicated_sum(self):
+        records = [
+            self._assistant("msg-1", "2026-01-01T00:00:10Z", output=100,
+                            tools=("Bash", "Read", "Edit")),
+            self._assistant("msg-2", "2026-01-01T00:00:20Z", output=55),
+            self._assistant("msg-3", "2026-01-01T00:00:30Z", output=7,
+                            tools=("Bash",)),
+            self._assistant("msg-3", "2026-01-01T00:00:31Z", output=7,
+                            tools=("Bash",)),
+        ]
+        path = self._write_transcript(records)
+        since = self._since()
+        by_model, _timeline = br.aggregate([path], since)
+        deduped = by_model["model-a"]["output"]
+        self.assertEqual(deduped, 162)
+        by_tool = br.aggregate_tools([path], since)
+        self.assertEqual(
+            sum(row["output"] for row in by_tool.values()), deduped)
+        rendered = br.render_tool_table(by_tool)
+        # msg-3's two records repeat one tool_use block, so the union across the
+        # response's records counts it once: 3 calls (msg-1) + 1 (msg-3).
+        self.assertIn("| **Total** | 4 | %s |" % br.human(deduped), rendered)
+
+    def test_rows_sort_by_output_tokens_descending(self):
+        path = self._write_transcript([
+            self._assistant("msg-1", "2026-01-01T00:00:10Z", output=10,
+                            tools=("Read",)),
+            self._assistant("msg-2", "2026-01-01T00:00:20Z", output=300,
+                            tools=("Bash",)),
+            self._assistant("msg-3", "2026-01-01T00:00:30Z", output=90,
+                            tools=("Edit",)),
+        ])
+        rendered = br.render_tool_table(
+            br.aggregate_tools([path], self._since()))
+        names = [line.split("|")[1].strip()
+                 for line in rendered.splitlines()
+                 if line.startswith("| ") and not line.startswith("| --- ")
+                 and not line.startswith("| Tool ")]
+        self.assertEqual(names, ["Bash", "Edit", "Read", "**Total**"])
+
+    def test_skips_synthetic_records(self):
+        path = self._write_transcript([
+            self._assistant("msg-synth", "2026-01-01T00:00:10Z", output=999,
+                            tools=("Bash",), model=br.SYNTHETIC_MODEL),
+            self._assistant("msg-real", "2026-01-01T00:00:20Z", output=12,
+                            tools=("Read",)),
+        ])
+        by_tool = br.aggregate_tools([path], self._since())
+        self.assertEqual(by_tool, {"Read": {"calls": 1, "output": 12}})
+
+    def test_empty_scope_prints_nothing_with_exit_zero(self):
+        path = self._write_transcript([
+            self._assistant("msg-1", "2026-01-01T00:00:10Z", output=100,
+                            tools=("Bash",)),
+        ])
+        proc = subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS, "build_report.py"),
+             "--transcript", path, "--project-dir", self.tmp,
+             "--since", "2030-01-01T00:00:00Z", "--tool-table"],
+            capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout, "")
+
+    def test_tool_table_prints_the_section(self):
+        path = self._write_transcript([
+            self._assistant("msg-1", "2026-01-01T00:00:10Z", output=100,
+                            tools=("Bash",)),
+        ])
+        proc = subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS, "build_report.py"),
+             "--transcript", path, "--project-dir", self.tmp,
+             "--since", "2026-01-01T00:00:00Z", "--tool-table"],
+            capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("## Token usage breakdown", proc.stdout)
+        self.assertIn("| Tool | Calls | Output tokens |", proc.stdout)
+        self.assertIn("| Bash | 1 | 100 |", proc.stdout)
 
 
 if __name__ == "__main__":

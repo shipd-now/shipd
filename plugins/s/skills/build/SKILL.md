@@ -365,7 +365,49 @@ actually satisfies the spec:
 ## Phase 6 — Merge & archive (homegrown engine, no OpenSpec CLI)
 
 Only when tasks are complete, verification passes, and the spec re-lints clean,
-apply the change with the merge engine. Capture its **machine-readable warning
+apply the change with the merge engine.
+
+**First, persist the per-tool token breakdown into the change** — the archive is
+immutable, so this has to land *before* the merge, while `tasks.md` is still
+under `.shipd/planned/`. Generate the section and write it as the trailing
+section of the change's `tasks.md`, replacing an existing one so a re-run is
+idempotent:
+
+```
+TOOL_TABLE=$(python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/build_report.py" \
+  --since "$BUILD_START" --tool-table)
+if [ -n "$TOOL_TABLE" ]; then
+  TOOL_TABLE="$TOOL_TABLE" python3 - .shipd/planned/<change-name>/tasks.md <<'PY'
+import os, sys
+heading = "## Token usage breakdown"
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    body = fh.read()
+head, sep, tail = body.rpartition("\n" + heading + "\n")
+# Strip an existing section only when everything after its heading is the table
+# itself (blank or "|" lines). A heading that merely appears in prose is left
+# alone and the new section is appended, so this can never eat a later section.
+if sep and all(not ln.strip() or ln.lstrip().startswith("|")
+               for ln in tail.splitlines()):
+    body = head
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(body.rstrip("\n") + "\n\n"
+             + os.environ["TOOL_TABLE"].rstrip("\n") + "\n")
+PY
+fi
+```
+
+`--tool-table` prints a `## Token usage breakdown` section — a
+`Tool | Calls | Output tokens` table over the session's main *and* subagent
+transcripts, with a bold `**Total**` row — or nothing at all when no transcript
+resolves or no response falls in the `--since` window, which is why the write is
+guarded. The tasks linter inspects only checkbox lines, so the extra trailing
+section is lint-safe, and `epic-sync` later sums these tables into the epic.
+Like all telemetry this is **best-effort**: a failure here is noted in
+Observations and **never blocks the merge**, matching Phase 7's
+degrade-gracefully rule.
+
+Then apply the change, capturing the merge engine's **machine-readable warning
 summary** — the report in Phase 7 renders it:
 
 ```

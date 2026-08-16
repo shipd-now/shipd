@@ -14,6 +14,7 @@ where slug = re.sub(r'[^A-Za-z0-9]', '-', os.path.abspath(project_dir)).
 Usage:
   build_report.py --since <ISO> [--project-dir <path>] [--session <id>]
                   [--transcript <path>] [--json] [--summary-only]
+                  [--table] [--tool-table]
   build_report.py --since <ISO> --change <name> --schema <s> --tasks-done <d>
                   --tasks-total <t> --status <st> --commit <hash> --log
 
@@ -546,6 +547,166 @@ def aggregate(paths, since_dt):
     return by_model, timeline
 
 
+# The row a response carrying no tool_use block lands in (tool-usage-breakdown).
+NO_TOOL_LABEL = "(no tool)"
+
+# The heading of the persisted per-tool breakdown section, written as the
+# trailing section of a change's tasks.md and an epic's epic.md.
+TOOL_TABLE_HEADING = "## Token usage breakdown"
+
+
+def _tool_blocks(message):
+    """The ``tool_use`` blocks a transcript record's message carries, as
+    ``(key, name)`` pairs in order of appearance.
+
+    ``key`` identifies the block within its response so the union across the
+    response's records is taken over blocks, not names: a main transcript that
+    repeats the same content on every snapshot record contributes each block
+    once, while two distinct ``Bash`` invocations in one response stay two
+    calls. It is the block's own ``id`` when it has one, else its position in
+    the record's content — which dedupes repeated records just the same."""
+    content = message.get("content")
+    if not isinstance(content, list):
+        return []
+    blocks = []
+    for index, block in enumerate(content):
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") != "tool_use":
+            continue
+        name = block.get("name")
+        if not name:
+            continue
+        blocks.append((block.get("id") or ("#%d" % index, name), name))
+    return blocks
+
+
+def aggregate_tools(paths, since_dt):
+    """Sum a per-tool token breakdown across the given transcript files.
+
+    Returns ``{tool_name: {"calls": int, "output": int}}`` — the main and
+    subagent transcripts merged into the same rows, with tool-less responses
+    under :data:`NO_TOOL_LABEL` (build-reporting tool-usage-breakdown).
+
+    Assistant records are grouped by ``message.id`` (synthetic models skipped,
+    ``since_dt`` honored the same way :func:`aggregate` honors it), each
+    response counted once at its final usage snapshot — the per-field maximum
+    across its records — and its output tokens split evenly across the union of
+    the ``tool_use`` blocks its records carry, the integer remainder going to
+    the first-listed tool, so the rows sum to the deduplicated response total
+    exactly. A response with no tool call lands wholly in the ``(no tool)``
+    bucket with no call counted.
+
+    Best-effort like the rest of the module: an unreadable file or an
+    unparseable line is skipped, never raised."""
+    # message id -> {"output": highest snapshot, "tools": [name, ...]} where the
+    # tool list is the ordered union across the response's records.
+    responses = {}
+    order = []
+    anonymous = 0
+    for path in paths:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except (ValueError, TypeError):
+                        continue
+                    if record.get("type") != "assistant":
+                        continue
+                    message = record.get("message") or {}
+                    usage = message.get("usage")
+                    model = message.get("model")
+                    if not isinstance(usage, dict) or not model:
+                        continue
+                    if model == SYNTHETIC_MODEL:
+                        continue
+                    if since_dt is not None:
+                        ts = record.get("timestamp")
+                        if not ts:
+                            continue
+                        try:
+                            ts_dt = parse_timestamp(ts)
+                        except ValueError:
+                            continue
+                        if ts_dt < since_dt:
+                            continue
+                    msg_id = message.get("id")
+                    if msg_id is None:
+                        # No id to key on: treat the record as its own response,
+                        # matching aggregate()'s "always counted" behaviour.
+                        anonymous += 1
+                        key = ("<anonymous>", anonymous)
+                    else:
+                        key = msg_id
+                    entry = responses.get(key)
+                    if entry is None:
+                        entry = {"output": 0, "tools": [], "seen": set()}
+                        responses[key] = entry
+                        order.append(key)
+                    snapshot = usage.get("output_tokens") or 0
+                    if snapshot > entry["output"]:
+                        entry["output"] = snapshot
+                    for block_key, name in _tool_blocks(message):
+                        if block_key in entry["seen"]:
+                            continue
+                        entry["seen"].add(block_key)
+                        entry["tools"].append(name)
+        except OSError:
+            continue
+
+    by_tool = {}
+
+    def _row(name):
+        return by_tool.setdefault(name, {"calls": 0, "output": 0})
+
+    for key in order:
+        entry = responses[key]
+        tools = entry["tools"]
+        tokens = entry["output"]
+        if not tools:
+            row = _row(NO_TOOL_LABEL)
+            row["output"] += tokens
+            continue
+        # Even integer split across the response's tool_use blocks; the
+        # remainder lands on the first-listed tool so the total is preserved.
+        share, remainder = divmod(tokens, len(tools))
+        for i, name in enumerate(tools):
+            row = _row(name)
+            row["calls"] += 1
+            row["output"] += share + (remainder if i == 0 else 0)
+    return by_tool
+
+
+def render_tool_table(by_tool):
+    """Render the ``## Token usage breakdown`` markdown section from
+    :func:`aggregate_tools`' map: a ``Tool | Calls | Output tokens`` table with
+    rows sorted by output tokens descending (ties by tool name), and a bold
+    ``**Total**`` row. Returns an empty string when there is nothing to report,
+    so the caller omits the section entirely (tool-usage-breakdown)."""
+    if not by_tool:
+        return ""
+    rows = sorted(by_tool.items(), key=lambda kv: (-kv[1]["output"], kv[0]))
+    lines = [
+        TOOL_TABLE_HEADING,
+        "",
+        "| Tool | Calls | Output tokens |",
+        "| --- | --- | --- |",
+    ]
+    total_calls = 0
+    total_output = 0
+    for name, row in rows:
+        total_calls += row["calls"]
+        total_output += row["output"]
+        lines.append("| %s | %d | %s |" % (name, row["calls"],
+                                           human(row["output"])))
+    lines.append("| **Total** | %d | %s |" % (total_calls, human(total_output)))
+    return "\n".join(lines)
+
+
 def compute_timing(timeline, since_dt):
     """Compute total elapsed time and per-model attributed time (seconds)
     from a timeline of (ts, model) tuples, per the archived build-report design §1.
@@ -767,6 +928,12 @@ def main():
         help="print the per-model token+time markdown table and Total time line",
     )
     parser.add_argument(
+        "--tool-table",
+        action="store_true",
+        help="print the '## Token usage breakdown' per-tool markdown section "
+             "(nothing when no transcript resolves or no response is in scope)",
+    )
+    parser.add_argument(
         "--merge-warnings",
         help="path to spec_merge.py --json warning summary (- for stdin); "
              "rendered as ⚠ spec: lines and recorded in the --log entry",
@@ -798,6 +965,7 @@ def main():
     merge_warnings = load_merge_warnings(args.merge_warnings)
 
     by_model = None
+    by_tool = None
     session_id = None
     total_time = None
     by_model_time = None
@@ -821,9 +989,12 @@ def main():
         if paths:
             by_model, timeline = aggregate(paths, since_dt)
             total_time, by_model_time = compute_timing(timeline, since_dt)
+            if args.tool_table:
+                by_tool = aggregate_tools(paths, since_dt)
     except Exception as exc:  # never fail the build on telemetry errors
         print(f"Warning: telemetry collection failed: {exc}", file=sys.stderr)
         by_model = None
+        by_tool = None
         total_time = None
         by_model_time = None
 
@@ -862,6 +1033,16 @@ def main():
         block = render_warnings(merge_warnings)
         if block:
             print(block)
+    elif args.tool_table:
+        # Nothing at all when no transcript resolved or nothing is in scope —
+        # the caller writes the section only when it has content.
+        try:
+            section = render_tool_table(by_tool or {})
+        except Exception as exc:  # never fail the build on rendering errors
+            print(f"Warning: tool table rendering failed: {exc}", file=sys.stderr)
+            section = ""
+        if section:
+            print(section)
     elif args.table:
         if unavailable:
             print("Tokens: unavailable (transcripts not found)")
