@@ -1,7 +1,8 @@
-# project-readme
+## MODIFIED Requirements
 
 ### Requirement: README displays the shipd banner
 id: readme-displays-the-auto-mikk-banner
+base: c6653754b6aa
 
 The `README.md` at the repository root SHALL open with an ASCII-art header
 that renders the project name **shipd**. The banner SHALL be enclosed in a
@@ -26,6 +27,7 @@ and in terminals, and SHALL be followed by a short what-it-is introduction
 
 ### Requirement: README catalogs the plugin's skills
 id: readme-catalogs-the-plugin-s-skills
+base: b5dd7038d953
 
 The `README.md` SHALL include a **Skills** section listing every skill in
 the `s` plugin. Each skill entry SHALL state its invocation name
@@ -46,6 +48,7 @@ references to retired systems.
 
 ### Requirement: README retains onboarding content
 id: readme-retains-onboarding-content
+base: a6f4eeb2cc15
 
 The `README.md` SHALL preserve the existing practical guidance: what the
 project is, how to install it as a marketplace/plugin, the directory
@@ -62,32 +65,7 @@ installation and the quickstart link before the engine internals.
 - **THEN** installation and the quickstart link appear before the
   spec-engine and statusline internals
 
-### Requirement: README documents the spec engine and status pipeline
-id: readme-documents-spec-engine
-
-The `README.md` SHALL document the homegrown spec system: the `.shipd/` layout
-(`planned/` in-flight changes, `completed/` applied changes, `verified/`
-master library) with its configurability via `.shipd-config.json` (layered
-upward search, the `dir` key) and the lean change artifacts; the five-status
-lifecycle (`draft`, `ready`, `active`, `complete`, `verified`) with one-line
-stage meanings, its pipeline ownership, and the guarded `set-status`
-transitions with `--force` override; the ☕ statusline (rendered line
-format, spec selection via `spec_status.py use`, and its
-`.claude/settings.json` registration); and the build telemetry (report
-table, the `build` config key in `~/.shipd-config.json`, `builds.jsonl` under
-`~/.shipd/builds/`). It SHALL link to the content directory's `README.md` as
-the grammar authority rather than restating the requirement/delta grammar.
-
-#### Scenario: Lifecycle is explained
-- **WHEN** a reader reaches the spec-engine documentation
-- **THEN** the five statuses appear in pipeline order with a one-line
-  meaning each, and guarded transitions with `--force` override are
-  described
-
-#### Scenario: Storage convention is explained
-- **WHEN** a reader reaches the layout documentation
-- **THEN** the `.shipd/` default, the `.shipd-config.json` layering, and the
-  `dir` key are described
+## ADDED Requirements
 
 ### Requirement: Quickstart document
 id: quickstart-doc
