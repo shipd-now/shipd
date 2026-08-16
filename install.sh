@@ -148,3 +148,18 @@ case ":$PATH:" in
     ;;
 esac
 printf '%s\n' "Then run: shipd doctor"
+
+# Claude Code leaves auto-update off for third-party marketplaces, so a fresh
+# install would sit on this snapshot until someone updates by hand. Enabling it
+# is the user's toggle to flip — this notice instructs, it never edits a
+# settings file.
+printf '%s\n' \
+  "" \
+  "Tip: turn on auto-update for the shipd marketplace so new versions arrive" \
+  "on their own (Claude Code leaves it off for third-party marketplaces):" \
+  "  in a session, run /plugin -> Marketplaces -> shipd and toggle it on" \
+  "  or add \"autoUpdate\": true to the shipd entry under" \
+  "  \"extraKnownMarketplaces\" in ~/.claude/settings.json" \
+  "Updates are fetched shortly after a session starts and load in the next" \
+  "session (or after /reload-plugins). To update by hand at any time, run:" \
+  "  claude plugin update s@shipd"

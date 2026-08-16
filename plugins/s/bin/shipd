@@ -354,7 +354,9 @@ def check_snapshot(plugin_root):
     if _version_key(newest) > _version_key(root.name):
         return ("warn", "snapshot",
                 "running %s but %s is installed — start a new session to load "
-                "it" % (root.name, newest))
+                "it; to fetch later versions automatically, enable auto-update "
+                "for the shipd marketplace (/plugin), or run `claude plugin "
+                "update s@shipd` by hand" % (root.name, newest))
     return ("ok", "snapshot", "%s is the newest installed snapshot" % newest)
 
 
