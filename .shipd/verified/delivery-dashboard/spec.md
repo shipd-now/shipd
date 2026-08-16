@@ -365,26 +365,6 @@ the engine and its test suites stay dependency-free.
 - **THEN** both counts are zero without importing `textual`, and the indicator
   renders the idle marker
 
-### Requirement: Board HTML page
-id: board-html
-
-The dashboard CLI SHALL provide an `html` verb writing the board as a
-single self-contained page to `--out`: inline CSS only, every dynamic
-value HTML-escaped, and a `<meta http-equiv="refresh">` tag set to the
-`--interval` seconds (default 2) so the browser re-reads the file. By
-default the verb SHALL rewrite the page atomically every interval until
-interrupted; with `--once` it SHALL write a single snapshot and exit
-zero.
-
-#### Scenario: Page self-refreshes with board content
-- **WHEN** the HTML renderer runs on a board with members
-- **THEN** the page contains the meta refresh tag with the interval and a
-  row per member with its state
-
-#### Scenario: Snapshot mode writes once and exits
-- **WHEN** `html --out <path> --once` runs
-- **THEN** the file is written exactly once and the verb exits zero
-
 ### Requirement: Board actions
 id: board-actions
 

@@ -16,8 +16,7 @@ code are the binary's own. When `metrics` is given no trailing arguments,
 the binary SHALL delegate to `metrics.py summary`. When invoked as
 `shipd board`, the binary SHALL select the delegate by the first trailing
 argument: the bare word `text` SHALL be consumed and delegate to
-`dashboard.py board`, the bare word `html` SHALL be consumed and delegate to
-`dashboard.py html`, and any other first trailing argument (or none) SHALL
+`dashboard.py board`, and any other first trailing argument (or none) SHALL
 delegate to `dashboard.py tui` with all trailing arguments intact. The
 binary SHALL resolve the engine scripts relative to its own resolved file
 location. If the verb is unknown or missing — including the retired `tui` —
@@ -41,10 +40,10 @@ same banner to stdout and exit `0`.
 - **THEN** the output of `dashboard.py board --root <repo>` is printed and the
   exit code is `0`
 
-#### Scenario: Board html mode
+#### Scenario: Retired html mode falls through to the interactive delegate
 - **WHEN** `shipd board html --out <path> --once` runs
-- **THEN** the page is written to `<path>` exactly once and the exit code is
-  `0`, as `dashboard.py html` behaves
+- **THEN** the arguments delegate to `dashboard.py tui`, which rejects them as
+  unrecognized and exits `2`, and no page file is written
 
 #### Scenario: Retired tui verb is a usage error
 - **WHEN** `shipd tui` runs

@@ -68,7 +68,7 @@ def _imports_textual(python):
 
 # ``dashboard.py``'s script entry calls ``tui_bootstrap.ensure_textual`` before
 # its own module-scope ``textual`` import, so *any* subprocess invocation of it
-# — ``board`` and ``html`` included — self-provisions the dependency into a
+# — ``board`` included — self-provisions the dependency into a
 # cached venv over the network when ``textual`` is missing. This suite is the
 # stdlib-only one that must pass without ``textual`` installed (the
 # constitution's named exception lives in ``tests_textual/``), so every
@@ -206,18 +206,18 @@ class DispatchTest(ShipdCliTestBase):
 
     @unittest.skipUnless(HAS_TEXTUAL, "dashboard.py's script entry provisions "
                                       "textual; see HAS_TEXTUAL")
-    def test_board_html_writes_one_snapshot(self):
+    def test_retired_html_mode_falls_through_to_the_interactive_delegate(self):
+        # ``html`` is no longer a board mode word, so it is not consumed: it
+        # reaches ``dashboard.py tui`` as a trailing argument, which argparse
+        # rejects.
         self.make_epic("ep", ["m1"])
         self.make_change(self.root, "m1", status="ready")
         out = os.path.join(self.root, "board.html")
         r = self.cli("board", "html", "--root", self.root, "--out", out,
                      "--once")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertTrue(os.path.exists(out), "html mode wrote no page")
-        with open(out, encoding="utf-8") as fh:
-            page = fh.read()
-        self.assertIn("<html", page.lower())
-        self.assertIn("ep", page)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("unrecognized arguments", r.stderr)
+        self.assertFalse(os.path.exists(out), "fall-through wrote a page")
 
     def test_retired_tui_verb_is_a_usage_error(self):
         r = self.cli("tui")

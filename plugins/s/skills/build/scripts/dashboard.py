@@ -3,8 +3,8 @@
 
 ``build_board`` aggregates each epic's status, theme, initiative context,
 worktree-aware member states, live heartbeat, and last run report;
-``render_board_lines`` / ``render_board_html`` are pure renderers; the
-``board`` / ``html`` verbs are thin shells over them. The ``tui`` verb renders
+``render_board_lines`` is a pure renderer; the ``board`` verb is a thin shell
+over it. The ``tui`` verb renders
 the board full-screen as a ``textual`` application (:class:`BoardApp`) — the
 one third-party dependency the spec engine carves out for this module (see
 ``.shipd/constitution.md``); every other engine script, including the delivery
@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import glob
-import html
 import json
 import os
 import shlex
@@ -863,7 +862,7 @@ def _lane_contents(board, now=None):
 if __name__ == "__main__":
     # Self-provision `textual` before it is imported below: on a missing
     # `textual`, this creates/reuses the cached venv, installs the pinned
-    # dependency, and re-execs into it — so every verb (`tui`/`board`/`html`)
+    # dependency, and re-execs into it — so every verb (`tui`/`board`)
     # just works with no manual `pip install`. A no-op when `textual` is
     # already importable. Only reached for a script invocation, not a plain
     # `import dashboard`.
@@ -1210,84 +1209,6 @@ def render_board_lines(board):
         for epic in group.get("epics", []):
             lines.extend(_render_epic_lines(epic, board_root))
     return lines
-
-
-_HTML_CSS = (
-    "body{font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;"
-    "margin:2rem;color:#1a1a1a;background:#fafafa}"
-    "h1{font-size:1.3rem}h2{font-size:1.05rem;margin:1.5rem 0 .3rem}"
-    ".root{color:#666}.run{color:#444;margin:.2rem 0 .6rem}"
-    "table{border-collapse:collapse;width:100%}"
-    "th,td{text-align:left;padding:.25rem .6rem;border-bottom:1px solid #e2e2e2}"
-    "th{color:#666;font-weight:600}"
-    ".state{font-weight:600}"
-    ".s-driving{color:#0b62c4}.s-needs-human{color:#b23b00}"
-    ".s-rejected{color:#a11}.s-shipped{color:#128a3a}"
-)
-
-
-def render_board_html(board, interval):
-    """Render ``board`` as one self-contained HTML page: inline CSS only, a
-    ``<meta http-equiv="refresh">`` set to ``interval`` seconds, and a table row
-    per member carrying its state. Every dynamic value passes through
-    ``html.escape`` (design: pure renderers)."""
-    esc = html.escape
-    parts = [
-        "<!DOCTYPE html>",
-        '<html lang="en">',
-        "<head>",
-        '<meta charset="utf-8">',
-        '<meta http-equiv="refresh" content="%d">' % int(interval),
-        "<title>delivery board</title>",
-        "<style>%s</style>" % _HTML_CSS,
-        "</head>",
-        "<body>",
-        "<h1>delivery board</h1>",
-        '<p class="root">%s</p>' % esc(str(board.get("root", ""))),
-    ]
-    board_root = board.get("root")
-    for epic in board.get("epics", []):
-        head = "epic %s [%s]" % (
-            esc(epic["slug"]), esc(epic.get("status") or "?"))
-        if epic.get("theme"):
-            head += " &middot; theme: %s" % esc(str(epic["theme"]))
-        init = epic.get("initiative")
-        if init:
-            head += " &middot; initiative: %s (%s)" % (
-                esc(str(init.get("slug"))), esc(str(init.get("status") or "?")))
-        parts.append("<h2>%s</h2>" % head)
-
-        hb = epic.get("heartbeat")
-        if hb:
-            parts.append('<p class="run">run: %s &middot; seq %s &middot; %s</p>'
-                         % (esc(str(hb.get("state") or "?")),
-                            esc(str(hb.get("seq") or "?")),
-                            esc(_age(hb.get("updated_at")))))
-        else:
-            parts.append('<p class="run">run: (no live heartbeat)</p>')
-
-        roster = _roster_by_slug(hb)
-        parts.append("<table>")
-        parts.append(
-            "<tr><th>member</th><th>state</th><th>stage</th><th>risk</th>"
-            "<th>location</th><th>description</th></tr>")
-        for m in epic.get("members", []):
-            entry = roster.get(m["slug"], {})
-            stage = entry.get("stage") or ""
-            if stage and entry.get("attempt"):
-                stage = "%s#%s" % (stage, entry["attempt"])
-            state = m.get("state") or "?"
-            loc = "worktree" if m.get("location") != board_root else "root"
-            parts.append(
-                '<tr><td>%s</td><td class="state s-%s">%s</td><td>%s</td>'
-                "<td>%s</td><td>%s</td><td>%s</td></tr>" % (
-                    esc(m["slug"]),
-                    esc(state.replace(" ", "-")), esc(state),
-                    esc(str(stage)), esc(m.get("risk") or "?"),
-                    esc(loc), esc(m.get("description") or "")))
-        parts.append("</table>")
-    parts += ["</body>", "</html>"]
-    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -4360,36 +4281,6 @@ def _cmd_tui(args):
     return 0
 
 
-def _write_html_atomic(path, page):
-    """Write ``page`` to ``path`` atomically (temp file + ``os.replace``) so a
-    browser re-reading the file never sees a torn write."""
-    directory = os.path.dirname(os.path.abspath(path))
-    os.makedirs(directory, exist_ok=True)
-    tmp = "%s.tmp.%d" % (path, os.getpid())
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(page)
-    os.replace(tmp, path)
-
-
-def _cmd_html(args):
-    root = os.path.abspath(args.root)
-
-    def _snapshot():
-        board = build_board(root, epic=args.epic)
-        _write_html_atomic(args.out, render_board_html(board, args.interval))
-
-    _snapshot()
-    if args.once:
-        return 0
-    try:
-        while True:
-            time.sleep(args.interval)
-            _snapshot()
-    except KeyboardInterrupt:
-        pass
-    return 0
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="The autonomous-delivery board and its run heartbeat.")
@@ -4414,20 +4305,6 @@ def main(argv=None):
     p_tui.add_argument("--interval", type=float, default=2.0,
                        help="seconds between redraws (default: 2)")
     p_tui.set_defaults(func=_cmd_tui)
-
-    p_html = sub.add_parser(
-        "html", help="write the board as a self-refreshing HTML page")
-    p_html.add_argument("--root", default=os.getcwd(),
-                        help="repository root (default: cwd)")
-    p_html.add_argument("--epic", default=None,
-                        help="scope the board to one epic slug")
-    p_html.add_argument("--out", required=True,
-                        help="the HTML file to (re)write")
-    p_html.add_argument("--interval", type=float, default=2.0,
-                        help="seconds between rewrites / meta refresh (default: 2)")
-    p_html.add_argument("--once", action="store_true",
-                        help="write a single snapshot and exit")
-    p_html.set_defaults(func=_cmd_html)
 
     args = parser.parse_args(argv)
     # An unknown --epic slug surfaces from build_board as a ValueError; turn it
