@@ -184,6 +184,11 @@ The key also accepts a **built-in preset name** — `default`, `eco`, or `basic`
 so cheapening a delivery is a one-line opt-in, and
 `spec_status.py pipeline-show --expand <preset>` prints a preset's entry list as
 the starting point for a custom one.
+Entries may also carry typed per-stage options — model tiers, `build`'s
+`validator`/`telemetry`/`parallelism`, `review`'s `disposition`, and the
+`autopilot` driver knobs — validated strictly, so an unknown key or a wrongly
+typed value is an error rather than silently ignored config; a declared list
+(and every preset but `default`) requires `pydantic`.
 `spec_status.py pipeline-show` prints the effective pipeline and its provenance.
 See [`.shipd/README.md`](.shipd/README.md) for the full entry grammar.
 

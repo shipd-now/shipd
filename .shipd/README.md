@@ -215,13 +215,60 @@ entry is exactly one of five forms:
 A declared list is **wholesale**: stages absent from it do not run, and that
 omission is legitimate — including for gates (declaring the key is the required
 explicitness). Built-in stages that _are_ listed must appear in the canonical
-relative order above; `custom` steps may sit at any position. `skip`, `tools`,
-and `replace` are mutually exclusive on one entry. **When no layer declares the
-key, the pipeline is the built-in default: every registry stage in canonical
-order, unskipped and unbound.** Like every top-level key, `autonomous-pipeline`
-merges **nearest-wins-wholesale** — the closest layer declaring it wins the
-whole key. Inspect the effective pipeline and its provenance with
+relative order above; `custom` steps may sit at any position. `skip` may only
+be `true` when present, and a skipped entry carries **no other field** beyond
+`stage` — options on a skipped stage are an error, not a silent no-op. `tools`
+and `replace` are mutually exclusive on one entry. Entries are validated
+**strictly**: a key not defined for the entry's form is rejected as unknown,
+and a wrongly typed value (`{"skip": 1}`, `{"parallelism": "2"}`) is rejected
+rather than coerced. **When no layer declares the key, the pipeline is the
+built-in default: every registry stage in canonical order, unskipped and
+unbound.** Like every top-level key, `autonomous-pipeline` merges
+**nearest-wins-wholesale** — the closest layer declaring it wins the whole key.
+Inspect the effective pipeline and its provenance with
 `spec_status.py pipeline-show`.
+
+Validation runs on **pydantic**: a declared entry list — and every preset but
+`default` — is checked against the engine's pipeline schema, and when pydantic
+is not importable resolution **fails closed**, naming pydantic, the config file
+that declared the key, and the `pip install -r requirements.txt` remedy. It
+never falls back to weaker validation. The absent key and the `"default"`
+preset resolve with no third-party package at all.
+
+#### Per-stage options
+
+An unskipped entry may carry typed options beside its form:
+
+- **Every stage entry** — `model`: a non-empty string that is either a symbolic
+  tier (`session`, `tier-below`, `tier-two-below`, resolved relative to the
+  driving session) or a concrete model id. The set of concrete ids is open, so
+  any other non-empty string is taken as one.
+- **`build`** — `subagent_model` (same tier type as `model`), `validator`
+  (boolean, default `true`), `telemetry` (boolean, default `true`), and
+  `parallelism` (integer >= 1).
+- **`review`** — `disposition`: one of `all`, `high-only`, or `none` (default
+  `all`); the set is closed.
+- **Any stage or custom entry** — `autopilot`, an object of driver knobs:
+  `attempts` (integer >= 1, default 3), `timeout` (integer > 0), and
+  `max_resumes` (integer >= 0). Unknown keys inside it are rejected like
+  anywhere else.
+
+```json
+{
+  "autonomous-pipeline": [
+    { "stage": "plan", "model": "session" },
+    { "stage": "gate", "autopilot": { "attempts": 1 } },
+    { "stage": "build", "validator": false,
+      "subagent_model": "tier-two-below", "telemetry": false },
+    { "stage": "review", "model": "tier-below", "disposition": "high-only" }
+  ]
+}
+```
+
+Defaults are **schema-declared and never injected**: a resolved entry carries
+exactly the keys its author wrote, so `{ "stage": "build" }` resolves to
+`{ "stage": "build" }` — not to an entry with `validator` and `telemetry`
+spelled out — even though those defaults govern the run.
 
 #### Preset names — the one-line form
 

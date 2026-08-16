@@ -42,10 +42,15 @@ shipd doctor
 ```
 
 It reports one line per check — `python`, `git`, `config`, `gh`, `textual`,
-`snapshot` — and a closing `doctor: ok` or `doctor: N problem(s)`. Only a
-`fail` line has to be resolved before you continue: `warn` lines are optional
-extras (`gh` is needed only when you ship a pull request, `textual` only for
-the full-screen delivery board). Nothing is installed or edited by this verb.
+`pydantic`, `snapshot` — and a closing `doctor: ok` or `doctor: N problem(s)`.
+Only a `fail` line has to be resolved before you continue: `warn` lines are
+optional extras (`gh` is needed only when you ship a pull request, `textual`
+only for the full-screen delivery board, `pydantic` only for
+declared-pipeline validation). Nothing is installed or edited by this verb.
+
+`pydantic` is what unlocks the cheap-delivery opt-in: with it installed, putting
+`{"autonomous-pipeline": "eco"}` in `.shipd-config.json` runs deliveries on the
+eco preset.
 
 ## 3. Take the guided tour: `/s:onboard`
 
