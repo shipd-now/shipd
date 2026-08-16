@@ -941,6 +941,64 @@ class ResolvePipelineTest(unittest.TestCase):
             self.assertIn(sc.CONFIG_FILENAME, msg)
 
 
+class ResolveModelTierTest(unittest.TestCase):
+    """The stdlib model-tier authority the pipeline's consumers resolve a
+    `model`/`subagent_model` option through (epic-autopilot
+    stage-model-resolution). Pure: no config, no filesystem, no pydantic."""
+
+    def test_ladder_is_strongest_first(self):
+        self.assertEqual(sc.MODEL_LADDER,
+                         ("fable", "opus", "sonnet", "haiku"))
+
+    def test_session_without_anchor_inherits_the_cli_default(self):
+        # None means "pass no --model" — the CLI's own default decides.
+        self.assertIsNone(sc.resolve_model_tier("session"))
+
+    def test_below_tiers_step_down_from_the_ladder_top_by_default(self):
+        self.assertEqual(sc.resolve_model_tier("tier-below"), "opus")
+        self.assertEqual(sc.resolve_model_tier("tier-two-below"), "sonnet")
+
+    def test_anchored_stepping_clamps_at_the_ladder_bottom(self):
+        self.assertEqual(
+            sc.resolve_model_tier("tier-below", session_model="sonnet"),
+            "haiku")
+        self.assertEqual(
+            sc.resolve_model_tier("tier-two-below", session_model="sonnet"),
+            "haiku")
+
+    def test_anchored_stepping_from_a_mid_ladder_anchor(self):
+        self.assertEqual(
+            sc.resolve_model_tier("tier-below", session_model="opus"),
+            "sonnet")
+        self.assertEqual(
+            sc.resolve_model_tier("tier-two-below", session_model="opus"),
+            "haiku")
+
+    def test_session_returns_the_anchor(self):
+        self.assertEqual(
+            sc.resolve_model_tier("session", session_model="sonnet"),
+            "sonnet")
+
+    def test_concrete_ids_pass_through_verbatim(self):
+        self.assertEqual(sc.resolve_model_tier("claude-fable-5"),
+                         "claude-fable-5")
+        self.assertEqual(
+            sc.resolve_model_tier("claude-fable-5", session_model="sonnet"),
+            "claude-fable-5")
+
+    def test_non_ladder_anchor_steps_from_the_ladder_top(self):
+        # An anchor that is not a ladder alias cannot be positioned on the
+        # ladder, so stepping falls back to the top — fail expensive.
+        self.assertEqual(
+            sc.resolve_model_tier("tier-below",
+                                  session_model="claude-fable-5"),
+            "opus")
+        self.assertEqual(
+            sc.resolve_model_tier("tier-two-below",
+                                  session_model="claude-fable-5"),
+            "sonnet")
+
+
 class WikiPathsTest(unittest.TestCase):
     """wiki_dir and the reserved-slug constant (shipd-wiki wiki-store-layout,
     wiki-page-grammar). ``$HOME`` is overridden so content-dir resolution never

@@ -21,6 +21,7 @@ sys.path.insert(0, SCRIPTS)
 
 import autopilot  # noqa: E402
 import heartbeat  # noqa: E402
+import session_driver  # noqa: E402
 import spec_status as ss  # noqa: E402
 
 
@@ -361,6 +362,9 @@ class _Seams:
         self.commands = []          # list of (cmd, cwd)
         self.gate_calls = []        # list of (member, cwd)
         self.sessions = []          # list of (stage, member, prompt)
+        # Every session call's full argument record: one dict per call carrying
+        # the stage plus the per-stage knobs the driver resolved for it.
+        self.session_calls = []
         self.gate_rc = gate_rc
         # ``gate_rcs`` (when given) is a per-call sequence; the last value
         # sticks once exhausted, so the gate is deterministic across re-runs.
@@ -395,8 +399,11 @@ class _Seams:
         return self.gate_rc
 
     def session_fn(self, stage, member, cwd, prompt, timeout, max_resumes,
-                   on_session=None):
+                   on_session=None, model=None):
         self.sessions.append((stage, member, prompt))
+        self.session_calls.append(
+            {"stage": stage, "timeout": timeout, "max_resumes": max_resumes,
+             "model": model})
         n = self._counts.get(stage, 0) + 1
         self._counts[stage] = n
         behavior = (self.session_plan if stage == "plan"
@@ -410,11 +417,11 @@ class _Seams:
             on_session(result[1])
         return result
 
-    def drive(self, pipeline, root, member=None):
+    def drive(self, pipeline, root, member=None, **kwargs):
         return autopilot.drive_member(
             root, "ep", member or _member(), pipeline,
             session_fn=self.session_fn, gate_fn=self.gate_fn,
-            command_fn=self.command_fn, out=lambda *_: None)
+            command_fn=self.command_fn, out=lambda *_: None, **kwargs)
 
 
 class StageExecutionTest(AutopilotTestBase):
@@ -538,6 +545,293 @@ class StageExecutionTest(AutopilotTestBase):
         # Exactly three build attempts.
         build_sessions = [st for st, _m, _p in s.sessions if st == "build"]
         self.assertEqual(len(build_sessions), 3)
+
+
+# ---------------------------------------------------------------------------
+# Per-stage driver knobs: an entry's `autopilot` block replaces the fixed
+# three-strike budget and the run-global session budgets for that stage
+# (epic-autopilot per-stage-driver-knobs, three-strike-parking,
+# oracle-gate-enrichment).
+# ---------------------------------------------------------------------------
+
+class StageKnobsTest(AutopilotTestBase):
+    PGB = [{"stage": "plan"}, {"stage": "gate"}, {"stage": "build"}]
+
+    def _pipeline(self, build_entry):
+        return [{"stage": "plan"}, {"stage": "gate"}, build_entry]
+
+    def test_one_attempt_build_parks_on_first_failure(self):
+        def build_behavior(attempt):
+            return False, "sess-b%d" % attempt, "grade unmet %d" % attempt
+
+        s = _Seams(session_build=build_behavior)
+        result = s.drive(
+            self._pipeline({"stage": "build", "autopilot": {"attempts": 1}}),
+            self.root)
+        self.assertEqual(result.outcome, "needs_human")
+        self.assertEqual(result.stage, "build")
+        self.assertEqual(result.session_id, "sess-b1")
+        self.assertEqual(
+            [st for st, _m, _p in s.sessions if st == "build"], ["build"])
+
+    def test_two_attempts_let_a_second_try_succeed(self):
+        def build_behavior(attempt):
+            if attempt == 1:
+                return False, "sess-b1", "transient"
+            return True, "sess-b%d" % attempt, None
+
+        s = _Seams(session_build=build_behavior)
+        result = s.drive(
+            self._pipeline({"stage": "build", "autopilot": {"attempts": 2}}),
+            self.root)
+        self.assertEqual(result.outcome, "shipped")
+        self.assertEqual(
+            len([st for st, _m, _p in s.sessions if st == "build"]), 2)
+
+    def test_custom_step_attempts_govern_its_command_retries(self):
+        s = _Seams()
+
+        def command_fn(cmd, cwd):
+            s.commands.append((cmd, cwd))
+            if isinstance(cmd, list) and cmd and cmd[0] == autopilot.WORKTREE_SH:
+                os.makedirs(os.path.join(cwd, ".worktrees", cmd[1]),
+                            exist_ok=True)
+                return 0, "", ""
+            if cmd == "false":
+                return 1, "", "nope"
+            if isinstance(cmd, list) and cmd[:3] == ["gh", "pr", "view"]:
+                return 0, "http://pr/m\tMERGED\n", ""
+            return 0, "", ""
+
+        pipeline = self.PGB + [
+            {"custom": "smoke", "command": "false",
+             "autopilot": {"attempts": 1}}]
+        result = autopilot.drive_member(
+            self.root, "ep", _member(), pipeline,
+            session_fn=s.session_fn, gate_fn=s.gate_fn,
+            command_fn=command_fn, out=lambda *_: None)
+        self.assertEqual(result.outcome, "needs_human")
+        self.assertEqual(result.stage, "custom:smoke")
+        self.assertEqual([c for c, _cwd in s.commands].count("false"), 1)
+
+    def test_gate_attempts_govern_the_engine_loop(self):
+        # A non-rejection gate fault normally gets three strikes; one attempt
+        # parks after the single call.
+        s = _Seams(gate_rc=1)
+        pipeline = [{"stage": "plan"},
+                    {"stage": "gate", "autopilot": {"attempts": 1}},
+                    {"stage": "build"}]
+        result = s.drive(pipeline, self.root)
+        self.assertEqual(result.outcome, "needs_human")
+        self.assertEqual(result.stage, "gate")
+        self.assertEqual(len(s.gate_calls), 1)
+
+    def test_gate_attempts_govern_the_enrichment_loop(self):
+        # `eco`'s single-enrichment doctrine: one gate call, at most one
+        # enrichment session, then the member parks rejected.
+        def enrich_behavior(attempt):
+            return False, "sess-enrich-%d" % attempt, "session crashed"
+
+        s = _Seams(gate_rcs=[2, 2], session_enrich=enrich_behavior)
+        pipeline = [{"stage": "plan"},
+                    {"stage": "gate", "autopilot": {"attempts": 1}},
+                    {"stage": "build"}]
+        result = s.drive(pipeline, self.root)
+        self.assertEqual(result.outcome, "rejected")
+        self.assertEqual(result.stage, "gate")
+        self.assertEqual(len(s.gate_calls), 1)  # the rejection; no re-gate
+        self.assertEqual(
+            [st for st, _m, _p in s.sessions if st == "enrich"], ["enrich"])
+        self.assertEqual(result.session_id, "sess-enrich-1")
+        self.assertNotIn("build", [st for st, _m, _p in s.sessions])
+
+    def test_per_stage_timeout_and_max_resumes_override_the_run_globals(self):
+        s = _Seams()
+        pipeline = [{"stage": "plan",
+                     "autopilot": {"timeout": 42, "max_resumes": 0}},
+                    {"stage": "gate"}, {"stage": "build"}]
+        s.drive(pipeline, self.root, timeout=999, max_resumes=7)
+        by_stage = {c["stage"]: c for c in s.session_calls}
+        self.assertEqual(by_stage["plan"]["timeout"], 42)
+        self.assertEqual(by_stage["plan"]["max_resumes"], 0)
+        # A stage without an override keeps the run-global budgets.
+        self.assertEqual(by_stage["build"]["timeout"], 999)
+        self.assertEqual(by_stage["build"]["max_resumes"], 7)
+
+    def test_enrichment_sessions_use_the_gate_entrys_budgets(self):
+        s = _Seams(gate_rcs=[2, 0])
+        pipeline = [{"stage": "plan"},
+                    {"stage": "gate",
+                     "autopilot": {"timeout": 60, "max_resumes": 1}},
+                    {"stage": "build"}]
+        s.drive(pipeline, self.root, timeout=999, max_resumes=7)
+        enrich = next(c for c in s.session_calls if c["stage"] == "enrich")
+        self.assertEqual(enrich["timeout"], 60)
+        self.assertEqual(enrich["max_resumes"], 1)
+
+
+# ---------------------------------------------------------------------------
+# Model tiers on driven sessions: a declared `model` resolves through the
+# stdlib tier authority and reaches the session as a concrete `--model`
+# (epic-autopilot stage-model-resolution).
+# ---------------------------------------------------------------------------
+
+class SessionModelTierTest(AutopilotTestBase):
+    def _models(self, session_calls):
+        return {c["stage"]: c["model"] for c in session_calls}
+
+    def test_session_tier_inherits_the_cli_default(self):
+        s = _Seams()
+        pipeline = [{"stage": "plan", "model": "session"},
+                    {"stage": "gate"}, {"stage": "build"}]
+        s.drive(pipeline, self.root)
+        models = self._models(s.session_calls)
+        self.assertIsNone(models["plan"])   # no --model flag at all
+        self.assertIsNone(models["build"])  # a bare entry declares nothing
+
+    def test_below_tier_resolves_against_the_ladder_top(self):
+        s = _Seams()
+        pipeline = [{"stage": "plan"}, {"stage": "gate"},
+                    {"stage": "build", "model": "tier-below"}]
+        s.drive(pipeline, self.root)
+        self.assertEqual(self._models(s.session_calls)["build"], "opus")
+
+    def test_run_anchor_shifts_the_resolution(self):
+        s = _Seams()
+        pipeline = [{"stage": "plan"}, {"stage": "gate"},
+                    {"stage": "build", "model": "tier-below"}]
+        s.drive(pipeline, self.root, session_model="sonnet")
+        self.assertEqual(self._models(s.session_calls)["build"], "haiku")
+
+    def test_concrete_id_passes_through_to_the_session(self):
+        s = _Seams()
+        pipeline = [{"stage": "plan", "model": "claude-fable-5"},
+                    {"stage": "gate"}, {"stage": "build"}]
+        s.drive(pipeline, self.root)
+        self.assertEqual(self._models(s.session_calls)["plan"],
+                         "claude-fable-5")
+
+    def test_enrichment_uses_the_gate_entrys_model(self):
+        s = _Seams(gate_rcs=[2, 0])
+        pipeline = [{"stage": "plan"},
+                    {"stage": "gate", "model": "tier-below"},
+                    {"stage": "build"}]
+        s.drive(pipeline, self.root)
+        self.assertEqual(self._models(s.session_calls)["enrich"], "opus")
+
+    def test_run_member_and_run_accept_the_anchor(self):
+        # The anchor is a run-level control both entry points thread through.
+        _make_epic(self.root, "ep", [("a", "low")])
+        seen = {}
+
+        def driver(root, epic, member, pipeline, heartbeat=None):
+            return autopilot.MemberResult(outcome="shipped",
+                                          pr_url="http://pr/a")
+
+        autopilot.run(self.root, "ep", member_driver=driver,
+                      sync_fn=lambda *a, **k: seen.setdefault("sync", True),
+                      session_model="sonnet", out=lambda *_: None)
+        autopilot.run_member(
+            self.root, "ep", "a", session_model="sonnet",
+            driver=lambda: autopilot.MemberResult(outcome="shipped",
+                                                  pr_url="http://pr/a"),
+            out=lambda *_: None)
+
+
+class TierAnchorVisibilityTest(AutopilotTestBase):
+    """The acting model-tier anchor is visible, never implicit: printed in the
+    dry run and recorded in the run report (epic-autopilot
+    stage-model-resolution)."""
+
+    def _dry_run_text(self, **kwargs):
+        lines = []
+        autopilot.run(self.root, "ep", dry_run=True, out=lines.append,
+                      **kwargs)
+        return "\n".join(lines)
+
+    def test_dry_run_prints_the_default_anchor(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+        text = self._dry_run_text()
+        self.assertIn("Model tier anchor:", text)
+        anchor_line = next(l for l in text.splitlines()
+                           if l.startswith("Model tier anchor:"))
+        self.assertIn("fable", anchor_line)  # the ladder top
+
+    def test_dry_run_prints_the_named_anchor(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+        anchor_line = next(
+            l for l in self._dry_run_text(session_model="sonnet").splitlines()
+            if l.startswith("Model tier anchor:"))
+        self.assertIn("sonnet", anchor_line)
+
+    def test_run_report_records_the_anchor(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+
+        def driver(root, epic, member, pipeline, heartbeat=None):
+            return autopilot.MemberResult(outcome="shipped",
+                                          pr_url="http://pr/a")
+
+        report = autopilot.run(
+            self.root, "ep", member_driver=driver, session_model="sonnet",
+            sync_fn=lambda *a, **k: None, out=lambda *_: None)
+        self.assertEqual(report["tier_anchor"], "sonnet")
+        path = os.path.join(self.root, ".shipd", "autopilot", "ep-report.json")
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["tier_anchor"], "sonnet")
+
+    def test_run_report_records_the_default_anchor(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+
+        def driver(root, epic, member, pipeline, heartbeat=None):
+            return autopilot.MemberResult(outcome="shipped",
+                                          pr_url="http://pr/a")
+
+        report = autopilot.run(self.root, "ep", member_driver=driver,
+                               sync_fn=lambda *a, **k: None,
+                               out=lambda *_: None)
+        self.assertEqual(report["tier_anchor"], "fable")
+
+    def test_run_member_report_records_the_anchor(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+        autopilot.run_member(
+            self.root, "ep", "a", session_model="sonnet",
+            driver=lambda: autopilot.MemberResult(outcome="shipped",
+                                                  pr_url="http://pr/a"),
+            out=lambda *_: None)
+        path = os.path.join(self.root, ".shipd", "autopilot", "ep-report.json")
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["tier_anchor"], "sonnet")
+
+
+class ProductionSessionModelTest(unittest.TestCase):
+    """The production session seam turns a resolved model into the driven
+    CLI's ``--model`` argument — and omits the flag entirely when None."""
+
+    def _extra_args_for(self, model):
+        captured = {}
+
+        def fake_run_turn(prompt, cwd, resume_id=None, timeout=None,
+                          claude_bin=None, extra_args=None):
+            captured["extra"] = list(extra_args or [])
+            return True, None, "sess-1"
+
+        real = session_driver.run_turn
+        session_driver.run_turn = fake_run_turn
+        try:
+            session_fn = autopilot._make_session_fn("claude")
+            session_fn("custom", "m", os.getcwd(), "do it", 10, 0,
+                       model=model)
+        finally:
+            session_driver.run_turn = real
+        return captured["extra"]
+
+    def test_resolved_model_becomes_a_model_flag(self):
+        extra = self._extra_args_for("opus")
+        self.assertIn("--model", extra)
+        self.assertEqual(extra[extra.index("--model") + 1], "opus")
+
+    def test_no_model_passes_no_flag(self):
+        self.assertNotIn("--model", self._extra_args_for(None))
 
 
 # ---------------------------------------------------------------------------
@@ -878,7 +1172,7 @@ class GateEnrichmentTest(AutopilotTestBase):
             return 0, "", ""
 
         def session_fn(stage, member, cwd, prompt, timeout, max_resumes,
-                       on_session=None):
+                       on_session=None, model=None):
             if stage == "enrich":
                 shutil.rmtree(worktree, ignore_errors=True)
             return True, "sess-%s" % stage, None
@@ -968,6 +1262,103 @@ class OracleAwareSessionTest(unittest.TestCase):
         self.assertIn("QUESTION:", prompt)
 
 
+# ---------------------------------------------------------------------------
+# Declared stage options reach the stage prompts and the dry-run labels
+# (epic-autopilot stage-options-in-prompts).
+# ---------------------------------------------------------------------------
+
+class StageOptionPromptTest(unittest.TestCase):
+    BUILD_OPTS = {"stage": "build", "validator": False, "telemetry": False,
+                  "parallelism": 2, "subagent_model": "tier-two-below"}
+    REVIEW_OPTS = {"stage": "review", "disposition": "high-only",
+                   "model": "tier-below"}
+
+    def test_build_options_reach_the_build_prompt(self):
+        prompt = autopilot._stage_prompt("build", "m", self.BUILD_OPTS)
+        low = prompt.lower()
+        self.assertIn("validator", low)
+        self.assertIn("telemetry", low)
+        self.assertIn("2", prompt)          # the sub-agent cap
+        self.assertIn("sub-agent", low)
+        # The sub-agent model is named as the concrete resolved value with its
+        # symbolic provenance alongside.
+        self.assertIn("sonnet", prompt)     # tier-two-below from the top
+        self.assertIn("tier-two-below", prompt)
+
+    def test_build_subagent_model_resolves_against_the_stage_model(self):
+        # The anchor is the build session's own resolved model.
+        prompt = autopilot._stage_prompt(
+            "build", "m", self.BUILD_OPTS, model_anchor="opus")
+        self.assertIn("haiku", prompt)
+        self.assertIn("tier-two-below", prompt)
+
+    def test_review_scope_reaches_the_poster_and_the_loop(self):
+        prompt = autopilot._stage_prompt("review", "m", self.REVIEW_OPTS)
+        self.assertIn("--disposition high-only", prompt)
+        self.assertIn("--model tier-below", prompt)
+        low = prompt.lower()
+        self.assertIn("high-severity", low)
+        self.assertIn("autoreply", low)
+        self.assertIn("resolve", low)
+        self.assertIn("unresolved=0", prompt)
+
+    def test_review_disposition_none_autoreplies_everything(self):
+        prompt = autopilot._stage_prompt(
+            "review", "m", {"stage": "review", "disposition": "none"})
+        self.assertIn("--disposition none", prompt)
+        self.assertIn("autoreply", prompt.lower())
+        self.assertIn("unresolved=0", prompt)
+
+    def test_review_disposition_all_keeps_todays_loop(self):
+        # `all` reaches the poster, but the loop paragraph is today's
+        # per-finding judgement — no autoreply.
+        prompt = autopilot._stage_prompt(
+            "review", "m", {"stage": "review", "disposition": "all"})
+        self.assertIn("--disposition all", prompt)
+        self.assertIn("implement the suggestion", prompt)
+        self.assertNotIn("autoreply", prompt.lower())
+
+    def test_bare_entries_keep_todays_prompts(self):
+        build = autopilot._stage_prompt("build", "m", {"stage": "build"})
+        self.assertEqual(build, autopilot._stage_prompt("build", "m", {}))
+        for token in ("validator", "telemetry", "parallelism", "sub-agent model"):
+            self.assertNotIn(token, build.lower())
+        review = autopilot._stage_prompt("review", "m", {"stage": "review"})
+        self.assertEqual(review, autopilot._stage_prompt("review", "m", {}))
+        self.assertNotIn("--disposition", review)
+        self.assertNotIn("autoreply", review.lower())
+
+
+class EntryLabelTest(unittest.TestCase):
+    def test_gate_attempts_render_in_the_label(self):
+        label = autopilot._entry_label(
+            {"stage": "gate", "autopilot": {"attempts": 1}})
+        self.assertIn("gate", label)
+        self.assertIn("attempts 1", label)
+
+    def test_build_options_render_in_the_label(self):
+        label = autopilot._entry_label(
+            {"stage": "build", "validator": False, "telemetry": False,
+             "parallelism": 2, "subagent_model": "tier-two-below"})
+        self.assertIn("validator off", label)
+        self.assertIn("telemetry off", label)
+        self.assertIn("parallelism 2", label)
+        self.assertIn("subagent_model tier-two-below", label)
+
+    def test_review_options_render_in_the_label(self):
+        label = autopilot._entry_label(
+            {"stage": "review", "model": "tier-below",
+             "disposition": "high-only"})
+        self.assertIn("model tier-below", label)
+        self.assertIn("disposition high-only", label)
+
+    def test_bare_and_skipped_entries_keep_their_labels(self):
+        self.assertEqual(autopilot._entry_label({"stage": "plan"}), "plan")
+        self.assertEqual(
+            autopilot._entry_label({"stage": "gate", "skip": True}),
+            "gate [skip]")
+
+
 class ReviewGradeTest(AutopilotTestBase):
     """The production review grade passes iff the combined status carries a
     `semantic-review` = `success` entry **and** `resolve --check` reports
@@ -1035,7 +1426,7 @@ class VanishedWorktreeTest(AutopilotTestBase):
             return 0, "", ""
 
         def session_fn(stage, member, cwd, prompt, timeout, max_resumes,
-                       on_session=None):
+                       on_session=None, model=None):
             sessions.append(stage)
             if stage == "build":
                 shutil.rmtree(worktree, ignore_errors=True)
@@ -1271,7 +1662,7 @@ class HeartbeatSessionIdTest(AutopilotTestBase):
             return 0, "", ""
 
         def session_fn(stage, member, cwd, prompt, timeout, max_resumes,
-                       on_session=None):
+                       on_session=None, model=None):
             # Turn 1 of the drive yields a session id mid-drive.
             if on_session is not None:
                 on_session("sess-%s" % stage)

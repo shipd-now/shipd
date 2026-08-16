@@ -6,7 +6,8 @@ unplanned member changes to shipped PRs without human interaction. Members are
 selected and ordered risk-ascending; each is driven through the resolved
 ``autonomous-pipeline`` (skips, replacements, custom steps honored) in its own
 worktree/branch. Gate rejections park a member for human enrichment; other
-stage failures get a three-strike re-drive before parking the member as
+stage failures get re-driven up to the entry's fresh-attempt budget (its
+``autopilot.attempts``, three by default) before parking the member as
 ``needs-human`` with a resumable session id. Every run ends with a report —
 machine-readable JSON plus a human summary.
 
@@ -147,24 +148,61 @@ def select_and_order(members):
 # Pipeline rendering (dry-run) and entry classification
 # ---------------------------------------------------------------------------
 
+# The declared per-stage options a dry-run label renders, in a fixed order so
+# a label is stable whatever order the entry's author wrote its keys in.
+# ``off``/``on`` renders the boolean options; the rest render their value.
+_LABEL_OPTIONS = ("model", "subagent_model", "validator", "telemetry",
+                  "parallelism", "disposition")
+_LABEL_AUTOPILOT = ("attempts", "timeout", "max_resumes")
+
+
+def _entry_options(entry):
+    """The declared options of ``entry`` as ``"<key> <value>"`` fragments, in
+    :data:`_LABEL_OPTIONS` then ``autopilot``-block order. Only declared keys
+    appear — a bare entry yields none, so its label is unchanged."""
+    parts = []
+    for key in _LABEL_OPTIONS:
+        if key not in entry:
+            continue
+        value = entry[key]
+        if isinstance(value, bool):
+            parts.append("%s %s" % (key, "on" if value else "off"))
+        else:
+            parts.append("%s %s" % (key, value))
+    for key in _LABEL_AUTOPILOT:
+        opts = entry.get("autopilot") or {}
+        if key in opts:
+            parts.append("%s %s" % (key, opts[key]))
+    return parts
+
+
 def _entry_label(entry):
-    """A one-line human label for a resolved pipeline entry."""
+    """A one-line human label for a resolved pipeline entry, rendering the
+    entry's declared options (epic-autopilot stage-options-in-prompts) so the
+    dry run — which the in-session drive parses — shows them."""
     if "custom" in entry:
-        return "custom:%s -> %s" % (entry.get("custom"), entry.get("command"))
-    stage = entry.get("stage")
-    if entry.get("skip"):
-        return "%s [skip]" % stage
-    if "replace" in entry:
-        rep = entry["replace"]
-        target = rep.get("command") or ("tool:" + str(rep.get("tool")))
-        return "%s [replace -> %s, fallback %s]" % (
-            stage, target, rep.get("fallback"))
-    if "tools" in entry:
-        binds = ", ".join(
-            "%s (fallback %s)" % (t.get("name"), t.get("fallback"))
-            for t in entry["tools"])
-        return "%s [tools: %s]" % (stage, binds)
-    return stage
+        base = "custom:%s -> %s" % (entry.get("custom"), entry.get("command"))
+    else:
+        stage = entry.get("stage")
+        if entry.get("skip"):
+            # A skipped stage carries no other option by schema.
+            return "%s [skip]" % stage
+        if "replace" in entry:
+            rep = entry["replace"]
+            target = rep.get("command") or ("tool:" + str(rep.get("tool")))
+            base = "%s [replace -> %s, fallback %s]" % (
+                stage, target, rep.get("fallback"))
+        elif "tools" in entry:
+            binds = ", ".join(
+                "%s (fallback %s)" % (t.get("name"), t.get("fallback"))
+                for t in entry["tools"])
+            base = "%s [tools: %s]" % (stage, binds)
+        else:
+            base = stage
+    options = _entry_options(entry)
+    if options:
+        return "%s [%s]" % (base, ", ".join(options))
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -290,17 +328,26 @@ def _resolve_vanished(root, slug, last_session_id, stage, command_fn):
 def _make_session_fn(claude_bin):
     """Build the production session seam: drive a headless ``claude`` session
     for a stage and return ``(ok, session_id, failure)`` where ``ok`` reflects
-    the stage grade, not merely a clean exit."""
-    extra = ["--plugin-dir", PLUGIN_DIR,
-             "--permission-mode", "bypassPermissions"]
+    the stage grade, not merely a clean exit.
 
-    def runner(prompt, cwd, resume_id, turn_index, timeout=TIMEOUT_DEFAULT):
-        return session_driver.run_turn(
-            prompt, cwd, resume_id=resume_id, timeout=timeout,
-            claude_bin=claude_bin, extra_args=extra)
+    ``model`` (a concrete model id already resolved through
+    :func:`spec_common.resolve_model_tier`) becomes the session's ``--model``
+    argument; ``None`` passes no flag, so the CLI's own default decides."""
+    base_extra = ["--plugin-dir", PLUGIN_DIR,
+                  "--permission-mode", "bypassPermissions"]
 
     def session_fn(stage, member, cwd, prompt, timeout, max_resumes,
-                   on_session=None):
+                   on_session=None, model=None):
+        extra = list(base_extra)
+        if model:
+            extra += ["--model", model]
+
+        def runner(prompt_, cwd_, resume_id, turn_index,
+                   timeout=TIMEOUT_DEFAULT):
+            return session_driver.run_turn(
+                prompt_, cwd_, resume_id=resume_id, timeout=timeout,
+                claude_bin=claude_bin, extra_args=extra)
+
         if stage == "plan" or stage == "enrich":
             grade = _plan_grade(cwd, member)
         elif stage == "build":
@@ -327,7 +374,102 @@ def _make_session_fn(claude_bin):
 # Per-member driving
 # ---------------------------------------------------------------------------
 
-def _stage_prompt(stage, member, entry):
+def _build_option_lines(entry, model_anchor):
+    """The declared build options as prompt lines (epic-autopilot
+    stage-options-in-prompts). Only declared keys produce a line, so a bare
+    entry renders today's prompt unchanged. ``subagent_model`` resolves
+    against ``model_anchor`` — the build session's own resolved model, falling
+    back to the run's tier anchor — and is named as the concrete value with
+    its symbolic provenance alongside."""
+    lines = []
+    if entry.get("validator") is False:
+        lines.append("- Skip the adversarial validator phase: do not spawn the "
+                     "`s:validator` sub-agent; the mechanical verification "
+                     "still runs.")
+    if entry.get("telemetry") is False:
+        lines.append("- Skip the token telemetry: do not persist the per-tool "
+                     "token breakdown and do not render the token report.")
+    if entry.get("parallelism") is not None:
+        lines.append("- Cap concurrent execution sub-agents at %s."
+                     % entry["parallelism"])
+    sub = entry.get("subagent_model")
+    if sub:
+        resolved = sc.resolve_model_tier(sub, model_anchor)
+        if resolved is None:
+            lines.append("- Spawn execution sub-agents on this session's own "
+                         "model (the pipeline's `session` tier).")
+        elif resolved == sub:
+            lines.append("- Spawn execution sub-agents with the Agent tool's "
+                         "`model` set to `%s`." % resolved)
+        else:
+            lines.append("- Spawn execution sub-agents with the Agent tool's "
+                         "`model` set to `%s` (the pipeline's `%s`)."
+                         % (resolved, sub))
+    if not lines:
+        return ""
+    return ("\n\nStage options for this build, overriding the skill's "
+            "defaults:\n" + "\n".join(lines))
+
+
+def _review_prompt(member, entry):
+    """The review stage's prompt: the poster invocation carrying the entry's
+    declared `--disposition`/`--model`, plus the disposition-loop paragraph
+    matching the scope (epic-autopilot stage-options-in-prompts). The grade is
+    unchanged in every scope — a green `semantic-review` status and
+    `unresolved=0`."""
+    poster_opts = ""
+    if "disposition" in entry:
+        poster_opts += " --disposition %s" % entry["disposition"]
+    if entry.get("model"):
+        poster_opts += " --model %s" % entry["model"]
+    head = (
+        "Post the semantic-review gate for the change `%s` and disposition "
+        "its findings. Run /s:review on branch `change/%s` against `main` "
+        "(merge-base semantics), then publish the verdict to the member's "
+        "PR with the poster: emit the `--json` object to a temp file and "
+        "run\n"
+        "  python3 \"$CLAUDE_PLUGIN_ROOT/skills/review/scripts/"
+        "review_gate.py\" post change/%s --from <that file>%s\n"
+        "so the summary comment, anchored inline comments, and the "
+        "`semantic-review` commit status all land on the PR's head SHA.\n"
+        % (member, member, member, poster_opts))
+    grade = ("Finish with `review_gate.py resolve change/%s` so every gate "
+             "thread resolves; the stage is graded on the `semantic-review` "
+             "status being green AND `resolve --check` reporting "
+             "`unresolved=0`." % member)
+    scope = entry.get("disposition", "all")
+    if scope == "high-only":
+        loop = (
+            "Then run the disposition loop under the `high-only` scope: "
+            "implement every high-severity finding (edit, commit, push, and "
+            "re-review so the status tracks the new head), then dispose of "
+            "the rest in one call — `review_gate.py autoreply change/%s "
+            "--disposition high-only` — which posts the canonical policy "
+            "reply onto every medium and low gate thread. " % member)
+    elif scope == "none":
+        loop = (
+            "Then dispose of every posted finding by policy rather than by "
+            "judgement: run `review_gate.py autoreply change/%s --disposition "
+            "none`, which posts the canonical policy reply onto every gate "
+            "thread; implement nothing. " % member)
+    else:
+        loop = (
+            "Then run the disposition loop over every posted finding, low "
+            "included: implement the suggestion (edit, commit, push, and "
+            "re-review so the status tracks the new head) when it is correct, "
+            "otherwise reply on the finding's thread with the concrete reason "
+            "via `review_gate.py reply change/%s <comment-id> --body <reason>` "
+            "— never leave a finding with neither. " % member)
+    return head + loop + grade
+
+
+def _stage_prompt(stage, member, entry, model_anchor=None):
+    """The prompt driving ``stage`` for ``member``, conveying the resolved
+    ``entry``'s declared options (epic-autopilot stage-options-in-prompts).
+    ``model_anchor`` is the anchor a declared `subagent_model` resolves
+    against — the stage's own resolved model, falling back to the run's tier
+    anchor. An entry declaring no options renders today's prompt unchanged."""
+    entry = entry or {}
     if stage == "plan":
         base = ("Run /s:plan for the change `%s` — a member of an approved "
                 "epic. Investigate, spec it, and promote it to Status: ready."
@@ -340,6 +482,7 @@ def _stage_prompt(stage, member, entry):
                 "agent `s:oracle` with a compact question) before answering "
                 "on your own authority; on INSUFFICIENT, answer with your own "
                 "recommendation — never leave the sub-agent blocked." % member)
+        base += _build_option_lines(entry, model_anchor)
     elif stage == "enrich":
         base = (
             "The context-sufficiency gate rejected the change `%s`. Run "
@@ -354,29 +497,10 @@ def _stage_prompt(stage, member, entry):
             "recommendation. Exit through the re-gate so the change returns to "
             "Status: ready, lint-clean." % (member, member))
     elif stage == "review":
-        base = (
-            "Post the semantic-review gate for the change `%s` and disposition "
-            "its findings. Run /s:review on branch `change/%s` against `main` "
-            "(merge-base semantics), then publish the verdict to the member's "
-            "PR with the poster: emit the `--json` object to a temp file and "
-            "run\n"
-            "  python3 \"$CLAUDE_PLUGIN_ROOT/skills/review/scripts/"
-            "review_gate.py\" post change/%s --from <that file>\n"
-            "so the summary comment, anchored inline comments, and the "
-            "`semantic-review` commit status all land on the PR's head SHA.\n"
-            "Then run the disposition loop over every posted finding, low "
-            "included: implement the suggestion (edit, commit, push, and "
-            "re-review so the status tracks the new head) when it is correct, "
-            "otherwise reply on the finding's thread with the concrete reason "
-            "via `review_gate.py reply change/%s <comment-id> --body <reason>` "
-            "— never leave a finding with neither. Finish with `review_gate.py "
-            "resolve change/%s` so every gate thread resolves; the stage is "
-            "graded on the `semantic-review` status being green AND "
-            "`resolve --check` reporting `unresolved=0`."
-            % (member, member, member, member, member))
+        base = _review_prompt(member, entry)
     else:
         base = "Drive the `%s` stage for change `%s`." % (stage, member)
-    tools = entry.get("tools") if entry else None
+    tools = entry.get("tools")
     if tools:
         binds = "; ".join(
             "%s (fallback: %s)" % (t.get("name"), t.get("fallback"))
@@ -398,14 +522,16 @@ def _command_action(command_fn, command, cwd):
     return action
 
 
-def _three_strike(action, out, label, on_attempt=None):
+def _strike_loop(action, out, label, attempts=3, on_attempt=None):
     """Run ``action(attempt, prev_failure) -> (ok, session_id, failure)`` up to
-    three times, appending the prior failure each retry. ``on_attempt(attempt)``
-    (when given) is called at the start of each attempt — the heartbeat hook.
-    Returns ``(ok, last_session_id, failure)``."""
+    ``attempts`` times, appending the prior failure each retry.
+    ``on_attempt(attempt)`` (when given) is called at the start of each attempt
+    — the heartbeat hook. ``attempts`` is the entry's fresh-attempt budget
+    (:func:`_stage_opts`), three unless the entry declares otherwise. Returns
+    ``(ok, last_session_id, failure)``."""
     last_session_id = None
     failure = None
-    for attempt in range(1, 4):
+    for attempt in range(1, attempts + 1):
         if on_attempt is not None:
             on_attempt(attempt)
         ok, session_id, failure = action(attempt, failure)
@@ -413,21 +539,54 @@ def _three_strike(action, out, label, on_attempt=None):
             last_session_id = session_id
         if ok:
             return True, last_session_id, None
-        out("  %s attempt %d/3 failed: %s" % (label, attempt, failure))
+        out("  %s attempt %d/%d failed: %s"
+            % (label, attempt, attempts, failure))
     return False, last_session_id, failure
+
+
+def _stage_opts(entry, timeout, max_resumes):
+    """The driver knobs for ``entry`` (epic-autopilot per-stage-driver-knobs):
+    ``(attempts, timeout, max_resumes)`` read from its ``autopilot`` block,
+    defaulting to three attempts and the run-global ``timeout`` /
+    ``max_resumes`` when the block or a key is absent. Applies to stage,
+    custom, and replacement entries alike. Pure."""
+    opts = (entry or {}).get("autopilot") or {}
+    attempts = opts.get("attempts")
+    entry_timeout = opts.get("timeout")
+    entry_resumes = opts.get("max_resumes")
+    return (3 if attempts is None else attempts,
+            timeout if entry_timeout is None else entry_timeout,
+            max_resumes if entry_resumes is None else entry_resumes)
+
+
+def _attempts_phrase(attempts):
+    """``"3 attempts"`` / ``"1 attempt"`` — for reasons and log lines."""
+    return "%d attempt%s" % (attempts, "" if attempts == 1 else "s")
+
+
+def _tier_anchor(session_model):
+    """The anchor a run's symbolic tiers actually resolve against: the named
+    ``session_model``, or the ladder top when none was named. Printed in the
+    dry run and recorded in the report so the anchor is never implicit."""
+    return session_model or sc.MODEL_LADDER[0]
 
 
 def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
                  max_resumes=MAX_RESUMES_DEFAULT, claude_bin="claude",
-                 session_fn=None, gate_fn=None, command_fn=None, out=_noop,
-                 heartbeat=None):
+                 session_model=None, session_fn=None, gate_fn=None,
+                 command_fn=None, out=_noop, heartbeat=None):
     """Drive a single member through the resolved ``pipeline`` in its own
     worktree. Returns a :class:`MemberResult`.
 
     ``heartbeat`` is the run's :class:`heartbeat.RunHeartbeat` (or ``None`` for
     no live writes — the default, keeping existing callers unchanged). When
     present, this member's start, each stage attempt, and the outcome are
-    recorded."""
+    recorded.
+
+    ``session_model`` is the run's model-tier anchor: every entry's declared
+    ``model`` resolves against it through
+    :func:`spec_common.resolve_model_tier` (``None`` anchors at the ladder
+    top)."""
     if command_fn is None:
         command_fn = _run_command
     if gate_fn is None:
@@ -509,13 +668,20 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
                 root, slug, last_session_id,
                 entry.get("stage") or entry.get("custom"), command_fn))
 
+        # Every entry's own knobs: its fresh-attempt budget, the session
+        # budgets its stage runs under (run-global unless declared), and the
+        # model its sessions launch with (None -> the CLI default).
+        attempts, entry_timeout, entry_resumes = _stage_opts(
+            entry, timeout, max_resumes)
+        entry_model = sc.resolve_model_tier(entry.get("model"), session_model)
+
         # Custom step: run its command at this position in the worktree.
         if "custom" in entry:
             name = entry.get("custom")
             label = "custom:%s" % name
-            ok, _sid, failure = _three_strike(
+            ok, _sid, failure = _strike_loop(
                 _command_action(command_fn, entry["command"], cwd),
-                out, label, on_attempt=_hook(label))
+                out, label, attempts=attempts, on_attempt=_hook(label))
             if not ok:
                 return _park(label, failure)
             continue
@@ -535,20 +701,21 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
             if not command:
                 out("  %s [replace has no command; skipped]" % stage)
                 continue
-            ok, _sid, failure = _three_strike(
+            ok, _sid, failure = _strike_loop(
                 _command_action(command_fn, command, cwd),
-                out, "%s(replace)" % stage, on_attempt=_hook(stage))
+                out, "%s(replace)" % stage, attempts=attempts,
+                on_attempt=_hook(stage))
             if not ok:
                 return _park(stage, failure)
             continue
 
-        # Built-in gate. A context rejection (exit 2) triggers up to three
-        # oracle-backed enrichment attempts (a transient CLI/API fault on one
-        # attempt must not permanently park the member), then a deterministic
-        # re-gate whose verdict decides; other non-zero codes keep needs-human
-        # semantics.
+        # Built-in gate. A context rejection (exit 2) triggers the entry's
+        # budget of oracle-backed enrichment attempts (a transient CLI/API
+        # fault on one attempt must not permanently park the member), then a
+        # deterministic re-gate whose verdict decides; other non-zero codes
+        # keep needs-human semantics.
         if stage == "gate":
-            verdict, reason = _run_gate(gate_fn, slug, cwd,
+            verdict, reason = _run_gate(gate_fn, slug, cwd, attempts=attempts,
                                         on_attempt=_hook("gate"))
             if verdict == "pass":
                 out("  gate [passed]")
@@ -556,42 +723,47 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
             if verdict == "failed":
                 return _park("gate", reason)
 
-            # verdict == "rejected": up to three enrichment attempts (each a
-            # fresh session — the change's artifacts are the durable state and
-            # the re-gate is deterministic, so a fresh attempt resumes from
-            # disk), then re-gate.
+            # verdict == "rejected": up to the entry's budget of enrichment
+            # attempts (each a fresh session — the change's artifacts are the
+            # durable state and the re-gate is deterministic, so a fresh
+            # attempt resumes from disk), then re-gate.
             out("  gate [rejected: %s] — oracle-backed enrichment "
-                "(up to 3 attempts)" % reason)
+                "(up to %s)" % (reason, _attempts_phrase(attempts)))
             enrich_prompt = _stage_prompt("enrich", slug, entry)
 
-            def enrich_action(_attempt, prev_failure, _prompt=enrich_prompt):
+            def enrich_action(_attempt, prev_failure, _prompt=enrich_prompt,
+                              _model=entry_model):
                 p = _prompt
                 if prev_failure:
                     p = _prompt + ("\n\nA prior enrichment attempt failed: %s"
                                    "\nDiagnose and finish resolving the gate "
                                    "findings." % prev_failure)
-                return session_fn("enrich", slug, cwd, p, timeout, max_resumes,
-                                  on_session=on_sess)
+                return session_fn("enrich", slug, cwd, p, entry_timeout,
+                                  entry_resumes, on_session=on_sess,
+                                  model=_model)
 
-            ok, session_id, failure = _three_strike(
-                enrich_action, out, "enrich", on_attempt=_hook("enrich"))
+            ok, session_id, failure = _strike_loop(
+                enrich_action, out, "enrich", attempts=attempts,
+                on_attempt=_hook("enrich"))
             if session_id is not None:
                 last_session_id = session_id
             if not ok:
                 if not os.path.isdir(cwd):
                     return _finish(_resolve_vanished(
                         root, slug, last_session_id, "gate", command_fn))
-                out("  enrichment failed after 3 attempts: %s" % failure)
+                out("  enrichment failed after %s: %s"
+                    % (_attempts_phrase(attempts), failure))
                 return _finish(MemberResult(
                     outcome="rejected", stage="gate",
                     reason="context insufficient (gate exit 2); oracle "
-                           "enrichment failed after 3 attempts: %s" % failure,
+                           "enrichment failed after %s: %s"
+                           % (_attempts_phrase(attempts), failure),
                     session_id=last_session_id))
             # The session may have shipped the member and removed its worktree.
             if not os.path.isdir(cwd):
                 return _finish(_resolve_vanished(
                     root, slug, last_session_id, "gate", command_fn))
-            verdict, reason = _run_gate(gate_fn, slug, cwd,
+            verdict, reason = _run_gate(gate_fn, slug, cwd, attempts=attempts,
                                         on_attempt=_hook("gate"))
             if verdict == "pass":
                 out("  gate [passed after enrichment]")
@@ -604,19 +776,25 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
                 reason="context insufficient after oracle enrichment",
                 session_id=last_session_id))
 
-        # Built-in plan / build: drive a graded headless session.
-        prompt = _stage_prompt(stage, slug, entry)
+        # Built-in plan / build: drive a graded headless session. A declared
+        # `subagent_model` resolves against this stage's own model, falling
+        # back to the run's anchor.
+        prompt = _stage_prompt(stage, slug, entry,
+                               entry_model or session_model)
 
-        def action(_attempt, prev_failure, _stage=stage, _prompt=prompt):
+        def action(_attempt, prev_failure, _stage=stage, _prompt=prompt,
+                   _timeout=entry_timeout, _resumes=entry_resumes,
+                   _model=entry_model):
             p = _prompt
             if prev_failure:
                 p = _prompt + ("\n\nA prior attempt failed: %s\nDiagnose and "
                                "finish the stage." % prev_failure)
-            return session_fn(_stage, slug, cwd, p, timeout, max_resumes,
-                              on_session=on_sess)
+            return session_fn(_stage, slug, cwd, p, _timeout, _resumes,
+                              on_session=on_sess, model=_model)
 
-        ok, session_id, failure = _three_strike(action, out, stage,
-                                                on_attempt=_hook(stage))
+        ok, session_id, failure = _strike_loop(action, out, stage,
+                                               attempts=attempts,
+                                               on_attempt=_hook(stage))
         if session_id is not None:
             last_session_id = session_id
         if not ok:
@@ -665,8 +843,8 @@ def _pipeline_from_stage(pipeline, stage):
 
 def drive_single_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
                         max_resumes=MAX_RESUMES_DEFAULT, claude_bin="claude",
-                        session_fn=None, gate_fn=None, command_fn=None,
-                        out=_noop, heartbeat=None):
+                        session_model=None, session_fn=None, gate_fn=None,
+                        command_fn=None, out=_noop, heartbeat=None):
     """Drive exactly the one epic member named by ``slug`` — independent of the
     risk-ascending auto-selection — entering the resolved pipeline at the stage
     matching its current lifecycle (``unplanned`` -> ``plan``, ``ready`` ->
@@ -690,18 +868,19 @@ def drive_single_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
     sliced = _pipeline_from_stage(pipeline, stage)
     return drive_member(
         root, epic, member, sliced, timeout=timeout, max_resumes=max_resumes,
-        claude_bin=claude_bin, session_fn=session_fn, gate_fn=gate_fn,
-        command_fn=command_fn, out=out, heartbeat=heartbeat)
+        claude_bin=claude_bin, session_model=session_model,
+        session_fn=session_fn, gate_fn=gate_fn, command_fn=command_fn,
+        out=out, heartbeat=heartbeat)
 
 
-def _run_gate(gate_fn, member, cwd, on_attempt=None):
-    """Run the gate (exit 2 is a no-retry rejection); other non-zero codes get
-    the three-strike treatment. ``on_attempt(attempt)`` (when given) is the
-    heartbeat hook, called at the start of each attempt. Returns
-    ``(verdict, reason)`` where verdict is ``pass``, ``rejected``, or
-    ``failed``."""
+def _run_gate(gate_fn, member, cwd, attempts=3, on_attempt=None):
+    """Run the gate (exit 2 is a no-retry rejection); other non-zero codes are
+    retried up to ``attempts`` times — the gate entry's fresh-attempt budget,
+    three by default. ``on_attempt(attempt)`` (when given) is the heartbeat
+    hook, called at the start of each attempt. Returns ``(verdict, reason)``
+    where verdict is ``pass``, ``rejected``, or ``failed``."""
     reason = None
-    for attempt in range(1, 4):
+    for attempt in range(1, attempts + 1):
         if on_attempt is not None:
             on_attempt(attempt)
         rc = gate_fn(member, cwd)
@@ -818,15 +997,16 @@ class _SigtermAbortGuard:
 
 def run(root, epic, *, max_members=None, dry_run=False,
         timeout=TIMEOUT_DEFAULT, max_resumes=MAX_RESUMES_DEFAULT,
-        claude_bin="claude", member_driver=None, sync_fn=None,
-        heartbeat=None, out=print):
+        claude_bin="claude", session_model=None, member_driver=None,
+        sync_fn=None, heartbeat=None, out=print):
     """Drive ``epic``'s unplanned members and return the run report dict.
 
     ``member_driver`` and ``sync_fn`` are injectable seams (defaults do live
     work). ``dry_run`` prints the member order and resolved pipeline and drives
     nothing — and writes no heartbeat. ``heartbeat`` is an injectable
     :class:`heartbeat.RunHeartbeat` seam; when ``None`` a live one is
-    constructed for a real run (never for ``--dry-run``)."""
+    constructed for a real run (never for ``--dry-run``). ``session_model`` is
+    the run's model-tier anchor (``None`` anchors at the ladder top)."""
     if not os.path.isfile(_epic_file(root, epic)):
         raise AutopilotError("epic '%s' not found under %s"
                              % (epic, sc.specs_dir(root)))
@@ -843,6 +1023,7 @@ def run(root, epic, *, max_members=None, dry_run=False,
     report = {
         "epic": epic,
         "pipeline_source": provenance,
+        "tier_anchor": _tier_anchor(session_model),
         "shipped": [],
         "rejected": [],
         "needs_human": [],
@@ -852,6 +1033,10 @@ def run(root, epic, *, max_members=None, dry_run=False,
 
     if dry_run:
         out("Dry run for epic '%s' (pipeline from %s):" % (epic, provenance))
+        out("Model tier anchor: %s%s"
+            % (_tier_anchor(session_model),
+               "" if session_model else " (ladder top; --session-model "
+                                        "names another)"))
         out("Member order (risk ascending):")
         for m in to_drive:
             out("  %s (risk %s)" % (m.slug, m.risk or "?"))
@@ -865,8 +1050,8 @@ def run(root, epic, *, max_members=None, dry_run=False,
         def member_driver(root_, epic_, member_, pipeline_, heartbeat_=None):
             return drive_member(
                 root_, epic_, member_, pipeline_, timeout=timeout,
-                max_resumes=max_resumes, claude_bin=claude_bin, out=out,
-                heartbeat=heartbeat_)
+                max_resumes=max_resumes, claude_bin=claude_bin,
+                session_model=session_model, out=out, heartbeat=heartbeat_)
 
     reached = to_drive if max_members is None else to_drive[:max_members]
     report["unreached"] = [{"member": m.slug} for m in to_drive[len(reached):]]
@@ -919,7 +1104,7 @@ def run(root, epic, *, max_members=None, dry_run=False,
 
 def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
                max_resumes=MAX_RESUMES_DEFAULT, claude_bin="claude",
-               driver=None, heartbeat=None, out=print):
+               session_model=None, driver=None, heartbeat=None, out=print):
     """Targeted drive of a single epic member with a live heartbeat and run
     report — the board-observable wrapper the detached ``run`` action spawns.
     Seeds the epic heartbeat with just this member, drives it via
@@ -948,7 +1133,8 @@ def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
         def driver():
             return drive_single_member(
                 root, epic, slug, timeout=timeout, max_resumes=max_resumes,
-                claude_bin=claude_bin, out=out, heartbeat=hb)
+                claude_bin=claude_bin, session_model=session_model, out=out,
+                heartbeat=hb)
 
     finished = False
     with _SigtermAbortGuard(hb, lambda: finished):
@@ -958,6 +1144,7 @@ def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
             report = {
                 "epic": epic,
                 "pipeline_source": provenance,
+                "tier_anchor": _tier_anchor(session_model),
                 "shipped": [],
                 "rejected": [],
                 "needs_human": [],
@@ -1011,18 +1198,24 @@ def main(argv=None):
                         help="resumed turns per session before the grade decides")
     parser.add_argument("--claude-bin", default="claude",
                         help="the Claude Code CLI binary to invoke")
+    parser.add_argument("--session-model", default=None,
+                        help="the model-tier anchor a stage's symbolic `model` "
+                             "resolves against (default: the ladder top, %s)"
+                             % sc.MODEL_LADDER[0])
     args = parser.parse_args(argv)
 
     try:
         if args.member:
             run_member(os.path.abspath(args.root), args.epic, args.member,
                        timeout=args.timeout, max_resumes=args.max_resumes,
-                       claude_bin=args.claude_bin)
+                       claude_bin=args.claude_bin,
+                       session_model=args.session_model)
         else:
             run(os.path.abspath(args.root), args.epic,
                 max_members=args.max_members, dry_run=args.dry_run,
                 timeout=args.timeout, max_resumes=args.max_resumes,
-                claude_bin=args.claude_bin)
+                claude_bin=args.claude_bin,
+                session_model=args.session_model)
     except AutopilotError as exc:
         sys.stderr.write("error: %s\n" % exc)
         return 1

@@ -479,6 +479,40 @@ PIPELINE_PRESETS = ("default", "eco", "basic")
 # The config key naming the autonomous pipeline.
 PIPELINE_KEY = "autonomous-pipeline"
 
+# The model ladder, strongest first: the aliases a symbolic tier steps over
+# (epic-autopilot stage-model-resolution). Single source of truth for every
+# consumer of a pipeline entry's `model` / `subagent_model` option.
+MODEL_LADDER = ("fable", "opus", "sonnet", "haiku")
+
+# The symbolic tiers and how far below the anchor each sits. Mirrors
+# `pipeline_schema.SYMBOLIC_TIERS` on the stdlib side, so resolution never
+# imports the schema module.
+_TIER_STEPS = {"session": 0, "tier-below": 1, "tier-two-below": 2}
+
+
+def resolve_model_tier(tier, session_model=None):
+    """Resolve a pipeline entry's ``model``/``subagent_model`` ``tier`` to the
+    concrete value a consumer passes as ``--model`` (epic-autopilot
+    stage-model-resolution). Pure — no config, no environment, no imports.
+
+    ``session`` resolves to ``session_model`` itself, so a ``None`` anchor
+    means "pass no ``--model``" and inherit whatever the CLI defaults to.
+    ``tier-below`` and ``tier-two-below`` resolve to the :data:`MODEL_LADDER`
+    alias one or two positions below the anchor, clamped at the ladder bottom;
+    the anchor is ``session_model`` when it names a ladder alias, else the
+    ladder top — an unknown anchor cannot be positioned on the ladder, so
+    stepping starts from the strongest rung (fail expensive, never weak). Any
+    other non-empty string is a concrete model id and is returned verbatim."""
+    if tier not in _TIER_STEPS:
+        return tier
+    if tier == "session":
+        return session_model
+    if session_model in MODEL_LADDER:
+        index = MODEL_LADDER.index(session_model)
+    else:
+        index = 0
+    return MODEL_LADDER[min(index + _TIER_STEPS[tier], len(MODEL_LADDER) - 1)]
+
 
 def resolve_pipeline(root):
     """Resolve the effective autonomous pipeline for ``root`` (shipd-config
