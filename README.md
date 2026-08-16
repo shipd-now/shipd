@@ -88,6 +88,54 @@ Verify with:
 shipd doctor
 ```
 
+### Per-repo mode (vendor shipd into a repository)
+
+Install mode installs shipd for **you**. Per-repo mode installs it into **a
+repository**, so everyone who clones that repo gets the same shipd without
+installing anything. From a machine that already has shipd (install mode
+above), run this once inside the target repository:
+
+```bash
+shipd vendor add
+```
+
+That writes four surfaces, and nothing else:
+
+| Surface | What it is |
+| --- | --- |
+| `.shipd/plugin/s/` | The plugin itself — a byte-identical copy of the shipd you are running, test suites included |
+| `.shipd/plugin/.claude-plugin/marketplace.json` | A generated marketplace manifest declaring the `shipd` marketplace with that one plugin at `./s` |
+| `.claude/settings.json` | `enabledPlugins."s@shipd"` and an `extraKnownMarketplaces.shipd` directory source pointing at `.shipd/plugin`, merged into whatever the file already holds — plus a statusline registration, but only if the file carries no `statusLine` of its own |
+| `.shipd/{verified,planned,completed}/` | The content scaffold, created only where missing |
+
+Commit them, and a collaborator's flow is: **clone the repository, open Claude
+Code, accept the folder's trust dialog.** The plugin installs from the clone —
+no marketplace registration, no package registry, no network. The vendored
+`.shipd/plugin/s/bin/shipd` is directly runnable too, which is how non-Claude
+tooling in that repo reaches the engine.
+
+Everything is relative to the repository root, so the paths resolve in every
+clone, and the content directory is whatever your
+[`.shipd-config.json`](#the-spec-engine) resolves (`dir`, default `.shipd`) — a
+repo that renames it vendors under the renamed directory.
+
+Bare `shipd vendor` reports the state of each of the four surfaces —
+`installed`, `stale`, `foreign`, or `absent` — and changes nothing. To
+**refresh** after upgrading your own shipd, re-run `shipd vendor add` from the
+target repo: it rewrites the vendored tree to byte equality with the plugin you
+are now running, prunes anything extraneous, and is a no-op when there is
+nothing to do. To **remove** it:
+
+```bash
+shipd vendor remove
+```
+
+That deletes `.shipd/plugin/` and the two managed settings keys (and the
+statusline only if it still points into the vendored tree). Your spec content —
+`verified/`, `planned/`, `completed/` and everything in them — is never touched.
+A `.shipd/plugin/s/` this install does not own is refused by both modes unless
+you pass `--force`.
+
 ### Dev mode (working on shipd itself)
 
 Clone the repo and register **the checkout** as a local directory marketplace,

@@ -88,7 +88,15 @@ install step, SHALL document enabling Claude Code's marketplace
 auto-update for `shipd` (the `/plugin` toggle and the `"autoUpdate": true`
 settings entry), the apply semantics (next session start, or
 `/reload-plugins`), and `claude plugin update s@shipd` as the manual
-fallback.
+fallback. The installation documentation SHALL additionally document a
+per-repo mode, explicitly labeled, covering: `shipd vendor add` as the
+entry command, the four surfaces it writes (the vendored
+`<content-dir>/plugin/` tree, the marketplace manifest, the
+`.claude/settings.json` keys, and the content scaffold), the collaborator
+flow — clone, accept the folder trust dialog, and the plugin installs from
+the clone itself with no network or package registry — refresh by
+re-running `shipd vendor add` after a plugin update, and removal via
+`shipd vendor remove`.
 
 #### Scenario: Install mode leads
 - **WHEN** a reader reaches the README's installation section
@@ -106,6 +114,13 @@ fallback.
   install step
 - **THEN** the auto-update enable step, its apply semantics, and the
   manual `claude plugin update s@shipd` fallback are documented
+
+#### Scenario: Per-repo mode is documented
+- **WHEN** a reader reaches the installation documentation's per-repo mode
+- **THEN** it is explicitly labeled, names `shipd vendor add` and the four
+  written surfaces, describes the clone-then-trust collaborator flow as
+  registry-free, and names re-running `shipd vendor add` as the refresh
+  path and `shipd vendor remove` as the removal path
 
 ### Requirement: Installer brand mark
 id: installer-brand-mark
