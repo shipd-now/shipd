@@ -38,7 +38,7 @@ BIN = os.path.normpath(os.path.join(HERE, "..", "..", "..", "bin", "shipd"))
 
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
 VERBS = ("list", "status", "locate", "epic", "workspace", "board", "metrics",
-         "lint", "doctor", "statusline")
+         "lint", "doctor", "statusline", "copilot")
 
 
 def _load_binary():

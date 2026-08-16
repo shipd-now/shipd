@@ -1,0 +1,42 @@
+# shipd-copilot v{version}
+#
+# Provisions the environment GitHub Copilot code review runs in, so the shipd
+# review skill at .github/skills/code-review/ finds its optional tooling
+# already on PATH. Installed and upgraded by `shipd copilot add`; edit the
+# template in the shipd plugin (integrations/copilot/), not this copy.
+#
+# Nothing here is required for the review to work: semdiff.py degrades to its
+# structural text engine without difft, and `context` falls back to `git grep`
+# without ripgrep. These steps only make the review sharper.
+
+name: Copilot code review setup
+
+on:
+  workflow_dispatch:
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install difftastic (syntax-aware diffs for semdiff)
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o /tmp/difft.tar.gz \
+            https://github.com/Wilfred/difftastic/releases/latest/download/difft-x86_64-unknown-linux-gnu.tar.gz
+          mkdir -p /tmp/difft-release
+          tar -xzf /tmp/difft.tar.gz -C /tmp/difft-release
+          # The archive layout has varied across releases, so the binary is
+          # located by name rather than assumed at the archive root.
+          binary="$(find /tmp/difft-release -type f -name difft | head -n 1)"
+          install -m 0755 "$binary" "$HOME/.local/bin/difft"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install ripgrep (reference lookup for semdiff context)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
