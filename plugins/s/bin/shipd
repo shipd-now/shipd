@@ -8,9 +8,12 @@ a versioned plugin cache snapshot alike. Delegation is process replacement
 (:func:`os.execv`), so the delegate's stdout, stderr, interactivity, and exit
 code are this binary's own — nothing is reimplemented or reformatted here.
 
-Only read/inspect verbs are exposed. The mutating verbs (``set-status``,
-``merge``, ``emit``, ``autopilot``, ``worktree remove``) stay behind their
-guarded scripts and skills.
+Only read/inspect verbs are exposed, with one deliberate exception:
+``statusline install`` writes the statusline registration into the user's own
+Claude Code settings file — never a spec artifact, and only under that explicit
+word. The mutating verbs over the spec library (``set-status``, ``merge``,
+``emit``, ``autopilot``, ``worktree remove``) stay behind their guarded scripts
+and skills.
 
 Stdlib-only Python 3, per the engine's constitution.
 """
@@ -20,9 +23,12 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -81,6 +87,7 @@ verbs:
   metrics [subverb]          delivery metrics (default: summary)
   lint [change]              structurally validate specs and change deltas
   doctor                     preflight this environment for shipd
+  statusline [install]       report or register the shipd statusline
 
 options:
   -h, --help                 print this banner
@@ -376,6 +383,27 @@ def check_snapshot(plugin_root):
     return ("ok", "snapshot", "%s is the newest installed snapshot" % newest)
 
 
+def check_statusline(settings_path=None):
+    """Whether the shipd statusline is registered in Claude Code's user
+    settings. Read-only, and a warning at worst: the statusline only surfaces
+    state, so nothing in the workflow is blocked without it. Settings that do
+    not parse warn rather than fail — the registration simply cannot be
+    confirmed, and only ``statusline install`` may say more about that file.
+    """
+    path = str(settings_path or _default_settings())
+    data, error = _read_settings(path)
+    if error is not None:
+        return ("warn", "statusline",
+                "%s — fix the file, then run `shipd statusline install`"
+                % error)
+    command = _registered_command(data)
+    if command:
+        return ("ok", "statusline", "registered in %s: %s" % (path, command))
+    return ("warn", "statusline",
+            "not registered in %s — run `shipd statusline install` to add the "
+            "shipd statusline" % path)
+
+
 def default_checks(root):
     """Every preflight check, required ones first, as ``(level, name, detail)``
     triples."""
@@ -385,7 +413,8 @@ def default_checks(root):
             check_gh(),
             check_textual(),
             check_pydantic(),
-            check_snapshot(PLUGIN_ROOT)]
+            check_snapshot(PLUGIN_ROOT),
+            check_statusline()]
 
 
 def doctor_report(results):
@@ -412,6 +441,139 @@ def cmd_doctor(args):
     return code
 
 
+# ---------------------------------------------------------------------------
+# statusline (shipd-cli statusline-verb)
+# ---------------------------------------------------------------------------
+
+
+def _default_settings():
+    """Claude Code's user-scope settings file — the scope the plugin itself is
+    installed into, and the only scope this verb reads or writes. Resolved per
+    call so an injected ``HOME`` is honored."""
+    return Path.home() / ".claude" / "settings.json"
+
+
+def statusline_command(plugin_root):
+    """The statusline command this installation would register.
+
+    From a repository checkout the resolved script path is stable, so it is
+    registered directly. From a versioned plugin cache snapshot it is not: the
+    next ``claude plugin update`` writes a new version directory beside this
+    one, so the registration resolves the newest sibling at render time
+    (``sort -V``, which orders ``0.6.10`` above ``0.6.9``) instead of pinning
+    today's version and stranding the statusline on the next update. Shell
+    only either way — no Python is spawned per render.
+    """
+    root = Path(plugin_root)
+    if not VERSION_DIR_RE.match(root.name):
+        return "bash %s" % (root / "integrations" / "statusline.sh")
+    return ('bash "$(ls -d %s/*/integrations/statusline.sh '
+            '| sort -V | tail -n 1)"' % shlex.quote(str(root.parent)))
+
+
+def _read_settings(path):
+    """``(data, error)`` for the settings file at ``path``: the parsed mapping
+    (empty when the file is absent), or ``(None, reason)`` when the file exists
+    but is unusable — settings we cannot understand are never rewritten."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return {}, None
+    except (OSError, ValueError) as exc:
+        return None, "cannot read %s: %s" % (path, exc)
+    if not isinstance(data, dict):
+        return None, "%s does not hold a JSON object" % path
+    return data, None
+
+
+def _write_settings(path, data):
+    """Rewrite ``path`` with ``data``, creating its parent directory. The
+    document is written to a temp file in the same directory and renamed over
+    the original, so an interrupted write can never leave the user with a
+    truncated settings file. An existing file keeps its permission mode — the
+    rename would otherwise hand the user mkstemp's private 0600."""
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    try:
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+    except OSError:
+        mode = None
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".shipd-settings-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+            fh.write("\n")
+        if mode is not None:
+            os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except OSError:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def _registered_command(data):
+    """The statusline command ``data`` registers, or ``None`` when it registers
+    none."""
+    entry = data.get("statusLine")
+    return entry.get("command") if isinstance(entry, dict) else None
+
+
+def cmd_statusline(args):
+    """Report or register the shipd statusline. The one mutating verb in this
+    binary, and only under the explicit ``install`` word."""
+    parser = argparse.ArgumentParser(
+        prog="shipd statusline",
+        description="Report or register the shipd statusline in Claude Code's "
+                    "user settings. Bare, it reports and changes nothing.")
+    parser.add_argument(
+        "action", nargs="?", choices=["install"],
+        help="install: write the registration (default: report only)")
+    parser.add_argument(
+        "--settings", default=None,
+        help="settings file to use (default: ~/.claude/settings.json)")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="replace a different existing registration")
+    opts = parser.parse_args(args)
+
+    path = opts.settings or str(_default_settings())
+    command = statusline_command(PLUGIN_ROOT)
+    data, error = _read_settings(path)
+    if error is not None:
+        _err(error)
+        return 1
+    current = _registered_command(data)
+
+    if opts.action != "install":
+        if current is None:
+            print("statusline: not registered in %s" % path)
+        else:
+            print("statusline: registered in %s" % path)
+            print("  current: %s" % current)
+        print("  this install would register: %s" % command)
+        if current != command:
+            print("Run `shipd statusline install` to register it.")
+        return 0
+
+    if current is not None and current != command and not opts.force:
+        _err("%s already registers a different statusline: %s — pass --force "
+             "to replace it" % (path, current))
+        return 1
+
+    data["statusLine"] = {"type": "command", "command": command}
+    try:
+        _write_settings(path, data)
+    except OSError as exc:
+        _err("cannot write %s: %s" % (path, exc))
+        return 1
+    print("statusline registered in %s" % path)
+    print("  %s" % command)
+    print("It takes effect in the next Claude Code session.")
+    return 0
+
+
 def main(argv):
     if not argv:
         sys.stderr.write(USAGE)
@@ -426,6 +588,8 @@ def main(argv):
         return cmd_list(rest)
     if verb == "doctor":
         return cmd_doctor(rest)
+    if verb == "statusline":
+        return cmd_statusline(rest)
     if verb not in VERB_TABLE:
         sys.stderr.write(USAGE)
         return 2

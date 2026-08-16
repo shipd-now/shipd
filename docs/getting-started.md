@@ -18,10 +18,22 @@ name, lifecycle status, task progress — live, as the session works:
 ☕ export-json-flag · active · 3/7
 ```
 
-Register it in `~/.claude/settings.json`. If you installed via the installer
-(the normal case), the script lives inside the versioned plugin snapshot and
-its path changes on every update — so resolve the newest snapshot at render
-time instead of pinning one:
+Register it with one command:
+
+```
+shipd statusline install
+```
+
+That writes the `statusLine` entry into `~/.claude/settings.json` — creating
+the file if you don't have one and leaving every other setting untouched —
+and picks the right command for how you run shipd. Run `shipd statusline`
+with no arguments first if you want to see what it would register, and what
+(if anything) is registered today; bare, it reports and changes nothing.
+
+If you'd rather edit the settings yourself: when you installed via the
+installer (the normal case), the script lives inside the versioned plugin
+snapshot and its path changes on every update — so resolve the newest
+snapshot at render time instead of pinning one:
 
 ```json
 {
@@ -33,8 +45,9 @@ time instead of pinning one:
 ```
 
 (`sort -V` orders dotted versions correctly — `0.6.10` after `0.6.9` — and
-works with both macOS and GNU `sort`. If you run shipd from a checkout of
-this repository instead, register the repo path directly:
+works with both macOS and GNU `sort`. This is exactly the shape
+`shipd statusline install` writes for a snapshot install. If you run shipd
+from a checkout of this repository instead, register the repo path directly:
 `bash plugins/s/integrations/statusline.sh`.)
 
 It appears at the start of your next session. What you can see, and why it's

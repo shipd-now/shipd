@@ -1,7 +1,8 @@
-# shipd-cli
+## MODIFIED Requirements
 
 ### Requirement: Curated verb dispatch
 id: cli-dispatch
+base: 0cfdeff5f9f5
 
 The `shipd` binary SHALL expose exactly the curated verbs `list`, `status`,
 `locate`, `epic`, `workspace`, `board`, `metrics`, `lint`, `doctor`, and
@@ -66,59 +67,9 @@ same banner to stdout and exit `0`.
 - **WHEN** `shipd --help` runs
 - **THEN** the usage banner lists `statusline` among the verbs
 
-### Requirement: List in-flight changes
-id: cli-list
-
-When invoked as `shipd list`, the binary SHALL enumerate in-flight changes by
-probing the invocation root's `<content-dir>/planned/` and, for each
-`.worktrees/<name>` directory that has a `<content-dir>/planned/`, that
-worktree's planned changes, printing one line per change with the change
-name, its location (`root` or `worktree:<name>`), and its lifecycle status as
-read by the engine's status reader. The binary SHALL dedupe by change name
-with the worktree occurrence winning. The binary SHALL exclude completed
-changes unless `--all` is given, in which case entries from
-`<content-dir>/completed/` are appended with status `archived`. If no
-in-flight change exists, the binary SHALL print `no changes in flight` and
-exit `0`.
-
-#### Scenario: Worktree change is listed with its status
-- **WHEN** `shipd list --root <repo>` runs and `<repo>/.worktrees/foo` holds a
-  planned change `foo` with `Status: ready`
-- **THEN** the output contains one line naming `foo`, `worktree:foo`, and
-  `ready`
-
-#### Scenario: Duplicate change deduped, worktree wins
-- **WHEN** a change `foo` exists under both the root's `planned/` and
-  `.worktrees/foo`'s `planned/` and `shipd list --root <repo>` runs
-- **THEN** exactly one `foo` line is printed and its location is
-  `worktree:foo`
-
-#### Scenario: Completed changes only under --all
-- **WHEN** `<content-dir>/completed/` holds an archived change and
-  `shipd list --root <repo>` runs without and then with `--all`
-- **THEN** the archived entry appears only in the `--all` output, with status
-  `archived`
-
-#### Scenario: Empty tree
-- **WHEN** `shipd list --root <repo>` runs against a repo with no planned
-  changes and no worktrees
-- **THEN** the binary prints `no changes in flight` and exits `0`
-
-### Requirement: Version from the plugin manifest
-id: cli-version
-
-When invoked as `shipd --version`, the binary SHALL print the `version` value
-read from the `.claude-plugin/plugin.json` adjacent to its own resolved
-location and exit `0`. If that manifest is missing or unreadable, the binary
-SHALL print `Error: ` and a reason on stderr and exit `1`.
-
-#### Scenario: Version is printed
-- **WHEN** `shipd --version` runs from the repo checkout
-- **THEN** the version string from `plugins/s/.claude-plugin/plugin.json` is
-  printed to stdout and the exit code is `0`
-
 ### Requirement: Doctor preflight verb
 id: doctor-verb
+base: a2d680daef82
 
 The `shipd` binary SHALL provide a read-only `doctor` verb that runs
 environment preflight checks and prints one `ok <check> — <detail>`,
@@ -186,31 +137,7 @@ report `ok`). The verb SHALL mutate nothing.
   key holds a command
 - **THEN** the `statusline` check line begins `ok`
 
-### Requirement: List JSON output
-id: list-json
-
-The `shipd list` verb SHALL accept a `--json` flag that emits the listing as
-a JSON array on stdout — one object per row with `name`, `location`, and
-`status`, in the same order and with the same rows as the text mode,
-including the archived rows under `--all` — and nothing else. An empty
-listing SHALL emit an empty JSON array. Without the flag the text output
-SHALL stay byte-identical, and delegated verbs SHALL keep passing `--json`
-through to their engine scripts verbatim.
-
-#### Scenario: List rows are machine-readable
-- **WHEN** `shipd list --json` runs in a repo with an in-flight change in a
-  worktree
-- **THEN** stdout parses as a JSON array whose entry carries the change
-  name, its `worktree:<name>` location, and its status
-
-#### Scenario: Empty listing is an empty array
-- **WHEN** `shipd list --json` runs with no changes in flight
-- **THEN** stdout is an empty JSON array, not the text placeholder
-
-#### Scenario: Delegated verbs pass the flag through
-- **WHEN** `shipd epic <slug> --json` runs
-- **THEN** the output is exactly `spec_status.py epic-show <slug> --json`'s
-  output
+## ADDED Requirements
 
 ### Requirement: Statusline registration verb
 id: statusline-verb

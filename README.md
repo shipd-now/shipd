@@ -311,7 +311,23 @@ python3 plugins/s/skills/build/scripts/spec_status.py use <change>
 ```
 
 which records the selection in `.shipd/state.json`. Register the statusline
-in `.claude/settings.json`:
+with one command:
+
+```
+shipd statusline install
+```
+
+It writes the `statusLine` entry into `~/.claude/settings.json`, preserving
+every other setting, and picks the right command for how you run shipd: a
+checkout registers this repo's `integrations/statusline.sh` directly, an
+installed plugin registers a command that resolves the newest cache snapshot
+at render time, so the registration survives `claude plugin update`. It
+appears at the start of your next session.
+
+`shipd statusline` on its own reports what is registered and what this
+installation would register, without touching anything. Add `--force` to
+replace a different existing registration, or `--settings <path>` to target
+another settings file. To register by hand instead:
 
 ```json
 {
