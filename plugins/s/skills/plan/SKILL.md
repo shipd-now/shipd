@@ -522,6 +522,12 @@ enrichment's true-gap round — consult the oracle on each remaining decision
     oracle has already queued it, so nothing more is needed to escalate it.
   - **Spawn failure or any other first line** (a malformed verdict) → treat the
     decision as `INSUFFICIENT` and continue. **The rung never blocks planning.**
+- **Demote a malformed `ANSWER`.** The oracle answers only from a cited source
+  that states a position on the specific decision, quoted verbatim. So an
+  `ANSWER` whose body carries **no `Cited:` line or no `Evidence:` line** is
+  contract-malformed: treat that decision as `INSUFFICIENT` and put it to the
+  user like any other. An uncited or unquoted answer is an ungrounded opinion,
+  not mikk's standing position, and demoting it costs only one question.
 - **Number every consultation `Q<n>`.** Assign each consultation of the session
   a sequential reference — `Q1`, `Q2`, … in consultation order, across every
   rung invocation of the session, not restarting per round. That reference is
@@ -544,6 +550,27 @@ enrichment's true-gap round — consult the oracle on each remaining decision
   with its `**Cited:**` sources, the user's typed resolution on an
   `INSUFFICIENT` entry with the `**Queued:**` `q-<slug>` the oracle filed. A
   session with no consultation emits no section.
+- **Capture the typed resolution back into the queue.** When a typed round
+  resolves a decision the oracle returned `INSUFFICIENT` **and** whose verdict
+  filed a `q-<slug>` (a `Queued:` line naming a slug, not `none`), distill the
+  user's typed resolution into one **concise durable answer** — the position
+  chosen and the reason given, in a sentence or two that will still read
+  correctly to someone with none of this session's context — and write it into
+  that queue block **before emission**:
+
+  ```
+  python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" \
+    --root <root> wiki-queue-answer <slug> --answer "<the distilled answer>"
+  ```
+
+  (Pass the bare `<slug>` — the verb prefixes `q-` itself.) This is **in
+  addition to** the ledger entry above, not instead of it: the ledger records
+  the consultation in `plan.md`, the queue write makes the answer citable by
+  the next oracle spawn, so the same question is never asked twice. Where the
+  verdict reported **`Queued: none`** (no discoverable workspace), skip the
+  write and say so in visible text — nothing durable was captured. If the write
+  **exits non-zero**, report the failure and continue to emission: capture
+  never blocks planning.
 
 **The investigation turn consults the rung in place, same-turn.** When the
 findings digest (step 2) names open task-shaping decisions under **OPEN

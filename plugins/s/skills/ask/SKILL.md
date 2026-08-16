@@ -22,8 +22,9 @@ returns.
 
 **The oracle is the middle rung of the epic's read → ask-mikk → human ladder.**
 A caller at an un-inferrable decision consults mikk's standing opinion before
-interrupting a person; when mikk has no opinion yet, the question queues for a
-human instead of blocking.
+interrupting a person; when mikk has no opinion yet, the question queues and
+this skill — the interactive rung — puts it to the user and captures their
+answer back into the queue, so the next spawn can cite it.
 
 **Announce the version first.** Read the running plugin version from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `am:ask
@@ -67,18 +68,64 @@ exactly `ANSWER` or `INSUFFICIENT`. It never asks anything back.
 Branch on the oracle's first line:
 
 - **`ANSWER`** — relay the oracle's recommendation **verbatim**, including its
-  `Cited:` line(s) naming the wiki page(s) (`[[slug]]`) or repo artifacts behind
-  it. Do not dilute the position into a list of alternatives; the oracle took a
-  stance, so present it as one.
-- **`INSUFFICIENT`** — the oracle could not answer and has queued the decision.
-  It appends the compact question to the workspace wiki queue through the engine
-  (`spec_status.py wiki-queue-add`, scaffolding the store with `wiki-init` first
-  when none exists). Relay the compact question block and the `Queued: q-<slug>`
-  it filed, and tell the user how the answer reaches the wiki: a person answers
-  the queued entry, and the future **teach-mikk** write path drains answered
-  queue entries into wiki pages. If the oracle reports `Queued: none` (no
-  discoverable workspace), relay that plainly — the question could not be queued
-  because there is no workspace store to hold it.
+  `Cited:` line(s) naming the wiki page(s) (`[[slug]]`), the answered queue
+  block (`queue q-<slug>`), or the repo artifacts behind it, and its
+  `Evidence:` quote line(s). Do not dilute the position into a list of
+  alternatives; the oracle took a stance, so present it as one.
+- **`INSUFFICIENT`** — the oracle could not answer from durable knowledge and
+  has queued the decision. It appends the compact question to the workspace
+  wiki queue through the engine (`spec_status.py wiki-queue-add`, scaffolding
+  the store with `wiki-init` first when none exists). Relay the compact
+  question block and the `Queued: q-<slug>` it filed, then **put the question
+  to the user** (below).
 
-Then stop. This skill relays the oracle's verdict; it does not act on the
-decision.
+**Demote a malformed `ANSWER`.** The oracle's bar is a cited source that states
+a position on the specific decision, quoted verbatim. So if the first line is
+`ANSWER` but the body carries **no `Cited:` line or no `Evidence:` line**,
+treat the verdict as `INSUFFICIENT` and take that branch instead — an uncited
+or unquoted answer is an ungrounded opinion, not mikk's standing position. Say
+plainly that you demoted it. (If the demoted verdict names no `q-<slug>`, there
+is nothing to capture against; ask the user and relay the answer for the
+session only, exactly as under `Queued: none`.)
+
+## Ask the user, then capture the answer
+
+On `INSUFFICIENT`, the human rung is the user in front of you — so ask them
+rather than leaving the question to sit in the queue.
+
+1. **One dialog, self-contained.** Put the compact question to the user through
+   a single **AskUserQuestion** call. The question text carries the decision;
+   the options are the oracle's options with **the recommendation listed
+   first**, so accepting the lean is the cheapest reply. Include enough of the
+   decision's context in the dialog that it stands on its own. Ask once — do
+   not open a multi-round interview.
+2. **Distill the reply.** Turn the user's answer into one **concise durable
+   answer**: the position they chose plus the reason they gave, in a sentence
+   or two that will still make sense to a future reader with none of this
+   session's context. Strip the session chatter; keep the decision.
+3. **Capture it against the queued entry.** Where the verdict reported a filed
+   `q-<slug>`, write the distilled answer into that block:
+
+   ```
+   python3 ${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py \
+     --root <asking-repo-root> wiki-queue-answer <slug> \
+     --answer "<the distilled answer>"
+   ```
+
+   (Pass the bare `<slug>` — the verb prefixes `q-` itself.) The next oracle
+   spawn reads that answered block and can cite it, so the same question is
+   never asked twice. Tell the user the answer was captured, naming the
+   `q-<slug>`. If the write exits non-zero, report the failure and still relay
+   the answer — capture never blocks the reply.
+4. **`Queued: none` — relay only.** Where the oracle reported `Queued: none`
+   (no discoverable workspace), there is no store to write to. Relay the user's
+   answer for **this session only** and state plainly that **nothing durable
+   was captured**, because the repo has no discoverable workspace — creating
+   one (`/s:workspace`) is what makes the next answer stick.
+
+**Correcting a captured answer** is `/s:teach`'s job, not this skill's: the
+verb refuses to overwrite an already-answered block, and teach drains answered
+queue entries into wiki pages where they can be revised.
+
+Then stop. This skill relays the oracle's verdict and captures the user's
+answer; it does not act on the decision.
