@@ -348,8 +348,10 @@ id: interactive-pipeline-resolution
 
 When the interactive `/s:build` flow starts, it SHALL resolve the
 effective autonomous pipeline exactly once by running the status CLI's
-`pipeline-show` verb and SHALL read each entry's declared options from
-the rendered labels, never re-deriving them from configuration files. If
+`pipeline-show --json` verb and SHALL read each entry's declared options
+from the emitted JSON object's `entries` dicts and the provenance from its
+`source` field, never re-deriving them from configuration files and never
+parsing the human-rendered label lines, which carry no contract status. If
 the resolution exits non-zero (a validation error or missing pydantic),
 then the flow SHALL report the engine's error text and stop before any
 spec work — a declared pipeline never half-runs. Where the resolved
@@ -375,6 +377,13 @@ SHALL supersede self-resolution.
 - **WHEN** a user runs `/s:build` on a planned change
 - **THEN** execution sub-agents spawn on the tier two below the session,
   no validator is spawned, and no per-tool token breakdown is persisted
+
+#### Scenario: Options are read from the JSON entries
+- **GIVEN** a resolved build entry declaring `subagent_model` and
+  `parallelism`
+- **WHEN** `/s:build` resolves the pipeline at flow start
+- **THEN** the options are taken from the `--json` object's entry dicts,
+  not parsed out of rendered label lines
 
 #### Scenario: Malformed pipeline stops the build before spec work
 - **GIVEN** a declared pipeline entry carrying an unknown key

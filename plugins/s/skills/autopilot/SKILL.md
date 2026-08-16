@@ -214,10 +214,16 @@ the stage is graded on the `semantic-review` status being green AND
 
 ### Stage options declared by the resolved entry
 
-The dry run's entry labels render each entry's declared options — `gate
-[attempts 1]`, `build [subagent_model tier-two-below, validator off,
-telemetry off]`, `review [model tier-below, disposition high-only]`. Read the
-options from those labels; never re-derive them from the config.
+Obtain the resolved entries and their declared options from the status CLI's
+machine contract, run once per run:
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-show --json
+```
+Read each entry's options from the emitted object's `entries` dicts — e.g.
+`{"stage": "build", "subagent_model": "tier-two-below", "validator": false,
+"telemetry": false}` — and never re-derive them from the config. The dry run
+remains the source of the **member order** only; its rendered entry labels are
+human-facing and carry no contract status.
 
 **A declared `model` picks the stage sub-agent's model.** When the entry
 declares `model`, spawn that stage's sub-agent with the Agent tool's `model`

@@ -40,6 +40,19 @@ Verbs (see the spec-status + statusline capabilities for the contract):
   epic-set-status <status> <slug>
                      write a validated epic status (draft/ready/active/
                      complete); `ready` is refused unless the epic lints clean
+  pipeline-show [--expand PRESET] [--json]
+                     print the effective autonomous pipeline: one line per
+                     resolved entry (form, bindings with fallbacks, declared
+                     per-stage options) plus the provenance of the
+                     `autonomous-pipeline` key. With --expand, print the named
+                     built-in preset's entry list as indented JSON — the value
+                     to declare to fork it — resolving no config. With --json,
+                     emit the machine contract instead of the text report: one
+                     JSON object whose `source` is the raw provenance
+                     (`default`, a config file path, or `preset:<name>
+                     (<path>)`) and whose `entries` are the resolved entry
+                     dicts; --expand --json prints the same entry-list array
+                     flagless expand does
   initiative-show <slug>
                      print a brief's status, metadata, and requirement
                      progress (<done>/<total>) plus each requirement line
@@ -82,8 +95,9 @@ Verbs (see the spec-status + statusline capabilities for the contract):
 The five read verbs — ``show``, ``status``, ``locate``, ``epic-show``, and
 ``workspace-show`` — additionally accept ``--json``, emitting exactly one JSON
 document on stdout in place of their text report, derived from the same data
-(spec-status json-output). Exit codes and the ``Error:`` stderr paths are the
-same in both modes.
+(spec-status json-output); ``pipeline-show`` accepts it on the same terms, as
+the machine contract its skill consumers read instead of the rendered labels.
+Exit codes and the ``Error:`` stderr paths are the same in both modes.
 
 The initiative, workspace, and project verbs resolve the workspace from
 ``--root`` and exit non-zero when no workspace is discoverable.
@@ -1679,7 +1693,7 @@ def _expand_pipeline_preset(name):
         raise StatusError(str(exc))
 
 
-def cmd_pipeline_show(root, expand=None):
+def cmd_pipeline_show(root, expand=None, as_json=False):
     """Print the effective autonomous pipeline: one line per resolved entry
     (form + bindings with fallbacks + declared per-stage options) plus the
     provenance of the ``autonomous-pipeline`` key — the supplying config file
@@ -1691,7 +1705,14 @@ def cmd_pipeline_show(root, expand=None):
 
     With ``expand`` naming a preset, no config is resolved at all: the preset's
     entry list prints as indented JSON — the value to paste as the key to fork
-    it into a custom list — and the verb exits zero."""
+    it into a custom list — and the verb exits zero.
+
+    With ``as_json`` the resolution prints as the machine contract instead of
+    the text report: one JSON object holding the raw provenance under ``source``
+    (``default`` undecorated) and the resolved entries — the validated dicts,
+    carrying exactly the keys each entry declared — under ``entries``. Combined
+    with ``expand`` it changes nothing: expand's output already is the one JSON
+    document the flag would ask for. Errors raise identically either way."""
     if expand is not None:
         print(json.dumps(_expand_pipeline_preset(expand), indent=2))
         return 0
@@ -1699,6 +1720,9 @@ def cmd_pipeline_show(root, expand=None):
         entries, provenance = sc.resolve_pipeline(root)
     except sc.ConfigError as exc:
         raise StatusError(str(exc))
+    if as_json:
+        print(json.dumps({"source": provenance, "entries": entries}, indent=2))
+        return 0
     source = "[default]" if provenance == "default" else provenance
     print("pipeline (source: %s):" % source)
     for i, entry in enumerate(entries, 1):
@@ -2484,13 +2508,15 @@ def cmd_wiki_remove(root, slug, personal=False):
 # ---------------------------------------------------------------------------
 
 
-def _add_json_flag(subparser):
+def _add_json_flag(subparser, help_text=None):
     """Give one read verb's subparser the ``--json`` machine-output flag
-    (spec-status json-output). Only the five read verbs get it — the mutating
-    and guarded verbs stay text-only."""
+    (spec-status json-output). The five read verbs and ``pipeline-show`` get it
+    — the mutating and guarded verbs stay text-only. ``help_text`` overrides the
+    generic help for a verb whose JSON document warrants describing."""
     subparser.add_argument(
         "--json", action="store_true", dest="json",
-        help="emit one JSON document on stdout instead of the text report")
+        help=help_text or
+        "emit one JSON document on stdout instead of the text report")
 
 
 def main(argv=None):
@@ -2576,7 +2602,13 @@ def main(argv=None):
         "--expand", metavar="PRESET",
         help="print the named built-in preset's entry list as JSON (the value "
              "to declare to fork it into a custom list) instead of resolving "
-             "this repo's pipeline")
+             "this repo's pipeline; with --json the same entry-list array "
+             "prints")
+    _add_json_flag(
+        p_pipeline_show,
+        help_text="emit the machine contract instead of the text report: one "
+                  "JSON object with `source` (the raw provenance) and "
+                  "`entries` (the resolved entry dicts)")
 
     p_cat = sub.add_parser(
         "cat",
@@ -2708,7 +2740,8 @@ def main(argv=None):
         if args.verb == "config-show":
             return cmd_config_show(root)
         if args.verb == "pipeline-show":
-            return cmd_pipeline_show(root, expand=args.expand)
+            return cmd_pipeline_show(root, expand=args.expand,
+                                     as_json=args.json)
         if args.verb == "cat":
             return cmd_cat(root, args.kind, args.slug, args.personal)
         if args.verb == "initiative-show":

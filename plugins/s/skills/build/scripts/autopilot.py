@@ -179,7 +179,8 @@ def _entry_options(entry):
 def _entry_label(entry):
     """A one-line human label for a resolved pipeline entry, rendering the
     entry's declared options (epic-autopilot stage-options-in-prompts) so the
-    dry run — which the in-session drive parses — shows them."""
+    dry run shows them. Display only: the in-session drive reads its options
+    from `spec_status.py pipeline-show --json`, never from these labels."""
     if "custom" in entry:
         base = "custom:%s -> %s" % (entry.get("custom"), entry.get("command"))
     else:

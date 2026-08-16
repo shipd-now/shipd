@@ -880,14 +880,17 @@ skill SHALL emit no such section.
 id: plan-pipeline-resolution
 
 When the plan flow starts, it SHALL resolve the effective autonomous
-pipeline by running the status CLI's `pipeline-show` verb. If the
+pipeline by running the status CLI's `pipeline-show --json` verb, reading
+the provenance from the emitted object's `source` field rather than
+parsing the human-rendered header line. If the
 resolution exits non-zero (a validation error or missing pydantic), then
 the flow SHALL report the engine's error text and stop before
 investigation or any question round — a declared pipeline never
 half-runs. Where a configuration layer declares the pipeline (list or
-preset), the flow SHALL name the resolved provenance in its first
+preset) — a `source` other than `default` — the flow SHALL name the
+resolved provenance in its first
 user-visible status text alongside the version announcement; a default
-pipeline (`[default]` provenance) SHALL add no announcement. The flow
+pipeline (`source` `default`) SHALL add no announcement. The flow
 SHALL ignore the plan entry's `model` option and every `autopilot` block
 — interactively the session's model is the user's choice and the human
 is the retry loop — and SHALL run its ending's context-gate promotion
@@ -901,11 +904,12 @@ forced status.
 - **THEN** the flow reports the resolution error naming the entry and
   field and stops without investigating or emitting
 
-#### Scenario: Declared provenance is announced
+#### Scenario: Declared provenance is announced from the JSON source
 - **GIVEN** a repo whose config declares `{"autonomous-pipeline": "eco"}`
 - **WHEN** `/s:plan` starts
 - **THEN** the first status text names the `preset:eco` provenance with
-  its supplying config path, alongside the version announcement
+  its supplying config path, taken from the `--json` object's `source`
+  field, alongside the version announcement
 
 #### Scenario: Gate skip never skips the internal gate
 - **GIVEN** a resolved pipeline whose gate entry is skipped

@@ -2,16 +2,18 @@
 name: status
 description: >-
   Report or change a spec's lifecycle status through the guarded status CLI:
-  print the bare status, validate the change's structure, or run a guarded
-  transition that asks before forcing past a guard. Use when asked to check,
-  validate, or set a change's status, or to promote/complete/verify a change.
-  Trigger phrases: "status", "validate change", "set status", "/s:status".
+  print the bare status, validate the change's structure, run a guarded
+  transition that asks before forcing past a guard, or report the effective
+  autonomous pipeline (and expand a named preset). Use when asked to check,
+  validate, or set a change's status, to promote/complete/verify a change, or
+  to see which pipeline this repo resolves. Trigger phrases: "status",
+  "validate change", "set status", "pipeline", "/s:status".
 ---
 
 # /s:status — Guarded status reporting & transitions
 
 You are the **Status wrapper**. Your job is thin and interactive: run the
-status CLI for one of three commands, report its result plainly, and — only
+status CLI for one of four commands, report its result plainly, and — only
 when a guarded transition is refused — ask the user whether to override before
 re-running with `--force`. You never decide to force on your own initiative,
 and you never re-implement the checks the binary already owns.
@@ -59,6 +61,22 @@ none is selected) — so you never resolve the selection yourself.
   ```
   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" set-status <status> [change]
   ```
+- **`/s:status pipeline`** → report the effective autonomous pipeline and its
+  provenance, relaying the output verbatim:
+  ```
+  python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-show
+  ```
+  With a **preset name** — **`/s:status pipeline <preset>`** — expand that
+  built-in preset instead, relaying the printed entry list (the exact value a
+  config may declare as its own `autonomous-pipeline` list):
+  ```
+  python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-show --expand <preset>
+  ```
+  An unknown preset name exits non-zero listing the known presets — relay that
+  listing as the answer; it is the discovery surface, not a failure of this
+  skill. Never re-render or summarize either output, and never parse it: the
+  `--json` machine contract exists for flows that need the values, not for
+  this relay.
 
 ### When there is no argument and no selection — the workspace report
 

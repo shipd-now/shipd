@@ -25,10 +25,10 @@ implementer — you converge, emit, and end.
 which plugin snapshot the session is running.
 
 **Resolve the pipeline in the same breath.** Before investigating, run the
-status CLI's `pipeline-show` verb once:
+status CLI's `pipeline-show --json` verb once:
 
 ```
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-show
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-show --json
 ```
 
 - **Non-zero exit stops the flow.** A validation error (e.g. `entry 4
@@ -38,12 +38,14 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-sho
   declared pipeline is unusable: report the engine's own error text and stop
   **before investigating and before any question round** — nothing
   investigated, nothing emitted. A declared pipeline never half-runs.
-- **Announce a declared provenance, and only a declared one.** The verb's
-  header line names where the pipeline came from. When a configuration layer
-  declares it — a config path, or `preset:<name> (<config-path>)` for a preset
-  — name that provenance in the same first status sentence as the version
+- **Announce a declared provenance, and only a declared one.** The emitted
+  object's `source` field names where the pipeline came from — read it there,
+  never by parsing the flagless verb's human-rendered header line. When a
+  configuration layer declares it — a config path, or `preset:<name>
+  (<config-path>)` for a preset — name that provenance in the same first
+  status sentence as the version
   (e.g. "am:plan v0.2.11 (pipeline preset:eco (/repo/.shipd-config.json)) —
-  investigating the repo first"). A `[default]` provenance means no layer
+  investigating the repo first"). A `default` source means no layer
   declared one: announce nothing about pipelines and proceed exactly as
   before.
 - **What this flow ignores.** The `plan` entry's own `model` option —

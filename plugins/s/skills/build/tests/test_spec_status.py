@@ -2016,6 +2016,39 @@ class PipelineShowTest(SpecStatusTestBase):
         for name in ("basic", "default", "eco"):
             self.assertIn(name, combined)
 
+    def test_json_defaults_only_emits_source_and_entries(self):
+        # The machine contract: exactly one JSON object, `source` the raw
+        # provenance value (`default`, undecorated) and `entries` the resolved
+        # entries as dicts carrying exactly the keys each entry declared.
+        r = self.cli("pipeline-show", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        payload = json.loads(r.stdout)
+        self.assertEqual(payload["source"], "default")
+        self.assertEqual(
+            payload["entries"], [{"stage": name} for name in sc.PIPELINE_STAGES])
+
+    def test_json_expand_matches_flagless_expand(self):
+        # `--expand <preset> --json` keeps the entry-list array contract: the
+        # flag is accepted so a machine consumer can uniformly pass it.
+        flagless = self.cli("pipeline-show", "--expand", "default")
+        flagged = self.cli("pipeline-show", "--expand", "default", "--json")
+        self.assertEqual(flagged.returncode, 0, flagged.stderr)
+        self.assertEqual(flagged.stdout, flagless.stdout)
+        self.assertEqual(
+            json.loads(flagged.stdout),
+            [{"stage": name} for name in sc.PIPELINE_STAGES])
+
+    def test_text_mode_unchanged_without_the_flag(self):
+        # Adding the flag must not disturb the human rendering.
+        r = self.cli("pipeline-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[0], "pipeline (source: [default]):")
+        self.assertEqual(
+            lines[1:],
+            ["  %d. %s" % (i, name)
+             for i, name in enumerate(sc.PIPELINE_STAGES, 1)])
+
 
 class EpicSetInitiativeTest(SpecStatusTestBase):
     """`epic-set-initiative <epic> <initiative>` writes/replaces exactly one
