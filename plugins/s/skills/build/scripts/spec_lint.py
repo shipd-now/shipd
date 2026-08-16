@@ -34,9 +34,14 @@ CLI:  spec_lint.py [<change>] [--epic <slug>] [--initiative <slug>] [--root DIR]
       discoverable workspace's initiatives/<slug>/ (non-zero when no workspace
       is found). Without any, lints the whole master library under .shipd/verified/
       plus every epic under .shipd/epics/.
+
+      With --json, the findings are emitted as one JSON object on stdout —
+      `ok`, `errors`, `warnings` — carrying the same strings the text mode
+      prints, with the same exit code, instead of the text report.
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -1363,6 +1368,9 @@ def main(argv=None):
                              "(<content-dir>/wiki)")
     parser.add_argument("--root", default=os.getcwd(),
                         help="repo root containing the .shipd/ content directory (default: cwd)")
+    parser.add_argument("--json", action="store_true", dest="json",
+                        help="emit one JSON object on stdout — ok, errors, "
+                             "warnings — instead of the text report")
     args = parser.parse_args(argv)
 
     warnings = []
@@ -1419,6 +1427,18 @@ def main(argv=None):
     except sc.ConfigError as exc:
         cc.err(str(exc))
         return 1
+
+    # The machine rendering of the very same findings, carrying the strings the
+    # text report prints below (shipd-spec-lint lint-json). The exit code is
+    # computed from the same errors either way, so the two modes gate
+    # identically; the fatal `Error:` path above is untouched by the flag.
+    if args.json:
+        print(json.dumps({
+            "ok": not errors,
+            "errors": [str(err) for err in errors],
+            "warnings": [str(warning) for warning in warnings],
+        }))
+        return 1 if errors else 0
 
     for warning in warnings:
         print("WARNING: %s" % warning, file=sys.stderr)
