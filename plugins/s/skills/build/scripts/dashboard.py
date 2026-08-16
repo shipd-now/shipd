@@ -4,11 +4,11 @@
 ``build_board`` aggregates each epic's status, theme, initiative context,
 worktree-aware member states, live heartbeat, and last run report;
 ``render_board_lines`` is a pure renderer; the ``board`` verb is a thin shell
-over it. The ``tui`` verb renders
-the board full-screen as a ``textual`` application (:class:`BoardApp`) — the
-one third-party dependency the spec engine carves out for this module (see
-``.shipd/constitution.md``); every other engine script, including the delivery
-engine ``autopilot.py``, stays stdlib-only.
+over it. The ``tui`` verb renders the board full-screen as a ``textual``
+application (:class:`BoardApp`) — the one third-party dependency the spec
+engine carves out for this module (see ``.shipd/constitution.md``); every
+other engine script, including the delivery engine ``autopilot.py``, stays
+stdlib-only.
 
 This module top-imports ``textual`` and defines the App and its widget
 classes at module scope so the ``tests_textual`` suite can import and drive
