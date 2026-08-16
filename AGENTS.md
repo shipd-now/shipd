@@ -80,12 +80,17 @@ never raw `git worktree remove` — then pull `main`, and refresh the plugin
 snapshot (`claude plugin update s@shipd`) when `plugins/s/` changed. The
 `remove` verb refuses (exit 2, listing every reason) while the worktree still
 shows work in progress, so a session can't prune a worktree another is using;
-pass `--force` only once you have confirmed the refusal is spurious.
+pass `--force` only once you have confirmed the refusal is spurious. A squash
+merge deletes only the *remote* branch, so reclaim the local `change/*`
+branches whose content already landed with
+`plugins/s/skills/build/scripts/worktree.sh prune-branches`, which deletes
+merged ones (squash merges included) and lists everything it keeps.
 
 **Epic status derivations** (`epic-sync`/`epic-set-status`) on a merged epic
-run in a fresh `epic-close-<slug>` worktree and ship as a PR — never from the
-main checkout, whose uncommitted epic-file edit a protected-main workflow
-cannot ship.
+run in a fresh `epic-close-<slug>` worktree — created with
+`worktree.sh epic-close-<slug> --fresh`, so the derivation never adopts a stale
+close-out branch — and ship as a PR, never from the main checkout, whose
+uncommitted epic-file edit a protected-main workflow cannot ship.
 
 **Conventions live here (or in the specs), never only in an assistant's private
 memory** — a durable rule is checked into this file or the spec library so

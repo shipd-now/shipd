@@ -901,7 +901,9 @@ def _default_sync_fn(root, epic, out):
     """Close out the epic after at least one PR merged: re-derive its status in
     a fresh worktree, exactly as the build skill's Phase 7 prescribes."""
     slug = "epic-close-%s" % epic
-    rc, _o, err = _run_command([WORKTREE_SH, slug], root)
+    # `--fresh`: the derivation must start from the base branch, never from a
+    # stale local change/epic-close-<slug> branch an earlier run left behind.
+    rc, _o, err = _run_command([WORKTREE_SH, slug, "--fresh"], root)
     if rc != 0:
         out("epic close-out skipped: worktree failed: %s" % (err.strip() or rc))
         return

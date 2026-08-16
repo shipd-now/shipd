@@ -305,6 +305,15 @@ class CloseOutSyncTest(unittest.TestCase):
             autopilot._run_command = original
         return fake, lines
 
+    def test_close_out_worktree_is_created_fresh(self):
+        # The close-out must never adopt a stale local change/epic-close-<slug>
+        # branch left by an earlier run, so the helper carries --fresh.
+        fake, _lines = self.run_sync(
+            [(0, "", ""), (0, "active", ""), (0, "", "")])
+        self.assertEqual(
+            fake.calls[0][0],
+            [autopilot.WORKTREE_SH, "epic-close-ep", "--fresh"])
+
     def test_sync_invocation_places_root_before_subcommand(self):
         fake, _lines = self.run_sync(
             [(0, "", ""), (0, "active", ""), (0, "", "")])

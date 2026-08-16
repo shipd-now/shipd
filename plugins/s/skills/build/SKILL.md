@@ -705,10 +705,14 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
    *after* the squash merge, so a pre-merge sync would read a stale status).
    From the main checkout, spin up a fresh worktree and sync there:
    ```
-   "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/worktree.sh" epic-close-<slug>
+   "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/worktree.sh" epic-close-<slug> --fresh
    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" \
      --root .worktrees/epic-close-<slug> epic-sync <slug>
    ```
+   `--fresh` guarantees the derivation never starts from a stale
+   `change/epic-close-<slug>` branch left by an earlier close-out: the helper
+   recreates that branch from the base when its content already merged, and
+   refuses (changing nothing) when it has not.
    `epic-sync` prints the derived status and rewrites `.shipd/epics/<slug>/epic.md`
    **only when the status line actually changes**. Then:
    - **Status line changed** → commit the epic file on the
