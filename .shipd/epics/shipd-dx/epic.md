@@ -46,8 +46,7 @@ Success criteria:
 ### Non-goals
 
 - **No web surface.** The report's xterm.js/web-terminal bridging and the
-  shipd.now site are out of scope (the port epic also deferred the site);
-  the board's existing `html` verb is unchanged.
+  shipd.now site are out of scope (the port epic also deferred the site).
 - **No package-manager distribution.** No Homebrew, Scoop, Winget, npm, or
   GoReleaser pipelines — shipd ships no compiled binary; the Claude Code
   plugin marketplace is the distribution vector.
