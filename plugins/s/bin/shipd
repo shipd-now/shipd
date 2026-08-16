@@ -8,12 +8,13 @@ a versioned plugin cache snapshot alike. Delegation is process replacement
 (:func:`os.execv`), so the delegate's stdout, stderr, interactivity, and exit
 code are this binary's own — nothing is reimplemented or reformatted here.
 
-Only read/inspect verbs are exposed, with two deliberate exceptions, both
-writing user-domain files and never a spec artifact, and both only under an
+Only read/inspect verbs are exposed, with three deliberate exceptions, each
+writing user-domain files and never a spec artifact, and each only under an
 explicit word: ``statusline install`` writes the statusline registration into
-the user's own Claude Code settings file, and ``copilot add`` / ``copilot
-remove`` maintain the shipd Copilot code-review skill's three files inside a
-target repository. The mutating verbs over the spec library (``set-status``,
+the user's own Claude Code settings file, ``copilot add`` / ``copilot remove``
+maintain the shipd Copilot code-review skill's three files inside a target
+repository, and ``vendor add`` / ``vendor remove`` maintain a vendored per-repo
+shipd install there. The mutating verbs over the spec library (``set-status``,
 ``merge``, ``emit``, ``autopilot``, ``worktree remove``) stay behind their
 guarded scripts and skills.
 
@@ -91,6 +92,7 @@ verbs:
   doctor                     preflight this environment for shipd
   statusline [install]       report or register the shipd statusline
   copilot [add|remove]       maintain the Copilot code-review skill in a repo
+  vendor [add|remove]        maintain a vendored per-repo shipd install
 
 options:
   -h, --help                 print this banner
@@ -357,7 +359,23 @@ def check_gh(which=shutil.which, gh_status=_gh_auth_status):
     return ("ok", "gh", "authenticated at %s" % found)
 
 
-def check_textual(find_spec=importlib.util.find_spec):
+# The pinned ranges the install hints fall back to, mirroring
+# ``requirements.txt`` and the doctor skill's remedy table — change all three.
+PINNED_SPECIFIERS = {"textual": "textual>=8.2.8,<9",
+                     "pydantic": "pydantic>=2.12,<3"}
+
+
+def _install_hint(root, package):
+    """The ``pip install`` hint for ``package`` at ``root``: the checkout's
+    ``requirements.txt`` when there is one to install from, and the pinned
+    specifier otherwise — a vendored per-repo install carries no
+    ``requirements.txt`` to ``-r``."""
+    if os.path.isfile(os.path.join(root, "requirements.txt")):
+        return "pip install -r requirements.txt"
+    return "pip install '%s'" % PINNED_SPECIFIERS[package]
+
+
+def check_textual(root, find_spec=importlib.util.find_spec):
     """The delivery board's one third-party dependency — board-only, so its
     absence is a warning."""
     try:
@@ -367,8 +385,8 @@ def check_textual(find_spec=importlib.util.find_spec):
     if found:
         return ("ok", "textual", "importable; the delivery board can render")
     return ("warn", "textual",
-            "not importable — only the board (`shipd board`) needs it; "
-            "pip install -r requirements.txt")
+            "not importable — only the board (`shipd board`) needs it; %s"
+            % _install_hint(root, "textual"))
 
 
 def _pipeline_needs_pydantic(root):
@@ -408,15 +426,15 @@ def check_pydantic(root, find_spec=importlib.util.find_spec):
     if found:
         return ("ok", "pydantic",
                 "importable; declared pipelines can be validated")
+    hint = _install_hint(root, "pydantic")
     declared_by = _pipeline_needs_pydantic(root)
     if declared_by:
         return ("fail", "pydantic",
-                "not importable but %s declares an `%s` needing it; "
-                "pip install -r requirements.txt"
-                % (declared_by, sc.PIPELINE_KEY))
+                "not importable but %s declares an `%s` needing it; %s"
+                % (declared_by, sc.PIPELINE_KEY, hint))
     return ("warn", "pydantic",
-            "not importable — only declared-pipeline validation needs it; "
-            "pip install -r requirements.txt")
+            "not importable — only declared-pipeline validation needs it; %s"
+            % hint)
 
 
 def check_snapshot(plugin_root):
@@ -469,7 +487,7 @@ def default_checks(root):
             check_config(root),
             check_pipeline(root),
             check_gh(),
-            check_textual(),
+            check_textual(root),
             check_pydantic(root),
             check_snapshot(PLUGIN_ROOT),
             check_statusline()]
@@ -749,14 +767,14 @@ def _copilot_render(relative, version):
     return text.replace("{version}", version).encode("utf-8")
 
 
-def _copilot_write(path, data, mode):
+def _atomic_write(path, data, mode, prefix=".shipd-copilot-"):
     """Write ``data`` to ``path`` atomically, creating its parents — the
     same-directory temp file and rename of :func:`_write_settings`, so an
     interrupted install can never leave a half-written file in the user's
     repository. ``mkstemp``'s private 0600 is replaced by ``mode``."""
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".shipd-copilot-")
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=prefix)
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
@@ -805,7 +823,7 @@ def _copilot_add(root, version):
     for relative, data, mode in payloads:
         target = os.path.join(root, relative)
         try:
-            _copilot_write(target, data, mode)
+            _atomic_write(target, data, mode)
         except OSError as exc:
             _err("cannot write %s: %s" % (target, exc))
             return 1
@@ -891,6 +909,485 @@ def cmd_copilot(args):
     return _copilot_remove(root)
 
 
+# ---------------------------------------------------------------------------
+# vendor (shipd-cli vendor-verb)
+# ---------------------------------------------------------------------------
+
+# The vendored install's fixed names: the marketplace the generated manifest
+# declares, the plugin inside it, and the identifier Claude Code enables.
+VENDOR_MARKETPLACE = "shipd"
+VENDOR_PLUGIN = "s"
+VENDOR_PLUGIN_ID = "%s@%s" % (VENDOR_PLUGIN, VENDOR_MARKETPLACE)
+
+# The settings file the verb merges into, relative to the target repository,
+# and the two keys it manages there. A ``statusLine`` is registered too, but
+# only into a file carrying none — so it is never part of ownership.
+VENDOR_SETTINGS = os.path.join(".claude", "settings.json")
+VENDOR_ENABLED_KEY = "enabledPlugins"
+VENDOR_MARKETPLACES_KEY = "extraKnownMarketplaces"
+
+# The content scaffold, created only where missing and never removed.
+VENDOR_SCAFFOLD = ("verified", "planned", "completed")
+
+# Directories the vendored copy never carries. ``__pycache__`` holds generated
+# bytecode, not part of the shipping unit: it appears in whichever plugin tree
+# has run the engine, so copying it would both litter the target repository and
+# report the vendored tree ``stale`` the first time the source ran a script.
+VENDOR_EXCLUDED_DIRS = ("__pycache__",)
+
+
+def vendor_layout(root):
+    """The managed paths for ``root``, each *relative* to it, with the content
+    directory resolved through the engine's layered configuration — a repo
+    declaring a custom ``dir`` vendors under that name and points its settings
+    at it. Raises ``sc.ConfigError`` when the configuration is unusable."""
+    _load_engine()
+    config, _prov = sc.resolve_config(root)
+    content = sc.specs_dirname(config)
+    plugin = os.path.join(content, "plugin")
+    return {
+        "content": content,
+        "plugin": plugin,
+        "tree": os.path.join(plugin, VENDOR_PLUGIN),
+        "marketplace": os.path.join(plugin, ".claude-plugin",
+                                    "marketplace.json"),
+        "settings": VENDOR_SETTINGS,
+        "scaffold": os.path.join(content,
+                                 "{%s}" % ",".join(VENDOR_SCAFFOLD)),
+    }
+
+
+def _vendor_manifest(root, layout):
+    """The vendored plugin manifest's path — the ownership marker's home."""
+    return os.path.join(root, layout["tree"], ".claude-plugin", "plugin.json")
+
+
+def _vendor_ownership(root, layout):
+    """``(ownership, marker version)`` of the vendored plugin directory:
+    ``absent`` when there is none, ``owned`` with the manifest's ``version``
+    when its manifest parses and names ``s``, and ``foreign`` for a plugin
+    directory that exists as anything else."""
+    if not os.path.isdir(os.path.join(root, layout["tree"])):
+        return "absent", None
+    try:
+        with open(_vendor_manifest(root, layout), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return "foreign", None
+    if not isinstance(data, dict) or data.get("name") != VENDOR_PLUGIN:
+        return "foreign", None
+    return "owned", data.get("version")
+
+
+def _vendor_tree_files(base):
+    """Sorted ``base``-relative paths of every file under it, the generated
+    bytecode caches excluded — the file set both the copy and the drift
+    comparison work over."""
+    found = []
+    for current, dirs, names in os.walk(base):
+        dirs[:] = [name for name in dirs if name not in VENDOR_EXCLUDED_DIRS]
+        for name in names:
+            found.append(os.path.relpath(os.path.join(current, name), base))
+    return sorted(found)
+
+
+def vendor_drift(source, target):
+    """``(missing, extraneous, differing)`` relative paths between the running
+    plugin tree ``source`` and the vendored ``target``. All three empty is
+    byte equality — the only state ``add`` leaves behind."""
+    want = set(_vendor_tree_files(source))
+    have = set(_vendor_tree_files(target))
+    differing = [relative for relative in sorted(want & have)
+                 if _read_bytes(os.path.join(source, relative))
+                 != _read_bytes(os.path.join(target, relative))]
+    return sorted(want - have), sorted(have - want), differing
+
+
+def _vendor_tree_state(root, layout, version):
+    """The vendored plugin tree's state, drift included."""
+    ownership, marker = _vendor_ownership(root, layout)
+    if ownership == "absent":
+        return ("absent", "not installed")
+    if ownership == "foreign":
+        return ("foreign",
+                "a plugin directory without a manifest naming `%s` — "
+                "`shipd vendor add --force` replaces it" % VENDOR_PLUGIN)
+    if marker != version:
+        return ("stale",
+                "vendored v%s — `shipd vendor add` refreshes it to v%s"
+                % (marker, version))
+    missing, extraneous, differing = vendor_drift(
+        str(PLUGIN_ROOT), os.path.join(root, layout["tree"]))
+    if missing or extraneous or differing:
+        return ("stale",
+                "v%s but drifted: %d missing, %d extraneous, %d changed — "
+                "`shipd vendor add` rewrites the tree"
+                % (version, len(missing), len(extraneous), len(differing)))
+    return ("installed",
+            "v%s, byte-identical to this install" % version)
+
+
+def vendor_marketplace_document(layout):
+    """The marketplace manifest the vendored tree is registered through: the
+    ``shipd`` marketplace with the single plugin ``s`` beside it."""
+    return {
+        "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+        "name": VENDOR_MARKETPLACE,
+        "owner": {"name": VENDOR_MARKETPLACE},
+        "description": "Vendored shipd plugin, installed into this repository "
+                       "by `shipd vendor add`.",
+        "plugins": [{
+            "name": VENDOR_PLUGIN,
+            "source": "./%s" % VENDOR_PLUGIN,
+            "description": "Shipd commands and skills, namespaced under /s:",
+            "category": "productivity",
+            "keywords": ["shipd", "s", "workflow"],
+        }],
+    }
+
+
+def _vendor_declares_the_plugin(data):
+    """Whether ``data`` is a marketplace manifest declaring this vendored
+    install. Compared by declaration, not by bytes: the surrounding prose keys
+    are ours to change without calling every existing manifest stale."""
+    if not isinstance(data, dict) or data.get("name") != VENDOR_MARKETPLACE:
+        return False
+    plugins = data.get("plugins")
+    if not isinstance(plugins, list) or len(plugins) != 1:
+        return False
+    entry = plugins[0]
+    return (isinstance(entry, dict) and entry.get("name") == VENDOR_PLUGIN
+            and entry.get("source") == "./%s" % VENDOR_PLUGIN)
+
+
+def _vendor_marketplace_state(root, layout, tree_state):
+    """The generated marketplace manifest's state. It carries no marker of its
+    own — like the copilot engine beside its SKILL.md, it is owned exactly when
+    the plugin tree beside it is."""
+    path = os.path.join(root, layout["marketplace"])
+    if not os.path.exists(path):
+        return ("absent", "not installed")
+    if tree_state == "foreign":
+        return ("foreign", "the plugin directory beside it is not shipd's")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return ("stale",
+                "not readable as JSON — `shipd vendor add` regenerates it")
+    if _vendor_declares_the_plugin(data):
+        return ("installed",
+                "marketplace `%s` with plugin `%s` at ./%s"
+                % (VENDOR_MARKETPLACE, VENDOR_PLUGIN, VENDOR_PLUGIN))
+    return ("stale",
+            "does not declare `%s` at ./%s — `shipd vendor add` regenerates it"
+            % (VENDOR_PLUGIN, VENDOR_PLUGIN))
+
+
+def vendor_marketplace_entry(layout):
+    """The ``extraKnownMarketplaces.shipd`` value: a directory source at the
+    vendored plugin directory, declared *relative* to the repository root so it
+    resolves in every clone, with auto-update on."""
+    return {"source": {"source": "directory",
+                       "path": layout["plugin"].replace(os.sep, "/")},
+            "autoUpdate": True}
+
+
+def vendor_statusline_command(layout):
+    """The statusline the vendored install would register — the copy inside
+    the vendored tree, again repository-relative."""
+    return "bash %s" % os.path.join(
+        layout["tree"], "integrations", "statusline.sh").replace(os.sep, "/")
+
+
+def _vendor_settings_state(root, layout):
+    """The target's ``.claude/settings.json`` state, judged on the two managed
+    keys alone. A ``statusLine`` is deliberately excluded: ``add`` writes one
+    only into a file carrying none, so somebody else's is not drift."""
+    path = os.path.join(root, layout["settings"])
+    data, error = _read_settings(path)
+    if error is not None:
+        return ("foreign", "%s — fix the file, then re-run" % error)
+    enabled = data.get(VENDOR_ENABLED_KEY)
+    marketplaces = data.get(VENDOR_MARKETPLACES_KEY)
+    has_enabled = isinstance(enabled, dict) and VENDOR_PLUGIN_ID in enabled
+    has_marketplace = (isinstance(marketplaces, dict)
+                       and VENDOR_MARKETPLACE in marketplaces)
+    if not has_enabled and not has_marketplace:
+        return ("absent", "no shipd keys registered")
+    if (has_enabled and enabled.get(VENDOR_PLUGIN_ID) is True
+            and has_marketplace
+            and marketplaces.get(VENDOR_MARKETPLACE)
+            == vendor_marketplace_entry(layout)):
+        return ("installed",
+                "`%s` enabled from the vendored %s"
+                % (VENDOR_PLUGIN_ID, layout["plugin"]))
+    return ("stale",
+            "the shipd keys do not match this install — "
+            "`shipd vendor add` merges them")
+
+
+def _vendor_scaffold_state(root, layout):
+    """The content scaffold's state. It holds the user's own spec library, so
+    it is only ever created — never rewritten, never removed."""
+    present = [name for name in VENDOR_SCAFFOLD
+               if os.path.isdir(os.path.join(root, layout["content"], name))]
+    if not present:
+        return ("absent", "no content scaffold yet")
+    if len(present) == len(VENDOR_SCAFFOLD):
+        return ("installed",
+                "%s exist" % ", ".join("%s/" % name
+                                       for name in VENDOR_SCAFFOLD))
+    return ("stale",
+            "only %s — `shipd vendor add` creates the rest"
+            % ", ".join("%s/" % name for name in present))
+
+
+def vendor_states(root, layout, version):
+    """``[(relative label, state, detail)]`` for the four managed surfaces, in
+    a fixed order: the vendored tree, its marketplace manifest, the settings
+    merge, and the content scaffold."""
+    tree = _vendor_tree_state(root, layout, version)
+    return [(layout["tree"],) + tree,
+            (layout["marketplace"],)
+            + _vendor_marketplace_state(root, layout, tree[0]),
+            (layout["settings"],) + _vendor_settings_state(root, layout),
+            (layout["scaffold"],) + _vendor_scaffold_state(root, layout)]
+
+
+def _vendor_prune_empty_dirs(base):
+    """Remove directories the pruning emptied, innermost first; ``base``
+    itself stays. A directory still holding anything is left alone."""
+    for current, _dirs, _names in os.walk(base, topdown=False):
+        if os.path.abspath(current) == os.path.abspath(base):
+            continue
+        try:
+            os.rmdir(current)
+        except OSError:
+            continue
+
+
+def _vendor_sync_tree(root, layout):
+    """Rewrite the vendored tree to byte equality with the running plugin,
+    pruning anything extraneous. Only the files that actually differ are
+    written, so a repeated ``add`` touches nothing. Returns
+    ``(written, pruned)`` counts."""
+    source = str(PLUGIN_ROOT)
+    target = os.path.join(root, layout["tree"])
+    missing, extraneous, differing = vendor_drift(source, target)
+    for relative in missing + differing:
+        origin = os.path.join(source, relative)
+        data = _read_bytes(origin)
+        if data is None:
+            raise OSError("cannot read %s" % origin)
+        _atomic_write(os.path.join(target, relative), data,
+                      stat.S_IMODE(os.stat(origin).st_mode),
+                      prefix=".shipd-vendor-")
+    for relative in extraneous:
+        os.remove(os.path.join(target, relative))
+    if extraneous:
+        _vendor_prune_empty_dirs(target)
+    return len(missing) + len(differing), len(extraneous)
+
+
+def _vendor_write_marketplace(root, layout):
+    """(Re)generate the marketplace manifest beside the vendored tree."""
+    document = json.dumps(vendor_marketplace_document(layout), indent=2) + "\n"
+    _atomic_write(os.path.join(root, layout["marketplace"]),
+                  document.encode("utf-8"), 0o644, prefix=".shipd-vendor-")
+
+
+def _vendor_merge_settings(layout, data):
+    """Merge the two managed keys into ``data`` declaratively — the same value
+    however often it runs. A ``statusLine`` is registered only into settings
+    carrying none: replacing somebody else's is never this verb's call."""
+    for key in (VENDOR_ENABLED_KEY, VENDOR_MARKETPLACES_KEY):
+        if not isinstance(data.get(key), dict):
+            data[key] = {}
+    data[VENDOR_ENABLED_KEY][VENDOR_PLUGIN_ID] = True
+    data[VENDOR_MARKETPLACES_KEY][VENDOR_MARKETPLACE] = (
+        vendor_marketplace_entry(layout))
+    if "statusLine" not in data:
+        data["statusLine"] = {"type": "command",
+                              "command": vendor_statusline_command(layout)}
+    return data
+
+
+def _vendor_scaffold(root, layout):
+    """Create the content scaffold where it is missing. Existing directories
+    and every spec artifact inside them are left exactly as they are."""
+    created = []
+    for name in VENDOR_SCAFFOLD:
+        directory = os.path.join(root, layout["content"], name)
+        if not os.path.isdir(directory):
+            created.append(name)
+        os.makedirs(directory, exist_ok=True)
+        keep = os.path.join(directory, ".gitkeep")
+        if not os.path.exists(keep):
+            _atomic_write(keep, b"", 0o644, prefix=".shipd-vendor-")
+    return created
+
+
+def _vendor_add(root, layout, version):
+    """Install or refresh all four surfaces.
+
+    The settings file is read before the first write, so settings this verb
+    cannot understand stop the install rather than being clobbered by it —
+    the guard :func:`cmd_statusline` applies to the same file.
+    """
+    settings_path = os.path.join(root, layout["settings"])
+    data, error = _read_settings(settings_path)
+    if error is not None:
+        _err(error)
+        return 1
+    ownership, _marker = _vendor_ownership(root, layout)
+    try:
+        if ownership == "foreign":
+            # Forced past the guard in :func:`cmd_vendor`: the directory is
+            # replaced wholesale rather than merged into.
+            shutil.rmtree(os.path.join(root, layout["tree"]))
+        written, pruned = _vendor_sync_tree(root, layout)
+        _vendor_write_marketplace(root, layout)
+        _write_settings(settings_path, _vendor_merge_settings(layout, data))
+        created = _vendor_scaffold(root, layout)
+    except OSError as exc:
+        _err("cannot write the vendored install in %s: %s" % (root, exc))
+        return 1
+
+    print("vendored %s at v%s (%d file(s) written, %d pruned)"
+          % (layout["tree"], version, written, pruned))
+    print("wrote %s" % layout["marketplace"])
+    print("merged `%s` and `%s` into %s"
+          % (VENDOR_ENABLED_KEY, VENDOR_MARKETPLACES_KEY, layout["settings"]))
+    print("scaffold %s: %s"
+          % (layout["scaffold"],
+             "created %s" % ", ".join(created) if created
+             else "already present"))
+    print("It takes effect in the next Claude Code session, once the folder's "
+          "trust dialog has been accepted.")
+    return 0
+
+
+def _vendor_unmerge_settings(layout, data):
+    """Drop the two managed keys from ``data``, and a ``statusLine`` only when
+    its command points into the vendored tree — one this verb did not write is
+    the user's, and stays. Emptied managed keys are dropped whole, so removal
+    leaves no residue behind. Returns the removed key names."""
+    removed = []
+    for key, name in ((VENDOR_ENABLED_KEY, VENDOR_PLUGIN_ID),
+                      (VENDOR_MARKETPLACES_KEY, VENDOR_MARKETPLACE)):
+        entry = data.get(key)
+        if not isinstance(entry, dict) or name not in entry:
+            continue
+        del entry[name]
+        removed.append("%s.%s" % (key, name))
+        if not entry:
+            del data[key]
+    command = _registered_command(data)
+    if command and layout["tree"].replace(os.sep, "/") in command:
+        del data["statusLine"]
+        removed.append("statusLine")
+    return removed
+
+
+def _vendor_remove(root, layout):
+    """Delete the vendored plugin directory and unmerge the settings keys.
+
+    The content scaffold and everything under it is the user's spec library,
+    never this verb's to remove — only ``<content-dir>/plugin/`` goes.
+    """
+    settings_path = os.path.join(root, layout["settings"])
+    data, error = _read_settings(settings_path)
+    if error is not None:
+        _err(error)
+        return 1
+    plugin = os.path.join(root, layout["plugin"])
+    removed = []
+    try:
+        if os.path.isdir(plugin):
+            shutil.rmtree(plugin)
+            removed.append(layout["plugin"])
+        keys = _vendor_unmerge_settings(layout, data)
+        if keys:
+            _write_settings(settings_path, data)
+            removed.extend("%s (%s)" % (layout["settings"], key)
+                           for key in keys)
+    except OSError as exc:
+        _err("cannot remove the vendored install in %s: %s" % (root, exc))
+        return 1
+    if not removed:
+        print("nothing to remove: no vendored shipd install in %s" % root)
+        return 0
+    for entry in removed:
+        print("removed %s" % entry)
+    print("The content scaffold and every spec under it were left untouched.")
+    return 0
+
+
+def _vendor_report(root, version, states):
+    """The bare verb's read-only report. Nothing here writes."""
+    print("vendored shipd plugin in %s (this install: v%s)" % (root, version))
+    for label, state, detail in states:
+        print("  %s %s — %s" % (state, label, detail))
+    print("`shipd vendor add` installs or refreshes those surfaces; "
+          "`shipd vendor remove` deletes the ones it owns.")
+    print("A collaborator then needs only to clone this repository and accept "
+          "Claude Code's folder trust dialog — no marketplace registration, "
+          "no network.")
+    return 0
+
+
+def cmd_vendor(args):
+    """Report on, install, or remove a vendored per-repo shipd install. Bare it
+    is read-only; only the explicit words ``add`` and ``remove`` write, and
+    only inside the four managed surfaces. Nothing here runs ``claude`` or
+    ``gh``, or touches the network."""
+    parser = argparse.ArgumentParser(
+        prog="shipd vendor",
+        description="Maintain a vendored per-repo shipd install in a "
+                    "repository. Bare, it reports and changes nothing.")
+    parser.add_argument(
+        "action", nargs="?", choices=["add", "remove"],
+        help="add: install or refresh the vendored plugin and its wiring; "
+             "remove: delete the ones it owns (default: report only)")
+    parser.add_argument("--root", default=os.getcwd(),
+                        help="repository to maintain (default: cwd)")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="act on a vendored plugin directory this install does not own")
+    opts = parser.parse_args(args)
+    root = os.path.abspath(opts.root)
+
+    try:
+        version = _plugin_version()
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        _err("cannot read %s: %s" % (MANIFEST, exc))
+        return 1
+    _load_engine()
+    try:
+        layout = vendor_layout(root)
+    except sc.ConfigError as exc:
+        _err("%s" % exc)
+        return 1
+
+    states = vendor_states(root, layout, version)
+    if opts.action is None:
+        return _vendor_report(root, version, states)
+
+    # Only the plugin directory carries ownership, so it is the only surface
+    # the force guard speaks for. (Unreadable settings are refused separately,
+    # inside each mode, and never forced past.)
+    ownership, _marker = _vendor_ownership(root, layout)
+    if ownership == "foreign" and not opts.force:
+        _err("%s: not a shipd-vendored plugin (its manifest does not name "
+             "`%s`) — pass --force to %s it anyway"
+             % (layout["tree"], VENDOR_PLUGIN, opts.action))
+        return 1
+    if opts.action == "add":
+        return _vendor_add(root, layout, version)
+    return _vendor_remove(root, layout)
+
+
 def main(argv):
     if not argv:
         sys.stderr.write(USAGE)
@@ -909,6 +1406,8 @@ def main(argv):
         return cmd_statusline(rest)
     if verb == "copilot":
         return cmd_copilot(rest)
+    if verb == "vendor":
+        return cmd_vendor(rest)
     if verb not in VERB_TABLE:
         sys.stderr.write(USAGE)
         return 2

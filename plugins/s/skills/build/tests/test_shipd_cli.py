@@ -34,11 +34,13 @@ from contextlib import redirect_stderr, redirect_stdout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
-BIN = os.path.normpath(os.path.join(HERE, "..", "..", "..", "bin", "shipd"))
+PLUGIN_ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+BIN = os.path.join(PLUGIN_ROOT, "bin", "shipd")
+MANIFEST = os.path.join(PLUGIN_ROOT, ".claude-plugin", "plugin.json")
 
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
 VERBS = ("list", "status", "locate", "epic", "workspace", "board", "metrics",
-         "lint", "doctor", "statusline", "copilot")
+         "lint", "doctor", "statusline", "copilot", "vendor")
 
 
 def _load_binary():
@@ -750,23 +752,50 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual((level, name), ("warn", "gh"))
         self.assertIn("gh auth login", detail)
 
+    # -- the pip install hint ----------------------------------------------
+    #
+    # A vendored per-repo install has no checkout to ``-r`` from, so the hint
+    # names the pinned specifier wherever no ``requirements.txt`` sits at the
+    # probed root. Both pins mirror ``requirements.txt``.
+
+    PYDANTIC_HINT = "pip install 'pydantic>=2.12,<3'"
+    TEXTUAL_HINT = "pip install 'textual>=8.2.8,<9'"
+    REQUIREMENTS_HINT = "pip install -r requirements.txt"
+
+    def with_requirements(self, root):
+        """Plant a ``requirements.txt`` at ``root`` — the checkout case."""
+        with open(os.path.join(root, "requirements.txt"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("textual>=8.2.8,<9\npydantic>=2.12,<3\n")
+        return root
+
     # -- textual -----------------------------------------------------------
 
     def test_textual_importable_is_ok(self):
         level, name, _detail = shipd.check_textual(
-            find_spec=lambda name: object())
+            self.tmp, find_spec=lambda name: object())
         self.assertEqual((level, name), ("ok", "textual"))
 
     def test_textual_missing_warns_about_the_board_only(self):
-        level, name, detail = shipd.check_textual(find_spec=lambda name: None)
+        root = self.with_requirements(self.undeclared_repo("textual-checkout"))
+        level, name, detail = shipd.check_textual(
+            root, find_spec=lambda name: None)
         self.assertEqual((level, name), ("warn", "textual"))
         self.assertIn("board", detail)
+        self.assertIn(self.REQUIREMENTS_HINT, detail)
 
     def test_textual_probe_failure_warns(self):
         def boom(name):
             raise ValueError("no parent package")
-        level, name, _detail = shipd.check_textual(find_spec=boom)
+        level, name, _detail = shipd.check_textual(self.tmp, find_spec=boom)
         self.assertEqual((level, name), ("warn", "textual"))
+
+    def test_textual_hint_pins_the_specifier_without_a_requirements_file(self):
+        root = self.undeclared_repo("textual-vendored")
+        _level, _name, detail = shipd.check_textual(
+            root, find_spec=lambda name: None)
+        self.assertIn(self.TEXTUAL_HINT, detail)
+        self.assertNotIn("-r requirements.txt", detail)
 
     # -- pydantic ----------------------------------------------------------
 
@@ -791,11 +820,33 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual((level, name), ("ok", "pydantic"))
 
     def test_pydantic_missing_warns_about_pipeline_validation_only(self):
+        root = self.with_requirements(self.undeclared_repo())
         level, name, detail = self.pydantic_check(
-            self.undeclared_repo(), find_spec=lambda name: None)
+            root, find_spec=lambda name: None)
         self.assertEqual((level, name), ("warn", "pydantic"))
         self.assertIn("pipeline", detail)
-        self.assertIn("pip install -r requirements.txt", detail)
+        self.assertIn(self.REQUIREMENTS_HINT, detail)
+
+    def test_pydantic_hint_pins_the_specifier_without_a_requirements_file(
+            self):
+        level, name, detail = self.pydantic_check(
+            self.undeclared_repo("pydantic-vendored"),
+            find_spec=lambda name: None)
+        self.assertEqual((level, name), ("warn", "pydantic"))
+        self.assertIn(self.PYDANTIC_HINT, detail)
+        self.assertNotIn("-r requirements.txt", detail)
+
+    def test_escalated_pydantic_hint_pins_the_specifier_too(self):
+        # The ``fail`` form carries the same context-aware hint as the
+        # ``warn`` one — a vendored repo has no checkout either way.
+        root, _path = self.repo_with_config(
+            "escalating-vendored",
+            {"autonomous-pipeline": [{"stage": "plan"}]})
+        level, name, detail = self.pydantic_check(
+            root, find_spec=lambda name: None)
+        self.assertEqual((level, name), ("fail", "pydantic"))
+        self.assertIn(self.PYDANTIC_HINT, detail)
+        self.assertNotIn("-r requirements.txt", detail)
 
     def test_pydantic_probe_failure_warns(self):
         def boom(name):
@@ -814,11 +865,12 @@ class DoctorCheckTest(unittest.TestCase):
     def test_declared_pipeline_escalates_missing_pydantic_to_a_failure(self):
         root, path = self.repo_with_config(
             "escalating", {"autonomous-pipeline": [{"stage": "plan"}]})
+        self.with_requirements(root)
         level, name, detail = self.pydantic_check(
             root, find_spec=lambda name: None)
         self.assertEqual((level, name), ("fail", "pydantic"))
         self.assertIn(path, detail)
-        self.assertIn("pip install -r requirements.txt", detail)
+        self.assertIn(self.REQUIREMENTS_HINT, detail)
 
     def test_known_preset_escalates_missing_pydantic_to_a_failure(self):
         root, path = self.repo_with_config(
@@ -831,10 +883,11 @@ class DoctorCheckTest(unittest.TestCase):
     def test_default_preset_never_escalates_missing_pydantic(self):
         root, _path = self.repo_with_config(
             "default-preset", {"autonomous-pipeline": "default"})
+        self.with_requirements(root)
         level, name, detail = self.pydantic_check(
             root, find_spec=lambda name: None)
         self.assertEqual((level, name), ("warn", "pydantic"))
-        self.assertIn("pip install -r requirements.txt", detail)
+        self.assertIn(self.REQUIREMENTS_HINT, detail)
 
     def test_unknown_preset_never_escalates_missing_pydantic(self):
         root, _path = self.repo_with_config(
@@ -1048,6 +1101,625 @@ class DoctorCommandTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught:
             self.run_doctor([("ok", "python", "3.13.0")], args=("extra",))
         self.assertEqual(caught.exception.code, 2)
+
+
+class VendorVerbTestBase(unittest.TestCase):
+    """``shipd vendor`` (shipd-cli vendor-verb), driven as a black box through
+    the binary itself against throwaway target roots.
+
+    This checkout is only ever the *source* of the vendored copy; every target
+    root is a temp directory, and ``HOME`` is isolated so the layered config
+    resolution can never read the real user's outermost layer.
+    """
+
+    # The four managed surfaces, keyed for the assertions below. ``tree`` and
+    # ``marketplace`` sit under the resolved content directory, so their labels
+    # are computed per test from that name.
+    SCAFFOLD = ("verified", "planned", "completed")
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="shipd-vendor-test-")
+        self.home = tempfile.mkdtemp(prefix="shipd-vendor-home-")
+        with open(MANIFEST, encoding="utf-8") as fh:
+            self.version = json.load(fh)["version"]
+
+    def tearDown(self):
+        shutil.rmtree(self.home, ignore_errors=True)
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    # -- runners -----------------------------------------------------------
+
+    def env(self):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        return env
+
+    def cli(self, *args):
+        """Run the binary itself (shebang + exec bit) against the temp root."""
+        return subprocess.run(
+            [BIN, "vendor", *args, "--root", self.root],
+            capture_output=True, text=True, cwd=self.root, env=self.env())
+
+    # -- the managed surfaces ----------------------------------------------
+
+    def labels(self, content=".shipd"):
+        """``{key: reported label}`` for the four managed surfaces."""
+        return {
+            "tree": os.path.join(content, "plugin", "s"),
+            "marketplace": os.path.join(content, "plugin", ".claude-plugin",
+                                        "marketplace.json"),
+            "settings": os.path.join(".claude", "settings.json"),
+            "scaffold": os.path.join(content, "{verified,planned,completed}"),
+        }
+
+    def states(self, *args, content=".shipd"):
+        """``{surface key: state word}`` parsed from a bare report. The label
+        is matched as a whole field, never a substring, so a nested path can
+        never be mistaken for its parent."""
+        result = self.cli(*args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        by_label = {label: key
+                    for key, label in self.labels(content).items()}
+        found = {}
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if len(fields) >= 2 and fields[1] in by_label:
+                found[by_label[fields[1]]] = fields[0]
+        return found
+
+    # -- target-tree helpers -----------------------------------------------
+
+    def path(self, *parts):
+        return os.path.join(self.root, *parts)
+
+    def tree(self):
+        """Every file under the target root, as root-relative paths."""
+        found = set()
+        for base, _dirs, names in os.walk(self.root):
+            for name in names:
+                found.add(os.path.relpath(os.path.join(base, name), self.root))
+        return found
+
+    def write_json(self, path, data):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+            fh.write("\n")
+
+    def read_json(self, path):
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def use_content_dir(self, name):
+        """Declare a custom content ``dir`` for the target root."""
+        self.write_json(self.path(".shipd-config.json"), {"dir": name})
+
+    # -- fixtures ----------------------------------------------------------
+    #
+    # The report is exercised against a *planted* install rather than one made
+    # by ``vendor add``, so these cases stand on their own before the writing
+    # modes exist.
+
+    def plant_plugin(self, content=".shipd"):
+        """Copy this checkout's plugin tree into the target as ``vendor add``
+        would. ``__pycache__`` is generated bytecode, never part of the
+        shipping unit, and is excluded on both sides."""
+        shutil.copytree(PLUGIN_ROOT, self.path(content, "plugin", "s"),
+                        ignore=shutil.ignore_patterns("__pycache__"))
+
+    def plant_marketplace(self, content=".shipd"):
+        self.write_json(
+            self.path(content, "plugin", ".claude-plugin",
+                      "marketplace.json"),
+            {"name": "shipd",
+             "owner": {"name": "shipd"},
+             "plugins": [{"name": "s", "source": "./s"}]})
+
+    def plant_settings(self, content=".shipd", **extra):
+        data = {
+            "enabledPlugins": {"s@shipd": True},
+            "extraKnownMarketplaces": {
+                "shipd": {
+                    "source": {"source": "directory",
+                               "path": "%s/plugin" % content},
+                    "autoUpdate": True,
+                },
+            },
+        }
+        data.update(extra)
+        self.write_json(self.path(".claude", "settings.json"), data)
+
+    def plant_scaffold(self, content=".shipd"):
+        for name in self.SCAFFOLD:
+            os.makedirs(self.path(content, name), exist_ok=True)
+            with open(self.path(content, name, ".gitkeep"), "w") as fh:
+                fh.write("")
+
+    def plant_install(self, content=".shipd"):
+        self.plant_plugin(content)
+        self.plant_marketplace(content)
+        self.plant_settings(content)
+        self.plant_scaffold(content)
+
+    def vendored_manifest(self, content=".shipd"):
+        return self.path(content, "plugin", "s", ".claude-plugin",
+                         "plugin.json")
+
+    # -- tree comparison ---------------------------------------------------
+
+    def files_under(self, base):
+        """Sorted ``base``-relative paths of every file under it, generated
+        bytecode caches excluded."""
+        found = []
+        for current, dirs, names in os.walk(base):
+            dirs[:] = [name for name in dirs if name != "__pycache__"]
+            for name in names:
+                found.append(
+                    os.path.relpath(os.path.join(current, name), base))
+        return sorted(found)
+
+    def assertTreeIsByteIdentical(self, content=".shipd"):
+        """The vendored tree holds exactly this plugin's files, byte for
+        byte."""
+        target = self.path(content, "plugin", "s")
+        expected = self.files_under(PLUGIN_ROOT)
+        self.assertEqual(self.files_under(target), expected)
+        for relative in expected:
+            with open(os.path.join(PLUGIN_ROOT, relative), "rb") as fh:
+                source = fh.read()
+            with open(os.path.join(target, relative), "rb") as fh:
+                self.assertEqual(fh.read(), source, relative)
+
+    def add(self, *args):
+        result = self.cli("add", *args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
+
+class VendorDispatchTest(VendorVerbTestBase):
+    """``vendor`` is a curated verb handled inside the binary (shipd-cli
+    cli-dispatch), like ``copilot``: it writes files in a target repository,
+    which no engine script does, so it never replaces the process."""
+
+    def test_vendor_dispatches_in_binary_without_delegating(self):
+        self.assertNotIn("vendor", shipd.VERB_TABLE)
+        seen = []
+
+        def fake_vendor(args):
+            seen.append(args)
+            return 0
+
+        def no_exec(*args):
+            self.fail("vendor must not exec-delegate")
+
+        with unittest.mock.patch.object(shipd, "cmd_vendor", fake_vendor), \
+                unittest.mock.patch.object(shipd.os, "execv", no_exec):
+            code = shipd.main(["vendor", "add", "--force"])
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, [["add", "--force"]])
+
+    def test_an_unknown_mode_word_is_a_usage_error(self):
+        result = self.cli("frobnicate")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("frobnicate", result.stderr)
+        # A usage error writes nothing into the target repository.
+        self.assertEqual(self.tree(), set())
+
+
+class VendorAddTest(VendorVerbTestBase):
+    """``vendor add`` — the idempotent install/refresh of all four surfaces."""
+
+    # -- the vendored tree -------------------------------------------------
+
+    def test_add_writes_a_byte_identical_plugin_tree(self):
+        self.add()
+        self.assertTreeIsByteIdentical()
+
+    def test_add_vendors_the_test_suites_too(self):
+        self.add()
+        self.assertTrue(os.path.isfile(self.path(
+            ".shipd", "plugin", "s", "skills", "build", "tests",
+            "test_shipd_cli.py")))
+
+    def test_add_vendors_an_executable_binary(self):
+        self.add()
+        vendored = self.path(".shipd", "plugin", "s", "bin", "shipd")
+        self.assertTrue(os.access(vendored, os.X_OK), vendored)
+
+    def test_add_reports_every_surface_installed(self):
+        self.add()
+        self.assertEqual(self.states(),
+                         {key: "installed" for key in self.labels()})
+
+    def test_add_leaves_no_temporary_files_behind(self):
+        self.add()
+        strays = [name for name in self.tree()
+                  if os.path.basename(name).startswith(".shipd-")]
+        self.assertEqual(strays, [])
+
+    # -- the marketplace manifest ------------------------------------------
+
+    def test_add_generates_the_marketplace_manifest(self):
+        self.add()
+        data = self.read_json(self.path(".shipd", "plugin", ".claude-plugin",
+                                        "marketplace.json"))
+        self.assertEqual(data["name"], "shipd")
+        self.assertEqual([(entry["name"], entry["source"])
+                          for entry in data["plugins"]],
+                         [("s", "./s")])
+
+    # -- the settings merge ------------------------------------------------
+
+    def settings(self):
+        return self.read_json(self.path(".claude", "settings.json"))
+
+    def test_add_merges_the_two_managed_settings_keys(self):
+        self.add()
+        data = self.settings()
+        self.assertIs(data["enabledPlugins"]["s@shipd"], True)
+        self.assertEqual(
+            data["extraKnownMarketplaces"]["shipd"],
+            {"source": {"source": "directory", "path": ".shipd/plugin"},
+             "autoUpdate": True})
+
+    def test_add_registers_the_vendored_statusline(self):
+        self.add()
+        entry = self.settings()["statusLine"]
+        self.assertEqual(entry["type"], "command")
+        self.assertIn(".shipd/plugin/s/integrations/statusline.sh",
+                      entry["command"])
+
+    def test_add_preserves_an_existing_statusline(self):
+        self.write_json(self.path(".claude", "settings.json"),
+                        {"statusLine": {"type": "command",
+                                        "command": "bash /elsewhere"}})
+        self.add()
+        data = self.settings()
+        self.assertEqual(data["statusLine"]["command"], "bash /elsewhere")
+        self.assertIs(data["enabledPlugins"]["s@shipd"], True)
+        self.assertIn("shipd", data["extraKnownMarketplaces"])
+
+    def test_add_keeps_unrelated_settings_keys(self):
+        self.write_json(self.path(".claude", "settings.json"),
+                        {"model": "opus", "env": {"FOO": "bar"}})
+        self.add()
+        data = self.settings()
+        self.assertEqual(data["model"], "opus")
+        self.assertEqual(data["env"], {"FOO": "bar"})
+
+    def test_add_refuses_to_rewrite_unparseable_settings(self):
+        os.makedirs(self.path(".claude"))
+        with open(self.path(".claude", "settings.json"), "w") as fh:
+            fh.write("{not json")
+        result = self.cli("add")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(".claude/settings.json", result.stderr)
+        with open(self.path(".claude", "settings.json")) as fh:
+            self.assertEqual(fh.read(), "{not json")
+
+    # -- the content scaffold ----------------------------------------------
+
+    def test_add_creates_the_scaffold_with_gitkeeps(self):
+        self.add()
+        for name in self.SCAFFOLD:
+            self.assertTrue(os.path.isdir(self.path(".shipd", name)), name)
+            self.assertTrue(os.path.isfile(self.path(".shipd", name,
+                                                     ".gitkeep")), name)
+
+    def test_add_never_touches_existing_spec_content(self):
+        os.makedirs(self.path(".shipd", "planned", "a-change"))
+        with open(self.path(".shipd", "planned", "a-change", "plan.md"),
+                  "w") as fh:
+            fh.write("# a-change\n")
+        self.add()
+        with open(self.path(".shipd", "planned", "a-change",
+                            "plan.md")) as fh:
+            self.assertEqual(fh.read(), "# a-change\n")
+
+    # -- a configured content directory ------------------------------------
+
+    def test_a_configured_content_dir_relocates_every_surface(self):
+        self.use_content_dir("specs")
+        self.add()
+        self.assertTreeIsByteIdentical("specs")
+        self.assertFalse(os.path.exists(self.path(".shipd", "plugin")))
+        self.assertEqual(
+            self.settings()["extraKnownMarketplaces"]["shipd"]["source"],
+            {"source": "directory", "path": "specs/plugin"})
+        self.assertEqual(self.states(content="specs"),
+                         {key: "installed" for key in self.labels("specs")})
+
+    # -- idempotence and refresh -------------------------------------------
+
+    def test_repeated_add_is_a_no_op(self):
+        self.add()
+        before = {}
+        for relative in self.tree():
+            with open(self.path(relative), "rb") as fh:
+                before[relative] = fh.read()
+        self.add()
+        after = {}
+        for relative in self.tree():
+            with open(self.path(relative), "rb") as fh:
+                after[relative] = fh.read()
+        self.assertEqual(after, before)
+        self.assertEqual(self.states(),
+                         {key: "installed" for key in self.labels()})
+
+    def test_add_refreshes_a_stale_install_and_prunes_extraneous_files(self):
+        self.plant_install()
+        manifest = self.read_json(self.vendored_manifest())
+        manifest["version"] = "0.0.1"
+        self.write_json(self.vendored_manifest(), manifest)
+        stray = self.path(".shipd", "plugin", "s", "STRAY.md")
+        with open(stray, "w") as fh:
+            fh.write("not mine\n")
+        self.assertEqual(self.states()["tree"], "stale")
+
+        self.add()
+        self.assertFalse(os.path.exists(stray))
+        self.assertEqual(self.read_json(self.vendored_manifest())["version"],
+                         self.version)
+        self.assertTreeIsByteIdentical()
+        self.assertEqual(self.states()["tree"], "installed")
+
+    def test_add_repairs_a_modified_vendored_file(self):
+        self.plant_install()
+        target = self.path(".shipd", "plugin", "s", "bin", "shipd")
+        with open(target, "a", encoding="utf-8") as fh:
+            fh.write("\n# local edit\n")
+        self.add()
+        self.assertTreeIsByteIdentical()
+
+    def test_add_completes_a_partial_scaffold(self):
+        os.makedirs(self.path(".shipd", "planned"))
+        self.add()
+        self.assertEqual(self.states()["scaffold"], "installed")
+
+    # -- the foreign guard -------------------------------------------------
+
+    def plant_foreign_plugin(self):
+        os.makedirs(self.path(".shipd", "plugin", "s"))
+        with open(self.path(".shipd", "plugin", "s", "README.md"), "w") as fh:
+            fh.write("someone else's plugin\n")
+
+    def test_add_refuses_a_foreign_plugin_directory_and_writes_nothing(self):
+        self.plant_foreign_plugin()
+        result = self.cli("add")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(os.path.join(".shipd", "plugin", "s"), result.stderr)
+        self.assertEqual(self.tree(),
+                         {os.path.join(".shipd", "plugin", "s", "README.md")})
+
+    def test_force_replaces_a_foreign_plugin_directory(self):
+        self.plant_foreign_plugin()
+        self.add("--force")
+        self.assertTreeIsByteIdentical()
+        self.assertFalse(os.path.exists(
+            self.path(".shipd", "plugin", "s", "README.md")))
+        self.assertEqual(self.states(),
+                         {key: "installed" for key in self.labels()})
+
+
+class VendorRemoveTest(VendorVerbTestBase):
+    """``vendor remove`` — the guarded delete of what the verb owns, and only
+    that: the user's spec content is never its to remove."""
+
+    def settings(self):
+        return self.read_json(self.path(".claude", "settings.json"))
+
+    def remove(self, *args):
+        result = self.cli("remove", *args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
+    def test_remove_deletes_the_whole_vendored_plugin_directory(self):
+        self.plant_install()
+        self.remove()
+        self.assertFalse(os.path.exists(self.path(".shipd", "plugin")))
+        states = self.states()
+        self.assertEqual(states["tree"], "absent")
+        self.assertEqual(states["marketplace"], "absent")
+
+    def test_remove_drops_the_two_managed_settings_keys(self):
+        self.plant_install()
+        self.plant_settings(model="opus")
+        self.remove()
+        data = self.settings()
+        self.assertNotIn("enabledPlugins", data)
+        self.assertNotIn("extraKnownMarketplaces", data)
+        self.assertEqual(data["model"], "opus")
+        self.assertEqual(self.states()["settings"], "absent")
+
+    def test_remove_drops_a_statusline_pointing_into_the_vendored_tree(self):
+        self.plant_install()
+        self.plant_settings(statusLine={
+            "type": "command",
+            "command": "bash .shipd/plugin/s/integrations/statusline.sh"})
+        self.remove()
+        self.assertNotIn("statusLine", self.settings())
+
+    def test_remove_keeps_a_statusline_it_did_not_write(self):
+        self.plant_install()
+        self.plant_settings(statusLine={"type": "command",
+                                        "command": "bash /elsewhere"})
+        self.remove()
+        self.assertEqual(self.settings()["statusLine"]["command"],
+                         "bash /elsewhere")
+
+    def test_remove_keeps_the_scaffold_and_every_planned_change(self):
+        self.plant_install()
+        os.makedirs(self.path(".shipd", "planned", "a-change"))
+        with open(self.path(".shipd", "planned", "a-change", "plan.md"),
+                  "w") as fh:
+            fh.write("# a-change\n")
+        self.remove()
+        for name in self.SCAFFOLD:
+            self.assertTrue(os.path.isdir(self.path(".shipd", name)), name)
+        with open(self.path(".shipd", "planned", "a-change",
+                            "plan.md")) as fh:
+            self.assertEqual(fh.read(), "# a-change\n")
+        self.assertEqual(self.states()["scaffold"], "installed")
+
+    def test_remove_on_an_absent_install_exits_zero_and_deletes_nothing(self):
+        self.plant_scaffold()
+        before = self.tree()
+        self.remove()
+        self.assertEqual(self.tree(), before)
+
+    def test_remove_is_idempotent(self):
+        self.plant_install()
+        self.remove()
+        after_first = self.tree()
+        self.remove()
+        self.assertEqual(self.tree(), after_first)
+
+    def test_remove_honors_a_configured_content_directory(self):
+        self.use_content_dir("specs")
+        self.plant_install("specs")
+        self.remove()
+        self.assertFalse(os.path.exists(self.path("specs", "plugin")))
+        self.assertTrue(os.path.isdir(self.path("specs", "verified")))
+
+    def test_remove_refuses_a_foreign_plugin_directory(self):
+        os.makedirs(self.path(".shipd", "plugin", "s"))
+        with open(self.path(".shipd", "plugin", "s", "README.md"), "w") as fh:
+            fh.write("someone else's plugin\n")
+        before = self.tree()
+        result = self.cli("remove")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(os.path.join(".shipd", "plugin", "s"), result.stderr)
+        self.assertEqual(self.tree(), before)
+
+    def test_force_removes_a_foreign_plugin_directory(self):
+        os.makedirs(self.path(".shipd", "plugin", "s"))
+        with open(self.path(".shipd", "plugin", "s", "README.md"), "w") as fh:
+            fh.write("someone else's plugin\n")
+        self.remove("--force")
+        self.assertFalse(os.path.exists(self.path(".shipd", "plugin")))
+
+
+class VendorReportTest(VendorVerbTestBase):
+    """The bare verb's read-only per-surface state report."""
+
+    def test_empty_root_reports_every_surface_absent(self):
+        result = self.cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for label in self.labels().values():
+            self.assertIn(label, result.stdout)
+        self.assertEqual(
+            self.states(),
+            {key: "absent" for key in self.labels()})
+
+    def test_bare_report_creates_nothing(self):
+        result = self.cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.tree(), set())
+
+    def test_bare_report_names_this_installs_version(self):
+        result = self.cli()
+        self.assertIn(self.version, result.stdout)
+
+    def test_owned_install_at_this_version_reports_installed(self):
+        self.plant_install()
+        self.assertEqual(
+            self.states(),
+            {key: "installed" for key in self.labels()})
+
+    def test_older_vendored_version_reports_stale(self):
+        self.plant_install()
+        manifest = self.read_json(self.vendored_manifest())
+        manifest["version"] = "0.0.1"
+        self.write_json(self.vendored_manifest(), manifest)
+        result = self.cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.states()["tree"], "stale")
+        self.assertIn("0.0.1", result.stdout)
+
+    def test_extraneous_vendored_file_reports_stale(self):
+        self.plant_install()
+        with open(self.path(".shipd", "plugin", "s", "STRAY.md"), "w") as fh:
+            fh.write("not mine\n")
+        self.assertEqual(self.states()["tree"], "stale")
+
+    def test_modified_vendored_file_reports_stale(self):
+        self.plant_install()
+        target = self.path(".shipd", "plugin", "s", "bin", "shipd")
+        with open(target, "a", encoding="utf-8") as fh:
+            fh.write("\n# local edit\n")
+        self.assertEqual(self.states()["tree"], "stale")
+
+    def test_plugin_dir_without_a_manifest_reports_foreign(self):
+        os.makedirs(self.path(".shipd", "plugin", "s"))
+        with open(self.path(".shipd", "plugin", "s", "README.md"), "w") as fh:
+            fh.write("someone else's plugin\n")
+        self.assertEqual(self.states()["tree"], "foreign")
+
+    def test_plugin_dir_with_an_unparseable_manifest_reports_foreign(self):
+        os.makedirs(self.path(".shipd", "plugin", "s", ".claude-plugin"))
+        with open(self.vendored_manifest(), "w", encoding="utf-8") as fh:
+            fh.write("{not json")
+        self.assertEqual(self.states()["tree"], "foreign")
+
+    def test_plugin_dir_naming_another_plugin_reports_foreign(self):
+        self.plant_plugin()
+        manifest = self.read_json(self.vendored_manifest())
+        manifest["name"] = "someone-else"
+        self.write_json(self.vendored_manifest(), manifest)
+        self.assertEqual(self.states()["tree"], "foreign")
+
+    def test_a_foreign_tree_makes_its_marketplace_manifest_foreign(self):
+        self.plant_install()
+        manifest = self.read_json(self.vendored_manifest())
+        manifest["name"] = "someone-else"
+        self.write_json(self.vendored_manifest(), manifest)
+        self.assertEqual(self.states()["marketplace"], "foreign")
+
+    def test_marketplace_manifest_naming_another_source_reports_stale(self):
+        self.plant_install()
+        self.write_json(
+            self.path(".shipd", "plugin", ".claude-plugin",
+                      "marketplace.json"),
+            {"name": "shipd", "plugins": [{"name": "s", "source": "./other"}]})
+        self.assertEqual(self.states()["marketplace"], "stale")
+
+    def test_settings_without_the_managed_keys_report_absent(self):
+        self.plant_install()
+        self.write_json(self.path(".claude", "settings.json"),
+                        {"model": "opus"})
+        self.assertEqual(self.states()["settings"], "absent")
+
+    def test_partially_merged_settings_report_stale(self):
+        self.plant_install()
+        self.write_json(self.path(".claude", "settings.json"),
+                        {"enabledPlugins": {"s@shipd": True}})
+        self.assertEqual(self.states()["settings"], "stale")
+
+    def test_unparseable_settings_report_foreign(self):
+        self.plant_install()
+        with open(self.path(".claude", "settings.json"), "w") as fh:
+            fh.write("{not json")
+        self.assertEqual(self.states()["settings"], "foreign")
+
+    def test_a_foreign_statusline_never_makes_the_settings_stale(self):
+        # ``add`` never replaces an existing ``statusLine``, so one it did not
+        # write is not drift.
+        self.plant_install()
+        self.plant_settings(
+            statusLine={"type": "command", "command": "bash /elsewhere"})
+        self.assertEqual(self.states()["settings"], "installed")
+
+    def test_partial_scaffold_reports_stale(self):
+        self.plant_install()
+        shutil.rmtree(self.path(".shipd", "completed"))
+        self.assertEqual(self.states()["scaffold"], "stale")
+
+    def test_report_honors_a_configured_content_directory(self):
+        self.use_content_dir("specs")
+        self.plant_install("specs")
+        self.assertEqual(
+            self.states(content="specs"),
+            {key: "installed" for key in self.labels("specs")})
 
 
 if __name__ == "__main__":
