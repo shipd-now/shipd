@@ -752,6 +752,34 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual((level, name), ("warn", "gh"))
         self.assertIn("gh auth login", detail)
 
+    # -- difft -------------------------------------------------------------
+
+    def test_difft_on_path_is_ok(self):
+        level, name, detail = shipd.check_difft(
+            which=self.stub_which({"difft": "/opt/bin/difft"}))
+        self.assertEqual((level, name), ("ok", "difft"))
+        self.assertIn("/opt/bin/difft", detail)
+
+    def test_difft_missing_warns_naming_the_degradation_and_remedy(self):
+        level, name, detail = shipd.check_difft(which=self.stub_which({}))
+        self.assertEqual((level, name), ("warn", "difft"))
+        self.assertIn("text engine", detail)
+        self.assertIn("semdiff doctor --fix", detail)
+
+    def test_default_checks_probe_difft_after_gh(self):
+        stubs = {}
+        for check in ("python", "git", "config", "pipeline", "gh", "difft",
+                      "textual", "pydantic", "snapshot", "statusline"):
+            stubs[check] = unittest.mock.patch.object(
+                shipd, "check_%s" % check,
+                lambda *a, _n=check, **kw: ("ok", _n, ""))
+        with contextlib.ExitStack() as stack:
+            for patcher in stubs.values():
+                stack.enter_context(patcher)
+            names = [name for _level, name, _detail
+                     in shipd.default_checks(self.tmp)]
+        self.assertEqual(names.index("difft"), names.index("gh") + 1)
+
     # -- the pip install hint ----------------------------------------------
     #
     # A vendored per-repo install has no checkout to ``-r`` from, so the hint
@@ -906,8 +934,8 @@ class DoctorCheckTest(unittest.TestCase):
 
     def test_default_checks_run_in_the_documented_order(self):
         stubs = {}
-        for check in ("python", "git", "config", "pipeline", "gh", "textual",
-                      "pydantic", "snapshot", "statusline"):
+        for check in ("python", "git", "config", "pipeline", "gh", "difft",
+                      "textual", "pydantic", "snapshot", "statusline"):
             stubs[check] = unittest.mock.patch.object(
                 shipd, "check_%s" % check,
                 lambda *a, _n=check, **kw: ("ok", _n, ""))
@@ -917,7 +945,7 @@ class DoctorCheckTest(unittest.TestCase):
             names = [name for _level, name, _detail
                      in shipd.default_checks(self.tmp)]
         self.assertEqual(names,
-                         ["python", "git", "config", "pipeline", "gh",
+                         ["python", "git", "config", "pipeline", "gh", "difft",
                           "textual", "pydantic", "snapshot", "statusline"])
 
     # -- statusline --------------------------------------------------------
@@ -967,8 +995,8 @@ class DoctorCheckTest(unittest.TestCase):
 
     def test_default_checks_probe_statusline_after_snapshot(self):
         stubs = {}
-        for check in ("python", "git", "config", "pipeline", "gh", "textual",
-                      "pydantic", "snapshot", "statusline"):
+        for check in ("python", "git", "config", "pipeline", "gh", "difft",
+                      "textual", "pydantic", "snapshot", "statusline"):
             stubs[check] = unittest.mock.patch.object(
                 shipd, "check_%s" % check,
                 lambda *a, _n=check, **kw: ("ok", _n, ""))

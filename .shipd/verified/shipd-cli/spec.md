@@ -143,7 +143,12 @@ default included — and `fail` carrying the resolver's own error line
 when a declared pipeline cannot resolve, whether from malformed entries,
 an unknown preset, or missing pydantic), with `pipeline` reported
 directly after `config`. The warning checks SHALL be: `gh` (present on
-PATH and `gh auth status` exiting 0), `textual` (importable), `pydantic`
+PATH and `gh auth status` exiting 0), `difft` (present on PATH, probed
+via `shutil.which` so the binary stays stdlib-only, reported directly
+after `gh`; the warning detail SHALL name the semantic review's
+text-engine degradation as the affected surface and the tiered
+`semdiff doctor --fix` installer as the remedy, and a present binary
+SHALL report `ok`), `textual` (importable), `pydantic`
 (importable, probed via `importlib.util.find_spec` without importing it,
 so the binary itself stays stdlib-only), `snapshot` (when the binary
 runs from a plugin cache snapshot that is not the newest version
@@ -167,7 +172,8 @@ configuration SHALL NOT escalate it. The verb SHALL mutate nothing.
 
 #### Scenario: Healthy environment reports ok
 - **WHEN** `shipd doctor` runs with python >= 3.9, git present, a resolvable
-  config, a resolvable pipeline, gh authenticated, and the newest snapshot
+  config, a resolvable pipeline, gh authenticated, difft present, and the
+  newest snapshot
 - **THEN** every line begins `ok` and the closing line is `doctor: ok` with
   exit code `0`
 
@@ -180,6 +186,16 @@ configuration SHALL NOT escalate it. The verb SHALL mutate nothing.
 - **WHEN** `shipd doctor` runs with `gh` absent or `gh auth status` failing,
   all required checks passing
 - **THEN** a `warn gh — ` line is printed and the exit code is `0`
+
+#### Scenario: Missing difft only warns
+- **WHEN** `shipd doctor` runs with no `difft` on PATH, all required checks
+  passing
+- **THEN** a `warn difft — ` line names the review's text-engine degradation
+  and the `semdiff doctor --fix` remedy, and the exit code is `0`
+
+#### Scenario: Present difft reports ok
+- **WHEN** `shipd doctor` runs with `difft` on PATH
+- **THEN** the `difft` check line begins `ok`
 
 #### Scenario: Missing textual only warns
 - **WHEN** `shipd doctor` runs without `textual` importable, all required

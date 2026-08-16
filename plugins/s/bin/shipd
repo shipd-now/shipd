@@ -359,6 +359,19 @@ def check_gh(which=shutil.which, gh_status=_gh_auth_status):
     return ("ok", "gh", "authenticated at %s" % found)
 
 
+def check_difft(which=shutil.which):
+    """Difftastic, the semantic review's syntax-aware diff engine. Recommended,
+    never required: without it a review still completes, on the structural-text
+    engine, so its absence is a warning that names that degradation and the
+    tiered installer that repairs it."""
+    found = which("difft")
+    if not found:
+        return ("warn", "difft",
+                "not found — semantic reviews degrade to the text engine; "
+                "run /s:doctor or `semdiff doctor --fix` to install it")
+    return ("ok", "difft", "found at %s" % found)
+
+
 # The pinned ranges the install hints fall back to, mirroring
 # ``requirements.txt`` and the doctor skill's remedy table — change all three.
 PINNED_SPECIFIERS = {"textual": "textual>=8.2.8,<9",
@@ -487,6 +500,7 @@ def default_checks(root):
             check_config(root),
             check_pipeline(root),
             check_gh(),
+            check_difft(),
             check_textual(root),
             check_pydantic(root),
             check_snapshot(PLUGIN_ROOT),
