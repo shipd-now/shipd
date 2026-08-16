@@ -670,6 +670,16 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
    pipeline that skips or omits `review`) is exactly such a blocker: surface
    it to the user rather than waiting for a status that is never coming. This close-out waits only on this PR; a second shipped
    change's stuck PR never delays this one, and this one never delays it.
+
+   **When this build runs as a driven stage sub-agent** — spawned by an
+   autopilot drive rather than invoked by a human — run this watch **in the
+   foreground of your own turn**: poll it through to a terminal state and end
+   the turn with the Phase 7 report as the turn's **final text**. Never end the
+   turn with the outcome still pending on a backgrounded process or watch: a
+   sub-agent cannot message its parent mid-run and no parent resumes it to
+   collect a result, so anything left running in your context is never
+   observed, and the orchestrator grades the stage from the repository the
+   moment your turn ends.
 5. **Close the build from the main checkout, now that the PR has merged.**
    Return to the main checkout and:
    ```
