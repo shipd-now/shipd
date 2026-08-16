@@ -26,12 +26,13 @@ remain anywhere outside archived history.
 - `plugins/s/skills/build/tests/test_shipd_cli.py`: the retired-html test is
   rewritten to the generic unknown-word shape, dropping every html mention.
 - Plugin version bump (test file lives under `plugins/s/`).
-- Live epic records under `.shipd/epics/` lose their two references to the
+- Live epic records under `.shipd/epics/` lose their references to the
   removed verb: `update-ui-look-feel/epic.md`'s Non-goals drops the sentence
-  "The `html` verb's static page is out of scope.", and `shipd-dx/epic.md`'s
+  "The `html` verb's static page is out of scope.", `shipd-dx/epic.md`'s
   Non-goals drops the clause "; the board's existing `html` verb is
-  unchanged" — epics are live documents, not archives, so the sweep covers
-  them.
+  unchanged", and `autonomous-delivery/epic.md` drops "and auto-refresh
+  HTML" from its board description and delivery-dashboard stub-table row —
+  epics are live documents, not archives, so the sweep covers them.
 
 Affected capabilities: `delivery-dashboard` (modified), `shipd-cli`
 (modified). Impact: `plugins/s/skills/build/tests/test_shipd_cli.py`,

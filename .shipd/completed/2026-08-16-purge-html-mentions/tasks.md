@@ -25,20 +25,25 @@
       from `0.6.108` to `0.6.109` (plugin-cache rule in `AGENTS.md`); if the
       merged base has already advanced past `0.6.108`, bump from the current
       value instead.
-- [x] 1.4 [req: *] Sweep the two live epic references: in
+- [x] 1.4 [req: *] Sweep the live epic references: in
       `.shipd/epics/update-ui-look-feel/epic.md` (Non-goals, ~line 45) delete
       the sentence "The `html` verb's static page is out of scope." — keeping
       the preceding `.dc.html` mock sentence, which names a design-mock file,
       not the board feature; in `.shipd/epics/shipd-dx/epic.md` (Non-goals,
       ~line 49) delete the clause "; the board's existing `html` verb is
       unchanged" so the sentence ends at "(the port epic also deferred the
-      site)." Reflow the touched bullets to the surrounding wrap width.
+      site)."; in `.shipd/epics/autonomous-delivery/epic.md` change
+      "(TUI and auto-refresh HTML)" (~line 107) to "(TUI)" and drop
+      "and auto-refresh HTML" from the delivery-dashboard stub-table row
+      (~line 162). Reflow the touched bullets to the surrounding wrap width.
 - [x] 1.5 [req: *] From `plugins/s/skills/build`, run
       `python3 -m unittest discover -s tests` and
       `python3 -m unittest discover -s tests_textual`; both must pass. Then
-      from the worktree root run
-      `grep -rn html --include="*.md" --include="*.py" --include=shipd . |
-      grep -v "^\./\.shipd/completed/\|^\./\.git/\|^\./\.shipd/planned/"` and
+      from the worktree root run the case-insensitive, all-filetypes sweep
+      `grep -rni html . | sed 's|^\./||' |
+      grep -v "^\.shipd/completed/\|^\.git/\|^\.shipd/planned/"` (the
+      original case-sensitive, include-globbed form with `^\./`-anchored
+      exclusions could not match `HTML` and never filtered the archives) and
       confirm every remaining match is one of the allowed unrelated classes
       named in plan.md (GitHub `html_url` fields, `semdiff.py`'s `.html`
       extension mapping, external URLs in `.shipd/research/` reports, and the
