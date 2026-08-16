@@ -1998,6 +1998,24 @@ class PipelineShowTest(SpecStatusTestBase):
             self.assertIn(stage, r.stdout)
         self.assertIn("[default]", r.stdout)
 
+    def test_expand_default_prints_bare_stage_json_without_pydantic(self):
+        # `--expand default` resolves no config and needs no third-party
+        # package: the JSON is the exact value a config may declare as a list.
+        r = self.cli("pipeline-show", "--expand", "default")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            json.loads(r.stdout),
+            [{"stage": name} for name in sc.PIPELINE_STAGES])
+        self.assertIn("\n  ", r.stdout)   # indented, not one compact line
+
+    def test_expand_unknown_preset_lists_known_names(self):
+        r = self.cli("pipeline-show", "--expand", "turbo")
+        self.assertNotEqual(r.returncode, 0)
+        combined = r.stdout + r.stderr
+        self.assertIn("turbo", combined)
+        for name in ("basic", "default", "eco"):
+            self.assertIn(name, combined)
+
 
 class EpicSetInitiativeTest(SpecStatusTestBase):
     """`epic-set-initiative <epic> <initiative>` writes/replaces exactly one

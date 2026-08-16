@@ -30,7 +30,7 @@ from pydantic import (BaseModel, ConfigDict, Discriminator, Field,
                       StringConstraints, Tag, TypeAdapter, ValidationError,
                       model_validator)
 
-from spec_common import KEBAB_RE
+from spec_common import KEBAB_RE, PIPELINE_STAGES
 
 # The symbolic model tiers a `model` / `subagent_model` option may name,
 # resolved relative to the driving session by the pipeline's consumers. Any
@@ -235,3 +235,57 @@ def validate_entries(raw):
     if errors:
         raise ValueError("\n".join(errors))
     return entries
+
+
+# ---------------------------------------------------------------------------
+# The shipped preset table (shipd-config pipeline-presets)
+# ---------------------------------------------------------------------------
+
+# The built-in presets a string `autonomous-pipeline` value may name, as data
+# beside the schema that types them. Keyed by exactly the names in
+# ``spec_common.PIPELINE_PRESETS`` — the stdlib-side mirror the resolver checks
+# an unknown name against without importing this module (the same
+# mirror discipline as PIPELINE_FALLBACKS/Fallback above), asserted by
+# ``tests_pydantic/test_resolve_pipeline.py``.
+#
+# `default` is bare: schema defaults apply, they are never injected. The
+# cheapened presets skip a stage *explicitly* rather than by omission, so a
+# skipped stage stays visible in `pipeline-show`, and both keep plan on
+# `session` and keep an unskipped review — cheapening review through `model`
+# and `disposition` instead.
+PRESETS = {
+    "default": [{"stage": name} for name in PIPELINE_STAGES],
+    "eco": [
+        {"stage": "research", "skip": True},
+        {"stage": "epic", "skip": True},
+        {"stage": "plan", "model": "session"},
+        {"stage": "gate", "autopilot": {"attempts": 1}},
+        {"stage": "build", "validator": False,
+         "subagent_model": "tier-two-below", "telemetry": False},
+        {"stage": "review", "model": "tier-below",
+         "disposition": "high-only"},
+    ],
+    "basic": [
+        {"stage": "research", "skip": True},
+        {"stage": "epic", "skip": True},
+        {"stage": "plan", "model": "session"},
+        {"stage": "gate", "skip": True},
+        {"stage": "build", "validator": False,
+         "subagent_model": "tier-below"},
+        {"stage": "review", "model": "tier-below",
+         "disposition": "high-only"},
+    ],
+}
+
+
+def expand_preset(name):
+    """Return the named preset's entries, validated exactly like a
+    user-authored list (shipd-config pipeline-presets).
+
+    Running the table through :func:`validate_entries` is the point: a preset
+    is not a privileged shape, so a preset entry that stops matching the schema
+    fails the same way a hand-written one would — the drift guard the
+    pydantic-dependent suite relies on. ``name`` is already known to be a
+    preset name; an unknown one is the resolver's error to raise, stdlib-side,
+    without this import."""
+    return validate_entries(PRESETS[name])

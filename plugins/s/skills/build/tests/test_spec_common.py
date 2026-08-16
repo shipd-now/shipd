@@ -840,6 +840,75 @@ class ResolvePipelineTest(unittest.TestCase):
                 self.assertEqual(set(e.keys()), {"stage"})
             self.assertEqual(prov, "default")
 
+    # --- the preset names and the string form -----------------------------
+
+    def test_preset_names_are_the_stdlib_constant(self):
+        self.assertEqual(sc.PIPELINE_PRESETS, ("default", "eco", "basic"))
+
+    def test_default_preset_resolves_without_pydantic(self):
+        # `"default"` is the absent key's pipeline with preset provenance, and
+        # it never touches the schema module.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"autonomous-pipeline": "default"})
+            with imports_blocked("pipeline_schema", "pydantic"), \
+                    home_set_to(os.path.realpath(home)):
+                entries, prov = sc.resolve_pipeline(root)
+            self.assertEqual(
+                [e["stage"] for e in entries], list(sc.PIPELINE_STAGES))
+            for e in entries:
+                self.assertEqual(set(e.keys()), {"stage"})
+            self.assertEqual(
+                prov,
+                "preset:default (%s)"
+                % os.path.join(root, sc.CONFIG_FILENAME))
+
+    def test_unknown_preset_lists_known_names_without_pydantic(self):
+        # The name check precedes the import, so an unknown name reports the
+        # roster rather than the missing dependency.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"autonomous-pipeline": "ecoo"})
+            with imports_blocked("pipeline_schema", "pydantic"), \
+                    home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.resolve_pipeline(root)
+            msg = str(cm.exception)
+            self.assertIn("ecoo", msg)
+            self.assertIn(os.path.join(root, sc.CONFIG_FILENAME), msg)
+            for name in ("basic", "default", "eco"):
+                self.assertIn(name, msg)
+            self.assertNotIn("pydantic", msg)
+
+    def test_non_default_preset_without_pydantic_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"autonomous-pipeline": "eco"})
+            with imports_blocked("pipeline_schema", "pydantic"), \
+                    home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.resolve_pipeline(root)
+            msg = str(cm.exception)
+            self.assertIn("pydantic", msg)
+            self.assertIn("pip install -r requirements.txt", msg)
+
+    def test_non_list_non_string_value_names_both_forms(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"autonomous-pipeline": 7})
+            with imports_blocked("pipeline_schema", "pydantic"), \
+                    home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.resolve_pipeline(root)
+            msg = str(cm.exception)
+            self.assertIn(sc.PIPELINE_KEY, msg)
+            self.assertIn("list", msg)
+            self.assertIn("preset name string", msg)
+
     # --- fail-closed on a missing pydantic -------------------------------
 
     def test_absent_key_resolves_without_pydantic(self):
