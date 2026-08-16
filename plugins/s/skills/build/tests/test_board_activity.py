@@ -458,6 +458,81 @@ class LaneDeadRunTest(unittest.TestCase):
         self.assertEqual(entry.get("stage"), "build")
 
 
+class LaneLiveBuildTest(unittest.TestCase):
+    """A member whose attached interactive build heartbeat is live
+    (delivery-dashboard board-live-build-lane spec) is placed by that
+    heartbeat's stage — ``review`` in the ``review`` lane, any other stage in
+    ``building`` — overriding its lifecycle-state mapping. A ``driving``
+    roster entry still wins, and an aged-out heartbeat falls back to the
+    state mapping with no stale treatment. A standalone change (planned
+    outside any epic) is judged against the same injected ``now``."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dashboard = _load_dashboard_stdlib()
+
+    def _member_with_build(self, stage, updated_at, state="archived"):
+        member = _member("a")
+        member["state"] = state
+        member["build_heartbeat"] = {"slug": "a", "kind": "build",
+                                     "state": "running", "stage": stage,
+                                     "updated_at": updated_at}
+        return member
+
+    def _board_with(self, member, roster=()):
+        hb = {"state": "running", "host": socket.gethostname(),
+              "pid": os.getpid(), "updated_at": 1000.0,
+              "roster": list(roster)}
+        epic = {"slug": "ep", "status": "active", "heartbeat": hb,
+                "members": [member]}
+        return _board(epics=[epic])
+
+    def _slugs(self, contents, lane):
+        return [member["slug"] for _slug, _status, member, _entry
+                in contents[lane]]
+
+    def test_archived_member_mid_review_lands_in_review(self):
+        board = self._board_with(self._member_with_build("review", 1000.0))
+        contents = self.dashboard._lane_contents(board, now=1000.0)
+        self.assertEqual(self._slugs(contents, "review"), ["a"])
+        self.assertEqual(contents["shipped"], [])
+
+    def test_non_review_build_stage_lands_in_building(self):
+        board = self._board_with(self._member_with_build("implement", 1000.0))
+        contents = self.dashboard._lane_contents(board, now=1000.0)
+        self.assertEqual(self._slugs(contents, "building"), ["a"])
+        self.assertEqual(contents["review"], [])
+        self.assertEqual(contents["shipped"], [])
+
+    def test_stale_build_heartbeat_falls_back_to_state_mapping(self):
+        stale_at = 1000.0 - self.dashboard.BUILD_FRESH_SECONDS - 1
+        board = self._board_with(self._member_with_build("review", stale_at))
+        contents = self.dashboard._lane_contents(board, now=1000.0)
+        self.assertEqual(self._slugs(contents, "shipped"), ["a"])
+        self.assertEqual(contents["review"], [])
+        entry = contents["shipped"][0][3]
+        self.assertFalse(entry.get("stale"))
+
+    def test_driving_roster_entry_keeps_precedence(self):
+        board = self._board_with(
+            self._member_with_build("review", 1000.0),
+            roster=[{"slug": "a", "state": "driving", "stage": "build"}])
+        contents = self.dashboard._lane_contents(board, now=1000.0)
+        self.assertEqual(self._slugs(contents, "building"), ["a"])
+        self.assertEqual(contents["review"], [])
+
+    def test_standalone_change_is_judged_against_the_injected_clock(self):
+        # `now` reaches the standalone loop's `_member_column` too, so an
+        # injected clock places a standalone change exactly as it places an
+        # epic member (not against the wall clock, under which this
+        # heartbeat is ancient and the change would land in `shipped`).
+        member = self._member_with_build("review", 1000000.0)
+        board = _board(standalone=[member])
+        contents = self.dashboard._lane_contents(board, now=1000000.0)
+        self.assertEqual(self._slugs(contents, "review"), ["a"])
+        self.assertEqual(contents["shipped"], [])
+
+
 class DrivingSessionKeysBuildTest(_BuildHeartbeatFixture):
     """``driving_session_keys`` also yields the ``(tdir, session_id)`` key for a
     member with a live build heartbeat (explicit session id first, else the

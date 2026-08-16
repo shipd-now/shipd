@@ -2229,6 +2229,14 @@ class TaskCardRowTest(unittest.TestCase):
             card._card_text(),
             "[$text-error]†[/] sl[$fg-muted] · stale (died 8h ago)[/]")
 
+    def test_live_build_row_appends_the_build_stage_in_muted_tier(self):
+        card = _bare_card("low", state="archived")
+        card.member["build_heartbeat"] = {
+            "slug": "sl", "kind": "build", "state": "running",
+            "stage": "review", "updated_at": time.time()}
+        self.assertEqual(card._card_text(),
+                         "[$risk-low]●[/] sl[$fg-muted] · review[/]")
+
     def test_row_css_drops_accent_bars_and_margin_adds_height_one(self):
         css = dashboard.BoardApp.CSS
         block = re.search(r"\bTaskCard\s*\{[^}]*\}", css).group(0)
@@ -3325,6 +3333,53 @@ class ParkedMemberModalTest(DashboardTestBase, unittest.IsolatedAsyncioTestCase)
             self.assertEqual(list(app.screen.query(".badge-error")), [])
             self.assertEqual(list(app.screen.query("#member-signal-callout")),
                              [])
+
+
+class LiveBuildMemberModalTest(DashboardTestBase,
+                               unittest.IsolatedAsyncioTestCase):
+    """The spec-detail modal of a member placed by a live interactive build
+    heartbeat (delivery-dashboard board-live-build-lane spec): the muted
+    ``stage:`` chip is derived from that heartbeat when no roster stage chip
+    or parked signal applies, and the lane badge follows
+    :func:`_member_column` into ``review``."""
+
+    def _push_member(self, app, stage, entry=None, state="archived"):
+        member = {"slug": "documented", "description": "d", "risk": "high",
+                  "state": state, "location": self.root,
+                  "actions": [], "session_id": None,
+                  "build_heartbeat": {"slug": "documented", "kind": "build",
+                                      "state": "running", "stage": stage,
+                                      "updated_at": time.time()}}
+        app.push_screen(
+            dashboard.MemberDetailScreen("ep", member, entry or {}, "active"))
+
+    async def test_live_build_member_shows_stage_chip_and_review_lane(self):
+        app = dashboard.BoardApp(
+            root=self.root,
+            board_fn=lambda: _detail_board(self.root, "documented"))
+        async with app.run_test(size=(120, 24)) as pilot:
+            self._push_member(app, "review")
+            await pilot.pause()
+            muted = "\n".join(
+                str(w.render()) for w in app.screen.query(".badge-muted"))
+            self.assertIn("stage: review", muted)
+            self.assertTrue(app.screen.query(".badge-lane-review"))
+            self.assertEqual(list(app.screen.query(".badge-error")), [])
+
+    async def test_parked_signal_still_wins_over_the_build_stage_chip(self):
+        app = dashboard.BoardApp(
+            root=self.root,
+            board_fn=lambda: _detail_board(self.root, "documented"))
+        async with app.run_test(size=(120, 24)) as pilot:
+            self._push_member(app, "review",
+                              entry={"slug": "documented",
+                                     "state": "needs-human"})
+            await pilot.pause()
+            chip = app.screen.query_one(".badge-error")
+            self.assertEqual(str(chip.render()), "needs-human")
+            muted = "\n".join(
+                str(w.render()) for w in app.screen.query(".badge-muted"))
+            self.assertNotIn("stage:", muted)
 
 
 class ControlHierarchyTest(DashboardTestBase, unittest.IsolatedAsyncioTestCase):
@@ -4505,6 +4560,42 @@ class LaneSignatureTest(unittest.TestCase):
         building_sig = lambda stage: self._sig(
             _one_card_board(stage=stage), "building")
         self.assertNotEqual(building_sig("build"), building_sig("test"))
+
+    def _build_board(self, stage, updated_at=None):
+        """A one-member board whose ``active`` member carries an interactive
+        build heartbeat at ``stage``, stamped ``updated_at`` (default: now).
+        The member lands in ``building`` either way — live by the heartbeat,
+        and by the plain state mapping once it ages out — so a signature
+        difference can only come from the folded-in build stage."""
+        board = _one_card_board(state="active")
+        board["epics"][0]["members"][0]["build_heartbeat"] = {
+            "slug": "m", "kind": "build", "state": "running", "stage": stage,
+            "updated_at": time.time() if updated_at is None else updated_at}
+        return board
+
+    def _building_sig(self, board):
+        # Guard that lane membership itself is unchanged, so the assertions
+        # below test the folded build stage rather than a card appearing or
+        # vanishing from the lane.
+        self.assertEqual(len(dashboard._lane_contents(board)["building"]), 1)
+        return self._sig(board, "building")
+
+    def test_differs_when_the_live_build_stage_changes(self):
+        # An `implement` -> `verify` transition keeps the member in
+        # `building`; without the build stage in the signature the lane never
+        # repaints and the card's stage suffix freezes (board-live-build-lane).
+        self.assertNotEqual(self._building_sig(self._build_board("implement")),
+                            self._building_sig(self._build_board("verify")))
+
+    def test_differs_when_the_build_heartbeat_ages_out(self):
+        # The liveness flip alone must repaint: the stale card's fallback lane
+        # is also `building`, so otherwise a dead build keeps a phantom
+        # `· implement` suffix forever.
+        stale_at = time.time() - dashboard.BUILD_FRESH_SECONDS - 1
+        self.assertNotEqual(
+            self._building_sig(self._build_board("implement")),
+            self._building_sig(self._build_board("implement",
+                                                 updated_at=stale_at)))
 
     def test_differs_across_the_three_modes(self):
         board = _kanban_board()
