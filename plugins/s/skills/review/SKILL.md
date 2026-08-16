@@ -203,6 +203,34 @@ the PR", or a driving session (the autopilot's `review` stage) instructing you
 to. Never post as a side effect of a plain review; a review with no posting
 request stays local and touches no `gh` write.
 
+### Review stage options
+
+The invoker — a driving session or the user — may pass two options with the
+posting request. Both default to today's behaviour, so a plain "post the
+review" changes nothing:
+
+- `disposition=<all|high-only|none>` (default `all`) — how much per-finding
+  judgement this review is worth. It selects the posting flow's step 5 (see
+  below) and passes straight through to the poster as `--disposition`, which
+  maps the `semantic-review` commit status by scope: `all` → `success` iff the
+  verdict is `pass`; `high-only` → `success` iff no finding is high; `none` →
+  always `success`. The findings and the rendered verdict stay
+  severity-honest in every scope — only the merge-gating status is
+  policy-aware, and a non-`all` scope is stamped on the summary comment and in
+  the status description so a green status over visible findings is explained
+  on the PR.
+- `model=<tier>` — the model tier this review was meant to run on, symbolic
+  (`session`, `tier-below`, `tier-two-below`) or a concrete id. Pass it
+  through to the poster as `--model`; it is recorded verbatim as a `Model:`
+  line in the summary. **Applying** the tier is the concern of the driver that
+  spawns the reviewing session (the autopilot's `review` stage); this skill
+  never spawns itself on another model, and interactively the tier is
+  informational provenance only.
+
+Never resolve the pipeline configuration yourself — this skill reads no
+`autonomous-pipeline` key and infers no options. Whatever the invoker did not
+pass, take as the default.
+
 When posting is requested:
 
 1. **Resolve the PR.** `gh pr view <branch> --json number,headRefOid,url` (or
@@ -215,28 +243,59 @@ When posting is requested:
 3. **Emit the machine JSON to a temp file.** Produce the `--json` object (same
    shape and rules as Machine output mode) and write it to a temp path, e.g.
    `"$TMPDIR/review.json"`.
-4. **Run the poster.** `review_gate.py post <pr> --from "$TMPDIR/review.json"`.
-   It upserts the marker summary comment, posts anchored inline comments for
-   in-diff findings (folding the rest into the summary), and sets the
-   `semantic-review` commit status on the head SHA — `success` iff the verdict
-   is `pass`, else `failure`.
-5. **Disposition every finding — low included.** A posted finding is advice
-   nobody is required to read until it is dispositioned. Walk the findings
-   (newest post first) and give each exactly one of two dispositions — never
-   leave a finding with neither:
-   - **Implement** it when the suggestion is correct: make the edit, commit,
-     and push. The push re-triggers the gate, so re-run the review + poster
-     afterwards so the summary and status track the new head SHA.
-   - **Push back** when you judge it not worth implementing: post a concrete,
-     reasoned reply onto the finding's thread with
+4. **Run the poster.** `review_gate.py post <pr> --from "$TMPDIR/review.json"`,
+   adding `--disposition <scope>` and `--model <tier>` when the invoker passed
+   them. It upserts the marker summary comment, posts anchored inline comments
+   for in-diff findings (folding the rest into the summary), and sets the
+   `semantic-review` commit status on the head SHA by scope — under the default
+   `all`, `success` iff the verdict is `pass`, else `failure`.
+5. **Disposition the findings — by scope.** A posted finding is advice nobody
+   is required to read until it is dispositioned, and every gate thread must
+   end up carrying disposition evidence. How much judgement you spend depends
+   on the acting scope:
+   - **`all` (the default) — every finding, low included.** Walk the findings
+     (newest post first) and give each exactly one of two dispositions — never
+     leave a finding with neither:
+     - **Implement** it when the suggestion is correct: make the edit, commit,
+       and push. The push re-triggers the gate, so re-run the review + poster
+       afterwards so the summary and status track the new head SHA.
+     - **Push back** when you judge it not worth implementing: post a concrete,
+       reasoned reply onto the finding's thread with
+
+       ```
+       review_gate.py reply <pr> <comment-id> --body "<the reason>"
+       ```
+
+       where `<comment-id>` is the inline review comment rooting that finding's
+       thread. A bare "won't fix" is not a disposition — name the reason.
+   - **`high-only` — judgement on the highs only.** Implement each **high**
+     finding (or push back on it with a reasoned `reply`, exactly as under
+     `all`), re-reviewing and re-posting after any push. Then cover the rest
+     mechanically:
 
      ```
-     review_gate.py reply <pr> <comment-id> --body "<the reason>"
+     review_gate.py autoreply <pr> --disposition high-only
      ```
 
-     where `<comment-id>` is the inline review comment rooting that finding's
-     thread. A bare "won't fix" is not a disposition — name the reason.
-6. **Resolve the threads.** Once every finding is implemented or answered, run
+     It posts the canonical policy reply onto every unreplied gate thread
+     rooted at a medium or low finding, prints `replied=<n>`, and leaves the
+     highs — and any thread whose severity it cannot parse — untouched, so a
+     reported unparsed thread still needs your disposition.
+   - **`none` — no per-finding judgement at all.** Do not implement and do not
+     author individual replies; run
+
+     ```
+     review_gate.py autoreply <pr> --disposition none
+     ```
+
+     which replies to every unreplied gate thread regardless of severity. The
+     findings stay posted and honest; they are simply recorded rather than
+     acted on.
+
+   `autoreply` skips threads that already carry a reply, so re-running it after
+   a push is safe.
+6. **Resolve the threads.** Once every finding is implemented, answered, or
+   auto-replied, run
 
    ```
    review_gate.py resolve <pr>
@@ -248,9 +307,10 @@ When posting is requested:
    never touches human-authored threads — humans resolve their own. Use
    `resolve <pr> --check` to read the unresolved count without mutating.
 7. **Report back** the posted status state (`success`/`failure`), the summary
-   comment URL, and the `unresolved=` count from `resolve` — which is **zero**
-   on a completed disposition. Any non-zero count means a finding still has no
-   disposition; go back to step 5.
+   comment URL, the acting disposition scope when it is not `all`, and the
+   `unresolved=` count from `resolve` — which is **zero** on a completed
+   disposition. Any non-zero count means a finding still has no disposition; go
+   back to step 5.
 
 The poster is idempotent: re-running after a new push edits the same summary
 comment in place and re-stamps the status on the new head SHA. It performs no
