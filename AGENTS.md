@@ -106,8 +106,10 @@ workspace, `/s:initiative` to run workspace initiatives, `/s:ask` to
 query the ask-mikk oracle before interrupting the user, `/s:teach` to
 distill spec artifacts and answered queue entries into the workspace wiki,
 `/s:remember` to capture the user's durable preferences into the personal
-memory store, `/s:memory` to list the captured memories, and `/s:forget` to
-remove a captured memory from the personal store.
+memory store, `/s:memory` to list the captured memories, `/s:forget` to
+remove a captured memory from the personal store, and `/s:doctor` to run the
+read-only `shipd doctor` preflight and then run the remedies the user consents
+to.
 
 ### The delivery board's one third-party dependency
 
