@@ -11,7 +11,11 @@ head, two-dot under `--linear`), a per-file list with `path`, `language`,
 file/hunk/kind counts, languages, and a best-effort `signature_changes`
 estimate. When reviewing the working tree, untracked files SHALL be
 included; whole-file adds/deletes with no hunks SHALL carry a `lines`
-count; whitespace-only content edits SHALL be filtered out.
+count; whitespace-only content edits SHALL be filtered out. Kind
+classification SHALL distinguish a file that is present at an endpoint
+with empty content from a file absent at that endpoint: emptying an
+existing file classifies `modified`, never `deleted`, and adding content
+to an existing empty file classifies `modified`, never `added`.
 
 #### Scenario: Working-tree review against a base
 - **WHEN** `semdiff diff main` runs in a repo with one modified tracked
@@ -24,6 +28,12 @@ count; whitespace-only content edits SHALL be filtered out.
 - **THEN** the JSON reports `mode: merge-base` with the resolved
   `merge_base`, and the after-side content comes from the `feature` ref,
   not the checkout
+
+#### Scenario: Empty is not absent
+- **WHEN** `semdiff diff HEAD` runs after emptying one committed non-empty
+  file and writing content into another committed empty file
+- **THEN** both files report kind `modified` — neither `deleted` nor
+  `added`
 
 ### Requirement: Text-engine degradation
 id: text-fallback
@@ -99,12 +109,21 @@ rg and gh optional — with actionable hints, exiting non-zero only when a
 required tool is missing. Where `--fix` is given, the system SHALL install
 difftastic by trying Homebrew, then cargo, then a prebuilt release binary
 into the plugin's `bin/` (else `~/.local/bin`); network access SHALL occur
-only under `--fix`.
+only under `--fix`. The release-binary path SHALL extract only an archive
+member that is a regular file: a member named `difft` that is a symlink or
+any other non-regular type SHALL be refused with a clear error and nothing
+extracted.
 
 #### Scenario: Doctor reports without installing
 - **WHEN** `semdiff doctor` runs without `--fix` on a machine missing difft
 - **THEN** difft is reported as recommended-missing with an install hint,
   no network access occurs, and the exit code is zero when git is present
+
+#### Scenario: A non-regular archive member is refused
+- **WHEN** the release-binary installer encounters an archive whose only
+  `difft` member is a symlink
+- **THEN** nothing is extracted and the failure names the non-regular
+  member, while an archive with a regular-file `difft` member extracts it
 
 ### Requirement: Semantic review skill
 id: review-skill

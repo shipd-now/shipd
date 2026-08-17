@@ -45,6 +45,20 @@
 #     relevance-driven, so a review that ignored the skill must not brick the
 #     merge.
 #
+# Strictness knob: a repository that has ruled the opposite — that an
+# unparsed verdict must never green the required check — sets the repository
+# Actions variable SHIPD_GATE_FAIL_OPEN to `false`
+# (`gh variable set SHIPD_GATE_FAIL_OPEN --body false`). Every marker-less
+# outcome then logs that no verdict was parsed and leaves the status
+# `pending`, on all three classify paths alike; the session review flow
+# (`review_gate.py post`) is the manual out. The CLI reviewer still posts the
+# text it captured as a pull-request comment there — a review no status was
+# derived from is the one an operator most needs to read. Unset, or set to
+# anything else,
+# keeps the fail-open default above. It is a variable rather than a local edit
+# to this file because `shipd copilot add` reinstalls the template and would
+# revert such an edit on the next upgrade.
+#
 # Why the fallback polls rather than waiting to be told: Copilot submits its
 # review from inside a dynamic Actions run, with the workflow-scoped token, and
 # GitHub does not start workflow runs from events raised by such a token. No
@@ -113,6 +127,11 @@ jobs:
       # that runs the CLI. This is what keeps a repository on the poll fallback
       # from paying for a checkout and a toolchain it will not use.
       COPILOT_CLI_REVIEWER: ${{ secrets.COPILOT_GITHUB_TOKEN != '' }}
+      # The strictness knob, read at classify time. An unset variable
+      # interpolates to the empty string, which the `:-true` default below
+      # reads as the fail-open default; only the literal `false` turns a
+      # marker-less outcome into a `pending` that stands.
+      SHIPD_GATE_FAIL_OPEN: ${{ vars.SHIPD_GATE_FAIL_OPEN }}
     steps:
       - name: Post the pending semantic-review status for this head
         env:
@@ -158,6 +177,14 @@ jobs:
           # The archive layout has varied across releases, so the binary is
           # located by name rather than assumed at the archive root.
           binary="$(find /tmp/difft-release -type f -name difft | head -n 1)"
+          # An archive carrying no difft would otherwise reach `install` as an
+          # empty source path. Failing here fails this step, which leaves the
+          # `pending` posted above standing — the correct outcome for a review
+          # that never ran.
+          if [[ -z "$binary" ]]; then
+            echo "The difftastic release archive contains no difft binary." >&2
+            exit 1
+          fi
           install -m 0755 "$binary" "$HOME/.local/bin/difft"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           sudo apt-get update
@@ -358,15 +385,33 @@ jobs:
           elif [[ "$last_line" == '<!-- shipd-verdict: ship-it -->' ]]; then
             state=success
             description="Copilot code review: ship it."
+          elif [[ "${SHIPD_GATE_FAIL_OPEN:-true}" == "false" ]]; then
+            # The strict repository. Nothing was judged, so no status is
+            # posted: the `pending` above stands and a human either
+            # re-reviews or posts the status by hand with the session flow's
+            # `review_gate.py post`. An empty state is what says "post
+            # nothing" — the run still falls through to the comment below,
+            # because a reviewer text no status was derived from is exactly
+            # the one an operator needs to read.
+            state=
+            description=
+            echo "The reviewed text of $HEAD_SHA carried no verdict marker" \
+              "and SHIPD_GATE_FAIL_OPEN is false; semantic-review stays" \
+              "pending."
           else
             state=success
             description="Copilot reviewed this commit; no verdict marker was parsed."
           fi
-          post_status "$state" "$description"
+          if [[ -n "$state" ]]; then
+            post_status "$state" "$description"
+          fi
 
           # What the gate judged, where a human can read it. Posted after the
           # status, so a comment that fails cannot cost the verdict it
-          # explains.
+          # explains — and posted whenever this run captured the text itself,
+          # verdict or none. A Copilot-authored review is already on the pull
+          # request, so the poll and review-event paths leave `comment_file`
+          # unset and post nothing.
           if [[ -n "$comment_file" ]]; then
             gh pr comment "$PR_NUMBER" --repo "$REPO" \
               --body-file "$comment_file"

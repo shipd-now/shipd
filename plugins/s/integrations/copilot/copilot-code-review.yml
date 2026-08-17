@@ -8,6 +8,14 @@
 # Nothing here is required for the review to work: semdiff.py degrades to its
 # structural text engine without difft, and `context` falls back to `git grep`
 # without ripgrep. These steps only make the review sharper.
+#
+# The checkout is fail-soft. GitHub's Copilot review runner cannot check out a
+# private repository, and a setup job that fails there earns every reviewed
+# pull request a visible `ccr-setup-step-failure` notice. So the checkout runs
+# `continue-on-error` and the installs below run only where it succeeded: on a
+# public repository the toolchain lands exactly as before, and on a private one
+# the job completes with the installs skipped — which is the same review the
+# repository was already getting, minus the notice.
 
 name: Copilot code review setup
 
@@ -19,9 +27,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository
+        id: checkout
+        # A checkout the runner's token cannot perform — a private repository —
+        # must not fail this job; the steps below read this step's outcome.
+        continue-on-error: true
         uses: actions/checkout@v4
 
       - name: Install difftastic (syntax-aware diffs for semdiff)
+        if: steps.checkout.outcome == 'success'
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.local/bin"
@@ -32,10 +45,17 @@ jobs:
           # The archive layout has varied across releases, so the binary is
           # located by name rather than assumed at the archive root.
           binary="$(find /tmp/difft-release -type f -name difft | head -n 1)"
+          # An archive carrying no difft would otherwise reach `install` as an
+          # empty source path; fail here, naming the problem.
+          if [[ -z "$binary" ]]; then
+            echo "The difftastic release archive contains no difft binary." >&2
+            exit 1
+          fi
           install -m 0755 "$binary" "$HOME/.local/bin/difft"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install ripgrep (reference lookup for semdiff context)
+        if: steps.checkout.outcome == 'success'
         run: |
           set -euo pipefail
           sudo apt-get update
