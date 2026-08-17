@@ -11,14 +11,14 @@ Subcommands:
                            fallback when difft is missing)
   files <base> [<head>]    changed paths grouped into architectural cohorts
   context <symbol>         best-effort reference lookup (rg, else git grep)
-  change <name>            aggregate a planned am change's review context
+  change <name>            aggregate a planned shipd change's review context
   doctor [--fix]           dependency check with a tiered difft installer
 
 Design: difftastic is *recommended*, never required — when `difft` is absent
 `diff` degrades to a structural-text engine parsing `git diff` unified output
 into the same JSON shape (`engine: "text"`), and never exits non-zero solely
 because difftastic is missing. This mirrors the automedifftool sample but drops
-its hard difft requirement and replaces its OpenSpec bridge with an am one.
+its hard difft requirement and replaces its OpenSpec bridge with a shipd one.
 """
 
 import argparse
@@ -641,7 +641,7 @@ def cmd_context(args):
     return 0
 
 
-# --- change (planned am change review bridge) -------------------------------
+# --- change (planned shipd change review bridge) -------------------------------
 
 
 def _import_engine():
@@ -797,7 +797,7 @@ def main():
     c.set_defaults(func=cmd_context)
 
     ch = sub.add_parser(
-        "change", help="aggregate a planned am change's review context")
+        "change", help="aggregate a planned shipd change's review context")
     ch.add_argument("change", help="planned change name (under planned/)")
     ch.set_defaults(func=cmd_change)
 

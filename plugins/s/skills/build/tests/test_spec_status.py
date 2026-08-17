@@ -1938,7 +1938,7 @@ class ConfigShowTest(SpecStatusTestBase):
     def test_defaults_only_succeeds(self):
         r = self.cli("config-show")
         self.assertEqual(r.returncode, 0)
-        # Content directory prints as the default `.am`; keys show `default`.
+        # Content directory prints as the default `.shipd`; keys show `default`.
         self.assertIn(".shipd", r.stdout)
         self.assertIn("default", r.stdout)
 
@@ -2984,12 +2984,12 @@ class CheckBaseTest(SpecStatusTestBase):
                 return sc.content_hash(req)
         raise AssertionError("no requirement %r in master %r" % (req_id, capability))
 
-    def snapshot_am(self):
-        """Return a {path: bytes} snapshot of every file under ``.am`` so a test
-        can assert the verb wrote nothing."""
+    def snapshot_content(self):
+        """Return a {path: bytes} snapshot of every file under the content
+        directory so a test can assert the verb wrote nothing."""
         snap = {}
-        am = os.path.join(self.root, ".shipd")
-        for dirpath, _dirs, files in os.walk(am):
+        content = os.path.join(self.root, ".shipd")
+        for dirpath, _dirs, files in os.walk(content):
             for name in files:
                 p = os.path.join(dirpath, name)
                 with open(p, "rb") as fh:
@@ -3101,10 +3101,10 @@ class CheckBaseTest(SpecStatusTestBase):
             "#### Scenario: It works\n"
             "- **WHEN** a user signs in\n"
             "- **THEN** access is granted\n")
-        before = self.snapshot_am()
+        before = self.snapshot_content()
         r = self.cli("check-base", "feat")
         self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
-        after = self.snapshot_am()
+        after = self.snapshot_content()
         self.assertEqual(before, after)
 
 

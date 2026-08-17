@@ -13,7 +13,7 @@ The orchestrator's spawn message supplies **the change name** — and only that.
 You get a **clean context**: no builder summaries, no orchestrator conversation —
 only the artifacts and the code.
 
-Working directory: the project root (where `./am` lives).
+Working directory: the project root (where `.shipd/` lives).
 Change under validation: `.shipd/planned/<change-name>/`.
 
 ## Your inputs (and only these)
@@ -26,7 +26,7 @@ Read, up front:
 - the relevant `.shipd/verified/<capability>/spec.md` masters the change touches —
   the surrounding capabilities the change fits into.
 - the **actual code** in the repository that the change added or modified.
-- `am/constitution.md` when present — binding engineering constraints the change
+- `.shipd/constitution.md` when present — binding engineering constraints the change
   must honor.
 - When `plan.md`'s `## Implementation` names a design scratch directory — an
   absolute path outside the worktree — that directory too, as a **read-only**

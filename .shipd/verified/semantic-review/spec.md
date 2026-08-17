@@ -71,7 +71,7 @@ best-effort candidates, never a complete call graph.
 ### Requirement: Planned-change review bridge
 id: change-bridge
 
-The system SHALL provide `semdiff change <name>` aggregating a planned am
+The system SHALL provide `semdiff change <name>` aggregating a planned shipd
 change's review context as one JSON object: the change status, per-delta
 entries (operation, capability, requirement id and text, scenario texts),
 task checkbox states with progress counts, the change's lint findings, and
@@ -171,12 +171,17 @@ id: gate-poster
 The system SHALL provide `review_gate.py post <pr> --from <json|->` which,
 given a `/s:review --json` object, publishes it to the named pull request
 via `gh`: it SHALL upsert a single summary comment identified by the hidden
-marker `<!-- am-semantic-review -->` (editing the existing marker comment in
-place on re-runs), SHALL post inline comments only for findings whose
+marker `<!-- shipd-semantic-review -->` (editing the existing marker comment
+in place on re-runs), SHALL post inline comments only for findings whose
 `location` anchors to a RIGHT-side commentable line of the PR diff (folding
 unanchorable findings into the summary, and retrying once with no inline
 comments if the review POST is rejected), and SHALL set a commit status with
-context `semantic-review` on the PR's head SHA. The verb SHALL accept
+context `semantic-review` on the PR's head SHA. The summary-comment
+upsert lookup SHALL also recognize the legacy marker
+`<!-- am-semantic-review -->`, while every write SHALL emit only the current
+marker, so a PR whose summary predates the rename is edited in place rather
+than duplicated (`reply`, `autoreply`, and `resolve` identify gate threads
+by their gate-authored root comment, which needs no marker matching). The verb SHALL accept
 `--disposition <scope>` (`all`, `high-only`, or `none`, default `all`) and
 SHALL map the status state by scope: under `all`, `success` iff the verdict
 is `pass`; under `high-only`, `success` iff no finding has severity `high`;
@@ -198,6 +203,13 @@ tiers. The script SHALL be stdlib-only and perform no analysis of its own.
 - **WHEN** `post` runs twice against the same PR
 - **THEN** the second run edits the existing marker comment and exactly one
   marker comment exists afterward
+
+#### Scenario: Legacy-marker summary is updated, not duplicated
+- **WHEN** `post` runs against a PR whose existing summary comment carries
+  the legacy `<!-- am-semantic-review -->` marker
+- **THEN** that comment is edited in place, the edited body opens with the
+  current `<!-- shipd-semantic-review -->` marker, and exactly one gate
+  summary comment exists afterward
 
 #### Scenario: Red verdict anchors findings inline
 - **WHEN** `post` runs with verdict `changes-requested`, one finding whose
@@ -411,7 +423,7 @@ successful pass.
 ### Requirement: Summary comment brand mark
 id: summary-brand-mark
 
-When `review_gate.py post` renders the marker-tagged summary comment, the system SHALL open the comment's visible body with the brand line `**☕ shipd** semantic review` — after the hidden `<!-- am-semantic-review -->` marker and before the `## Findings:` verdict header — on fresh posts and in-place re-post edits alike, leaving the marker line itself byte-identical.
+When `review_gate.py post` renders the marker-tagged summary comment, the system SHALL open the comment's visible body with the brand line `**☕ shipd** semantic review` — after the hidden `<!-- shipd-semantic-review -->` marker and before the `## Findings:` verdict header — on fresh posts and in-place re-post edits alike, leaving the marker line itself byte-identical.
 
 #### Scenario: Summary opens with the brand line
 - **WHEN** the summary body is rendered for any review JSON

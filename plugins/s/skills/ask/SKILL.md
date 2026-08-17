@@ -27,8 +27,8 @@ this skill — the interactive rung — puts it to the user and captures their
 answer back into the queue, so the next spawn can cite it.
 
 **Announce the version first.** Read the running plugin version from
-`${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `am:ask
-v<version>` in your first user-visible status sentence (e.g. "am:ask v0.6.7 —
+`${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `shipd:ask
+v<version>` in your first user-visible status sentence (e.g. "shipd:ask v0.6.7 —
 shaping your question and consulting the oracle"), so the user can always see
 which plugin snapshot the session is running.
 

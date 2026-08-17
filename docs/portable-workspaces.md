@@ -47,7 +47,7 @@ python3 <plugin>/skills/build/scripts/spec_status.py workspace-init ~/jobs/docum
 ```
 
 `--git` makes the root a git repo and seeds the managed `.gitignore` block.
-(`<plugin>` = `plugins/am` in an shipd checkout, or the installed plugin
+(`<plugin>` = `plugins/s` in a shipd checkout, or the installed plugin
 root.) Then declare the job in `~/jobs/documents-linking/.shipd-config.json`:
 
 ```json

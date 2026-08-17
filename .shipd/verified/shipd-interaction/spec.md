@@ -9,7 +9,7 @@ rather than a user decision: it SHALL NOT record a decline or a stop, and on
 the user's next message it SHALL either fold in a typed answer or re-offer
 the same choices as a plain-text numbered list and wait. An explicit stop —
 a selected Stop option or a typed stop — SHALL still be honored immediately.
-Every interactive am skill's SKILL.md (plan, build, epic, initiative,
+Every interactive shipd skill's SKILL.md (plan, build, epic, initiative,
 status, onboard, research, forget, doctor) SHALL carry this recovery rule.
 
 #### Scenario: Rejected question is re-offered, not obeyed

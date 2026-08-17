@@ -154,10 +154,12 @@ skip the append. When a lifecycle mutation completes — a plan status write
 promote/reject), a change install (`spec_emit.py change`), or an archive
 (`spec_merge.archive_change`) — the system SHALL append a snapshot
 best-effort; if capture fails for any reason, then the mutation SHALL still
-succeed. The log directory SHALL resolve as: the `AM_FLOW_LOG_DIR` environment
-variable when set (its value the directory; the empty string disabling
-recording entirely), else an explicit `config` dict's `log_dir`, else the
-layered configuration's `build.log_dir`, else `~/.shipd/builds`. The layer SHALL
+succeed. The log directory SHALL resolve as: the `SHIPD_FLOW_LOG_DIR`
+environment variable when set, else the legacy `AM_FLOW_LOG_DIR` environment
+variable when set (in either case the value the directory; the winning
+variable's empty string disabling recording entirely), else an explicit
+`config` dict's `log_dir`, else the layered configuration's `build.log_dir`,
+else `~/.shipd/builds`. The layer SHALL
 also provide a reader, `collect_flow(root, config=None)`, returning the
 root-filtered records sorted by `ts` (each with a derived `by_state` count
 map, malformed lines skipped, missing file → empty list); `derive` SHALL carry
@@ -167,11 +169,24 @@ print the appended record as JSON, or `unchanged` when deduped, exiting `0`.
 
 #### Scenario: A status write appends a full-band snapshot
 - **GIVEN** a fixture root whose epic holds members in `unplanned`, `draft`,
-  and `archived` states, with `AM_FLOW_LOG_DIR` pointing at a temp dir
+  and `archived` states, with `SHIPD_FLOW_LOG_DIR` pointing at a temp dir
 - **WHEN** a member's plan status is written via the status CLI
 - **THEN** `flow.jsonl` gains a record whose `root` is the fixture root and
   whose `states` lists the members under all three states, `unplanned` and
   `archived` included
+
+#### Scenario: The legacy env var still resolves the log directory
+- **GIVEN** `AM_FLOW_LOG_DIR` set to a temp dir and `SHIPD_FLOW_LOG_DIR`
+  unset
+- **WHEN** `record_flow` runs after a lifecycle mutation
+- **THEN** the snapshot is appended under the legacy variable's directory
+
+#### Scenario: The new env var wins over the legacy one
+- **GIVEN** both `SHIPD_FLOW_LOG_DIR` and `AM_FLOW_LOG_DIR` set to different
+  temp dirs
+- **WHEN** `record_flow` runs
+- **THEN** the snapshot is appended under the `SHIPD_FLOW_LOG_DIR` directory
+  only
 
 #### Scenario: An unchanged snapshot is not appended twice
 - **GIVEN** a root already recorded in `flow.jsonl`
@@ -199,7 +214,7 @@ print the appended record as JSON, or `unchanged` when deduped, exiting `0`.
   still writes no file
 
 #### Scenario: The empty env seam disables recording
-- **GIVEN** `AM_FLOW_LOG_DIR` set to the empty string
+- **GIVEN** `SHIPD_FLOW_LOG_DIR` set to the empty string
 - **WHEN** a hooked lifecycle mutation runs
 - **THEN** no flow record is written anywhere and the mutation succeeds
 

@@ -35,7 +35,7 @@ import spec_common as sc  # noqa: E402
 import spec_status as ss  # noqa: E402
 from spec_lint import lint_change  # noqa: E402
 
-# The plugin root (``plugins/am``), four directories up from this script, is the
+# The plugin root (``plugins/s``), four directories up from this script, is the
 # ``--plugin-dir`` handed to driven sessions so ``/s:*`` skills load.
 PLUGIN_DIR = os.path.normpath(os.path.join(SCRIPTS_DIR, "..", "..", ".."))
 WORKTREE_SH = os.path.join(SCRIPTS_DIR, "worktree.sh")

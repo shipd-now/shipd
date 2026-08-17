@@ -2,7 +2,7 @@
 name: build
 description: >-
   Orchestrate a feature end-to-end with spec-driven development: plan and design
-  the am artifacts on the most powerful model, then delegate implementation
+  the shipd artifacts on the most powerful model, then delegate implementation
   to execution sub-agents on the tier below, answer their questions, verify, and
   merge + archive with the plugin's own spec engine. Use
   when asked to build/implement/ship a feature, add a capability, or "orchestrate"
@@ -84,7 +84,7 @@ planning already answered. Before authoring anything, gate on context:
   change = one worktree = one branch = one PR; never author artifacts or edit
   code directly in the main checkout.
 
-0. **Load the constitution first.** When `am/constitution.md` is present,
+0. **Load the constitution first.** When `.shipd/constitution.md` is present,
    read it now and treat its rules as binding constraints on every design and
    implementation that follows in this build. When it is absent, proceed
    unchanged.
@@ -178,7 +178,7 @@ planning already answered. Before authoring anything, gate on context:
    identified, and is there no open decision that would change the task list?
    - **All four met → proceed to author the spec yourself** (Phase 1 then
      Phase 2). Rich context means no questions and no plan hand-off.
-   - **Any item unmet → invoke the `am:plan` flow** (the skill at
+   - **Any item unmet → invoke the `shipd:plan` flow** (the skill at
      `${CLAUDE_PLUGIN_ROOT}/skills/plan/SKILL.md`), by reference — do not copy
      its prompt. Let plan run its codebase-first investigation and its single
      batched AskUserQuestion round, emit the lean artifacts, and lint
@@ -213,7 +213,7 @@ BUILD_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 ## Phase 2 — Author & lint the spec (done by you on the strong model)
 
-If Phase 0 handed off to `am:plan`, the artifacts already exist and are
+If Phase 0 handed off to `shipd:plan`, the artifacts already exist and are
 lint-clean — skip authoring, review them, and go to the go-ahead gate at the end
 of this phase. Otherwise author them here.
 
@@ -225,7 +225,7 @@ ceremony to shortcut for small tasks.
 
 1. Pick a short kebab-case `<change-name>` (e.g. `dark-mode-toggle`).
 2. Author the artifacts under `.shipd/planned/<change-name>/`, following the
-   `am:plan` emission references — they are the format authority:
+   `shipd:plan` emission references — they are the format authority:
    - `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/emission.md` (directory
      layout, per-artifact rules, worked examples, `base:` hash computation);
    - `.shipd/README.md` (the requirement/delta grammar itself).
@@ -255,7 +255,7 @@ ceremony to shortcut for small tasks.
    lint is clean.** Then show the user the plan (`plan.md` + tasks) and get a
    quick go-ahead before spawning sub-agents.
 4. **On the go-ahead, promote the status to `ready`** — but only when *you*
-   authored the spec here (Phase 0 did not hand off to `am:plan`, which already
+   authored the spec here (Phase 0 did not hand off to `shipd:plan`, which already
    emits `draft` and promotes to `ready` at its own approval gate):
    ```
    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" set-status ready <change-name>
@@ -284,7 +284,7 @@ contract, so there is no template to build or substitute: the spawn message
 supplies only the change name, the absolute `<CLAIM_SCRIPT>` path (resolve
 `${CLAUDE_PLUGIN_ROOT}` to the real path first), and any Orchestrator addenda.
 Give each spawn a description of `builder <n> · <change>` so the agents pane
-shows the am role. Name the change's worktree root (`.worktrees/<change-name>`
+shows the shipd role. Name the change's worktree root (`.worktrees/<change-name>`
 on branch `change/<change-name>`) as the sub-agent's working directory — so
 every claim, edit, and command it runs stays inside the branch, never in the
 main checkout.
@@ -294,7 +294,7 @@ start from a **clean context**: the spawn message is the change name, the
 coordinator path, and any addenda, and nothing else. Do **not** paste
 conversational history, the planning transcript, or exploratory research into
 the message — the sub-agent obtains all change context by reading the named
-artifact set (`plan.md`, the delta specs, `tasks.md`, `am/constitution.md` when
+artifact set (`plan.md`, the delta specs, `tasks.md`, `.shipd/constitution.md` when
 present, and the relevant masters), and the rationale for binding decisions
 lives in `plan.md`'s `## Implementation` section where it can find it. When
 `plan.md`'s `## Implementation` names a design scratch directory, that

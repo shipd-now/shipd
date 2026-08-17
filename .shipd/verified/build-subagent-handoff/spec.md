@@ -5,7 +5,7 @@ id: artifact-compiled-context-handoff
 
 When spawning an execution sub-agent, the orchestrator SHALL deliver context
 through the change artifacts — the sub-agent reads the named artifact set
-(`plan.md`, delta specs, `tasks.md`, `am/constitution.md` when present, and
+(`plan.md`, delta specs, `tasks.md`, `.shipd/constitution.md` when present, and
 relevant masters) directly — and SHALL NOT pass conversational history,
 planning transcript, or exploratory research into the sub-agent's prompt. When
 `plan.md`'s `## Implementation` names a design scratch directory for the change,
@@ -69,9 +69,9 @@ body carrying that role's full contract. Neither definition SHALL pin a
 spawn. Build SHALL spawn workers with these agent types, with a spawn
 description of `builder <n> · <change>` for executors and
 `validator · <change>` for the validator, so the session's agent list shows
-the am role rather than a generic type.
+the shipd role rather than a generic type.
 
-#### Scenario: Agents pane shows the am role
+#### Scenario: Agents pane shows the shipd role
 - **WHEN** a build spawns an execution sub-agent
 - **THEN** it is spawned with agent type `s:sub-agent` and a description of
   the form `builder <n> · <change>`

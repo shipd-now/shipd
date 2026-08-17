@@ -41,7 +41,11 @@ import sys
 
 PROG = "review_gate"
 CONTEXT = "semantic-review"
-MARKER = "<!-- am-semantic-review -->"
+MARKER = "<!-- shipd-semantic-review -->"
+# The pre-rename marker. Every *read* still recognizes it — a PR whose summary
+# predates the rename is edited in place, never duplicated — while every write
+# emits MARKER only, so the old form retires as PRs are re-posted.
+LEGACY_MARKER = "<!-- am-semantic-review -->"
 # The ☕ brand line that opens the summary comment's visible body — the hidden
 # MARKER above stays line 1 and unbranded, so upsert matching is untouched.
 BRAND_LINE = "**☕ shipd** semantic review"
@@ -259,6 +263,15 @@ def render_summary(review, unanchored, disposition="all", model=None):
     return "\n".join(out) + "\n"
 
 
+def has_gate_marker(body):
+    """True when ``body`` carries this gate's hidden marker in either its
+    current or its pre-rename form — the single read-side identification every
+    marker lookup goes through, so no path recognizes one form and not the
+    other."""
+    text = body or ""
+    return MARKER in text or LEGACY_MARKER in text
+
+
 def _sev_marker(severity):
     """The marker an inline finding comment opens with. The renderer below and
     ``parse_severity`` both go through this one format, so the pair cannot
@@ -344,12 +357,14 @@ def _pr_files(gh, repo, number):
 
 
 def _upsert_summary(gh, repo, number, body):
-    """Create the marker summary comment or edit the existing one in place.
-    Returns the comment's html_url."""
+    """Create the marker summary comment or edit the existing one in place — a
+    comment carrying either the current or the legacy marker is *the* summary,
+    so a pre-rename PR is edited rather than given a second one. Returns the
+    comment's html_url."""
     rc, out, err = gh(["api",
                        "repos/%s/issues/%d/comments?per_page=100" % (repo, number)])
     comments = json.loads(out or "[]") if rc == 0 else []
-    existing = next((c for c in comments if MARKER in (c.get("body") or "")), None)
+    existing = next((c for c in comments if has_gate_marker(c.get("body"))), None)
     payload = json.dumps({"body": body})
     if existing:
         rc, out, err = gh(

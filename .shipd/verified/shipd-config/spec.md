@@ -54,7 +54,7 @@ unrecognized keys SHALL be tolerated and preserved.
 id: content-dir-key
 
 The engine SHALL resolve the content directory name from the resolved `dir`
-key, defaulting to `.am` when no layer declares it. The value SHALL be a
+key, defaulting to `.shipd` when no layer declares it. The value SHALL be a
 single path component (no path separators); a violating value SHALL be an
 error. The config filename `.shipd-config.json` itself SHALL NOT be
 configurable or affected by `dir`.
@@ -72,18 +72,25 @@ configurable or affected by `dir`.
 - **WHEN** a layer declares `dir: "nested/specs"`
 - **THEN** resolution fails with an error naming the invalid value
 
-### Requirement: Spec library path notation
+### Requirement: Spec-library path notation
 id: spec-library-path-notation
 
-Literal `am/` path prefixes appearing in master-library requirement text
-SHALL be read as denoting the configured content directory (default `.am`),
+Literal `.shipd/` path prefixes appearing in master-library requirement text
+SHALL be read as denoting the configured content directory (default `.shipd`),
 so requirements that reference canonical locations incidentally remain
-correct when the directory is renamed.
+correct when the directory is renamed. The retired `am/` prefix notation
+SHALL no longer appear in master-library requirement text.
 
 #### Scenario: Notation follows the configured name
 - **GIVEN** a repo whose config declares `dir: "specs"`
-- **WHEN** a requirement elsewhere references `am/planned/<change>/`
+- **WHEN** a requirement elsewhere references `.shipd/planned/<change>/`
 - **THEN** tooling and readers resolve it as `specs/planned/<change>/`
+
+#### Scenario: No retired prefix survives in the library
+- **WHEN** the master library's requirement texts are scanned for the
+  retired `am/` path prefix
+- **THEN** no occurrence remains outside the `shipd-port` capability's
+  deliberate legacy examples
 
 ### Requirement: Autonomous-pipeline config key
 id: autonomous-pipeline-key
