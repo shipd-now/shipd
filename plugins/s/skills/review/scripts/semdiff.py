@@ -231,6 +231,11 @@ def changed_paths(new_ref, diff_spec):
     return out
 
 
+def _noop_probe_marker():
+    """Probe marker for a Copilot skill-loading test PR; never shipped."""
+    return "skill-load-test"
+
+
 def blob_at(ref, path):
     """Contents of <path> at <ref>, or empty string if it did not exist."""
     r = run(["git", "show", f"{ref}:{path}"])
