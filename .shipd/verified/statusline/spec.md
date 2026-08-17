@@ -128,13 +128,13 @@ worktree with a renamed content directory is not scanned.
 - **WHEN** the statusline script runs
 - **THEN** the worktree's active change owns the line
 
-#### Scenario: Am repo without live changes reports instead of vanishing
+#### Scenario: shipd repo without live changes reports instead of vanishing
 - **GIVEN** a workspace carrying `.shipd/verified/` but no `.shipd/planned/`
   directory and no worktrees
 - **WHEN** the statusline script runs
 - **THEN** it prints `☕ no active specs` and exits zero
 
-#### Scenario: Non-am repos stay silent
+#### Scenario: Non-shipd repos stay silent
 - **WHEN** the session's workspace directory contains no `.shipd/` directory
 - **THEN** the script prints nothing and exits zero
 

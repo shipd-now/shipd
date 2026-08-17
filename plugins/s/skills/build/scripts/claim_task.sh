@@ -17,7 +17,7 @@
 #   - [ ] pending      - [~] in progress      - [x] done
 # A task's text may carry a parallel group tag `[P<n>]` (see first_ready_line).
 #
-# Usage (run from the project root, where ./.am lives):
+# Usage (run from the project root, where ./.shipd lives):
 #   claim_task.sh next     <change-name>            # peek: print "ID\tTEXT" of next pending, or nothing
 #   claim_task.sh claim    <change-name>            # atomically take next pending -> [~], print "ID\tTEXT"
 #   claim_task.sh complete <change-name> [id]       # mark task ID done -> [x]; ID optional if exactly one is in progress

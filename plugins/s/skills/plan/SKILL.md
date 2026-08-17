@@ -3,7 +3,7 @@ name: plan
 description: >-
   Converge context into an execution-ready spec: investigate the codebase first,
   ask the user only what can't be inferred (batched on the fast path; grouped
-  question rounds when the depth gate fires), then emit the lean am artifacts
+  question rounds when the depth gate fires), then emit the lean shipd artifacts
   (plan.md, delta specs, tasks.md) and stop. Use when
   asked to "plan", "spec
   this", "plan before building", or work out an approach before writing code.
@@ -13,15 +13,15 @@ description: >-
 # /s:plan — Convergent planning → silent spec emission
 
 You are the **Planner**. Your job is to reach **spec-readiness** and then stop:
-gather enough context to write a correct spec, emit the lean `am` artifacts
+gather enough context to write a correct spec, emit the lean shipd artifacts
 (`plan.md`, delta specs, `tasks.md`), and hand off. You are not an open-ended
 explorer and you are not the
 implementer — you converge, emit, and end.
 
 **Announce the version first.** Read the running plugin version from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include
-`am:plan v<version>` in your first user-visible status sentence (e.g.
-"am:plan v0.2.11 — investigating the repo first"), so the user can always see
+`shipd:plan v<version>` in your first user-visible status sentence (e.g.
+"shipd:plan v0.2.11 — investigating the repo first"), so the user can always see
 which plugin snapshot the session is running.
 
 **Resolve the pipeline in the same breath.** Before investigating, run the
@@ -44,7 +44,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-sho
   configuration layer declares it — a config path, or `preset:<name>
   (<config-path>)` for a preset — name that provenance in the same first
   status sentence as the version
-  (e.g. "am:plan v0.2.11 (pipeline preset:eco (/repo/.shipd-config.json)) —
+  (e.g. "shipd:plan v0.2.11 (pipeline preset:eco (/repo/.shipd-config.json)) —
   investigating the repo first"). A `default` source means no layer
   declared one: announce nothing about pipelines and proceed exactly as
   before.
@@ -66,7 +66,7 @@ Requirements: this repo must have the resolved content-directory layout (the
 spec engine and linter live under `plugins/s/skills/build/scripts/`). The
 content directory is configured, not hardcoded — resolve its name and confirm it
 exists with `spec_status.py config-show` (it prints the resolved `content-dir`,
-default `.am`). **When that layout is missing, stop before any questioning**:
+default `.shipd`). **When that layout is missing, stop before any questioning**:
 report that the repo has no resolved content-directory layout, then ask one
 AskUserQuestion — scaffold the minimal layout (`verified/`, `planned/`,
 `completed/` under the resolved content directory, default `.shipd/`) and continue
@@ -117,7 +117,7 @@ match. Branch on the located `status:` of the first (invocation-root-first)
 match:
 
 - **`rejected` → enter enrichment mode.** Announce it in one sentence (e.g.
-  "am:plan v<version> — enriching the rejected change `<change>` located at
+  "shipd:plan v<version> — enriching the rejected change `<change>` located at
   `<root>`"), then operate on the **located root** for the rest of the session.
   The fresh-planning flow does **not** run: no investigation digest, no depth
   gate, no emission. Follow the enrichment loop below instead.
@@ -181,8 +181,9 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_gate.py" <change> --roo
 - **Exit 0** — the gate stripped the `## Context insufficient` section and
   promoted the change to `ready`. Confirm the change now sits at `ready` and
   hand off with the **motivation-led summary** (lead with the plan's
-  `### Motivation`, then a brief sense of the `## Implementation`; point at
-  `/s:build`).
+  `### Motivation`, then a brief sense of the `## Implementation`; close with a
+  colon-terminated sentence, a blank line, then `/s:build` alone on its own
+  line — never inline mid-sentence).
 - **Exit 2** — the gate re-wrote a new `## Context insufficient` section and
   parked the change back at `rejected`. Present the remaining findings and
   **continue the enrichment loop** with them as the new agenda — do not end.
@@ -362,7 +363,7 @@ answered by reading is a failure of this skill.
    Any item that cannot be discharged with a citation (per the Attestation
    section) is unmet → go back to investigate or ask. All four met and cited →
    emit.
-6. **Emit** the lean `am` artifacts (`plan.md`, delta specs, `tasks.md`) into a
+6. **Emit** the lean shipd artifacts (`plan.md`, delta specs, `tasks.md`) into a
    **staging directory**, then install them through `spec_emit.py change` —
    silently, following
    `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/emission.md`. Never write into
@@ -656,7 +657,7 @@ re-confirm, but the successful install already guarantees a clean lint.)
 
 ## Ending — hand off, don't build
 
-`am:plan` is standalone: it ends when the change is emitted and lint-clean. When
+`shipd:plan` is standalone: it ends when the change is emitted and lint-clean. When
 that point is reached:
 
 1. **Promote through the context gate.** Emission wrote the plan with
@@ -685,9 +686,18 @@ that point is reached:
    written (`plan.md`, delta specs, `tasks.md`) — that inventory tells the user
    nothing about the change. Still name the change and where it lives (the
    worktree / `planned/<change>/`) so the user can act on it.
-3. **Point at build.** Tell the user the change is ready to implement with
-   `/s:build` (which will pick up the installed `planned/<change>/` and delegate
-   the tasks).
+3. **Point at build, on its own line.** End the summary with a
+   colon-terminated sentence, then a blank line, then `/s:build` alone on its
+   own line — never inline mid-sentence, so the one actionable string is easy
+   to spot and copy:
+
+   ```
+   The change is ready to implement with:
+
+   /s:build
+   ```
+
+   Build picks up the installed `planned/<change>/` and delegates the tasks.
 4. **Stop.** Do **not** start implementation, write application code, or begin
    executing tasks. Planning is done; building is a separate, user-initiated
    step.

@@ -28,7 +28,8 @@ the workflow must enforce that anchoring rather than match anywhere.
   so the bridge never fires on the pull request that first installs the
   gate; that one PR needs its `semantic-review` status posted by the
   session flow (`review_gate.py post`) or an admin bypass, once.
-- Version bump `0.6.127` -> `0.6.128` so v0.6.127 installs report `stale`
+- Version bump `0.6.127` -> the next free patch version (`0.6.130` — main took
+  `0.6.128` and `0.6.129` in flight) so v0.6.127 installs report `stale`
   and refresh on re-`add`.
 
 Affected capabilities: `copilot-review-skill` (modified), `project-readme`
@@ -79,6 +80,7 @@ Affected capabilities: `copilot-review-skill` (modified), `project-readme`
   outs: the session flow's `review_gate.py post`, or a one-time admin
   bypass; every pull request after the install merges is unaffected.
 - **Version bump** `plugins/s/.claude-plugin/plugin.json` `0.6.127` ->
-  `0.6.128`, per the cache-snapshot rule in `AGENTS.md` — and it is what
+  the next free patch version (`0.6.130` — main took `0.6.128` and
+  `0.6.129` in flight), per the cache-snapshot rule in `AGENTS.md` — and it is what
   makes existing v0.6.127 installs report `stale` so re-`add` refreshes
   the buggy workflow.

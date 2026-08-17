@@ -48,7 +48,8 @@ class PipelineShowDeclaredTest(unittest.TestCase):
     def cli(self, *args):
         env = dict(os.environ)
         env["HOME"] = self.home
-        env["AM_FLOW_LOG_DIR"] = self.flow_dir
+        env["SHIPD_FLOW_LOG_DIR"] = self.flow_dir
+        env.pop("AM_FLOW_LOG_DIR", None)
         return subprocess.run(
             [sys.executable, SCRIPT, "--root", self.root, *args],
             capture_output=True, text=True, env=env)

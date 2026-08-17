@@ -34,8 +34,8 @@ no promotion step.** Unlike `/s:teach`, every store verb here carries
 personal store participates in no base layering.
 
 **Announce the version first.** Read the running plugin version from
-`${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `am:remember
-v<version>` in your first user-visible status sentence (e.g. "am:remember
+`${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `shipd:remember
+v<version>` in your first user-visible status sentence (e.g. "shipd:remember
 v0.6.26 — capturing your preference into the personal memory store"), so the user
 can always see which plugin snapshot the session is running.
 

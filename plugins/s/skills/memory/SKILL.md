@@ -28,8 +28,8 @@ the personal memory store at `<memory_dir>/wiki` (default `~/.shipd-memory/wiki`
 by fixed path, bypassing workspace discovery.
 
 **Announce the version first.** Read the running plugin version from
-`${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `am:memory
-v<version>` in your first user-visible status sentence (e.g. "am:memory v0.6.24
+`${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `shipd:memory
+v<version>` in your first user-visible status sentence (e.g. "shipd:memory v0.6.24
 — listing your captured memories"), so the user can always see which plugin
 snapshot the session is running.
 

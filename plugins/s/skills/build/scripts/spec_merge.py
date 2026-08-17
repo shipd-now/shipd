@@ -296,7 +296,7 @@ def main(argv=None):
                     "library (LLM-free, take-newer, never blocking).")
     parser.add_argument("change", help="change name under .shipd/planned/")
     parser.add_argument("--root", default=os.getcwd(),
-                        help="repo root containing am/ (default: cwd)")
+                        help="repo root containing the .shipd/ content directory (default: cwd)")
     parser.add_argument("--json", action="store_true", dest="as_json",
                         help="emit warnings as machine-readable JSON lines")
     parser.add_argument("--no-archive", action="store_true",

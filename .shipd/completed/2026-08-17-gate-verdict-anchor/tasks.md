@@ -42,7 +42,8 @@
 ## 3. Release
 
 - [x] 3.1 [req: *] Bump `plugins/s/.claude-plugin/plugin.json` version
-      `0.6.127` -> `0.6.128`.
+      `0.6.127` -> the next free patch
+      version (`0.6.130` — main took `0.6.128`/`0.6.129` in flight).
 - [x] 3.2 [req: *] Run the full engine suite
       (`python3 -m unittest discover -s plugins/s/skills/build/tests`) from
       the worktree root and confirm it passes without `textual` or

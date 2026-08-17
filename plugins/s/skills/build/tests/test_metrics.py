@@ -433,7 +433,7 @@ class _Fixture:
     def config(self):
         return {"log_dir": self.log_dir}
 
-    def am(self, *parts):
+    def shipd(self, *parts):
         return os.path.join(self.root, ".shipd", *parts)
 
     def cleanup(self):
@@ -465,8 +465,8 @@ class CollectShipEventsTest(unittest.TestCase):
         _write(os.path.join(self.fx.log_dir, "builds.jsonl"),
                "\n".join(lines) + "\n")
         # completed/ archives for `a` (also in the log) and `b` (log-missing).
-        os.makedirs(self.fx.am("completed", "2026-07-01-a"))
-        os.makedirs(self.fx.am("completed", "2026-06-15-b"))
+        os.makedirs(self.fx.shipd("completed", "2026-07-01-a"))
+        os.makedirs(self.fx.shipd("completed", "2026-06-15-b"))
 
     def _by_slug(self):
         events = metrics.collect_ship_events(self.fx.root, config=self.fx.config)
@@ -500,14 +500,14 @@ class CollectOutcomesTest(unittest.TestCase):
     def setUp(self):
         self.fx = _Fixture()
         self.addCleanup(self.fx.cleanup)
-        _write_json(self.fx.am("autopilot", "epic1-report.json"), {
+        _write_json(self.fx.shipd("autopilot", "epic1-report.json"), {
             "epic": "epic1",
             "shipped": [{"member": "s1", "pr_url": "u1"}],
             "rejected": [{"member": "r1", "stage": "gate", "reason": "x"}],
             "needs_human": [{"member": "n1", "stage": "build", "reason": "y"}],
             "skipped": [{"member": "k1", "state": "ready"}],
         })
-        _write_json(self.fx.am("autopilot", "epic2-report.json"), {
+        _write_json(self.fx.shipd("autopilot", "epic2-report.json"), {
             "epic": "epic2",
             "shipped": [{"member": "s2"}, {"member": "s3"}],
             "rejected": [],
@@ -551,14 +551,14 @@ class CollectWipTest(unittest.TestCase):
     def setUp(self):
         self.fx = _Fixture()
         self.addCleanup(self.fx.cleanup)
-        _write(self.fx.am("epics", "e1", "epic.md"), self.EPIC)
+        _write(self.fx.shipd("epics", "e1", "epic.md"), self.EPIC)
         # m_ready: planned with a readable status -> in-flight, age from plan.md.
-        _write(self.fx.am("planned", "m_ready", "plan.md"),
+        _write(self.fx.shipd("planned", "m_ready", "plan.md"),
                "# m_ready\nStatus: ready\n")
         # m_shipped: a completed archive -> exited, excluded from WIP.
-        os.makedirs(self.fx.am("completed", "2026-07-01-m_shipped"))
+        os.makedirs(self.fx.shipd("completed", "2026-07-01-m_shipped"))
         # m_building: a planned dir with no plan.md -> in-flight, no age evidence.
-        os.makedirs(self.fx.am("planned", "m_building"))
+        os.makedirs(self.fx.shipd("planned", "m_building"))
         # m_unplanned: nothing on disk -> not entered, excluded.
         self.now = dt.datetime(2030, 1, 1, tzinfo=UTC)
 
@@ -600,12 +600,12 @@ class EpicRemainingTest(unittest.TestCase):
     def setUp(self):
         self.fx = _Fixture()
         self.addCleanup(self.fx.cleanup)
-        _write(self.fx.am("epics", "e1", "epic.md"), self.EPIC)
+        _write(self.fx.shipd("epics", "e1", "epic.md"), self.EPIC)
         # m_ready: an in-flight (non-archived) member.
-        _write(self.fx.am("planned", "m_ready", "plan.md"),
+        _write(self.fx.shipd("planned", "m_ready", "plan.md"),
                "# m_ready\nStatus: ready\n")
         # m_archived: a completed/ archive -> archived (excluded).
-        os.makedirs(self.fx.am("completed", "2026-07-01-m_archived"))
+        os.makedirs(self.fx.shipd("completed", "2026-07-01-m_archived"))
         # m_unplanned: nothing on disk -> unplanned (still remaining).
 
     def test_returns_sorted_non_archived_members_including_unplanned(self):
@@ -644,7 +644,7 @@ class MemberStateAndLocationTest(unittest.TestCase):
         self.assertEqual(location, os.path.abspath(wt_root))
 
     def test_root_hosted_member_reports_root_location(self):
-        _write(self.fx.am("planned", "mem", "plan.md"),
+        _write(self.fx.shipd("planned", "mem", "plan.md"),
                "# mem\nStatus: ready\n")
         state, location = metrics._member_state_and_location(
             self.fx.root, "mem")
@@ -777,10 +777,10 @@ class CollectFixLinksTest(unittest.TestCase):
         self.fx = _Fixture()
         self.addCleanup(self.fx.cleanup)
         # A shipped fix declaring two Fixes lines → fixes both `a` and `b`.
-        _write(self.fx.am("completed", "2026-07-01-fixer", "plan.md"),
+        _write(self.fx.shipd("completed", "2026-07-01-fixer", "plan.md"),
                "# fixer\nStatus: complete\nFixes: a\nFixes: b\n")
         # A shipped change with no Fixes key → contributes no link.
-        _write(self.fx.am("completed", "2026-06-01-plain", "plan.md"),
+        _write(self.fx.shipd("completed", "2026-06-01-plain", "plan.md"),
                "# plain\nStatus: complete\nTheme: reliability\n")
 
     def test_collects_fixed_slug_to_fixing_slugs(self):
@@ -801,7 +801,7 @@ class CollectChangeFailuresTest(unittest.TestCase):
         self.fx = _Fixture()
         self.addCleanup(self.fx.cleanup)
         # A shipped fix declaring `Fixes: a` and `Fixes: b`.
-        _write(self.fx.am("completed", "2026-07-01-fixer", "plan.md"),
+        _write(self.fx.shipd("completed", "2026-07-01-fixer", "plan.md"),
                "# fixer\nStatus: complete\nFixes: a\nFixes: b\n")
         # Revert signals (monkeypatched): `a` is also reverted; `ghost` is
         # reverted but never shipped and so must be ignored.
@@ -893,14 +893,14 @@ class DeriveTest(unittest.TestCase):
         _write(os.path.join(self.fx.log_dir, "builds.jsonl"),
                "\n".join(log) + "\n")
         # An epic with one in-flight member for the WIP block.
-        _write(self.fx.am("epics", "e1", "epic.md"),
+        _write(self.fx.shipd("epics", "e1", "epic.md"),
                "# e1\nStatus: active\n\n## Changes\n\n"
                "| Change | Description | Risk |\n| --- | --- | --- |\n"
                "| m1 | in flight | low |\n")
-        _write(self.fx.am("planned", "m1", "plan.md"),
+        _write(self.fx.shipd("planned", "m1", "plan.md"),
                "# m1\nStatus: ready\n")
         # An autopilot report for the outcome block.
-        _write_json(self.fx.am("autopilot", "e1-report.json"), {
+        _write_json(self.fx.shipd("autopilot", "e1-report.json"), {
             "epic": "e1",
             "shipped": [{"member": "alpha"}],
             "rejected": [{"member": "x", "stage": "gate", "reason": "r"}],
@@ -1015,23 +1015,23 @@ def _seed_rollup_fixture(fx):
     }) for i, d in enumerate(dates)]
     _write(os.path.join(fx.log_dir, "builds.jsonl"), "\n".join(lines) + "\n")
     # e1: one archived + two remaining members → total 3, done 1, bands present.
-    _write(fx.am("epics", "e1", "epic.md"),
+    _write(fx.shipd("epics", "e1", "epic.md"),
            "# e1\nStatus: active\n\n## Changes\n\n"
            "| Change | Description | Risk |\n| --- | --- | --- |\n"
            "| e1_archived | shipped | low |\n"
            "| e1_ready | planned | low |\n"
            "| e1_unplanned | not started | low |\n")
-    _write(fx.am("planned", "e1_ready", "plan.md"),
+    _write(fx.shipd("planned", "e1_ready", "plan.md"),
            "# e1_ready\nStatus: ready\n")
-    os.makedirs(fx.am("completed", "2026-06-01-e1_archived"))
+    os.makedirs(fx.shipd("completed", "2026-06-01-e1_archived"))
     # e2: a single archived member → total 1, done 1, no remaining, bands None.
-    _write(fx.am("epics", "e2", "epic.md"),
+    _write(fx.shipd("epics", "e2", "epic.md"),
            "# e2\nStatus: active\n\n## Changes\n\n"
            "| Change | Description | Risk |\n| --- | --- | --- |\n"
            "| e2_archived | shipped | low |\n")
-    os.makedirs(fx.am("completed", "2026-06-02-e2_archived"))
+    os.makedirs(fx.shipd("completed", "2026-06-02-e2_archived"))
     # Outcomes for the rework-rate headline.
-    _write_json(fx.am("autopilot", "e1-report.json"), {
+    _write_json(fx.shipd("autopilot", "e1-report.json"), {
         "epic": "e1",
         "shipped": [{"member": "s1"}, {"member": "s2"}],
         "rejected": [{"member": "r1", "stage": "gate", "reason": "x"}],
@@ -1055,9 +1055,10 @@ class BuildRollupResultTest(unittest.TestCase):
         self.fx = _Fixture()
         self.addCleanup(self.fx.cleanup)
         _seed_rollup_fixture(self.fx)
-        # Never let a stray AM_FLOW_LOG_DIR from the environment leak in.
+        # Never let a stray flow-log env var from the environment leak in.
         patch = unittest.mock.patch.dict(os.environ, {}, clear=False)
         patch.start()
+        os.environ.pop("SHIPD_FLOW_LOG_DIR", None)
         os.environ.pop("AM_FLOW_LOG_DIR", None)
         self.addCleanup(patch.stop)
         self.now = dt.datetime(2026, 7, 10, tzinfo=UTC)
@@ -1097,7 +1098,7 @@ class BuildRollupResultTest(unittest.TestCase):
 
     def test_exec_headlines_carry_change_fail_rate_and_stay_slug_free(self):
         # Declare a shipped change failed via a post-merge Fixes archive.
-        _write(self.fx.am("completed", "2026-07-05-fixer", "plan.md"),
+        _write(self.fx.shipd("completed", "2026-07-05-fixer", "plan.md"),
                "# fixer\nStatus: complete\nFixes: ship_00\n")
         result = self._build("exec")
         block = result["exec"]
@@ -1199,13 +1200,13 @@ class SummaryCliTest(unittest.TestCase):
         ]
         _write(os.path.join(self.fx.log_dir, "builds.jsonl"),
                "\n".join(log) + "\n")
-        _write(self.fx.am("epics", "e1", "epic.md"),
+        _write(self.fx.shipd("epics", "e1", "epic.md"),
                "# e1\nStatus: active\n\n## Changes\n\n"
                "| Change | Description | Risk |\n| --- | --- | --- |\n"
                "| m1 | in flight | low |\n")
-        _write(self.fx.am("planned", "m1", "plan.md"),
+        _write(self.fx.shipd("planned", "m1", "plan.md"),
                "# m1\nStatus: ready\n")
-        _write_json(self.fx.am("autopilot", "e1-report.json"), {
+        _write_json(self.fx.shipd("autopilot", "e1-report.json"), {
             "epic": "e1",
             "shipped": [{"member": "alpha"}],
             "rejected": [{"member": "x", "stage": "gate", "reason": "r"}],
@@ -1318,10 +1319,10 @@ _FLOW_EPIC = (
 
 def _seed_flow_bands(fx):
     """Populate ``fx`` with the _FLOW_EPIC members in their four bands."""
-    _write(fx.am("epics", "e1", "epic.md"), _FLOW_EPIC)
-    _write(fx.am("planned", "m_draft", "plan.md"), "# m_draft\nStatus: draft\n")
-    _write(fx.am("planned", "m_ready", "plan.md"), "# m_ready\nStatus: ready\n")
-    os.makedirs(fx.am("completed", "2026-07-01-m_archived"))
+    _write(fx.shipd("epics", "e1", "epic.md"), _FLOW_EPIC)
+    _write(fx.shipd("planned", "m_draft", "plan.md"), "# m_draft\nStatus: draft\n")
+    _write(fx.shipd("planned", "m_ready", "plan.md"), "# m_ready\nStatus: ready\n")
+    os.makedirs(fx.shipd("completed", "2026-07-01-m_archived"))
 
 
 class FlowSnapshotTest(unittest.TestCase):
@@ -1340,12 +1341,12 @@ class FlowSnapshotTest(unittest.TestCase):
     def test_slug_lists_are_sorted_and_deduped(self):
         # A second epic repeats m_ready and adds m_draft2; the shared slug is
         # counted once and each state's list is sorted.
-        _write(self.fx.am("epics", "e2", "epic.md"),
+        _write(self.fx.shipd("epics", "e2", "epic.md"),
                "# e2\nStatus: active\n\n## Changes\n\n"
                "| Change | Description | Risk |\n| --- | --- | --- |\n"
                "| m_ready | dup | low |\n"
                "| m_draft2 | staged | low |\n")
-        _write(self.fx.am("planned", "m_draft2", "plan.md"),
+        _write(self.fx.shipd("planned", "m_draft2", "plan.md"),
                "# m_draft2\nStatus: draft\n")
         states = metrics.flow_snapshot(self.fx.root)
         self.assertEqual(states.get("ready"), ["m_ready"])
@@ -1357,10 +1358,11 @@ class RecordFlowTest(unittest.TestCase):
         self.fx = _Fixture()
         self.addCleanup(self.fx.cleanup)
         _seed_flow_bands(self.fx)
-        # Never let a stray AM_FLOW_LOG_DIR from the environment leak in.
+        # Never let a stray flow-log env var from the environment leak in.
         self._env_patch = unittest.mock.patch.dict(
             os.environ, {}, clear=False)
         self._env_patch.start()
+        os.environ.pop("SHIPD_FLOW_LOG_DIR", None)
         os.environ.pop("AM_FLOW_LOG_DIR", None)
         self.addCleanup(self._env_patch.stop)
         self.flow_path = os.path.join(self.fx.log_dir, "flow.jsonl")
@@ -1392,7 +1394,7 @@ class RecordFlowTest(unittest.TestCase):
     def test_a_changed_snapshot_appends_a_second_record(self):
         metrics.record_flow(self.fx.root, config=self.fx.config, now=self.now)
         # Promote m_draft to ready -> the states map changes.
-        _write(self.fx.am("planned", "m_draft", "plan.md"),
+        _write(self.fx.shipd("planned", "m_draft", "plan.md"),
                "# m_draft\nStatus: ready\n")
         second = metrics.record_flow(
             self.fx.root, config=self.fx.config,
@@ -1429,6 +1431,107 @@ class RecordFlowTest(unittest.TestCase):
         self.assertFalse(os.path.isfile(self.flow_path))
 
 
+class FlowLogEnvMigrationTest(unittest.TestCase):
+    """The flow-log env seam is ``SHIPD_FLOW_LOG_DIR``, with the pre-rename
+    ``AM_FLOW_LOG_DIR`` still honoured as a legacy fallback."""
+
+    def setUp(self):
+        self.fx = _Fixture()
+        self.addCleanup(self.fx.cleanup)
+        _seed_flow_bands(self.fx)
+        self._env_patch = unittest.mock.patch.dict(
+            os.environ, {}, clear=False)
+        self._env_patch.start()
+        os.environ.pop("SHIPD_FLOW_LOG_DIR", None)
+        os.environ.pop("AM_FLOW_LOG_DIR", None)
+        self.addCleanup(self._env_patch.stop)
+        self.config_path = os.path.join(self.fx.log_dir, "flow.jsonl")
+        self.now = dt.datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+
+    def _dir(self, name):
+        path = os.path.join(self.fx.tmp, name)
+        os.makedirs(path)
+        return path
+
+    def test_env_constants_carry_the_new_and_legacy_names(self):
+        self.assertEqual(metrics.FLOW_LOG_ENV, "SHIPD_FLOW_LOG_DIR")
+        self.assertEqual(metrics.FLOW_LOG_ENV_LEGACY, "AM_FLOW_LOG_DIR")
+
+    def test_new_env_resolves_the_log_dir(self):
+        new_dir = self._dir("shipdlog")
+        os.environ["SHIPD_FLOW_LOG_DIR"] = new_dir
+        self.assertEqual(
+            metrics.resolve_flow_log_dir(self.fx.root, self.fx.config),
+            new_dir)
+        metrics.record_flow(self.fx.root, config=self.fx.config, now=self.now)
+        self.assertTrue(os.path.isfile(os.path.join(new_dir, "flow.jsonl")))
+        self.assertFalse(os.path.isfile(self.config_path))
+
+    def test_legacy_env_alone_still_resolves_the_log_dir(self):
+        legacy_dir = self._dir("legacylog")
+        os.environ["AM_FLOW_LOG_DIR"] = legacy_dir
+        self.assertEqual(
+            metrics.resolve_flow_log_dir(self.fx.root, self.fx.config),
+            legacy_dir)
+        metrics.record_flow(self.fx.root, config=self.fx.config, now=self.now)
+        self.assertTrue(os.path.isfile(os.path.join(legacy_dir, "flow.jsonl")))
+        self.assertFalse(os.path.isfile(self.config_path))
+
+    def test_new_env_wins_over_the_legacy_one(self):
+        new_dir = self._dir("shipdlog")
+        legacy_dir = self._dir("legacylog")
+        os.environ["SHIPD_FLOW_LOG_DIR"] = new_dir
+        os.environ["AM_FLOW_LOG_DIR"] = legacy_dir
+        self.assertEqual(
+            metrics.resolve_flow_log_dir(self.fx.root, self.fx.config),
+            new_dir)
+        metrics.record_flow(self.fx.root, config=self.fx.config, now=self.now)
+        self.assertTrue(os.path.isfile(os.path.join(new_dir, "flow.jsonl")))
+        self.assertFalse(os.path.isfile(os.path.join(legacy_dir, "flow.jsonl")))
+
+    def test_empty_new_env_disables_recording_even_with_legacy_set(self):
+        # The *winning* variable's empty string disables: an empty new var is
+        # a deliberate off switch, not a fall-through to the legacy one.
+        legacy_dir = self._dir("legacylog")
+        os.environ["SHIPD_FLOW_LOG_DIR"] = ""
+        os.environ["AM_FLOW_LOG_DIR"] = legacy_dir
+        self.assertIsNone(
+            metrics.resolve_flow_log_dir(self.fx.root, self.fx.config))
+        self.assertIsNone(metrics.record_flow(
+            self.fx.root, config=self.fx.config, now=self.now))
+        self.assertFalse(os.path.isfile(os.path.join(legacy_dir, "flow.jsonl")))
+        self.assertFalse(os.path.isfile(self.config_path))
+
+    def test_empty_legacy_env_alone_disables_recording(self):
+        os.environ["AM_FLOW_LOG_DIR"] = ""
+        self.assertIsNone(
+            metrics.resolve_flow_log_dir(self.fx.root, self.fx.config))
+        self.assertIsNone(metrics.record_flow(
+            self.fx.root, config=self.fx.config, now=self.now))
+        self.assertFalse(os.path.isfile(self.config_path))
+
+    def test_neither_env_falls_through_to_the_config_layers(self):
+        self.assertEqual(
+            metrics.resolve_flow_log_dir(self.fx.root, self.fx.config),
+            self.fx.log_dir)
+        metrics.record_flow(self.fx.root, config=self.fx.config, now=self.now)
+        self.assertTrue(os.path.isfile(self.config_path))
+
+    def test_cli_honours_the_new_env(self):
+        new_dir = self._dir("shipdlog")
+        env = dict(os.environ, SHIPD_FLOW_LOG_DIR=new_dir)
+        env.pop("AM_FLOW_LOG_DIR", None)
+        result = subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS, "metrics.py"),
+             "record-flow", "--root", self.fx.root],
+            cwd=SCRIPTS, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record = json.loads(result.stdout)
+        self.assertEqual(record["root"], os.path.abspath(self.fx.root))
+        self.assertTrue(os.path.isfile(os.path.join(new_dir, "flow.jsonl")))
+
+
 class CollectFlowTest(unittest.TestCase):
     def setUp(self):
         self.fx = _Fixture()
@@ -1436,6 +1539,7 @@ class CollectFlowTest(unittest.TestCase):
         # collect_flow resolves the log dir env → config, so clear a stray env.
         patch = unittest.mock.patch.dict(os.environ, {}, clear=False)
         patch.start()
+        os.environ.pop("SHIPD_FLOW_LOG_DIR", None)
         os.environ.pop("AM_FLOW_LOG_DIR", None)
         self.addCleanup(patch.stop)
         self.root = os.path.abspath(self.fx.root)
@@ -1475,6 +1579,7 @@ class CollectFlowTest(unittest.TestCase):
         self.addCleanup(fx.cleanup)
         patch = unittest.mock.patch.dict(os.environ, {}, clear=False)
         patch.start()
+        os.environ.pop("SHIPD_FLOW_LOG_DIR", None)
         os.environ.pop("AM_FLOW_LOG_DIR", None)
         self.addCleanup(patch.stop)
         root = os.path.abspath(fx.root)
@@ -1505,6 +1610,7 @@ class DeriveFlowBlockTest(unittest.TestCase):
         self.addCleanup(self.fx.cleanup)
         patch = unittest.mock.patch.dict(os.environ, {}, clear=False)
         patch.start()
+        os.environ.pop("SHIPD_FLOW_LOG_DIR", None)
         os.environ.pop("AM_FLOW_LOG_DIR", None)
         self.addCleanup(patch.stop)
         self.root = os.path.abspath(self.fx.root)
@@ -1557,7 +1663,10 @@ class RecordFlowCliTest(unittest.TestCase):
         os.makedirs(self.flow_dir)
 
     def _run(self):
+        # The legacy variable still redirects the CLI's flow log — with the
+        # current one cleared so the fallback is what is under test.
         env = dict(os.environ, AM_FLOW_LOG_DIR=self.flow_dir)
+        env.pop("SHIPD_FLOW_LOG_DIR", None)
         return subprocess.run(
             [sys.executable, os.path.join(SCRIPTS, "metrics.py"),
              "record-flow", "--root", self.fx.root],
@@ -1685,12 +1794,12 @@ class ForecastCliTest(unittest.TestCase):
                     {"build": {"log_dir": self.fx.log_dir}})
         _forecast_log(self.fx)
         # An epic with two remaining (non-archived) members for --epic mode.
-        _write(self.fx.am("epics", "e1", "epic.md"),
+        _write(self.fx.shipd("epics", "e1", "epic.md"),
                "# e1\nStatus: active\n\n## Changes\n\n"
                "| Change | Description | Risk |\n| --- | --- | --- |\n"
                "| m_ready | planned | low |\n"
                "| m_unplanned | not started | low |\n")
-        _write(self.fx.am("planned", "m_ready", "plan.md"),
+        _write(self.fx.shipd("planned", "m_ready", "plan.md"),
                "# m_ready\nStatus: ready\n")
 
     def _run(self, argv):
@@ -1907,6 +2016,7 @@ class RollupCliTest(unittest.TestCase):
         _seed_rollup_fixture(self.fx)
         patch = unittest.mock.patch.dict(os.environ, {}, clear=False)
         patch.start()
+        os.environ.pop("SHIPD_FLOW_LOG_DIR", None)
         os.environ.pop("AM_FLOW_LOG_DIR", None)
         self.addCleanup(patch.stop)
 

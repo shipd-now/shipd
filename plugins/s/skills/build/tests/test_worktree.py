@@ -5,7 +5,7 @@ The script is driven as a black box via subprocess against a throwaway temp
 git repository (git init + one commit) used as cwd — never against the real
 repo. Mirrors ``test_claim_task.py``'s fixture style. The helper makes no
 assumption about the repository beyond git itself, so the fixture carries no
-am layout."""
+shipd layout."""
 
 import os
 import shutil

@@ -29,15 +29,15 @@ stage.
 
 **Announce the version first.** Read the running plugin version from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include
-`am:research v<version>` in your first user-visible status sentence (e.g.
-"am:research v0.6.0 — decomposing the question and searching"), so the user can
+`shipd:research v<version>` in your first user-visible status sentence (e.g.
+"shipd:research v0.6.0 — decomposing the question and searching"), so the user can
 always see which plugin snapshot the session is running.
 
 Requirements: this repo must have the resolved content-directory layout (the
 spec engine and linter live under `plugins/s/skills/build/scripts/`). The
 content directory is configured, not hardcoded — resolve its name and confirm it
 exists with `spec_status.py config-show` (it prints the resolved `content-dir`,
-default `.am`). **When that layout is missing, stop before searching**: report
+default `.shipd`). **When that layout is missing, stop before searching**: report
 that the repo has no resolved content-directory layout and stop rather than
 inventing a path.
 

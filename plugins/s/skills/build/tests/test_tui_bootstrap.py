@@ -41,7 +41,7 @@ class FindRequirementsTest(unittest.TestCase):
             with open(req, "w", encoding="utf-8") as fh:
                 fh.write("textual>=8.2.8,<9\n")
             scripts_dir = os.path.join(
-                root, "plugins", "am", "skills", "build", "scripts")
+                root, "plugins", "s", "skills", "build", "scripts")
             os.makedirs(scripts_dir)
             self.assertEqual(tb.find_requirements(scripts_dir), req)
         finally:
@@ -82,7 +82,7 @@ class EnsureTextualTest(unittest.TestCase):
         with open(self.req, "w", encoding="utf-8") as fh:
             fh.write("textual>=8.2.8,<9\n")
         self.scripts_dir = os.path.join(
-            self.root, "plugins", "am", "skills", "build", "scripts")
+            self.root, "plugins", "s", "skills", "build", "scripts")
         os.makedirs(self.scripts_dir)
         self.script = os.path.join(self.scripts_dir, "dashboard.py")
         self.environ = {"HOME": os.path.join(self.root, "home")}

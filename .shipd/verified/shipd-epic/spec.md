@@ -24,12 +24,12 @@ it points the user at `/s:plan` per stub, whose emitted changes carry
 
 #### Scenario: Epic emission is draft until approved
 - **WHEN** the skill finishes authoring an epic
-- **THEN** `am/epics/<slug>/epic.md` carries `Status: draft` until the user
+- **THEN** `.shipd/epics/<slug>/epic.md` carries `Status: draft` until the user
   approves, at which point the skill promotes it to `ready`
 
 #### Scenario: Member changes are not created by the skill
 - **WHEN** the skill completes an epic with three stub rows
-- **THEN** `am/planned/` gains no new change directories, and the user is
+- **THEN** `.shipd/planned/` gains no new change directories, and the user is
   pointed at `/s:plan` for each stub
 
 #### Scenario: Emitted epics lint clean

@@ -461,8 +461,11 @@ def collect_wip(root, now):
 # ---------------------------------------------------------------------------
 
 # The env var that redirects (or, when empty, disables) flow recording — the
-# test seam that keeps every suite off the real ~/.shipd/builds/.
-FLOW_LOG_ENV = "AM_FLOW_LOG_DIR"
+# test seam that keeps every suite off the real ~/.shipd/builds/. The
+# pre-rename name stays honoured as a legacy fallback so an environment set up
+# against the old product name keeps working.
+FLOW_LOG_ENV = "SHIPD_FLOW_LOG_DIR"
+FLOW_LOG_ENV_LEGACY = "AM_FLOW_LOG_DIR"
 
 FLOW_LOG_FILE = "flow.jsonl"
 
@@ -545,14 +548,18 @@ def flow_snapshot(root):
 def resolve_flow_log_dir(root, config=None):
     """Resolve the flow-log directory, or ``None`` when recording is disabled.
 
-    The ``AM_FLOW_LOG_DIR`` environment variable wins over all other resolution:
-    a non-empty value is the directory (home-expanded); the **empty string**
-    disables recording entirely (``None``). Absent the env var, resolution falls
-    through to :func:`resolve_log_dir` (explicit ``config`` ``log_dir`` → layered
-    ``build.log_dir`` → ``~/.shipd/builds``) — flow records live beside
+    The ``SHIPD_FLOW_LOG_DIR`` environment variable wins over all other
+    resolution, with the legacy ``AM_FLOW_LOG_DIR`` consulted only when the
+    current name is unset: a non-empty value is the directory (home-expanded);
+    the **winning** variable's **empty string** disables recording entirely
+    (``None``) rather than falling through. Absent both env vars, resolution
+    falls through to :func:`resolve_log_dir` (explicit ``config`` ``log_dir`` →
+    layered ``build.log_dir`` → ``~/.shipd/builds``) — flow records live beside
     ``builds.jsonl``.
     """
     env = os.environ.get(FLOW_LOG_ENV)
+    if env is None:
+        env = os.environ.get(FLOW_LOG_ENV_LEGACY)
     if env is not None:
         if env == "":
             return None
@@ -592,7 +599,7 @@ def record_flow(root, config=None, now=None):
     the same root's latest record already carries an equal ``states`` map the
     append is **skipped** — the series is a compact step function readers
     forward-fill. Returns the appended record, or ``None`` when the snapshot is
-    unchanged or recording is disabled (empty ``AM_FLOW_LOG_DIR``). A capture
+    unchanged or recording is disabled (empty ``SHIPD_FLOW_LOG_DIR``). A capture
     failure raises; the lifecycle hooks that call it swallow the exception so a
     mutation is never blocked.
     """
