@@ -181,8 +181,9 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_gate.py" <change> --roo
 - **Exit 0** — the gate stripped the `## Context insufficient` section and
   promoted the change to `ready`. Confirm the change now sits at `ready` and
   hand off with the **motivation-led summary** (lead with the plan's
-  `### Motivation`, then a brief sense of the `## Implementation`; point at
-  `/s:build`).
+  `### Motivation`, then a brief sense of the `## Implementation`; close with a
+  colon-terminated sentence, a blank line, then `/s:build` alone on its own
+  line — never inline mid-sentence).
 - **Exit 2** — the gate re-wrote a new `## Context insufficient` section and
   parked the change back at `rejected`. Present the remaining findings and
   **continue the enrichment loop** with them as the new agenda — do not end.
@@ -685,9 +686,18 @@ that point is reached:
    written (`plan.md`, delta specs, `tasks.md`) — that inventory tells the user
    nothing about the change. Still name the change and where it lives (the
    worktree / `planned/<change>/`) so the user can act on it.
-3. **Point at build.** Tell the user the change is ready to implement with
-   `/s:build` (which will pick up the installed `planned/<change>/` and delegate
-   the tasks).
+3. **Point at build, on its own line.** End the summary with a
+   colon-terminated sentence, then a blank line, then `/s:build` alone on its
+   own line — never inline mid-sentence, so the one actionable string is easy
+   to spot and copy:
+
+   ```
+   The change is ready to implement with:
+
+   /s:build
+   ```
+
+   Build picks up the installed `planned/<change>/` and delegates the tasks.
 4. **Stop.** Do **not** start implementation, write application code, or begin
    executing tasks. Planning is done; building is a separate, user-initiated
    step.
