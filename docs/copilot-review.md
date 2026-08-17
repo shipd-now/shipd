@@ -113,13 +113,21 @@ Two triggers, two behaviours:
 | Copilot **submits a review** of the current head commit | The verdict, mapped from the review body (below). |
 
 The review body carries a machine-readable marker, which the skill instructs
-the reviewer to emit as the body's last line:
+the reviewer to emit as the body's last line. The gate reads **only that
+line** — it takes the body's last non-empty line (carriage returns and
+surrounding whitespace tolerated) and compares it for equality:
 
-| Marker in the review body | Status posted |
+| The body's last non-empty line | Status posted |
 | --- | --- |
 | `<!-- shipd-verdict: fix-required -->` | `failure` — the merge is blocked. |
 | `<!-- shipd-verdict: ship-it -->` | `success`. |
-| *neither marker* | `success`, described as *no verdict marker was parsed*. |
+| *anything else* | `success`, described as *no verdict marker was parsed*. |
+
+**A marker quoted elsewhere in the body never counts.** A review that
+*describes* the markers — a pull request installing this very skill draws
+exactly that review — mentions both of them mid-text, and matching anywhere in
+the body would read the quote as a verdict and fail a passing pull request.
+Only the last line decides.
 
 That last row is the **fail-open** rule, and it is deliberate. Skill pickup is
 relevance-driven (see [Scope and limits](#scope-and-limits)), so a Copilot
@@ -146,6 +154,19 @@ fork's pull request a **read-only** token, so the gate cannot post a status
 there and the check stays unreported. Same-repository branches — the shipd
 `change/<name>` flow — are unaffected. On a fork PR, post the status from a
 session with `review_gate.py post`.
+
+**Bootstrap: the pull request that installs the gate.** GitHub runs a
+`pull_request_review`-triggered workflow from the workflow file **on the
+default branch**, not from the pull request's head branch. So on the very
+first pull request — the one adding `copilot-review-gate.yml` — the bridge
+job does not exist yet as far as GitHub is concerned and never fires, no
+matter what Copilot posts. (Its `pending` job *does* fire, on the
+`pull_request` trigger, so that pull request sits at `pending` indefinitely.)
+Post that one status another way: run the session review flow's
+`review_gate.py post` against the pull request, or use a one-time admin
+bypass of the required check. Once the install merges into the default
+branch, every later pull request is bridged normally — this is a one-time
+bootstrap, not a standing limit.
 
 ## 4. Check and upgrade the install
 

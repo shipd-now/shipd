@@ -60,7 +60,7 @@ The walkthrough is a state machine you drive from an on-disk state file. There
 is no menu and no start-choice.
 
 - **State file:** `~/.shipd/onboarding/state.json`, schema
-  `{"step": <int 1-9>, "sandbox": "<abs path>"}`. `~/.am` is shipd's home.
+  `{"step": <int 1-9>, "sandbox": "<abs path>"}`. `~/.shipd` is shipd's home.
 - **Sandbox:** the stable path `~/.shipd/onboarding/sandbox/` (also recorded in the
   state file's `sandbox` field).
 
@@ -235,7 +235,7 @@ End with the navigation line: `/s:onboard next` for a suggested enhancement,
 
 **Step 9 — your turn: plan an enhancement.** Suggest one small enhancement: a
 `move` command that moves a card to another lane (`move <id> <lane>`). Explain in
-a sentence that the sandbox is a real am library, so a `/s:plan` run there lands
+a sentence that the sandbox is a real shipd library, so a `/s:plan` run there lands
 a new change in its `planned/`. Then print the two exact copy/paste blocks — open
 a session in the sandbox:
 

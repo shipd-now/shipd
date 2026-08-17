@@ -5,7 +5,7 @@ id: master-spec-library-layout
 
 The system SHALL store canonical specifications at
 `<content-dir>/verified/<capability>/spec.md`, one file per capability,
-where `<content-dir>` is the configured content directory (default `.am`).
+where `<content-dir>` is the configured content directory (default `.shipd`).
 Each file SHALL contain zero or more requirement blocks, each introduced by
 a `### Requirement: <title>` header, and this location SHALL be the single
 source of truth that the merge engine reads and writes.
@@ -158,7 +158,7 @@ specs. Tooling SHALL NOT reject a requirement solely for not matching an EARS
 template; the normative-statement check remains the presence of SHALL or MUST.
 
 #### Scenario: Guidance documents the patterns
-- **WHEN** an author consults `am/README.md` for how to phrase a
+- **WHEN** an author consults `.shipd/README.md` for how to phrase a
   requirement
 - **THEN** the five EARS patterns are documented with their sentence templates
 
@@ -170,7 +170,7 @@ template; the normative-statement check remains the presence of SHALL or MUST.
 ### Requirement: Constitution steering document
 id: constitution-steering-document
 
-The system SHALL reserve `am/constitution.md` as an optional global
+The system SHALL reserve `.shipd/constitution.md` as an optional global
 steering document holding the repository's non-negotiable engineering rules
 (technology constraints, testing standards, anti-patterns). When the file is
 present, the planning and build flows SHALL load it and treat its rules as
@@ -178,14 +178,14 @@ binding constraints on designs, emitted artifacts, and implementations. When
 it is absent, all tooling SHALL behave exactly as before.
 
 #### Scenario: Constitution grounds planning
-- **GIVEN** a repo whose `am/constitution.md` forbids third-party Python
+- **GIVEN** a repo whose `.shipd/constitution.md` forbids third-party Python
   dependencies in engine scripts
 - **WHEN** the plan flow authors a design that would add such a dependency
 - **THEN** the constitution rule is honored and the design stays within the
   constraint
 
 #### Scenario: Absent constitution changes nothing
-- **WHEN** a repo has no `am/constitution.md`
+- **WHEN** a repo has no `.shipd/constitution.md`
 - **THEN** lint, status, merge, plan, and build behave with no errors or
   warnings about the missing file
 
@@ -285,7 +285,7 @@ The system SHALL read the theme vocabulary from the resolved layered
 configuration's top-level `valid_themes` key. When the resolved value is a
 non-empty array, a plan's `Theme:` value SHALL be validated against it; when
 no layer declares `valid_themes`, any kebab-case theme SHALL be accepted.
-The retired `am/config.json` SHALL NOT be read.
+The retired `.shipd/config.json` SHALL NOT be read.
 
 #### Scenario: Theme outside the vocabulary is invalid
 - **GIVEN** the repo's `.shipd-config.json` declares
@@ -337,7 +337,7 @@ id: epic-header-metadata
 
 An epic's header metadata block SHALL recognize exactly two keys — `Theme:`
 and `Initiative:` — with kebab-case values; `Theme:` SHALL be validated
-against `valid_themes` when `am/config.json` declares a non-empty vocabulary,
+against `valid_themes` when `.shipd/config.json` declares a non-empty vocabulary,
 and any other key (including `Profile:` and `Epic:`) SHALL be rejected.
 
 #### Scenario: Epic carries theme and initiative
@@ -353,17 +353,17 @@ and any other key (including `Profile:` and `Epic:`) SHALL be rejected.
 id: epic-reference-resolution
 
 A change plan's `Epic: <slug>` line SHALL resolve to an existing
-`am/epics/<slug>/epic.md`; an unresolvable reference SHALL be an error. Where
+`.shipd/epics/<slug>/epic.md`; an unresolvable reference SHALL be an error. Where
 the referenced epic's stub table does not list the change's slug, tooling
 SHALL surface a warning — membership drift is visible but not fatal.
 
 #### Scenario: Dangling epic reference is an error
-- **WHEN** a change carries `Epic: no-such-epic` and `am/epics/no-such-epic/`
+- **WHEN** a change carries `Epic: no-such-epic` and `.shipd/epics/no-such-epic/`
   does not exist
 - **THEN** tooling reports an error for the unresolvable reference
 
 #### Scenario: Missing stub row warns
-- **GIVEN** `am/epics/reporting-overhaul/epic.md` exists but its stub table
+- **GIVEN** `.shipd/epics/reporting-overhaul/epic.md` exists but its stub table
   has no `csv-export` row
 - **WHEN** change `csv-export` carrying `Epic: reporting-overhaul` is checked
 - **THEN** tooling emits a warning naming the missing membership row and the

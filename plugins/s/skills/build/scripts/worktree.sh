@@ -2,7 +2,7 @@
 # worktree.sh — create/remove an isolated git worktree + branch for one change.
 #
 # The workflow is: one change = one worktree = one branch = one PR. This script
-# creates `.worktrees/<change>` on branch `change/<change>`; the whole am
+# creates `.worktrees/<change>` on branch `change/<change>`; the whole shipd
 # lifecycle (plan -> build -> merge/archive) runs there so artifacts,
 # implementation, and spec promotion travel in a single PR.
 #
@@ -16,7 +16,7 @@
 # `--force` performs the removal anyway, printing each guard it overrode.
 #
 # Shipped as a plugin engine script — invocable by plugin path from any git
-# repository. It assumes nothing about the repository beyond git itself: no am
+# repository. It assumes nothing about the repository beyond git itself: no shipd
 # layout, content directory, or host-repo convention is required.
 #
 # The create path is idempotent and says so out loud: reusing a worktree or
@@ -395,7 +395,7 @@ cat <<EOF
 
 Next steps:
   cd $WORKTREE
-  # run the am lifecycle here (/s:plan -> /s:build, including merge/archive)
+  # run the shipd lifecycle here (/s:plan -> /s:build, including merge/archive)
   # then ship it as a PR:
   git push -u origin $BRANCH
   gh pr create --fill

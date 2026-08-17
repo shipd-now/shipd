@@ -167,7 +167,7 @@ status-value validation.
 ### Requirement: Interactive status skill
 id: interactive-status-skill
 
-An `am:status` skill SHALL expose four commands over the status CLI —
+A `shipd:status` skill SHALL expose four commands over the status CLI —
 `status` (report the selected or named change's status), `validate` (report
 structural validity or the errors), `set-status <status>` (guarded
 transition), and `pipeline` (report the effective autonomous pipeline).
@@ -342,12 +342,12 @@ whose status is `draft`.
 
 #### Scenario: Sync derives active from one started member
 - **GIVEN** a `ready` epic whose stub table lists two members, one of which
-  is an `active` change under `am/planned/`
+  is an `active` change under `.shipd/planned/`
 - **WHEN** `epic-sync` runs
 - **THEN** the epic's status line becomes `active`
 
 #### Scenario: Sync derives complete when all members are archived
-- **GIVEN** an epic whose every stub slug matches an `am/completed/*-<slug>/`
+- **GIVEN** an epic whose every stub slug matches an `.shipd/completed/*-<slug>/`
   directory
 - **WHEN** `epic-sync` runs
 - **THEN** the epic's status line becomes `complete`
@@ -519,7 +519,7 @@ default-only resolution.
 
 #### Scenario: Defaults-only still succeeds
 - **WHEN** `config-show` runs where no `.shipd-config.json` exists in any layer
-- **THEN** the content directory prints as `.am`, keys show `default`, and
+- **THEN** the content directory prints as `.shipd`, keys show `default`, and
   the exit code is zero
 
 ### Requirement: Epic initiative header verb

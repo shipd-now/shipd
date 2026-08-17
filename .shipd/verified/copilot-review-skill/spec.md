@@ -78,13 +78,18 @@ event fires, the workflow SHALL post the commit status context
 When a `pull_request_review` event fires, the workflow SHALL act only if
 the review author's login is `copilot-pull-request-reviewer[bot]` and the
 review's `commit_id` equals the pull request's current head SHA, and SHALL
-map the review body onto the same status context: a body containing
-`<!-- shipd-verdict: fix-required -->` posts state `failure`; a body
-containing `<!-- shipd-verdict: ship-it -->` posts state `success`; a body
-containing neither marker posts state `success` with a description stating
-that no verdict was parsed. The workflow SHALL authenticate only with the
-workflow's own `github.token`, SHALL NOT reference any other secret, and
-SHALL NOT request Copilot as a reviewer.
+classify the review by its body's **last non-empty line** — extracted with
+pure-bash parameter expansion (never by piping the body into an external
+matcher), with carriage returns and surrounding whitespace tolerated —
+compared for equality against the markers: a last line equal to
+`<!-- shipd-verdict: fix-required -->` posts state `failure`; a last line
+equal to `<!-- shipd-verdict: ship-it -->` posts state `success`; any
+other last line — including a body whose markers appear only mid-text, and
+an empty body — posts state `success` with a description stating that no
+verdict was parsed. A marker appearing anywhere other than the last
+non-empty line SHALL NOT affect classification. The workflow SHALL
+authenticate only with the workflow's own `github.token`, SHALL NOT
+reference any other secret, and SHALL NOT request Copilot as a reviewer.
 
 #### Scenario: Template carries the marker, triggers, and permissions
 - **WHEN** `plugins/s/integrations/copilot/copilot-review-gate.yml` is read
@@ -104,15 +109,28 @@ SHALL NOT request Copilot as a reviewer.
   `copilot-pull-request-reviewer[bot]` and the review `commit_id` equals
   the pull request's current head SHA
 
+#### Scenario: A verdict is only the last non-empty line
+- **WHEN** a review body quotes both markers mid-text and ends with the
+  `<!-- shipd-verdict: ship-it -->` line
+- **THEN** the classification is `success` via the ship-it branch, never
+  `failure` from the quoted `fix-required` text
+
 #### Scenario: Fix-required blocks, ship-it passes
-- **WHEN** the verdict mapping is read
+- **WHEN** the review body's last non-empty line equals a verdict marker
 - **THEN** `<!-- shipd-verdict: fix-required -->` maps to state `failure`
   and `<!-- shipd-verdict: ship-it -->` maps to state `success`
 
 #### Scenario: A verdict-less review passes fail-open
-- **WHEN** the verdict mapping is read
-- **THEN** a body with neither marker maps to state `success` with a
-  description stating that no verdict was parsed
+- **WHEN** the review body's last non-empty line equals neither marker —
+  including when markers appear only mid-text, and when the body is empty
+- **THEN** the classification is state `success` with a description
+  stating that no verdict was parsed
+
+#### Scenario: The body is never piped into a matcher
+- **WHEN** the bridge job's script is read
+- **THEN** the last-line extraction and both comparisons use pure-bash
+  parameter expansion and `[[ ]]` tests, and no non-comment line
+  referencing the review body contains a pipe
 
 #### Scenario: Only the default token, and no reviewer request
 - **WHEN** the template is read
