@@ -790,12 +790,42 @@ class DoctorCheckTest(unittest.TestCase):
     TEXTUAL_HINT = "pip install 'textual>=8.2.8,<9'"
     REQUIREMENTS_HINT = "pip install -r requirements.txt"
 
+    # On a PEP 668 externally managed interpreter both forms gain the two
+    # flags that make the printed command runnable by the interpreter that
+    # printed it. The probe is injected in every test below — never read off
+    # the machine running the suite — so both branches are exercised whether
+    # or not that machine's python3 is externally managed.
+    MANAGED = staticmethod(lambda: True)
+    UNMANAGED = staticmethod(lambda: False)
+    OVERRIDE_FLAGS = "--user --break-system-packages"
+    MANAGED_REQUIREMENTS_HINT = (
+        "pip install --user --break-system-packages -r requirements.txt")
+    MANAGED_PYDANTIC_HINT = (
+        "pip install --user --break-system-packages 'pydantic>=2.12,<3'")
+    MANAGED_TEXTUAL_HINT = (
+        "pip install --user --break-system-packages 'textual>=8.2.8,<9'")
+
     def with_requirements(self, root):
         """Plant a ``requirements.txt`` at ``root`` — the checkout case."""
         with open(os.path.join(root, "requirements.txt"), "w",
                   encoding="utf-8") as fh:
             fh.write("textual>=8.2.8,<9\npydantic>=2.12,<3\n")
         return root
+
+    # -- the externally-managed probe --------------------------------------
+
+    def test_probe_reports_managed_when_the_marker_sits_in_the_stdlib(self):
+        stdlib = os.path.join(self.tmp, "managed-stdlib")
+        os.makedirs(stdlib, exist_ok=True)
+        with open(os.path.join(stdlib, "EXTERNALLY-MANAGED"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("[externally-managed]\n")
+        self.assertTrue(shipd.externally_managed(stdlib=stdlib))
+
+    def test_probe_reports_unmanaged_without_the_marker(self):
+        stdlib = os.path.join(self.tmp, "plain-stdlib")
+        os.makedirs(stdlib, exist_ok=True)
+        self.assertFalse(shipd.externally_managed(stdlib=stdlib))
 
     # -- textual -----------------------------------------------------------
 
@@ -807,10 +837,11 @@ class DoctorCheckTest(unittest.TestCase):
     def test_textual_missing_warns_about_the_board_only(self):
         root = self.with_requirements(self.undeclared_repo("textual-checkout"))
         level, name, detail = shipd.check_textual(
-            root, find_spec=lambda name: None)
+            root, find_spec=lambda name: None, managed=self.UNMANAGED)
         self.assertEqual((level, name), ("warn", "textual"))
         self.assertIn("board", detail)
         self.assertIn(self.REQUIREMENTS_HINT, detail)
+        self.assertNotIn(self.OVERRIDE_FLAGS, detail)
 
     def test_textual_probe_failure_warns(self):
         def boom(name):
@@ -821,8 +852,23 @@ class DoctorCheckTest(unittest.TestCase):
     def test_textual_hint_pins_the_specifier_without_a_requirements_file(self):
         root = self.undeclared_repo("textual-vendored")
         _level, _name, detail = shipd.check_textual(
-            root, find_spec=lambda name: None)
+            root, find_spec=lambda name: None, managed=self.UNMANAGED)
         self.assertIn(self.TEXTUAL_HINT, detail)
+        self.assertNotIn("-r requirements.txt", detail)
+        self.assertNotIn(self.OVERRIDE_FLAGS, detail)
+
+    def test_managed_interpreter_flags_the_textual_requirements_hint(self):
+        root = self.with_requirements(self.undeclared_repo("textual-managed"))
+        level, name, detail = shipd.check_textual(
+            root, find_spec=lambda name: None, managed=self.MANAGED)
+        self.assertEqual((level, name), ("warn", "textual"))
+        self.assertIn(self.MANAGED_REQUIREMENTS_HINT, detail)
+
+    def test_managed_interpreter_flags_the_textual_pinned_hint(self):
+        root = self.undeclared_repo("textual-managed-vendored")
+        _level, _name, detail = shipd.check_textual(
+            root, find_spec=lambda name: None, managed=self.MANAGED)
+        self.assertIn(self.MANAGED_TEXTUAL_HINT, detail)
         self.assertNotIn("-r requirements.txt", detail)
 
     # -- pydantic ----------------------------------------------------------
@@ -850,19 +896,21 @@ class DoctorCheckTest(unittest.TestCase):
     def test_pydantic_missing_warns_about_pipeline_validation_only(self):
         root = self.with_requirements(self.undeclared_repo())
         level, name, detail = self.pydantic_check(
-            root, find_spec=lambda name: None)
+            root, find_spec=lambda name: None, managed=self.UNMANAGED)
         self.assertEqual((level, name), ("warn", "pydantic"))
         self.assertIn("pipeline", detail)
         self.assertIn(self.REQUIREMENTS_HINT, detail)
+        self.assertNotIn(self.OVERRIDE_FLAGS, detail)
 
     def test_pydantic_hint_pins_the_specifier_without_a_requirements_file(
             self):
         level, name, detail = self.pydantic_check(
             self.undeclared_repo("pydantic-vendored"),
-            find_spec=lambda name: None)
+            find_spec=lambda name: None, managed=self.UNMANAGED)
         self.assertEqual((level, name), ("warn", "pydantic"))
         self.assertIn(self.PYDANTIC_HINT, detail)
         self.assertNotIn("-r requirements.txt", detail)
+        self.assertNotIn(self.OVERRIDE_FLAGS, detail)
 
     def test_escalated_pydantic_hint_pins_the_specifier_too(self):
         # The ``fail`` form carries the same context-aware hint as the
@@ -871,10 +919,37 @@ class DoctorCheckTest(unittest.TestCase):
             "escalating-vendored",
             {"autonomous-pipeline": [{"stage": "plan"}]})
         level, name, detail = self.pydantic_check(
-            root, find_spec=lambda name: None)
+            root, find_spec=lambda name: None, managed=self.UNMANAGED)
         self.assertEqual((level, name), ("fail", "pydantic"))
         self.assertIn(self.PYDANTIC_HINT, detail)
         self.assertNotIn("-r requirements.txt", detail)
+        self.assertNotIn(self.OVERRIDE_FLAGS, detail)
+
+    def test_managed_interpreter_flags_the_pydantic_requirements_hint(self):
+        root = self.with_requirements(self.undeclared_repo("pydantic-managed"))
+        level, name, detail = self.pydantic_check(
+            root, find_spec=lambda name: None, managed=self.MANAGED)
+        self.assertEqual((level, name), ("warn", "pydantic"))
+        self.assertIn(self.MANAGED_REQUIREMENTS_HINT, detail)
+
+    def test_managed_interpreter_flags_the_pydantic_pinned_hint(self):
+        _level, _name, detail = self.pydantic_check(
+            self.undeclared_repo("pydantic-managed-vendored"),
+            find_spec=lambda name: None, managed=self.MANAGED)
+        self.assertIn(self.MANAGED_PYDANTIC_HINT, detail)
+        self.assertNotIn("-r requirements.txt", detail)
+
+    def test_managed_interpreter_flags_the_escalated_pydantic_hint(self):
+        # The escalated ``fail`` detail is what /s:doctor relays for a
+        # pydantic-caused pipeline failure, so it must be runnable too.
+        root, _path = self.repo_with_config(
+            "escalating-managed",
+            {"autonomous-pipeline": [{"stage": "plan"}]})
+        self.with_requirements(root)
+        level, name, detail = self.pydantic_check(
+            root, find_spec=lambda name: None, managed=self.MANAGED)
+        self.assertEqual((level, name), ("fail", "pydantic"))
+        self.assertIn(self.MANAGED_REQUIREMENTS_HINT, detail)
 
     def test_pydantic_probe_failure_warns(self):
         def boom(name):
@@ -895,10 +970,11 @@ class DoctorCheckTest(unittest.TestCase):
             "escalating", {"autonomous-pipeline": [{"stage": "plan"}]})
         self.with_requirements(root)
         level, name, detail = self.pydantic_check(
-            root, find_spec=lambda name: None)
+            root, find_spec=lambda name: None, managed=self.UNMANAGED)
         self.assertEqual((level, name), ("fail", "pydantic"))
         self.assertIn(path, detail)
         self.assertIn(self.REQUIREMENTS_HINT, detail)
+        self.assertNotIn(self.OVERRIDE_FLAGS, detail)
 
     def test_known_preset_escalates_missing_pydantic_to_a_failure(self):
         root, path = self.repo_with_config(
@@ -913,7 +989,7 @@ class DoctorCheckTest(unittest.TestCase):
             "default-preset", {"autonomous-pipeline": "default"})
         self.with_requirements(root)
         level, name, detail = self.pydantic_check(
-            root, find_spec=lambda name: None)
+            root, find_spec=lambda name: None, managed=self.UNMANAGED)
         self.assertEqual((level, name), ("warn", "pydantic"))
         self.assertIn(self.REQUIREMENTS_HINT, detail)
 

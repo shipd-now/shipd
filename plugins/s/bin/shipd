@@ -31,6 +31,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import sysconfig
 import tempfile
 from pathlib import Path
 
@@ -378,17 +379,48 @@ PINNED_SPECIFIERS = {"textual": "textual>=8.2.8,<9",
                      "pydantic": "pydantic>=2.12,<3"}
 
 
-def _install_hint(root, package):
+# PEP 668: a distribution-managed interpreter (Homebrew, Debian, …) plants
+# this marker beside its stdlib and pip refuses to install into it without an
+# explicit override. The flags below are the pair PEP 668's own error text
+# sanctions: ``--user`` lands the package in the user site the same
+# interpreter imports from, leaving the distribution's site-packages alone.
+EXTERNALLY_MANAGED_MARKER = "EXTERNALLY-MANAGED"
+OVERRIDE_FLAGS = "--user --break-system-packages"
+
+
+def externally_managed(stdlib=None):
+    """Whether the running interpreter is externally managed (PEP 668).
+
+    Read-only: the marker file beside the interpreter's stdlib, resolved
+    through ``sysconfig``. ``stdlib`` overrides that resolution so the two
+    branches are testable without a distribution-managed interpreter.
+    """
+    if stdlib is None:
+        stdlib = sysconfig.get_path("stdlib")
+    if not stdlib:
+        return False
+    return os.path.isfile(os.path.join(stdlib, EXTERNALLY_MANAGED_MARKER))
+
+
+def _install_hint(root, package, managed=externally_managed):
     """The ``pip install`` hint for ``package`` at ``root``: the checkout's
     ``requirements.txt`` when there is one to install from, and the pinned
     specifier otherwise — a vendored per-repo install carries no
-    ``requirements.txt`` to ``-r``."""
+    ``requirements.txt`` to ``-r``.
+
+    On an externally managed interpreter both forms gain
+    ``--user --break-system-packages``, so the command printed here is one the
+    interpreter that printed it can actually run; on an unmanaged interpreter
+    the hints are unchanged.
+    """
+    flags = "%s " % OVERRIDE_FLAGS if managed() else ""
     if os.path.isfile(os.path.join(root, "requirements.txt")):
-        return "pip install -r requirements.txt"
-    return "pip install '%s'" % PINNED_SPECIFIERS[package]
+        return "pip install %s-r requirements.txt" % flags
+    return "pip install %s'%s'" % (flags, PINNED_SPECIFIERS[package])
 
 
-def check_textual(root, find_spec=importlib.util.find_spec):
+def check_textual(root, find_spec=importlib.util.find_spec,
+                  managed=externally_managed):
     """The delivery board's one third-party dependency — board-only, so its
     absence is a warning."""
     try:
@@ -399,7 +431,7 @@ def check_textual(root, find_spec=importlib.util.find_spec):
         return ("ok", "textual", "importable; the delivery board can render")
     return ("warn", "textual",
             "not importable — only the board (`shipd board`) needs it; %s"
-            % _install_hint(root, "textual"))
+            % _install_hint(root, "textual", managed=managed))
 
 
 def _pipeline_needs_pydantic(root):
@@ -426,7 +458,8 @@ def _pipeline_needs_pydantic(root):
     return prov.get(sc.PIPELINE_KEY, "default")
 
 
-def check_pydantic(root, find_spec=importlib.util.find_spec):
+def check_pydantic(root, find_spec=importlib.util.find_spec,
+                   managed=externally_managed):
     """The engine's other scoped third-party dependency — declared-pipeline
     validation only, so its absence is a warning where nothing declares a
     pipeline, and a failure where ``root``'s configuration declares one that
@@ -439,7 +472,7 @@ def check_pydantic(root, find_spec=importlib.util.find_spec):
     if found:
         return ("ok", "pydantic",
                 "importable; declared pipelines can be validated")
-    hint = _install_hint(root, "pydantic")
+    hint = _install_hint(root, "pydantic", managed=managed)
     declared_by = _pipeline_needs_pydantic(root)
     if declared_by:
         return ("fail", "pydantic",
