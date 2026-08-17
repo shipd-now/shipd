@@ -82,8 +82,8 @@ exhaustive: a finding not listed here is **report-only**.
 
 | Finding | Remedy | How it runs |
 | --- | --- | --- |
-| `warn textual` — not importable | `python3 -m pip install "textual>=8.2.8,<9"` | Runnable on consent. The range mirrors `requirements.txt`; keep the two in step. |
-| `warn pydantic` or `fail pydantic` — not importable | `python3 -m pip install "pydantic>=2.12,<3"` | Runnable on consent — the same command for both levels; the `fail` is only the escalation the preflight applies when a declared `autonomous-pipeline` needs it. The range mirrors `requirements.txt`; the two must change together. |
+| `warn textual` — not importable | `python3 -m ` followed by the `pip install` command **this finding's own detail names** | Runnable on consent. Relay the detail's command verbatim, never compose your own: the preflight composed it for this environment — `-r requirements.txt` in a checkout, the pinned `textual>=8.2.8,<9` range otherwise, with `--user --break-system-packages` prepended when the interpreter is externally managed (PEP 668), which is what makes the command runnable there at all. The range mirrors `requirements.txt`; keep the two in step. |
+| `warn pydantic` or `fail pydantic` — not importable | `python3 -m ` followed by the `pip install` command **that finding's own detail names** | Runnable on consent — relayed verbatim the same way (pinned range `pydantic>=2.12,<3`, `--user --break-system-packages` prepended on an externally managed interpreter), and the same command for both levels; the `fail` is only the escalation the preflight applies when a declared `autonomous-pipeline` needs it. The range mirrors `requirements.txt`; the two must change together. |
 | `warn difft` — not on PATH | `python3 "${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/semdiff.py" doctor --fix` | Runnable on consent. It is the review engine's **tiered installer** (Homebrew, then cargo, then a prebuilt binary), so **state in the dialog before it runs that it may reach the network to download difftastic** — the one remedy here that does. |
 | `warn snapshot` — a newer version is installed | `claude plugin update s@shipd` | Runnable on consent. Always add the note that the update applies **in a new session** — skills load at session start. |
 | `warn statusline` — not registered | `<shipd> statusline install` | Runnable on consent, with the binary resolved exactly as step 1 resolved it for the preflight — the registration it writes points at that same installation. Always add the note that the statusline appears **in a new session**. |
@@ -110,6 +110,13 @@ first seven rows above). Honor the dialog-and-prose-separation rule:
   over the runnable remedies, one option per remedy carrying the exact command
   it will run in its label or description, plus a "Run none of them" option.
   No load-bearing prose outside the dialog.
+
+**State the override flag.** Where a relayed `pip install` command carries
+`--user --break-system-packages` — the form the preflight composes on an
+externally managed (PEP 668) interpreter — the option offering it states the
+`--break-system-packages` flag, in either form of the dialog. Overriding the
+distribution's guard is part of what the user consents to, so it is visible in
+the option, never only in the command that runs afterwards.
 
 Report-only findings and the `gh auth login` hand-off are **never** dialog
 options — they are prose in the report, since there is nothing to consent to.

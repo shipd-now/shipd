@@ -161,7 +161,13 @@ present registration SHALL report `ok`). The `pip install` hint on the
 `textual` and `pydantic` details SHALL name `-r requirements.txt` when a
 `requirements.txt` exists at the working-directory root, and the pinned
 package specifier (`'textual>=8.2.8,<9'` / `'pydantic>=2.12,<3'`)
-otherwise — a vendored per-repo install has no checkout to `-r` from. The
+otherwise — a vendored per-repo install has no checkout to `-r` from.
+Where the running interpreter is externally managed (PEP 668) — probed
+read-only via the `EXTERNALLY-MANAGED` marker file in the interpreter's
+stdlib directory resolved through `sysconfig` — the hint SHALL prepend
+`--user --break-system-packages` to either form, so the printed command
+is runnable by the interpreter that printed it; on an unmanaged
+interpreter both hint forms SHALL remain unchanged. The
 `pydantic` check SHALL stay `warn` when pydantic is not importable and no
 declared pipeline requires it, and SHALL escalate to `fail` — naming the
 supplying config path — when the resolved configuration declares an
@@ -204,18 +210,32 @@ configuration SHALL NOT escalate it. The verb SHALL mutate nothing.
   surface and the exit code is `0`
 
 #### Scenario: Missing pydantic only warns without a declared pipeline
-- **WHEN** `shipd doctor` runs without `pydantic` importable in a repo whose
-  configuration declares no `autonomous-pipeline`, all required checks
-  passing, with a `requirements.txt` at the working-directory root
+- **WHEN** `shipd doctor` runs without `pydantic` importable on an unmanaged
+  interpreter in a repo whose configuration declares no
+  `autonomous-pipeline`, all required checks passing, with a
+  `requirements.txt` at the working-directory root
 - **THEN** a `warn pydantic — ` line names declared-pipeline validation as
   the only affected surface with a `pip install -r requirements.txt` hint
   and the exit code is `0`
 
 #### Scenario: Missing requirements.txt pins the hint
-- **WHEN** `shipd doctor` runs without `pydantic` importable in a repo whose
-  root carries no `requirements.txt`
+- **WHEN** `shipd doctor` runs without `pydantic` importable on an unmanaged
+  interpreter in a repo whose root carries no `requirements.txt`
 - **THEN** the `pydantic` detail's hint names `pip install
   'pydantic>=2.12,<3'` and never `-r requirements.txt`
+
+#### Scenario: Externally managed interpreter flags the checkout hint
+- **WHEN** `shipd doctor` runs without `pydantic` importable on an
+  externally managed interpreter (the `EXTERNALLY-MANAGED` marker present)
+  in a repo with a `requirements.txt` at its root
+- **THEN** the `pydantic` detail's hint names
+  `pip install --user --break-system-packages -r requirements.txt`
+
+#### Scenario: Externally managed interpreter flags the pinned hint
+- **WHEN** `shipd doctor` runs without `textual` importable on an externally
+  managed interpreter in a repo whose root carries no `requirements.txt`
+- **THEN** the `textual` detail's hint names
+  `pip install --user --break-system-packages 'textual>=8.2.8,<9'`
 
 #### Scenario: Stale snapshot warns
 - **WHEN** `shipd doctor` runs from a cache snapshot directory that is not
@@ -248,10 +268,10 @@ configuration SHALL NOT escalate it. The verb SHALL mutate nothing.
   and the exit code is `1`
 
 #### Scenario: Declared pipeline escalates missing pydantic
-- **WHEN** `shipd doctor` runs without `pydantic` importable in a repo whose
-  configuration declares an `autonomous-pipeline` list (or a known preset
-  other than `default`), with a `requirements.txt` at the working-directory
-  root
+- **WHEN** `shipd doctor` runs without `pydantic` importable on an unmanaged
+  interpreter in a repo whose configuration declares an
+  `autonomous-pipeline` list (or a known preset other than `default`), with
+  a `requirements.txt` at the working-directory root
 - **THEN** a `fail pydantic — ` line names the supplying config path with
   the `pip install -r requirements.txt` hint and the exit code is `1`
 
