@@ -12,7 +12,7 @@ Only read/inspect verbs are exposed, with three deliberate exceptions, each
 writing user-domain files and never a spec artifact, and each only under an
 explicit word: ``statusline install`` writes the statusline registration into
 the user's own Claude Code settings file, ``copilot add`` / ``copilot remove``
-maintain the shipd Copilot code-review skill's three files inside a target
+maintain the shipd Copilot code-review skill's four files inside a target
 repository, and ``vendor add`` / ``vendor remove`` maintain a vendored per-repo
 shipd install there. The mutating verbs over the spec library (``set-status``,
 ``merge``, ``emit``, ``autopilot``, ``worktree remove``) stay behind their
@@ -674,15 +674,21 @@ def cmd_statusline(args):
 COPILOT_TEMPLATES = PLUGIN_ROOT / "integrations" / "copilot"
 COPILOT_ENGINE = PLUGIN_ROOT / "skills" / "review" / "scripts" / "semdiff.py"
 
-# The three files the verb manages, relative to the target repository root.
+# The four files the verb manages, relative to the target repository root.
 COPILOT_SKILL_DIR = os.path.join(".github", "skills", "code-review")
 COPILOT_SKILL = os.path.join(COPILOT_SKILL_DIR, "SKILL.md")
 COPILOT_SEMDIFF = os.path.join(COPILOT_SKILL_DIR, "scripts", "semdiff.py")
 COPILOT_WORKFLOW = os.path.join(".github", "workflows",
                                 "copilot-code-review.yml")
-COPILOT_MANAGED = (COPILOT_SKILL, COPILOT_SEMDIFF, COPILOT_WORKFLOW)
+# The gate workflow: it bridges Copilot's submitted review into the
+# ``semantic-review`` commit status, so a repository requiring that context
+# stops waiting on a status nothing posts.
+COPILOT_GATE_WORKFLOW = os.path.join(".github", "workflows",
+                                     "copilot-review-gate.yml")
+COPILOT_MANAGED = (COPILOT_SKILL, COPILOT_SEMDIFF, COPILOT_WORKFLOW,
+                   COPILOT_GATE_WORKFLOW)
 
-# The two marker-bearing managed files: managed path -> (template file name,
+# The three marker-bearing managed files: managed path -> (template file name,
 # ownership-marker pattern). The marker is what makes a file ours; a managed
 # path holding anything else is foreign and is never touched without --force.
 # The installed ``semdiff.py`` carries no marker of its own — it is kept
@@ -693,6 +699,8 @@ COPILOT_TEMPLATED = {
                     re.compile(r"^<!-- shipd-copilot v(\S+) -->$", re.M)),
     COPILOT_WORKFLOW: ("copilot-code-review.yml",
                        re.compile(r"^# shipd-copilot v(\S+)$", re.M)),
+    COPILOT_GATE_WORKFLOW: ("copilot-review-gate.yml",
+                            re.compile(r"^# shipd-copilot v(\S+)$", re.M)),
 }
 
 
@@ -721,7 +729,7 @@ def _copilot_marker(path, pattern):
 
 
 def copilot_states(root, version):
-    """``[(relative path, state, detail)]`` for the three managed files under
+    """``[(relative path, state, detail)]`` for the four managed files under
     ``root``, in :data:`COPILOT_MANAGED` order.
 
     ``installed`` is a marker at ``version``; ``stale`` an older marker or an
@@ -815,7 +823,7 @@ def _copilot_report(root, version, states):
 
 
 def _copilot_add(root, version):
-    """Install or refresh the three managed files. Every payload is prepared
+    """Install or refresh the four managed files. Every payload is prepared
     before the first write, so a broken template installs nothing."""
     try:
         engine = _read_bytes(str(COPILOT_ENGINE))
@@ -828,6 +836,8 @@ def _copilot_add(root, version):
              stat.S_IMODE(os.stat(COPILOT_ENGINE).st_mode)),
             (COPILOT_WORKFLOW, _copilot_render(COPILOT_WORKFLOW, version),
              0o644),
+            (COPILOT_GATE_WORKFLOW,
+             _copilot_render(COPILOT_GATE_WORKFLOW, version), 0o644),
         ]
     except (OSError, ValueError) as exc:
         _err("cannot read the copilot templates in %s: %s"
@@ -882,7 +892,7 @@ def _copilot_remove(root):
 def cmd_copilot(args):
     """Report on, install, or remove the shipd Copilot code-review skill in a
     repository. Bare it is read-only; only the explicit words ``add`` and
-    ``remove`` write, and only inside the three managed paths. Nothing here
+    ``remove`` write, and only inside the four managed paths. Nothing here
     runs ``gh`` or touches the network."""
     parser = argparse.ArgumentParser(
         prog="shipd copilot",

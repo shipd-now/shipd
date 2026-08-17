@@ -6,16 +6,18 @@ Two layers, both black-box:
 
 * **The templates** shipped at ``plugins/s/integrations/copilot/`` are read off
   disk and asserted on their content — the marker lines carrying the literal
-  ``{version}`` placeholder, the instructions the reviewing agent follows, and
-  the setup workflow's single job and tooling steps.
+  ``{version}`` placeholder, the instructions the reviewing agent follows, the
+  setup workflow's single job and tooling steps, and the gate workflow's
+  triggers, guards, and verdict mapping.
 * **The verb** is driven through ``plugins/s/bin/shipd`` by path (so its
   shebang and exec bit are exercised too) against throwaway temp roots, in the
   subprocess-against-temp-roots style of ``test_shipd_cli.py``. ``HOME`` is
   isolated so nothing reaches the real user's files, and no test ever writes
   into this checkout.
 
-The workflow template is parsed with a small indentation-aware reader rather
-than a YAML library: the engine's suite is stdlib-only, per the constitution.
+The workflow templates are parsed with a small indentation-aware reader rather
+than a YAML library, and the gate's shell conditional with a line-based branch
+splitter: the engine's suite is stdlib-only, per the constitution.
 """
 
 import json
@@ -31,6 +33,7 @@ BIN = os.path.join(PLUGIN_ROOT, "bin", "shipd")
 INTEGRATIONS = os.path.join(PLUGIN_ROOT, "integrations", "copilot")
 SKILL_TEMPLATE = os.path.join(INTEGRATIONS, "SKILL.md")
 WORKFLOW_TEMPLATE = os.path.join(INTEGRATIONS, "copilot-code-review.yml")
+GATE_TEMPLATE = os.path.join(INTEGRATIONS, "copilot-review-gate.yml")
 PLUGIN_SEMDIFF = os.path.join(PLUGIN_ROOT, "skills", "review", "scripts",
                               "semdiff.py")
 
@@ -40,12 +43,24 @@ MANIFEST = os.path.join(PLUGIN_ROOT, ".claude-plugin", "plugin.json")
 SKILL_MARKER = "<!-- shipd-copilot v{version} -->"
 WORKFLOW_MARKER = "# shipd-copilot v{version}"
 
-# The three files the verb manages, relative to the target root.
+# The machine-readable verdict markers the gate parses out of a review body.
+FIX_MARKER = "<!-- shipd-verdict: fix-required -->"
+SHIP_MARKER = "<!-- shipd-verdict: ship-it -->"
+
+# The commit-status context the gate posts — the same one review_gate.py uses,
+# so either poster satisfies a required check of that name.
+STATUS_CONTEXT = "semantic-review"
+
+# The four files the verb manages, relative to the target root.
 SKILL_PATH = os.path.join(".github", "skills", "code-review", "SKILL.md")
 SEMDIFF_PATH = os.path.join(".github", "skills", "code-review", "scripts",
                             "semdiff.py")
 WORKFLOW_PATH = os.path.join(".github", "workflows", "copilot-code-review.yml")
-MANAGED = (SKILL_PATH, SEMDIFF_PATH, WORKFLOW_PATH)
+GATE_PATH = os.path.join(".github", "workflows", "copilot-review-gate.yml")
+MANAGED = (SKILL_PATH, SEMDIFF_PATH, WORKFLOW_PATH, GATE_PATH)
+
+# The managed files carrying a substituted ownership marker of their own.
+MARKED = (SKILL_PATH, WORKFLOW_PATH, GATE_PATH)
 
 
 def read(path):
@@ -72,6 +87,26 @@ def frontmatter(text):
         elif key is not None:
             fields[key] = (fields[key] + " " + line.strip()).strip()
     return fields
+
+
+def markdown_section(text, heading):
+    """The body of the markdown section ``heading`` (given with its ``#``
+    prefix) introduces, up to the next heading at the same or a shallower
+    level — so an assertion lands on the section that must carry it rather
+    than anywhere in the file."""
+    level = len(heading) - len(heading.lstrip("#"))
+    out = []
+    inside = False
+    for line in text.splitlines():
+        if line.strip() == heading:
+            inside = True
+            continue
+        if not inside:
+            continue
+        if line.startswith("#") and len(line) - len(line.lstrip("#")) <= level:
+            break
+        out.append(line)
+    return "\n".join(out)
 
 
 def yaml_block(text, key):
@@ -103,6 +138,60 @@ def block_keys(block):
     return [line.strip()[:-1] for line in block
             if line.strip().endswith(":")
             and len(line) - len(line.lstrip()) == level]
+
+
+def job_blocks(text):
+    """``{job name: the job's body as text}`` for the top-level ``jobs:``
+    mapping — enough to assert on one job's guard and steps without pulling in
+    a YAML library."""
+    block = yaml_block(text, "jobs")
+    names = block_keys(block)
+    if not names:
+        return {}
+    level = min(len(line) - len(line.lstrip()) for line in block
+                if line.strip() and line.rstrip().endswith(":"))
+    jobs = {}
+    current = None
+    for line in block:
+        if (line.strip().endswith(":")
+                and len(line) - len(line.lstrip()) == level
+                and line.strip()[:-1] in names):
+            current = line.strip()[:-1]
+            jobs[current] = []
+            continue
+        if current is not None:
+            jobs[current].append(line)
+    return {name: "\n".join(lines) for name, lines in jobs.items()}
+
+
+def verdict_branches(text):
+    """``{branch key: the branch's body}`` for the gate's shell conditional,
+    keyed by the verdict each arm tests — ``"fix-required"``, ``"ship-it"``, or
+    ``"none"`` for the marker-less fallback. A conditional arm testing anything
+    else contributes nothing."""
+    branches = {}
+    current = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        head = stripped.split()[0] if stripped else ""
+        if head in ("if", "elif", "else"):
+            if FIX_MARKER in stripped:
+                current = "fix-required"
+            elif SHIP_MARKER in stripped:
+                current = "ship-it"
+            elif head == "else":
+                current = "none"
+            else:
+                current = None
+            if current is not None:
+                branches.setdefault(current, [])
+            continue
+        if head == "fi":
+            current = None
+            continue
+        if current is not None:
+            branches[current].append(stripped)
+    return {key: "\n".join(lines) for key, lines in branches.items()}
 
 
 class SkillTemplateTest(unittest.TestCase):
@@ -159,6 +248,26 @@ class SkillTemplateTest(unittest.TestCase):
         self.assertIn("model", lowered)
         self.assertIn("advisory", lowered)
 
+    def test_report_instructions_mandate_the_verdict_marker(self):
+        report = markdown_section(self.text, "### 5. Report")
+        self.assertTrue(report.strip(), "no report section in the template")
+        self.assertIn(SHIP_MARKER, report)
+        self.assertIn(FIX_MARKER, report)
+        lowered = report.lower()
+        self.assertIn("verdict line", lowered)
+        self.assertIn("own line", lowered)
+
+    def test_scope_describes_the_gate_workflows_fail_open_bridging(self):
+        scope = markdown_section(self.text, "## Scope of this review")
+        self.assertTrue(scope.strip(), "no scope section in the template")
+        self.assertIn("copilot-review-gate.yml", scope)
+        self.assertIn(STATUS_CONTEXT, scope)
+        lowered = scope.lower()
+        self.assertIn("fail-open", lowered)
+        # Advisory is what remains where no gate workflow is installed.
+        self.assertIn("advisory", lowered)
+        self.assertIn("no gate workflow", lowered)
+
 
 class WorkflowTemplateTest(unittest.TestCase):
     """``integrations/copilot/copilot-code-review.yml``
@@ -194,6 +303,126 @@ class WorkflowTemplateTest(unittest.TestCase):
     def test_no_secrets_are_referenced(self):
         self.assertNotIn("secrets.", self.text)
         self.assertNotIn("${{ secrets", self.text)
+
+
+class GateWorkflowTemplateTest(unittest.TestCase):
+    """``integrations/copilot/copilot-review-gate.yml`` (copilot-review-skill
+    gate-workflow-template) — the workflow that bridges Copilot's review into
+    the required ``semantic-review`` commit status."""
+
+    def setUp(self):
+        self.assertTrue(os.path.isfile(GATE_TEMPLATE),
+                        "missing template %s" % GATE_TEMPLATE)
+        self.text = read(GATE_TEMPLATE)
+
+    def guard(self, event):
+        """The ``if`` guard of the single job gated on ``event`` — everything
+        the job declares before its ``steps:``."""
+        matching = [body for body in job_blocks(self.text).values()
+                    if "github.event_name == '%s'" % event in body]
+        self.assertEqual(len(matching), 1,
+                         "expected exactly one job gated on %r" % event)
+        body = matching[0]
+        self.assertIn("steps:", body)
+        return body[:body.index("steps:")], body
+
+    def test_ownership_marker_line_is_present_with_the_placeholder(self):
+        self.assertIn(WORKFLOW_MARKER,
+                      [line.strip() for line in self.text.splitlines()])
+
+    def test_triggers_on_pull_request_and_review_submission(self):
+        block = yaml_block(self.text, "on")
+        self.assertEqual(block_keys(block),
+                         ["pull_request", "pull_request_review"])
+        joined = "\n".join(block)
+        opened = joined.index("pull_request:")
+        submitted = joined.index("pull_request_review:")
+        on_pull_request = joined[opened:submitted]
+        on_review = joined[submitted:]
+        for event_type in ("opened", "synchronize", "reopened"):
+            self.assertIn(event_type, on_pull_request,
+                          "pull_request omits type %r" % event_type)
+        self.assertIn("submitted", on_review)
+        self.assertNotIn("submitted", on_pull_request)
+
+    def test_permissions_grant_statuses_write(self):
+        block = [line.strip() for line in yaml_block(self.text, "permissions")]
+        self.assertIn("statuses: write", block)
+
+    def test_pull_request_events_post_pending_on_the_head_sha(self):
+        _guard, body = self.guard("pull_request")
+        self.assertIn("state=pending", body)
+        self.assertIn("context=%s" % STATUS_CONTEXT, body)
+        self.assertIn(
+            "repos/${{ github.repository }}/statuses/"
+            "${{ github.event.pull_request.head.sha }}", body)
+
+    def test_the_bridge_guards_the_reviewer_login_and_the_head_commit(self):
+        guard, _body = self.guard("pull_request_review")
+        self.assertIn("github.event.review.user.login == "
+                      "'copilot-pull-request-reviewer[bot]'", guard)
+        self.assertIn("github.event.review.commit_id == "
+                      "github.event.pull_request.head.sha", guard)
+
+    def test_the_bridge_posts_the_same_status_context_on_the_head_sha(self):
+        _guard, body = self.guard("pull_request_review")
+        self.assertIn("context=%s" % STATUS_CONTEXT, body)
+        self.assertIn(
+            "repos/${{ github.repository }}/statuses/"
+            "${{ github.event.pull_request.head.sha }}", body)
+
+    def test_fix_required_maps_to_failure(self):
+        branch = verdict_branches(self.text)["fix-required"]
+        self.assertIn("failure", branch)
+        self.assertNotIn("success", branch)
+
+    def test_ship_it_maps_to_success(self):
+        branch = verdict_branches(self.text)["ship-it"]
+        self.assertIn("success", branch)
+        self.assertNotIn("failure", branch)
+
+    def test_a_marker_less_review_passes_fail_open_saying_so(self):
+        branch = verdict_branches(self.text)["none"]
+        self.assertIn("success", branch)
+        self.assertNotIn("failure", branch)
+        self.assertIn("no verdict", branch.lower(),
+                      "the fail-open description must say no verdict was "
+                      "parsed")
+
+    def test_the_verdict_match_is_a_pure_bash_substring_test(self):
+        for marker in (FIX_MARKER, SHIP_MARKER):
+            self.assertIn("""[[ "$REVIEW_BODY" == *'%s'* ]]""" % marker,
+                          self.text,
+                          "%r is not matched by a bash substring test" % marker)
+
+    def test_the_review_body_is_never_piped_into_a_matcher(self):
+        # `grep -q` exits at its first match, so on a review body larger than
+        # the pipe buffer the writer dies of SIGPIPE, `pipefail` makes the
+        # matched condition false, and a fix-required verdict falls through to
+        # the fail-open branch and posts success. Review bodies reach 65,536
+        # characters, well past that buffer — so the body is never piped.
+        for line in self.text.splitlines():
+            if "$REVIEW_BODY" in line and not line.lstrip().startswith("#"):
+                self.assertNotIn("|", line,
+                                 "the review body is piped: %s" % line.strip())
+
+    def test_the_blocking_verdict_is_tested_first(self):
+        # A body carrying both markers must block, so fix-required is the
+        # first arm of the conditional.
+        self.assertLess(self.text.index(FIX_MARKER),
+                        self.text.index(SHIP_MARKER))
+
+    def test_only_the_workflows_own_token_authenticates(self):
+        self.assertIn("GH_TOKEN: ${{ github.token }}", self.text)
+        self.assertNotIn("secrets.", self.text)
+        self.assertNotIn("${{ secrets", self.text)
+
+    def test_no_step_requests_copilot_as_a_reviewer(self):
+        # Triggering the review stays GitHub-side: a per-PR reviewer request
+        # or a branch ruleset. Nothing here asks for one.
+        self.assertNotIn("requested_reviewers", self.text)
+        self.assertNotIn("--add-reviewer", self.text)
+        self.assertNotIn("gh pr edit", self.text)
 
 
 class CopilotVerbTest(unittest.TestCase):
@@ -300,6 +529,7 @@ class CopilotVerbTest(unittest.TestCase):
         # The skill is only installed when its bundled engine matches.
         self.assertEqual(states[SKILL_PATH], "stale")
         self.assertEqual(states[WORKFLOW_PATH], "installed")
+        self.assertEqual(states[GATE_PATH], "installed")
 
     def test_report_marks_an_older_marker_stale_naming_the_version(self):
         self.install()
@@ -316,6 +546,10 @@ class CopilotVerbTest(unittest.TestCase):
         self.plant(WORKFLOW_PATH, "name: someone else's workflow\n")
         self.assertEqual(self.states()[WORKFLOW_PATH], "foreign")
 
+    def test_report_marks_a_marker_less_gate_workflow_foreign(self):
+        self.plant(GATE_PATH, "name: someone else's gate\n")
+        self.assertEqual(self.states()[GATE_PATH], "foreign")
+
     def test_report_marks_semdiff_foreign_when_its_skill_is_not_owned(self):
         self.plant(SKILL_PATH, "# someone else's skill\n")
         self.plant(SEMDIFF_PATH, read(PLUGIN_SEMDIFF))
@@ -325,18 +559,19 @@ class CopilotVerbTest(unittest.TestCase):
 
     # -- add ---------------------------------------------------------------
 
-    def test_add_installs_exactly_the_three_managed_files(self):
+    def test_add_installs_exactly_the_four_managed_files(self):
         self.install()
         self.assertEqual(self.tree(), set(MANAGED))
 
-    def test_add_substitutes_the_manifest_version_into_both_markers(self):
+    def test_add_substitutes_the_manifest_version_into_every_marker(self):
         self.install()
         skill = self.contents(SKILL_PATH)
-        workflow = self.contents(WORKFLOW_PATH)
         self.assertIn("<!-- shipd-copilot v%s -->" % self.version, skill)
-        self.assertIn("# shipd-copilot v%s" % self.version, workflow)
-        self.assertNotIn("{version}", skill)
-        self.assertNotIn("{version}", workflow)
+        for relative in (WORKFLOW_PATH, GATE_PATH):
+            self.assertIn("# shipd-copilot v%s" % self.version,
+                          self.contents(relative), relative)
+        for relative in MARKED:
+            self.assertNotIn("{version}", self.contents(relative), relative)
 
     def test_add_installs_the_plugins_semdiff_byte_for_byte(self):
         self.install()
@@ -386,6 +621,23 @@ class CopilotVerbTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("# shipd-copilot v%s" % self.version,
                       self.contents(WORKFLOW_PATH))
+        self.assertEqual(self.tree(), set(MANAGED))
+
+    def test_add_refuses_a_foreign_gate_workflow_and_writes_nothing(self):
+        self.plant(GATE_PATH, "name: someone else's gate\n")
+        result = self.cli("add")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(GATE_PATH, result.stderr)
+        self.assertEqual(self.contents(GATE_PATH),
+                         "name: someone else's gate\n")
+        self.assertEqual(self.tree(), {GATE_PATH})
+
+    def test_force_replaces_a_foreign_gate_workflow(self):
+        self.plant(GATE_PATH, "name: someone else's gate\n")
+        result = self.cli("add", "--force")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("# shipd-copilot v%s" % self.version,
+                      self.contents(GATE_PATH))
         self.assertEqual(self.tree(), set(MANAGED))
 
     def test_add_creates_the_parent_directories(self):
@@ -446,6 +698,21 @@ class CopilotVerbTest(unittest.TestCase):
     def test_force_removes_a_foreign_skill(self):
         self.install()
         self.plant(SKILL_PATH, "# someone else's skill\n")
+        result = self.cli("remove", "--force")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.tree(), set())
+
+    def test_remove_refuses_a_foreign_gate_workflow_and_deletes_nothing(self):
+        self.install()
+        self.plant(GATE_PATH, "name: someone else's gate\n")
+        result = self.cli("remove")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(GATE_PATH, result.stderr)
+        self.assertEqual(self.tree(), set(MANAGED))
+
+    def test_force_removes_a_foreign_gate_workflow(self):
+        self.install()
+        self.plant(GATE_PATH, "name: someone else's gate\n")
         result = self.cli("remove", "--force")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.tree(), set())

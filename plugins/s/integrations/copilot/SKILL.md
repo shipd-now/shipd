@@ -89,6 +89,22 @@ explicit **severity**.
 Low findings never block. When unsure between two levels, state the doubt
 rather than inflating.
 
+**End the review body with the verdict, twice.** A human-readable verdict line
+— `**Verdict: Ship it**` or `**Verdict: Fix required**` — and, on its own line
+directly below it, the matching machine-readable marker:
+
+```
+<!-- shipd-verdict: ship-it -->
+```
+
+```
+<!-- shipd-verdict: fix-required -->
+```
+
+Emit exactly one marker, matching the verdict line, as the last line of the
+body. It is read by an exact substring match, so reproduce it character for
+character — no reflowing, no extra spaces inside the comment.
+
 ## The engine's guarantees and limits
 
 - **Read-only.** Every subcommand above only reads the repository and shells
@@ -108,9 +124,19 @@ rather than inflating.
   surface exposes no repository-side option to pin the model this review runs
   on, so nothing here configures one. This is documented rather than faked; it
   will be revisited if GitHub exposes a real option.
-- **Advisory.** This review is advisory alongside whatever merge gate the
-  repository requires. It reports honestly and blocks nothing on its own; the
-  required status check remains the merge gate.
+- **This review can be the merge gate.** Where the repository installs
+  `.github/workflows/copilot-review-gate.yml`, that workflow reads the verdict
+  marker above out of this review's body and posts it as the `semantic-review`
+  commit status on the reviewed head commit: a `fix-required` marker posts
+  `failure` and blocks the merge, a `ship-it` marker posts `success`. The
+  bridging is **fail-open** — a review body carrying no marker posts `success`
+  with a description saying no verdict was parsed — so a missing marker never
+  bricks a merge, but it also throws away this review's judgement. Emit the
+  marker.
+- **Advisory where no gate workflow is installed.** Without that workflow the
+  review posts as an ordinary Copilot review and blocks nothing on its own;
+  whatever status check the repository requires remains the merge gate. Either
+  way, report honestly: the verdict follows the rubric, never the consequence.
 
 ---
 
