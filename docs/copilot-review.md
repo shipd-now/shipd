@@ -24,6 +24,20 @@ run. See [The merge gate](#3-the-merge-gate) and
 Nothing else. The review runs on GitHub Actions runners, which already provide
 `git` and Python 3 — all the engine needs.
 
+**On a private repository, verify the review runner's checkout once.** Copilot
+runs its review in a dynamic Actions run that checks the repository out for
+itself, and on a private repository that checkout has been observed to fail
+(`repository not found`, on a private individual-account repo). When it fails,
+nothing under `.github/skills` is on disk for the review: the skill never
+loads, the review is Copilot's generic one, it carries no verdict marker, and
+every review of that repository classifies **fail-open** — `success`,
+described as *no verdict marker was parsed*. Nothing here can fix that from
+the repository side; it is decided in Copilot's own runner. So on the first
+review, open the Copilot code review run's log and confirm its checkout step
+succeeded. Where it does not, treat the session flow (`/s:review` plus
+`review_gate.py post`) as the working gate and do not rely on the Copilot
+verdict.
+
 ## 1. Install the files
 
 From the repository you want reviewed:
@@ -105,12 +119,26 @@ requiring `semantic-review` is satisfied by whichever of the two ran last, and
 a pull request no longer waits forever at *"Expected — waiting for status to be
 reported"*.
 
-Two triggers, two behaviours:
+Two triggers, one job:
 
-| Event | What the gate posts |
+| Event | What the gate does |
 | --- | --- |
-| A pull request **opens**, **updates** (a new push), or **reopens** | `pending` on the new head commit — the review of an older commit never counts for a newer one. |
-| Copilot **submits a review** of the current head commit | The verdict, mapped from the review body (below). |
+| A pull request **opens**, **updates** (a new push), or **reopens** | Posts `pending` on the new head commit — a review of an older commit never counts for a newer one — and then **waits for Copilot's review of that commit**, polling for it, and posts the verdict it finds. |
+| Copilot **submits a review** of the current head commit, through an event GitHub routes | Posts the verdict straight from the event's review body. |
+
+**Why it polls instead of waiting to be told.** Copilot submits its review from
+inside a dynamic Actions run, using the workflow-scoped token, and GitHub does
+not start workflow runs from events raised by such a token. So a
+Copilot-authored review submission triggers **no `pull_request_review` run at
+all** — measured twice on a dogfooding repository, against human reviews of the
+same pull requests that triggered gate runs within three seconds. A gate that
+only listened for that event posted `pending` and then never heard the one
+thing it existed to hear. The `pull_request` run is the one that reliably
+exists, so it is the one that waits: it polls the pull request's reviews
+through the REST API for the newest review by
+`copilot-pull-request-reviewer[bot]` whose `commit_id` is the head it was
+triggered for. The review-event path is kept because it costs nothing and
+still handles any submission GitHub does route.
 
 The review body carries a machine-readable marker, which the skill instructs
 the reviewer to emit as the body's last line. The gate reads **only that
@@ -135,13 +163,36 @@ review that ignored the skill produces no marker — failing closed there would
 brick every merge on a Copilot miss. A review that *did* run the skill and
 found blocking problems still posts `failure`.
 
-The bridge only acts on a review whose author is
+The gate only acts on a review whose author is
 `copilot-pull-request-reviewer[bot]` and whose `commit_id` is the pull
 request's current head: someone else's review, or Copilot's review of a
-superseded commit, changes nothing.
+superseded commit, changes nothing. That holds on both paths — it is what the
+poll searches for, and what the review event is guarded on.
 
-The workflow authenticates with its own `github.token` and needs no secret of
-yours. It also never *asks* for a review — triggering stays GitHub-side, per
+**The poll's bounds, and what a timeout means.** The poll runs every **20
+seconds for at most 15 minutes**. On the dogfooding repository Copilot's
+reviews landed two to three minutes after the request, so the window is
+generous rather than tight. Each cycle also re-reads the pull request's own
+head: once a new push has moved it, the poll exits quietly and that push's own
+run — which has already posted its own `pending` — owns the gate from there.
+
+If the window elapses with no Copilot review of that commit, the gate **leaves
+the status `pending` and posts nothing further**. No review happened, so no
+verdict is invented; a required `semantic-review` check simply stays unmet, and
+the manual out is the session flow's poster, `review_gate.py post`. The same is
+true if the poll is cancelled: the workflow keeps one concurrency group per
+pull request with `cancel-in-progress`, so a new push cancels the poll it
+supersedes.
+
+**What it costs.** Waiting occupies a runner: up to 15 runner-minutes per pull
+request update in the worst case, typically the two or three minutes until the
+review lands. The concurrency group caps that at one live poll per pull
+request, and public repositories bill nothing for it — on a private repository
+those are billable Actions minutes.
+
+The workflow authenticates with its own `github.token` (with `statuses: write`
+to post and `pull-requests: read` to poll) and needs no secret of yours. It
+also never *asks* for a review — triggering stays GitHub-side, per
 [step 2](#2-enable-reviews).
 
 **Coexisting with the session flow.** Running `/s:review` and posting the gate
@@ -155,18 +206,15 @@ there and the check stays unreported. Same-repository branches — the shipd
 `change/<name>` flow — are unaffected. On a fork PR, post the status from a
 session with `review_gate.py post`.
 
-**Bootstrap: the pull request that installs the gate.** GitHub runs a
-`pull_request_review`-triggered workflow from the workflow file **on the
-default branch**, not from the pull request's head branch. So on the very
-first pull request — the one adding `copilot-review-gate.yml` — the bridge
-job does not exist yet as far as GitHub is concerned and never fires, no
-matter what Copilot posts. (Its `pending` job *does* fire, on the
-`pull_request` trigger, so that pull request sits at `pending` indefinitely.)
-Post that one status another way: run the session review flow's
-`review_gate.py post` against the pull request, or use a one-time admin
-bypass of the required check. Once the install merges into the default
-branch, every later pull request is bridged normally — this is a one-time
-bootstrap, not a standing limit.
+**Retracted: the "bootstrap" limit.** An earlier version of this guide warned
+that the pull request installing the gate could not be bridged, on the belief
+that a review-triggered workflow only ever runs from the default branch's copy
+of the workflow file. Dogfooding disproved it: a gate workflow present only on
+the head branch started runs for both of its triggers, on the installing pull
+request itself. There is no bootstrap step — the pull request that installs
+the gate is gated by the gate it installs, exactly like every later one. What
+does not fire is a run for a *Copilot-authored* review submission, on any
+branch, which is what the poll above exists to absorb.
 
 ## 4. Check and upgrade the install
 
