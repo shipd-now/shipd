@@ -8,11 +8,12 @@ Two layers, both black-box:
   disk and asserted on their content — the marker lines carrying the literal
   ``{version}`` placeholder, the instructions the reviewing agent follows, the
   setup workflow's single job and tooling steps, and the gate workflow's
-  triggers, guards, and verdict mapping. The gate's verdict parse is also
-  *executed*: its step body is extracted, its ``${{ … }}`` expressions
-  substituted, and the script run under bash against a stubbed ``gh``, so the
-  classification is proved on real review bodies rather than asserted on the
-  shape of a conditional.
+  triggers, guards, concurrency, and verdict mapping. The gate's own script is
+  also *executed*: its step body is extracted, its ``${{ … }}`` expressions
+  substituted, and the script run under bash against a stubbed ``gh`` serving
+  scripted API responses, so both the poll for Copilot's review and the
+  classification of it are proved on real bodies and real call sequences
+  rather than asserted on the shape of a conditional.
 * **The verb** is driven through ``plugins/s/bin/shipd`` by path (so its
   shebang and exec bit are exercised too) against throwaway temp roots, in the
   subprocess-against-temp-roots style of ``test_shipd_cli.py``. ``HOME`` is
@@ -199,17 +200,15 @@ def verdict_branches(text):
     return {key: "\n".join(lines) for key, lines in branches.items()}
 
 
-def gated_job(text, event):
-    """The body of the single job gated on ``event`` — the module-level twin
-    of :meth:`GateWorkflowTemplateTest.guard`, for helpers that need the job
-    outside a test case."""
-    matching = [body for body in job_blocks(text).values()
-                if "github.event_name == '%s'" % event in body]
-    if len(matching) != 1:
-        raise AssertionError(
-            "expected exactly one job gated on %r, found %d"
-            % (event, len(matching)))
-    return matching[0]
+def gate_job(text):
+    """The body of the gate workflow's single job. Both triggers are served by
+    one job — which event a run is handling is a branch inside its script, not
+    a job of its own — so there is exactly one to return."""
+    jobs = job_blocks(text)
+    if len(jobs) != 1:
+        raise AssertionError("expected exactly one job, found %d: %s"
+                             % (len(jobs), ", ".join(sorted(jobs))))
+    return next(iter(jobs.values()))
 
 
 def run_block(job_body):
@@ -243,13 +242,12 @@ def run_block(job_body):
 ACTIONS_EXPRESSION = re.compile(r"\$\{\{[^}]*\}\}")
 
 
-def bridge_script(text, substitute="stub"):
-    """The gate's ``pull_request_review`` step body, runnable under bash: the
-    Actions expressions the runner would interpolate are replaced by
-    ``substitute``."""
-    return ACTIONS_EXPRESSION.sub(substitute,
-                                  run_block(gated_job(text,
-                                                      "pull_request_review")))
+def gate_script(text, substitute="stub"):
+    """The gate job's step body, runnable under bash: the Actions expressions
+    the runner would interpolate are replaced by ``substitute``. Everything the
+    script needs of the event reaches it through the step's ``env:``, so a run
+    is driven entirely by the environment the test sets."""
+    return ACTIONS_EXPRESSION.sub(substitute, run_block(gate_job(text)))
 
 
 class SkillTemplateTest(unittest.TestCase):
@@ -372,17 +370,11 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(GATE_TEMPLATE),
                         "missing template %s" % GATE_TEMPLATE)
         self.text = read(GATE_TEMPLATE)
-
-    def guard(self, event):
-        """The ``if`` guard of the single job gated on ``event`` — everything
-        the job declares before its ``steps:``."""
-        matching = [body for body in job_blocks(self.text).values()
-                    if "github.event_name == '%s'" % event in body]
-        self.assertEqual(len(matching), 1,
-                         "expected exactly one job gated on %r" % event)
-        body = matching[0]
-        self.assertIn("steps:", body)
-        return body[:body.index("steps:")], body
+        self.job = gate_job(self.text)
+        self.assertIn("steps:", self.job)
+        # Everything the job declares before its steps — its trigger guard.
+        self.guard = self.job[:self.job.index("steps:")]
+        self.script = gate_script(self.text)
 
     def test_ownership_marker_line_is_present_with_the_placeholder(self):
         self.assertIn(WORKFLOW_MARKER,
@@ -403,31 +395,87 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertIn("submitted", on_review)
         self.assertNotIn("submitted", on_pull_request)
 
-    def test_permissions_grant_statuses_write(self):
+    def test_permissions_grant_statuses_write_and_pull_requests_read(self):
         block = [line.strip() for line in yaml_block(self.text, "permissions")]
         self.assertIn("statuses: write", block)
+        # The poll reads the pull request's reviews and its current head.
+        self.assertIn("pull-requests: read", block)
 
-    def test_pull_request_events_post_pending_on_the_head_sha(self):
-        _guard, body = self.guard("pull_request")
-        self.assertIn("state=pending", body)
-        self.assertIn("context=%s" % STATUS_CONTEXT, body)
-        self.assertIn(
-            "repos/${{ github.repository }}/statuses/"
-            "${{ github.event.pull_request.head.sha }}", body)
+    def test_one_concurrency_group_per_pull_request_cancels_superseded_runs(
+            self):
+        # A push while a poll is running supersedes it: the new head's own run
+        # owns the gate, and cancelling the old one is what stops two polls
+        # racing to post on the same pull request.
+        block = [line.strip() for line in yaml_block(self.text, "concurrency")]
+        group = [line for line in block if line.startswith("group:")]
+        self.assertEqual(len(group), 1,
+                         "expected exactly one concurrency group, found %d"
+                         % len(group))
+        self.assertIn("github.event.pull_request.number", group[0],
+                      "the concurrency group is not keyed on the pull request")
+        self.assertIn("cancel-in-progress: true", block)
 
-    def test_the_bridge_guards_the_reviewer_login_and_the_head_commit(self):
-        guard, _body = self.guard("pull_request_review")
+    def test_one_job_serves_both_triggers(self):
+        # Both events land in the same job, so the poll and the review-event
+        # classification share one script — and one classification block.
+        jobs = job_blocks(self.text)
+        self.assertEqual(len(jobs), 1,
+                         "expected one job, found: %s" % ", ".join(sorted(jobs)))
+        self.assertIn("github.event_name == 'pull_request'", self.guard)
+
+    def test_the_review_event_path_guards_reviewer_and_head_commit(self):
+        # A review event is worth a run only for Copilot's own review of the
+        # commit that is currently the head: a stale review is ignored.
         self.assertIn("github.event.review.user.login == "
-                      "'copilot-pull-request-reviewer[bot]'", guard)
+                      "'copilot-pull-request-reviewer[bot]'", self.guard)
         self.assertIn("github.event.review.commit_id == "
-                      "github.event.pull_request.head.sha", guard)
+                      "github.event.pull_request.head.sha", self.guard)
 
-    def test_the_bridge_posts_the_same_status_context_on_the_head_sha(self):
-        _guard, body = self.guard("pull_request_review")
-        self.assertIn("context=%s" % STATUS_CONTEXT, body)
-        self.assertIn(
-            "repos/${{ github.repository }}/statuses/"
-            "${{ github.event.pull_request.head.sha }}", body)
+    def test_every_status_is_posted_on_the_triggering_head_sha(self):
+        self.assertIn("HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+                      self.job)
+        self.assertIn("REPO: ${{ github.repository }}", self.job)
+        self.assertIn('repos/$REPO/statuses/$HEAD_SHA', self.script)
+        self.assertIn("context=%s" % STATUS_CONTEXT, self.script)
+
+    def test_the_poll_looks_for_copilots_review_of_the_triggering_head(self):
+        self.assertIn("PR_NUMBER: ${{ github.event.pull_request.number }}",
+                      self.job)
+        self.assertIn("pulls/$PR_NUMBER/reviews", self.script)
+        self.assertIn("--paginate", self.script,
+                      "the reviews listing is not paginated")
+        self.assertIn("copilot-pull-request-reviewer[bot]", self.script)
+        self.assertIn("env.HEAD_SHA", self.script,
+                      "the poll does not match the review's commit_id against "
+                      "the triggering head")
+        # Each cycle also re-reads the pull request's own head, so a poll for
+        # a superseded commit can stop itself.
+        self.assertIn('"repos/$REPO/pulls/$PR_NUMBER"', self.script)
+
+    def test_the_production_poll_cadence_is_20_seconds_over_15_minutes(self):
+        # The overrides exist only so the suite can drive the loop without
+        # waiting on it; nothing in the runner sets them, so these defaults
+        # are what every real run polls at.
+        self.assertIn('poll_interval="${SHIPD_GATE_POLL_INTERVAL:-20}"',
+                      self.script)
+        self.assertIn('poll_timeout="${SHIPD_GATE_POLL_TIMEOUT:-900}"',
+                      self.script)
+
+    def test_the_polled_body_reaches_the_classifier_through_a_file(self):
+        # A polled review body is written to a workspace file and read back
+        # with bash redirection: never through an environment variable (review
+        # bodies reach 65,536 characters, close enough to the 128 KiB per-string
+        # limit to matter) and never through a pipe.
+        self.assertIn('> "$body_file"', self.script)
+        self.assertIn('body="$(<"$body_file")"', self.script)
+        self.assertEqual(
+            self.script.count("REVIEW_BODY"), 1,
+            "the env-passed body belongs to the review-event branch alone")
+        poll = self.script[:self.script.index('body="$REVIEW_BODY"')]
+        self.assertIn("$body_file", poll)
+        self.assertNotIn("REVIEW_BODY", poll,
+                         "the polling path carries the body in an environment "
+                         "variable")
 
     def test_fix_required_maps_to_failure(self):
         branch = verdict_branches(self.text)["fix-required"]
@@ -465,10 +513,10 @@ class GateWorkflowTemplateTest(unittest.TestCase):
     def test_the_last_line_is_extracted_with_parameter_expansion_only(self):
         # The extraction has to be pure bash for the same reason the match
         # is: shelling out reintroduces the pipe the regression below forbids.
-        script = bridge_script(self.text)
-        self.assertIn("${", script,
-                      "the bridge step does no parameter expansion at all")
-        for line in script.splitlines():
+        # `gh` and `sleep` are the poll's business; no text tool is anyone's.
+        self.assertIn("${", self.script,
+                      "the gate step does no parameter expansion at all")
+        for line in self.script.splitlines():
             if line.lstrip().startswith("#"):
                 continue
             words = line.replace("$(", " ").replace("`", " ").split()
@@ -476,7 +524,7 @@ class GateWorkflowTemplateTest(unittest.TestCase):
                             "python", "python3"):
                 self.assertNotIn(
                     command, words,
-                    "the bridge step shells out to %r: %s"
+                    "the gate step shells out to %r: %s"
                     % (command, line.strip()))
 
     def test_the_review_body_is_never_piped_into_a_matcher(self):
@@ -484,11 +532,17 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         # the pipe buffer the writer dies of SIGPIPE, `pipefail` makes the
         # matched condition false, and a fix-required verdict falls through to
         # the fail-open branch and posts success. Review bodies reach 65,536
-        # characters, well past that buffer — so the body is never piped.
-        for line in self.text.splitlines():
-            if "$REVIEW_BODY" in line and not line.lstrip().startswith("#"):
-                self.assertNotIn("|", line,
-                                 "the review body is piped: %s" % line.strip())
+        # characters, well past that buffer — so the body is never piped, on
+        # either path: the polled one is redirected into a file and read back,
+        # the event-passed one is only ever expanded.
+        carriers = ("REVIEW_BODY", "$body", "${body", "$(<")
+        for line in self.script.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            if not any(carrier in line for carrier in carriers):
+                continue
+            self.assertNotIn("|", line,
+                             "the review body is piped: %s" % line.strip())
 
     def test_the_blocking_verdict_is_tested_first(self):
         # A body carrying both markers must block, so fix-required is the
@@ -525,18 +579,64 @@ No blocking findings were identified.
 """
 
 
-class GateVerdictParseTest(unittest.TestCase):
-    """The gate's verdict parse, executed (copilot-review-skill
-    gate-workflow-template): the bridge step's script is extracted from the
-    template and run under bash with a stubbed ``gh``, so what is asserted is
-    the state a real review body posts."""
+# A scripted `gh` for the runnable gate tests. Status posts are recorded; the
+# reads the poll makes are served from files in ``$STUB_DIR``, and a read's
+# answer may be scripted per call — ``ids.1``, ``ids.2``, … for successive
+# reviews listings, ``head.1``, ``head.2``, … for successive reads of the pull
+# request's own head — falling back to the unnumbered file once the script
+# runs out. That is what lets a test drive a poll through several cycles and
+# move the head underneath it.
+GH_STUB = r'''#!/bin/sh
+url=
+method=
+for arg in "$@"; do
+  case "$arg" in
+    POST) method=POST ;;
+    repos/*) url="$arg" ;;
+  esac
+done
+if [ "$method" = POST ]; then
+  for arg in "$@"; do printf '%s\n' "$arg"; done >> "$GH_ARGS"
+  exit 0
+fi
+serve() {
+  n=1
+  if [ -f "$STUB_DIR/$2" ]; then n=$(($(cat "$STUB_DIR/$2") + 1)); fi
+  printf '%s' "$n" > "$STUB_DIR/$2"
+  if [ -f "$STUB_DIR/$1.$n" ]; then cat "$STUB_DIR/$1.$n"
+  elif [ -f "$STUB_DIR/$1" ]; then cat "$STUB_DIR/$1"
+  fi
+}
+case "$url" in
+  */reviews/*)
+    id="${url##*/}"
+    if [ -f "$STUB_DIR/body.$id" ]; then cat "$STUB_DIR/body.$id"
+    else cat "$STUB_DIR/body"; fi ;;
+  */reviews) serve ids reviews-calls ;;
+  */pulls/*) serve head head-calls ;;
+esac
+exit 0
+'''
+
+
+class GateScriptCase(unittest.TestCase):
+    """Base for the tests that *run* the gate job's script (copilot-review-skill
+    gate-workflow-template): the step body is extracted from the template and
+    run under bash against :data:`GH_STUB`, so what is asserted is the sequence
+    of statuses a real event and a real review body produce."""
+
+    HEAD = "0" * 39 + "1"
+    MOVED = "0" * 39 + "2"
+
+    # Scripted files the stub serves from, cleared before each run.
+    SCRIPTED = ("ids", "head", "body", "reviews-calls", "head-calls")
 
     def setUp(self):
         self.assertTrue(os.path.isfile(GATE_TEMPLATE),
                         "missing template %s" % GATE_TEMPLATE)
-        self.script = bridge_script(read(GATE_TEMPLATE))
+        self.script = gate_script(read(GATE_TEMPLATE))
         self.assertIn("gh api", self.script,
-                      "no runnable bridge step found in the template")
+                      "no runnable gate step found in the template")
         self.tmp = tempfile.mkdtemp(prefix="shipd-copilot-gate-test-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.record = os.path.join(self.tmp, "gh-args")
@@ -544,23 +644,50 @@ class GateVerdictParseTest(unittest.TestCase):
         os.makedirs(self.stub_bin)
         stub = os.path.join(self.stub_bin, "gh")
         with open(stub, "w", encoding="utf-8") as fh:
-            fh.write('#!/bin/sh\n'
-                     'for arg in "$@"; do printf \'%s\\n\' "$arg"; done'
-                     ' >> "$GH_ARGS"\n')
+            fh.write(GH_STUB)
         os.chmod(stub, 0o755)
 
-    def post(self, body, timeout=30):
-        """Run the bridge step against ``body``; return the ``-f key=value``
-        fields it posted.
+    def plant(self, name, text):
+        with open(os.path.join(self.tmp, name), "w", encoding="utf-8") as fh:
+            fh.write(text)
 
-        The run is bounded: reintroducing a trim that is quadratic in a
-        trailing whitespace run makes the script crawl rather than misbehave
-        (the shipped one classified a 65,000-space body in ~64s on the
-        runner's bash, and minutes locally), and an unbounded ``run`` would
-        stall the whole suite instead of reporting that. The bound is
-        generous — every case here finishes in well under a second — so only
-        a real regression can trip it."""
-        script = os.path.join(self.tmp, "bridge.sh")
+    def calls(self, counter):
+        """How many reads the stub served for ``counter`` in the last run."""
+        path = os.path.join(self.tmp, counter)
+        return int(read(path)) if os.path.exists(path) else 0
+
+    def gate(self, event="pull_request", body="", ids="", cycles=(), heads=(),
+             bodies=None, interval="0", timeout="0", run_timeout=30):
+        """Run the gate script for ``event`` and return the statuses it posted,
+        in order — one dict of ``-f key=value`` fields per post, with the URL
+        it posted to under ``"url"``.
+
+        ``ids`` is the reviews listing the poll sees every cycle (``cycles``
+        overrides it call by call), ``heads`` the pull request's own head call
+        by call, and ``bodies`` maps a review id to its body where the default
+        ``body`` will not do. The poll's cadence is driven flat out
+        (``interval``/``timeout`` of ``0`` means: one cycle, no sleeping), so
+        the timeout case costs milliseconds rather than fifteen minutes.
+
+        The run is bounded by ``run_timeout``: reintroducing a trim that is
+        quadratic in a trailing whitespace run makes the script crawl rather
+        than misbehave (the shipped one classified a 65,000-space body in ~64s
+        on the runner's bash, and minutes locally), and a poll that never
+        notices a moved head spins forever — an unbounded ``run`` would stall
+        the whole suite instead of reporting either."""
+        for name in os.listdir(self.tmp):
+            if name in self.SCRIPTED or name.split(".")[0] in self.SCRIPTED:
+                os.remove(os.path.join(self.tmp, name))
+        self.plant("head", self.HEAD)
+        self.plant("ids", ids)
+        self.plant("body", body)
+        for cycle, listing in enumerate(cycles, start=1):
+            self.plant("ids.%d" % cycle, listing)
+        for cycle, sha in enumerate(heads, start=1):
+            self.plant("head.%d" % cycle, sha)
+        for review_id, text in (bodies or {}).items():
+            self.plant("body.%s" % review_id, text)
+        script = os.path.join(self.tmp, "gate.sh")
         with open(script, "w", encoding="utf-8") as fh:
             fh.write(self.script)
         if os.path.exists(self.record):
@@ -570,69 +697,160 @@ class GateVerdictParseTest(unittest.TestCase):
             "PATH": self.stub_bin + os.pathsep + env.get("PATH", ""),
             "GH_ARGS": self.record,
             "GH_TOKEN": "stub-token",
-            "REVIEW_BODY": body,
+            "STUB_DIR": self.tmp,
+            "RUNNER_TEMP": self.tmp,
+            "EVENT_NAME": event,
+            "REPO": "acme/widget",
+            "PR_NUMBER": "7",
+            "HEAD_SHA": self.HEAD,
+            # What the runner interpolates on a review event, and the empty
+            # string it interpolates on a pull-request one.
+            "REVIEW_BODY": body if event == "pull_request_review" else "",
+            "SHIPD_GATE_POLL_INTERVAL": interval,
+            "SHIPD_GATE_POLL_TIMEOUT": timeout,
         })
         try:
             result = subprocess.run(["bash", script], cwd=self.tmp, env=env,
                                     capture_output=True, text=True,
-                                    timeout=timeout)
+                                    timeout=run_timeout)
         except subprocess.TimeoutExpired:
-            self.fail("the bridge step did not finish within %ss on a "
-                      "%d-character body — the verdict parse is no longer "
-                      "linear in the body's trailing whitespace"
-                      % (timeout, len(body)))
+            self.fail("the gate step did not finish within %ss on a "
+                      "%d-character body — the poll or the verdict parse no "
+                      "longer terminates" % (run_timeout, len(body)))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(os.path.exists(self.record),
-                        "the bridge step posted no status at all")
-        args = read(self.record).splitlines()
-        fields = {}
-        for i, arg in enumerate(args):
-            if arg == "-f" and i + 1 < len(args) and "=" in args[i + 1]:
-                key, _sep, value = args[i + 1].partition("=")
-                fields[key] = value
-        return fields
+        return self.posted()
+
+    def posted(self):
+        """The recorded status posts, in order."""
+        if not os.path.exists(self.record):
+            return []
+        posts = []
+        for arg in read(self.record).splitlines():
+            if arg == "api":
+                posts.append({})
+            elif not posts:
+                continue
+            elif arg.startswith("repos/"):
+                posts[-1]["url"] = arg
+            elif "=" in arg and not arg.startswith("-"):
+                key, _sep, value = arg.partition("=")
+                posts[-1][key] = value
+        return posts
+
+    def assertStates(self, posts, expected):
+        self.assertEqual([post.get("state") for post in posts], expected)
+        for post in posts:
+            self.assertEqual(post.get("context"), STATUS_CONTEXT)
+            self.assertEqual(post.get("url"),
+                             "repos/acme/widget/statuses/" + self.HEAD,
+                             "a status was posted off the triggering head")
+
+
+class GatePollTest(GateScriptCase):
+    """The `pull_request` path: pending, then the poll for Copilot's review of
+    the triggering head (copilot-review-skill gate-workflow-template)."""
+
+    def test_a_found_review_turns_pending_into_a_terminal_status(self):
+        posts = self.gate(ids="42", body=SHIP_MARKER + "\n")
+        self.assertStates(posts, ["pending", "success"])
+
+    def test_the_newest_matching_review_is_the_one_classified(self):
+        # The listing arrives in submission order, so the last id is Copilot's
+        # latest word on this commit.
+        posts = self.gate(ids="31\n42",
+                          bodies={"31": FIX_MARKER + "\n",
+                                  "42": SHIP_MARKER + "\n"})
+        self.assertStates(posts, ["pending", "success"])
+
+    def test_the_poll_keeps_cycling_until_the_review_lands(self):
+        posts = self.gate(cycles=("", "", "42"), body=FIX_MARKER + "\n",
+                          timeout="30", interval="0", run_timeout=10)
+        self.assertStates(posts, ["pending", "failure"])
+        self.assertEqual(self.calls("reviews-calls"), 3,
+                         "the poll did not run one reviews read per cycle")
+
+    def test_a_timed_out_poll_leaves_pending(self):
+        # No review of this head ever arrives: the pending status stands and
+        # no verdict is invented. The session flow is the manual out.
+        posts = self.gate(ids="", timeout="0")
+        self.assertStates(posts, ["pending"])
+        self.assertGreaterEqual(self.calls("reviews-calls"), 1,
+                                "the poll never looked for a review at all")
+
+    def test_a_moved_head_stops_the_poll_quietly(self):
+        # The second cycle sees a newer head: that push's own run owns the
+        # gate, so this one exits without posting anything further.
+        posts = self.gate(ids="", heads=(self.HEAD, self.MOVED),
+                          timeout="30", interval="0", run_timeout=10)
+        self.assertStates(posts, ["pending"])
+        self.assertEqual(self.calls("head-calls"), 2,
+                         "the poll does not re-read the head every cycle")
+
+
+class GateVerdictParseTest(GateScriptCase):
+    """The gate's verdict parse, executed on both paths: the classification is
+    one shared block, so every body is put through the polled route and the
+    review-event route and must come out the same."""
+
+    def classify(self, body, run_timeout=30):
+        """The terminal status ``body`` posts, proved identical on both
+        paths."""
+        terminal = {}
+        for event in ("pull_request", "pull_request_review"):
+            posts = self.gate(event=event, body=body, ids="42",
+                              run_timeout=run_timeout)
+            self.assertTrue(posts, "the gate posted no status at all")
+            if event == "pull_request":
+                self.assertEqual(posts[0].get("state"), "pending")
+                self.assertEqual(len(posts), 2,
+                                 "the polled review was not classified")
+            terminal[event] = posts[-1]
+        self.assertEqual(terminal["pull_request"],
+                         terminal["pull_request_review"],
+                         "the two paths classified the same body differently")
+        return terminal["pull_request_review"]
 
     def test_a_quoted_marker_never_beats_the_ship_it_last_line(self):
-        fields = self.post(QUOTING_BODY + "\n" + SHIP_MARKER + "\n")
+        fields = self.classify(QUOTING_BODY + "\n" + SHIP_MARKER + "\n")
         self.assertEqual(fields.get("context"), STATUS_CONTEXT)
         self.assertEqual(fields.get("state"), "success",
                          "the quoted fix-required text won over the last line")
 
     def test_a_fix_required_last_line_fails_the_check(self):
-        fields = self.post("One high-severity finding blocks.\n\n"
-                           + FIX_MARKER + "\n")
+        fields = self.classify("One high-severity finding blocks.\n\n"
+                               + FIX_MARKER + "\n")
         self.assertEqual(fields.get("context"), STATUS_CONTEXT)
         self.assertEqual(fields.get("state"), "failure")
 
     def test_a_fix_required_last_line_survives_crlf_and_whitespace(self):
-        fields = self.post("One high-severity finding blocks.\r\n\r\n  "
-                           + FIX_MARKER + "  \r\n\r\n")
+        fields = self.classify("One high-severity finding blocks.\r\n\r\n  "
+                               + FIX_MARKER + "  \r\n\r\n")
         self.assertEqual(fields.get("state"), "failure")
 
     def test_a_long_trailing_whitespace_run_is_trimmed_promptly(self):
         # The liveness guard. Every way of asking bash for the trailing
         # whitespace in one shot is quadratic in the run — measured at 64s on
         # bash 5.2 and minutes on bash 3.2 for a body-sized 65,000 spaces —
-        # and a bridge job that crawls strands the required check in progress
+        # and a gate job that crawls strands the required check in progress
         # until the job times out. Both placements of the run are covered: on
         # its own line after the verdict, and on the verdict's own line.
-        fields = self.post("One high-severity finding blocks.\n\n"
-                           + FIX_MARKER + "\n" + " " * 65000 + "\n\n")
+        fields = self.classify("One high-severity finding blocks.\n\n"
+                               + FIX_MARKER + "\n" + " " * 65000 + "\n\n")
         self.assertEqual(fields.get("state"), "failure")
-        fields = self.post("One high-severity finding blocks.\n\n"
-                           + FIX_MARKER + " " * 65000)
+        fields = self.classify("One high-severity finding blocks.\n\n"
+                               + FIX_MARKER + " " * 65000)
         self.assertEqual(fields.get("state"), "failure")
 
     def test_an_all_whitespace_body_fails_open(self):
         # The trim pattern needs a non-space character to anchor on; with
         # none, the whole string is the whitespace run and the line must come
         # out empty rather than erroring under `set -euo pipefail`.
-        fields = self.post("   \n\n \t \n")
+        fields = self.classify("   \n\n \t \n")
         self.assertEqual(fields.get("state"), "success")
         self.assertIn("no verdict", fields.get("description", "").lower())
 
     def test_markers_quoted_only_mid_text_fail_open(self):
-        fields = self.post(QUOTING_BODY)
+        fields = self.classify(QUOTING_BODY)
         self.assertEqual(fields.get("state"), "success")
         self.assertIn("no verdict",
                       fields.get("description", "").lower(),
@@ -640,7 +858,7 @@ class GateVerdictParseTest(unittest.TestCase):
                       "parsed")
 
     def test_an_empty_body_fails_open(self):
-        fields = self.post("")
+        fields = self.classify("")
         self.assertEqual(fields.get("state"), "success")
         self.assertIn("no verdict", fields.get("description", "").lower())
 
