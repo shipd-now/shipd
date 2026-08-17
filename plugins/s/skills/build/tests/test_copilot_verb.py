@@ -211,6 +211,35 @@ def gate_job(text):
     return next(iter(jobs.values()))
 
 
+def job_steps(job_body):
+    """The job's steps, each as its own chunk of text in declaration order —
+    everything from one ``- name:`` at the steps' indent up to the next."""
+    lines = job_body.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if line.strip() == "steps:":
+            start = i + 1
+            break
+    if start is None:
+        return []
+    body = lines[start:]
+    indents = [len(line) - len(line.lstrip()) for line in body
+               if line.strip().startswith("- ")]
+    if not indents:
+        return []
+    level = min(indents)
+    steps = []
+    current = None
+    for line in body:
+        if (line.strip().startswith("- ")
+                and len(line) - len(line.lstrip()) == level):
+            current = [line]
+            steps.append(current)
+        elif current is not None:
+            current.append(line)
+    return ["\n".join(chunk) for chunk in steps]
+
+
 def run_block(job_body):
     """The dedented body of the first ``run: |`` block in ``job_body``."""
     lines = job_body.splitlines()
@@ -243,11 +272,20 @@ ACTIONS_EXPRESSION = re.compile(r"\$\{\{[^}]*\}\}")
 
 
 def gate_script(text, substitute="stub"):
-    """The gate job's step body, runnable under bash: the Actions expressions
-    the runner would interpolate are replaced by ``substitute``. Everything the
-    script needs of the event reaches it through the step's ``env:``, so a run
-    is driven entirely by the environment the test sets."""
-    return ACTIONS_EXPRESSION.sub(substitute, run_block(gate_job(text)))
+    """The gate's decision logic, runnable under bash: the ``run`` bodies of the
+    steps that touch the ``semantic-review`` status, concatenated in the order
+    the job runs them, with the Actions expressions the runner would interpolate
+    replaced by ``substitute``.
+
+    That selection is what the gate *decides*; the steps it leaves out are pure
+    provisioning — an ``actions/checkout``, and an apt/curl install of the
+    engine's optional tooling — with no branch in them, and what they provide is
+    stubbed on ``PATH`` for a test run instead. Everything the logic needs of
+    the event reaches it through the steps' ``env:``, so a run is driven
+    entirely by the environment the test sets."""
+    bodies = [run_block(step) for step in job_steps(gate_job(text))]
+    return ACTIONS_EXPRESSION.sub(
+        substitute, "".join(body for body in bodies if STATUS_CONTEXT in body))
 
 
 class SkillTemplateTest(unittest.TestCase):
@@ -313,6 +351,35 @@ class SkillTemplateTest(unittest.TestCase):
         self.assertIn("verdict line", lowered)
         self.assertIn("own line", lowered)
 
+    def test_the_marker_instruction_states_last_line_equality(self):
+        # The gate reads the marker off the body's last non-empty line and
+        # compares it for equality. An instruction promising an "exact
+        # substring match" describes a matcher that does not exist and that
+        # the gate deliberately does not use — a marker quoted mid-text is
+        # prose, and matching it anywhere would fail a passing pull request.
+        report = markdown_section(self.text, "### 5. Report")
+        self.assertTrue(report.strip(), "no report section in the template")
+        lowered = report.lower()
+        self.assertIn("last non-empty line", lowered)
+        self.assertIn("exact equality", lowered)
+        self.assertIn("never by a substring match", lowered,
+                      "the instruction does not rule the substring match out")
+        self.assertNotIn("exact substring match", self.text.lower(),
+                         "the template still promises a substring match")
+
+    def test_the_skill_is_the_contract_for_both_reviewer_surfaces(self):
+        # One rubric, two consumers: GitHub's own code-review runs, and the
+        # gate workflow's headless Copilot CLI reviewer, whose prompt defers to
+        # this file rather than restating it.
+        scope = markdown_section(self.text, "## Scope of this review")
+        self.assertTrue(scope.strip(), "no scope section in the template")
+        lowered = scope.lower()
+        self.assertIn("contract", lowered)
+        self.assertIn("both", lowered)
+        self.assertIn("code review", lowered)
+        self.assertIn("copilot cli", lowered)
+        self.assertIn("headless", lowered)
+
     def test_scope_describes_the_gate_workflows_fail_open_bridging(self):
         scope = markdown_section(self.text, "## Scope of this review")
         self.assertTrue(scope.strip(), "no scope section in the template")
@@ -375,6 +442,7 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         # Everything the job declares before its steps — its trigger guard.
         self.guard = self.job[:self.job.index("steps:")]
         self.script = gate_script(self.text)
+        self.steps = job_steps(self.job)
 
     def test_ownership_marker_line_is_present_with_the_placeholder(self):
         self.assertIn(WORKFLOW_MARKER,
@@ -395,11 +463,14 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertIn("submitted", on_review)
         self.assertNotIn("submitted", on_pull_request)
 
-    def test_permissions_grant_statuses_write_and_pull_requests_read(self):
+    def test_permissions_grant_statuses_and_pull_requests_write(self):
         block = [line.strip() for line in yaml_block(self.text, "permissions")]
         self.assertIn("statuses: write", block)
-        # The poll reads the pull request's reviews and its current head.
-        self.assertIn("pull-requests: read", block)
+        self.assertIn("contents: read", block)
+        # `write`, not the `read` the poll alone needed: the CLI reviewer posts
+        # the review text it judged as a pull-request comment.
+        self.assertIn("pull-requests: write", block)
+        self.assertNotIn("pull-requests: read", block)
 
     def test_one_concurrency_group_per_pull_request_cancels_superseded_runs(
             self):
@@ -460,6 +531,110 @@ class GateWorkflowTemplateTest(unittest.TestCase):
                       self.script)
         self.assertIn('poll_timeout="${SHIPD_GATE_POLL_TIMEOUT:-900}"',
                       self.script)
+
+    # -- the CLI reviewer path ---------------------------------------------
+
+    def cli_step(self):
+        """The step that runs the Copilot CLI — the one place the secret is
+        allowed to reach."""
+        found = [step for step in self.steps if "copilot -p" in step]
+        self.assertEqual(len(found), 1,
+                         "expected exactly one step invoking the Copilot CLI, "
+                         "found %d" % len(found))
+        return found[0]
+
+    def test_the_pull_request_path_branches_on_the_secret(self):
+        # A non-empty secret selects the CLI reviewer; an empty one falls back
+        # to the poll, which is what every repository without the secret keeps
+        # getting.
+        self.assertIn('-n "${COPILOT_GITHUB_TOKEN:-}"', self.script)
+        cli = self.script.index('-n "${COPILOT_GITHUB_TOKEN:-}"')
+        poll = self.script.index("pulls/$PR_NUMBER/reviews")
+        self.assertLess(cli, poll,
+                        "the secret is tested after the poll rather than "
+                        "selecting between the two paths")
+
+    def test_the_pending_status_is_posted_before_any_provisioning(self):
+        # Whatever fails afterwards — a checkout, an install, the CLI — the
+        # required check reads `pending` rather than going unreported.
+        first = run_block(self.steps[0])
+        self.assertIn("state=pending", first)
+        self.assertIn("context=%s" % STATUS_CONTEXT, first)
+        for step in self.steps[1:]:
+            self.assertNotIn("state=pending", run_block(step),
+                             "pending is posted after the first step")
+
+    def test_the_cli_path_checks_out_the_reviewed_commit_with_full_history(
+            self):
+        checkout = [step for step in self.steps
+                    if "uses: actions/checkout" in step]
+        self.assertEqual(len(checkout), 1,
+                         "expected exactly one checkout step, found %d"
+                         % len(checkout))
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}",
+                      checkout[0])
+        # The engine's merge-base diff needs the history behind both commits.
+        self.assertIn("fetch-depth: 0", checkout[0])
+        # Provisioning only happens where the CLI reviewer is configured.
+        self.assertIn("env.COPILOT_CLI_REVIEWER == 'true'", checkout[0])
+
+    def test_the_cli_path_provisions_difftastic_and_ripgrep(self):
+        tooling = [step for step in self.steps
+                   if "difft-x86_64-unknown-linux-gnu.tar.gz" in step]
+        self.assertEqual(len(tooling), 1,
+                         "expected exactly one difftastic install step, found "
+                         "%d" % len(tooling))
+        self.assertIn(
+            "https://github.com/Wilfred/difftastic/releases/latest/download/"
+            "difft-x86_64-unknown-linux-gnu.tar.gz", tooling[0])
+        self.assertIn("$GITHUB_PATH", tooling[0])
+        self.assertIn("ripgrep", tooling[0])
+        self.assertIn("apt-get install", tooling[0])
+        self.assertIn("env.COPILOT_CLI_REVIEWER == 'true'", tooling[0])
+
+    def test_the_cli_path_installs_the_copilot_cli(self):
+        self.assertIn("npm install -g @github/copilot", self.script)
+
+    def test_the_cli_runs_non_interactively_under_a_bounded_timeout(self):
+        # The bound's default is what every runner uses; the override exists so
+        # the suite can drive a simulated timeout without waiting ten minutes.
+        self.assertIn('cli_timeout="${SHIPD_GATE_CLI_TIMEOUT:-600}"',
+                      self.script)
+        self.assertIn('timeout "$cli_timeout" copilot -p ', self.script)
+        self.assertIn("--allow-all-tools", self.script)
+
+    def test_the_cli_prompt_defers_to_the_installed_skill(self):
+        # The rubric lives in SKILL.md, one contract for both reviewer modes,
+        # rather than being restated in YAML.
+        self.assertIn(".github/skills/code-review/SKILL.md", self.script)
+        prompt = self.script[self.script.index("prompt="):
+                             self.script.index('timeout "$cli_timeout"')]
+        self.assertIn("$BASE_SHA", prompt,
+                      "the prompt does not name the base to diff")
+        self.assertIn("$HEAD_SHA", prompt,
+                      "the prompt does not name the commit under review")
+        lowered = prompt.lower()
+        self.assertIn("do not post", lowered,
+                      "the prompt does not forbid the CLI from posting")
+        self.assertIn("last line", lowered,
+                      "the prompt does not require the marker as the last line")
+
+    def test_the_cli_output_is_captured_to_the_workspace_file(self):
+        # Only stdout: the CLI writes its report there and its run statistics
+        # to stderr, which belongs in the job log, not in the classified text.
+        run = self.script[self.script.index('timeout "$cli_timeout"'):]
+        run = run[:run.index("; then")]
+        self.assertIn('> "$body_file"', run)
+        self.assertNotIn("2>&1", run,
+                         "stderr is folded into the classified text")
+        self.assertIn('body="$(<"$body_file")"', self.script)
+
+    def test_the_review_text_is_posted_as_a_pull_request_comment(self):
+        self.assertIn("gh pr comment", self.script)
+        self.assertIn('--body-file "$comment_file"', self.script)
+        # After the verdict, so a failed comment cannot cost the status.
+        self.assertLess(self.script.index('post_status "$state"'),
+                        self.script.index("gh pr comment"))
 
     def test_the_polled_body_reaches_the_classifier_through_a_file(self):
         # A polled review body is written to a workspace file and read back
@@ -550,10 +725,35 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertLess(self.text.index(FIX_MARKER),
                         self.text.index(SHIP_MARKER))
 
-    def test_only_the_workflows_own_token_authenticates(self):
+    def test_exactly_one_optional_secret_scoped_to_the_copilot_cli(self):
+        # `gh` authenticates with the workflow's own token throughout; the one
+        # secret a repository may configure is the Copilot PAT, and it reaches
+        # nothing but the CLI's own environment.
         self.assertIn("GH_TOKEN: ${{ github.token }}", self.text)
-        self.assertNotIn("secrets.", self.text)
-        self.assertNotIn("${{ secrets", self.text)
+        self.assertEqual(
+            set(re.findall(r"secrets\.([A-Za-z_][A-Za-z0-9_]*)", self.text)),
+            {"COPILOT_GITHUB_TOKEN"},
+            "the template reads a secret other than the Copilot PAT")
+        binding = "COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}"
+        self.assertEqual(self.text.count(binding), 1,
+                         "the secret's value is bound in more than one place")
+        # The only other mention is the presence test hoisted to the job's
+        # `env:`, which carries a boolean rather than the secret — a step's
+        # `if:` cannot read the `secrets` context at all.
+        self.assertIn(
+            "COPILOT_CLI_REVIEWER: ${{ secrets.COPILOT_GITHUB_TOKEN != '' }}",
+            self.text)
+        self.assertEqual(self.text.count("${{ secrets.COPILOT_GITHUB_TOKEN }}"),
+                         1)
+        self.assertIn(binding, self.cli_step(),
+                      "the secret is bound outside the step running the CLI")
+        # No `gh` call is handed the secret: it authenticates on GH_TOKEN.
+        for line in self.script.splitlines():
+            if line.lstrip().startswith("#") or "gh " not in line:
+                continue
+            self.assertNotIn("COPILOT_GITHUB_TOKEN", line,
+                             "a gh call carries the Copilot secret: %s"
+                             % line.strip())
 
     def test_no_step_requests_copilot_as_a_reviewer(self):
         # Triggering the review stays GitHub-side: a per-PR reviewer request
@@ -587,6 +787,10 @@ No blocking findings were identified.
 # runs out. That is what lets a test drive a poll through several cycles and
 # move the head underneath it.
 GH_STUB = r'''#!/bin/sh
+if [ "$1" = pr ]; then
+  for arg in "$@"; do printf '%s\n' "$arg"; done >> "$GH_COMMENTS"
+  exit 0
+fi
 url=
 method=
 for arg in "$@"; do
@@ -619,6 +823,40 @@ exit 0
 '''
 
 
+# The Copilot CLI, stubbed. It records the arguments it was handed, writes the
+# scripted review on **stdout**, and writes a run-statistics footer on stderr —
+# which is where the real CLI puts it. A gate that captured stderr into the
+# classified text would read that footer as the last non-empty line and lose
+# every verdict, so the stub emits one on every run.
+#
+# Its arguments are recorded one per record rather than one per line: the
+# prompt is a paragraph, so a line-per-argument log could not be split back up.
+COPILOT_STUB = r'''#!/bin/sh
+for arg in "$@"; do printf '%s\n<<<ARG>>>\n' "$arg"; done >> "$COPILOT_ARGS"
+printf 'Total duration 16s\nAI Credits used 6.64\n' >&2
+if [ -f "$STUB_DIR/cli-out" ]; then cat "$STUB_DIR/cli-out"; fi
+if [ -f "$STUB_DIR/cli-code" ]; then exit "$(cat "$STUB_DIR/cli-code")"; fi
+exit 0
+'''
+
+# `timeout DURATION COMMAND ...`, stubbed: it runs the command, unless the test
+# scripted the timeout itself — the real one kills the command and exits 124,
+# so the stub exits without running it and writes nothing.
+TIMEOUT_STUB = r'''#!/bin/sh
+duration="$1"
+shift
+printf '%s\n' "$duration" >> "$TIMEOUT_ARGS"
+if [ -f "$STUB_DIR/cli-timeout" ]; then exit 124; fi
+exec "$@"
+'''
+
+# `npm`, stubbed: the global install of the CLI is recorded, never run.
+NPM_STUB = r'''#!/bin/sh
+for arg in "$@"; do printf '%s\n' "$arg"; done >> "$NPM_ARGS"
+exit 0
+'''
+
+
 class GateScriptCase(unittest.TestCase):
     """Base for the tests that *run* the gate job's script (copilot-review-skill
     gate-workflow-template): the step body is extracted from the template and
@@ -628,8 +866,9 @@ class GateScriptCase(unittest.TestCase):
     HEAD = "0" * 39 + "1"
     MOVED = "0" * 39 + "2"
 
-    # Scripted files the stub serves from, cleared before each run.
-    SCRIPTED = ("ids", "head", "body", "reviews-calls", "head-calls")
+    # Scripted files the stubs serve from, cleared before each run.
+    SCRIPTED = ("ids", "head", "body", "reviews-calls", "head-calls",
+                "cli-out", "cli-code", "cli-timeout")
 
     def setUp(self):
         self.assertTrue(os.path.isfile(GATE_TEMPLATE),
@@ -642,10 +881,25 @@ class GateScriptCase(unittest.TestCase):
         self.record = os.path.join(self.tmp, "gh-args")
         self.stub_bin = os.path.join(self.tmp, "bin")
         os.makedirs(self.stub_bin)
-        stub = os.path.join(self.stub_bin, "gh")
-        with open(stub, "w", encoding="utf-8") as fh:
-            fh.write(GH_STUB)
-        os.chmod(stub, 0o755)
+        for name, source in (("gh", GH_STUB), ("copilot", COPILOT_STUB),
+                             ("timeout", TIMEOUT_STUB), ("npm", NPM_STUB)):
+            stub = os.path.join(self.stub_bin, name)
+            with open(stub, "w", encoding="utf-8") as fh:
+                fh.write(source)
+            os.chmod(stub, 0o755)
+
+    def recorded(self, name):
+        """The argument lines a stub recorded in the last run, or ``[]``."""
+        path = os.path.join(self.tmp, name + "-args")
+        return read(path).splitlines() if os.path.exists(path) else []
+
+    def cli_args(self):
+        """The arguments the Copilot CLI was invoked with, or ``[]`` — split on
+        the stub's record separator, since the prompt spans lines."""
+        path = os.path.join(self.tmp, "copilot-args")
+        if not os.path.exists(path):
+            return []
+        return read(path).split("\n<<<ARG>>>\n")[:-1]
 
     def plant(self, name, text):
         with open(os.path.join(self.tmp, name), "w", encoding="utf-8") as fh:
@@ -657,10 +911,18 @@ class GateScriptCase(unittest.TestCase):
         return int(read(path)) if os.path.exists(path) else 0
 
     def gate(self, event="pull_request", body="", ids="", cycles=(), heads=(),
-             bodies=None, interval="0", timeout="0", run_timeout=30):
+             bodies=None, interval="0", timeout="0", run_timeout=30,
+             secret="", cli_out=None, cli_code=None, cli_timed_out=False):
         """Run the gate script for ``event`` and return the statuses it posted,
         in order — one dict of ``-f key=value`` fields per post, with the URL
         it posted to under ``"url"``.
+
+        ``secret`` is the ``COPILOT_GITHUB_TOKEN`` the runner would interpolate:
+        empty (the default) leaves every existing case on the poll path, and a
+        non-empty one selects the CLI reviewer. ``cli_out`` is what the stubbed
+        CLI writes on stdout, ``cli_code`` the status it exits with, and
+        ``cli_timed_out`` makes the stubbed ``timeout`` kill it the way the real
+        one does.
 
         ``ids`` is the reviews listing the poll sees every cycle (``cycles``
         overrides it call by call), ``heads`` the pull request's own head call
@@ -687,15 +949,28 @@ class GateScriptCase(unittest.TestCase):
             self.plant("head.%d" % cycle, sha)
         for review_id, text in (bodies or {}).items():
             self.plant("body.%s" % review_id, text)
+        if cli_out is not None:
+            self.plant("cli-out", cli_out)
+        if cli_code is not None:
+            self.plant("cli-code", str(cli_code))
+        if cli_timed_out:
+            self.plant("cli-timeout", "")
         script = os.path.join(self.tmp, "gate.sh")
         with open(script, "w", encoding="utf-8") as fh:
             fh.write(self.script)
-        if os.path.exists(self.record):
-            os.remove(self.record)
+        for name in ("gh-args", "comments-args", "copilot-args",
+                     "timeout-args", "npm-args"):
+            path = os.path.join(self.tmp, name)
+            if os.path.exists(path):
+                os.remove(path)
         env = dict(os.environ)
         env.update({
             "PATH": self.stub_bin + os.pathsep + env.get("PATH", ""),
             "GH_ARGS": self.record,
+            "GH_COMMENTS": os.path.join(self.tmp, "comments-args"),
+            "COPILOT_ARGS": os.path.join(self.tmp, "copilot-args"),
+            "TIMEOUT_ARGS": os.path.join(self.tmp, "timeout-args"),
+            "NPM_ARGS": os.path.join(self.tmp, "npm-args"),
             "GH_TOKEN": "stub-token",
             "STUB_DIR": self.tmp,
             "RUNNER_TEMP": self.tmp,
@@ -703,11 +978,16 @@ class GateScriptCase(unittest.TestCase):
             "REPO": "acme/widget",
             "PR_NUMBER": "7",
             "HEAD_SHA": self.HEAD,
+            "BASE_SHA": "0" * 39 + "b",
+            # The repository secret, interpolated by the runner: empty unless a
+            # test configures the CLI reviewer.
+            "COPILOT_GITHUB_TOKEN": secret,
             # What the runner interpolates on a review event, and the empty
             # string it interpolates on a pull-request one.
             "REVIEW_BODY": body if event == "pull_request_review" else "",
             "SHIPD_GATE_POLL_INTERVAL": interval,
             "SHIPD_GATE_POLL_TIMEOUT": timeout,
+            "SHIPD_GATE_CLI_TIMEOUT": "5",
         })
         try:
             result = subprocess.run(["bash", script], cwd=self.tmp, env=env,
@@ -785,6 +1065,100 @@ class GatePollTest(GateScriptCase):
         self.assertStates(posts, ["pending"])
         self.assertEqual(self.calls("head-calls"), 2,
                          "the poll does not re-read the head every cycle")
+
+
+class GateCliReviewerTest(GateScriptCase):
+    """The CLI reviewer path: with a ``COPILOT_GITHUB_TOKEN`` configured the
+    gate runs the review itself through headless Copilot CLI instead of waiting
+    on GitHub's review surface (copilot-review-skill gate-workflow-template)."""
+
+    SECRET = "ghp-stub-copilot-pat"
+
+    REVIEW = ("## Findings\n\nNothing blocking.\n\n**Verdict: Ship it**\n\n"
+              + SHIP_MARKER + "\n")
+
+    def cli_gate(self, **kwargs):
+        kwargs.setdefault("secret", self.SECRET)
+        return self.gate(**kwargs)
+
+    def test_a_marker_ending_review_posts_pending_then_the_verdict(self):
+        posts = self.cli_gate(cli_out=self.REVIEW)
+        self.assertStates(posts, ["pending", "success"])
+        self.assertIn("ship it", posts[-1].get("description", "").lower())
+
+    def test_the_cli_is_installed_and_run_non_interactively(self):
+        self.cli_gate(cli_out=self.REVIEW)
+        self.assertEqual(self.recorded("npm"),
+                         ["install", "-g", "@github/copilot"])
+        args = self.cli_args()
+        self.assertIn("-p", args)
+        self.assertIn("--allow-all-tools", args)
+        prompt = args[args.index("-p") + 1]
+        self.assertIn(".github/skills/code-review/SKILL.md", prompt)
+        self.assertIn(self.HEAD, prompt,
+                      "the prompt does not name the commit under review")
+        # The run is bounded, and the bound is the one the step computed.
+        self.assertEqual(self.recorded("timeout"), ["5"])
+
+    def test_the_reviewed_text_is_posted_as_a_pull_request_comment(self):
+        self.cli_gate(cli_out=self.REVIEW)
+        comment = self.recorded("comments")
+        self.assertEqual(comment[:2], ["pr", "comment"],
+                         "the review text was not posted as a comment")
+        self.assertIn("7", comment)
+        body_file = comment[comment.index("--body-file") + 1]
+        self.assertEqual(read(body_file), self.REVIEW,
+                         "the comment does not carry what the gate judged")
+
+    def test_the_cli_path_never_polls_the_reviews_api(self):
+        self.cli_gate(cli_out=self.REVIEW)
+        self.assertEqual(self.calls("reviews-calls"), 0,
+                         "the CLI path fell through into the poll")
+
+    def test_a_fix_required_last_line_fails_the_check(self):
+        posts = self.cli_gate(
+            cli_out="One high-severity finding blocks.\n\n" + FIX_MARKER + "\n")
+        self.assertStates(posts, ["pending", "failure"])
+
+    def test_a_review_without_a_marker_fails_open(self):
+        posts = self.cli_gate(cli_out=QUOTING_BODY)
+        self.assertStates(posts, ["pending", "success"])
+        self.assertIn("no verdict", posts[-1].get("description", "").lower())
+
+    def test_the_run_statistics_footer_never_reaches_the_classifier(self):
+        # The real CLI writes its report on stdout and its statistics footer on
+        # stderr. Capturing both would make the footer the last non-empty line
+        # and throw every verdict away — the stub writes one on every run, so
+        # only a stdout-only capture classifies this as `failure`.
+        posts = self.cli_gate(cli_out="Blocking.\n\n" + FIX_MARKER + "\n")
+        self.assertStates(posts, ["pending", "failure"])
+
+    def test_a_nonzero_cli_run_leaves_pending(self):
+        posts = self.cli_gate(cli_out="partial output\n", cli_code=1)
+        self.assertNotEqual(self.cli_args(), [],
+                            "the CLI was never invoked at all")
+        self.assertStates(posts, ["pending"])
+        self.assertEqual(self.recorded("comments"), [],
+                         "a failed review was posted as a comment anyway")
+
+    def test_a_timed_out_cli_run_leaves_pending(self):
+        posts = self.cli_gate(cli_timed_out=True)
+        self.assertEqual(self.recorded("timeout"), ["5"],
+                         "the CLI was not run under the bound at all")
+        self.assertStates(posts, ["pending"])
+        self.assertEqual(self.cli_args(), [],
+                         "the timeout did not stop the CLI")
+        self.assertEqual(self.recorded("comments"), [])
+
+    def test_an_empty_secret_keeps_the_poll_path(self):
+        # Every repository without the secret keeps today's behaviour: the poll
+        # runs, and the CLI is never installed or invoked.
+        posts = self.gate(ids="42", body=SHIP_MARKER + "\n")
+        self.assertStates(posts, ["pending", "success"])
+        self.assertEqual(self.cli_args(), [])
+        self.assertEqual(self.recorded("npm"), [])
+        self.assertEqual(self.recorded("comments"), [])
+        self.assertGreaterEqual(self.calls("reviews-calls"), 1)
 
 
 class GateVerdictParseTest(GateScriptCase):

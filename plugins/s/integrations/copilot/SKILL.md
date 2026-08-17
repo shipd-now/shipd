@@ -102,8 +102,11 @@ directly below it, the matching machine-readable marker:
 ```
 
 Emit exactly one marker, matching the verdict line, as the last line of the
-body. It is read by an exact substring match, so reproduce it character for
-character — no reflowing, no extra spaces inside the comment.
+body. It is read from the body's **last non-empty line**, by exact equality —
+never by a substring match elsewhere in the body, because a review that quotes
+a marker while describing a diff would otherwise be read as having voted it. So
+reproduce it character for character, on its own line, with nothing after it:
+no reflowing, no extra spaces inside the comment, no sign-off below it.
 
 ## The engine's guarantees and limits
 
@@ -120,14 +123,21 @@ character — no reflowing, no extra spaces inside the comment.
 
 ## Scope of this review
 
+- **One contract, both reviewer surfaces.** This file is the review contract
+  for each of the two surfaces that consume it: GitHub's own Copilot
+  code review runs, and the gate workflow's headless Copilot CLI reviewer,
+  whose prompt names this file instead of restating the rubric. Whichever one
+  is reading, the workflow, the rubric, and the verdict rule above are the
+  review.
 - **No repository-side model selection.** The GitHub Copilot code-review
   surface exposes no repository-side option to pin the model this review runs
   on, so nothing here configures one. This is documented rather than faked; it
   will be revisited if GitHub exposes a real option.
 - **This review can be the merge gate.** Where the repository installs
   `.github/workflows/copilot-review-gate.yml`, that workflow reads the verdict
-  marker above out of this review's body and posts it as the `semantic-review`
-  commit status on the reviewed head commit: a `fix-required` marker posts
+  marker above out of the review text — this body, or the report the CLI
+  reviewer wrote — and posts it as the `semantic-review` commit status on the
+  reviewed head commit: a `fix-required` marker posts
   `failure` and blocks the merge, a `ship-it` marker posts `success`. The
   bridging is **fail-open** — a review body carrying no marker posts `success`
   with a description saying no verdict was parsed — so a missing marker never

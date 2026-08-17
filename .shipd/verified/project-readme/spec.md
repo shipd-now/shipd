@@ -149,34 +149,40 @@ naming the four files it manages (`.github/skills/code-review/SKILL.md`,
 `.github/workflows/copilot-review-gate.yml`) and that they must be committed
 and pushed because Copilot reads skills and workflows from the pull request's
 head branch; enabling reviews both per-PR (requesting Copilot as a reviewer)
-and automatically (a GitHub branch ruleset); the merge gate — the gate
-workflow posts the `semantic-review` commit status as `pending` when a pull
-request opens or updates and then polls the reviews API for Copilot's review
-of that head because Copilot-authored review submissions never trigger
-workflow runs (they are made with a workflow-scoped token, which GitHub's
-recursion suppression exempts from starting workflows), the verdict
-classification (a review whose last non-empty line is the `fix-required`
-marker posts `failure`; a `ship-it` last line, or any other last line, posts
-`success` — the fail-open rule; markers quoted elsewhere never count), the
-poll's bounds and timeout semantics (a timed-out poll leaves the status
-`pending`, with the session flow `review_gate.py post` as the manual out),
-its runner-minutes cost, that the session review flow posts the same status
-context so either poster satisfies a required `semantic-review` check, and
-that on pull requests from forks the workflow token is read-only so the gate
-cannot post there; a private-repository prerequisites note — the Copilot
-review runner's own repository checkout can fail on a private repository,
-in which case the skill and verdict marker never load and every review
-classifies fail-open, so the runner's checkout should be verified once and
-the session flow treated as the working gate where it fails; inspecting and
-maintaining the install via the bare `shipd copilot` report (the
-`installed`, `stale`, `foreign`, and `absent` states), re-running `add` to
-upgrade, `remove` to uninstall, and `--force` for foreign files; and the
-integration's scope: the Copilot code-review surface exposes no
-repository-side model selection, skill pickup is relevance-driven, and
-difftastic/ripgrep are optional because the engine degrades to its text
-engine without them. The guide SHALL NOT claim that
-`pull_request_review`-triggered workflows run only from the default
-branch's workflow file.
+and automatically (a GitHub branch ruleset); the merge gate's two reviewer
+modes — the **CLI reviewer mode**, selected by a `COPILOT_GITHUB_TOKEN`
+repository secret (a fine-grained personal access token carrying the
+account-level "Copilot Requests" permission), in which the gate workflow
+posts `pending`, runs headless GitHub Copilot CLI following the installed
+SKILL.md so the engine executes and the verdict marker is authored,
+classifies the output's last non-empty line into the strict
+`semantic-review` status, posts the review text as a pull-request comment,
+works on private repositories, consumes Copilot AI credits per review
+(order of ten per run), and leaves `pending` on a failed or timed-out run;
+and the **poll fallback mode**, used with no secret, in which the workflow
+polls the reviews API for GitHub's Copilot code review of the head because
+Copilot-authored review submissions never trigger workflow runs — with the
+documented reality that GitHub's code-review surface currently cannot
+execute the engine or author the verdict marker (its bash tool is disabled
+and its review body is pipeline-assembled), so the poll mode's operative
+guarantee is the fail-open "Copilot reviewed this commit" and the session
+flow `review_gate.py post` remains the strict alternative; the verdict
+classification shared by both modes (a `fix-required` last line posts
+`failure`, a `ship-it` last line posts `success`, any other last line
+posts `success` fail-open, markers quoted elsewhere never count); that the
+session review flow posts the same status context so any poster satisfies
+a required `semantic-review` check; that on pull requests from forks the
+workflow token is read-only so the gate cannot post there; a
+private-repository note scoped to the poll mode — GitHub's Copilot review
+runner cannot check out a private repository, so the skill never loads
+there and its reviews classify fail-open, while the CLI reviewer mode is
+unaffected; inspecting and maintaining the install via the bare
+`shipd copilot` report (the `installed`, `stale`, `foreign`, and `absent`
+states), re-running `add` to upgrade, `remove` to uninstall, and `--force`
+for foreign files; and the integration's scope: the Copilot code-review
+surface exposes no repository-side model selection, skill pickup is
+relevance-driven, and difftastic/ripgrep are optional because the engine
+degrades to its text engine without them.
 
 #### Scenario: Install section names the managed files and the head-branch rule
 - **WHEN** the guide's install section is read
@@ -184,43 +190,39 @@ branch's workflow file.
   and states the files must be committed and pushed because Copilot reads
   them from the PR head branch
 
-#### Scenario: Enablement covers per-PR and automatic review
-- **WHEN** the guide's enablement section is read
-- **THEN** it explains requesting Copilot as a reviewer on a pull request and
-  enabling automatic review through a GitHub branch ruleset
-
-#### Scenario: The merge-gate section states the polling bridge semantics
+#### Scenario: The CLI reviewer mode is documented end to end
 - **WHEN** the guide's merge-gate section is read
-- **THEN** it documents `pending` on pull-request open/update, the polling
-  rationale (Copilot-authored submissions trigger no workflow runs), the
-  last-line verdict classification with the fail-open rule, the timeout
-  leaving `pending` with the session flow as the manual out, the
-  runner-minutes cost, the coexisting session-flow poster, and the fork
-  read-only-token limit
+- **THEN** it documents the `COPILOT_GITHUB_TOKEN` secret (a fine-grained
+  PAT with the "Copilot Requests" account permission), the headless CLI
+  run following the installed SKILL.md, the strict status from the
+  output's last line, the review comment, private-repository support, the
+  per-review AI-credit cost, and `pending` standing on a failed or
+  timed-out run
 
-#### Scenario: The private-repository prerequisite is documented
+#### Scenario: The poll fallback and the CCR surface's limits are documented
+- **WHEN** the guide's merge-gate section is read
+- **THEN** it documents the no-secret poll mode, the recursion-suppression
+  rationale, and that GitHub's code-review surface currently cannot
+  execute the engine or author the marker — so poll mode's operative
+  guarantee is fail-open, with `review_gate.py post` as the strict
+  alternative
+
+#### Scenario: The private-repository note is scoped to poll mode
 - **WHEN** the guide's prerequisites or merge-gate section is read
-- **THEN** it states that the Copilot runner's checkout can fail on a
-  private repository, that the skill and verdict marker then never load so
-  reviews classify fail-open, and that the checkout should be verified once
-  with the session flow as the fallback gate
-
-#### Scenario: The default-branch bootstrap claim is retracted
-- **WHEN** the guide is searched for the prior bootstrap limit
-- **THEN** no text claims that `pull_request_review` workflows run only
-  from the default branch's workflow file or that the installing pull
-  request cannot be bridged
+- **THEN** the runner-checkout failure and its fail-open consequence are
+  attributed to GitHub's review runner (poll mode), and the CLI reviewer
+  mode is stated to be unaffected on private repositories
 
 #### Scenario: Maintenance documents the report states and upgrade path
 - **WHEN** the guide's maintenance section is read
 - **THEN** it documents the `installed`, `stale`, `foreign`, and `absent`
-  report states, re-`add` as the upgrade path, `remove` as the uninstall, and
-  `--force` as the foreign-file override
+  report states, re-`add` as the upgrade path, `remove` as the uninstall,
+  and `--force` as the foreign-file override
 
 #### Scenario: Scope states the model-selection absence
 - **WHEN** the guide's scope section is read
-- **THEN** it states that no repository-side model selection exists and that
-  skill pickup is relevance-driven
+- **THEN** it states that no repository-side model selection exists and
+  that skill pickup is relevance-driven
 
 ### Requirement: README carries the brand marks
 id: readme-brand-marks
