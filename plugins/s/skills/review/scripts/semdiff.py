@@ -140,6 +140,14 @@ def install_difft():
                 print(f"{PROG}: 'difft' not found inside release archive.",
                       file=sys.stderr)
                 return False
+            if not member.isreg():
+                # The member is selected by name, so the archive decides what
+                # lands on PATH: a symlink (or any other non-regular member)
+                # wearing the name is refused rather than extracted.
+                print(f"{PROG}: refusing to extract {member.name} from the "
+                      f"release archive: it is not a regular file.",
+                      file=sys.stderr)
+                return False
             member.name = "difft"
             tf.extract(member, dest)
         binp = os.path.join(dest, "difft")
@@ -232,9 +240,14 @@ def changed_paths(new_ref, diff_spec):
 
 
 def blob_at(ref, path):
-    """Contents of <path> at <ref>, or empty string if it did not exist."""
+    """Contents of <path> at <ref>, or None if it did not exist there.
+
+    The absent answer is a sentinel rather than the empty string because a
+    tracked file may legitimately be empty at an endpoint: conflating the two
+    reported an emptied file as `deleted` and a filled previously-empty file
+    as `added`."""
     r = run(["git", "show", f"{ref}:{path}"])
-    return r.stdout if r.returncode == 0 else ""
+    return r.stdout if r.returncode == 0 else None
 
 
 # Markers that suggest a changed line declares a callable/type/message — used to
@@ -330,8 +343,11 @@ def _touches_declaration_difft(new_text, hunks):
     return False
 
 
-def _difft_entry(old, new, path):
+def _difft_entry(old, new, path, kind):
     """Build a diff entry for one file via difftastic.
+
+    `old`/`new` are the endpoint texts (empty where the file is absent there),
+    `kind` the classification the caller derived from presence.
 
     Returns ("ok", entry, signature_touch) on success, ("skip", None, False)
     for an unchanged/whitespace-only file, or ("fallback", None, False) when
@@ -347,7 +363,6 @@ def _difft_entry(old, new, path):
     # adds/deletes carry no chunks but MUST still surface.
     if status == "changed" and is_whitespace_only(chunks):
         return "skip", None, False
-    kind = "added" if not old else ("deleted" if not new else "modified")
     hunks = summarize_chunks(chunks)
     entry = {
         "path": path,
@@ -415,12 +430,14 @@ def _has_content_change(diff_spec, path, ignore_ws):
     return False
 
 
-def _text_entry(old, new, path, diff_spec):
+def _text_entry(old, new, path, diff_spec, kind):
     """Build a diff entry for one file by parsing `git diff` unified output.
+
+    `old`/`new` are the endpoint texts (empty where the file is absent there),
+    `kind` the classification the caller derived from presence.
 
     Returns ("ok", entry, signature_touch) or ("skip", None, False) for an
     unchanged or whitespace-only file."""
-    kind = "added" if not old else ("deleted" if not new else "modified")
     entry = {
         "path": path,
         "language": _lang_for(path),
@@ -463,7 +480,7 @@ def cmd_diff(args):
         old = blob_at(old_ref, path)
         if new_ref is None:
             abs_path = os.path.join(root, path)
-            new = ""
+            new = None
             if os.path.exists(abs_path):
                 try:
                     with open(abs_path, "r", errors="replace") as f:
@@ -473,11 +490,18 @@ def cmd_diff(args):
         else:
             new = blob_at(new_ref, path)
 
+        # Presence at each endpoint, not emptiness there, is what the kind
+        # says: an emptied file is still present, and so is a file that was
+        # empty before it was filled. Both are modifications.
+        kind = ("added" if old is None
+                else "deleted" if new is None else "modified")
+        old, new = old or "", new or ""
+
         action, entry, touch = ("fallback", None, False)
         if difft_available:
-            action, entry, touch = _difft_entry(old, new, path)
+            action, entry, touch = _difft_entry(old, new, path, kind)
         if action in ("fallback",) or not difft_available:
-            action, entry, touch = _text_entry(old, new, path, diff_spec)
+            action, entry, touch = _text_entry(old, new, path, diff_spec, kind)
         if action == "skip":
             continue
         results.append(entry)

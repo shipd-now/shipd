@@ -400,6 +400,17 @@ class WorkflowTemplateTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(WORKFLOW_TEMPLATE),
                         "missing template %s" % WORKFLOW_TEMPLATE)
         self.text = read(WORKFLOW_TEMPLATE)
+        jobs = job_blocks(self.text)
+        self.assertEqual(sorted(jobs), ["copilot-setup-steps"])
+        self.steps = job_steps(jobs["copilot-setup-steps"])
+
+    def step(self, needle):
+        """The one step whose text carries ``needle``."""
+        found = [step for step in self.steps if needle in step]
+        self.assertEqual(len(found), 1,
+                         "expected exactly one step carrying %r, found %d"
+                         % (needle, len(found)))
+        return found[0]
 
     def test_ownership_marker_line_is_present_with_the_placeholder(self):
         self.assertIn(WORKFLOW_MARKER,
@@ -426,6 +437,51 @@ class WorkflowTemplateTest(unittest.TestCase):
     def test_no_secrets_are_referenced(self):
         self.assertNotIn("secrets.", self.text)
         self.assertNotIn("${{ secrets", self.text)
+
+    def test_the_checkout_is_fail_soft_and_identified(self):
+        # GitHub's Copilot review runner cannot check out a private
+        # repository, and a setup job that fails there earns every reviewed
+        # pull request a visible `ccr-setup-step-failure` notice. The
+        # checkout keeps its place — the public-repo case needs it for skill
+        # loading — but a failure of it no longer fails the job, and the step
+        # carries an `id` so the installs can read its outcome.
+        checkout = self.step("uses: actions/checkout")
+        self.assertIn("continue-on-error: true", checkout)
+        ids = [line.strip() for line in checkout.splitlines()
+               if line.strip().startswith("id:")]
+        self.assertEqual(len(ids), 1,
+                         "the checkout step carries no id for the installs to "
+                         "condition on")
+        self.checkout_id = ids[0].split(":", 1)[1].strip()
+
+    def test_the_installs_run_only_on_a_successful_checkout(self):
+        self.test_the_checkout_is_fail_soft_and_identified()
+        guard = "steps.%s.outcome == 'success'" % self.checkout_id
+        for needle in ("difft-x86_64-unknown-linux-gnu.tar.gz",
+                       "apt-get install"):
+            step = self.step(needle)
+            self.assertIn("if:", step,
+                          "the %r step is not conditioned on the checkout"
+                          % needle)
+            self.assertIn(guard, step,
+                          "the %r step does not require the checkout to have "
+                          "succeeded" % needle)
+
+    def test_a_binary_less_archive_fails_the_difftastic_step_loudly(self):
+        # `find` printing nothing would otherwise reach `install` as an empty
+        # source path — an obscure failure at best, and a silently skipped
+        # install at worst.
+        run = run_block(self.step("difft-x86_64-unknown-linux-gnu.tar.gz"))
+        self.assertIn('-z "$binary"', run,
+                      "the located binary path is never tested for emptiness")
+        self.assertLess(run.index('-z "$binary"'), run.index("install -m"),
+                        "the emptiness guard runs after the install it is "
+                        "supposed to protect")
+        guard = run[run.index('-z "$binary"'):run.index("install -m")]
+        self.assertIn("difft", guard,
+                      "the failure message does not name the missing binary")
+        self.assertIn("exit 1", guard,
+                      "a binary-less archive does not fail the step")
 
 
 class GateWorkflowTemplateTest(unittest.TestCase):
@@ -592,6 +648,26 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertIn("apt-get install", tooling[0])
         self.assertIn("env.COPILOT_CLI_REVIEWER == 'true'", tooling[0])
 
+    def test_a_binary_less_archive_fails_the_difftastic_install_loudly(self):
+        # The same guard the setup workflow carries: `find` printing nothing
+        # would otherwise reach `install` as an empty source path. Failing
+        # this step fails the CLI review, which leaves the `pending` posted
+        # by the first step standing — the right outcome for a review that
+        # never ran.
+        tooling = [step for step in self.steps
+                   if "difft-x86_64-unknown-linux-gnu.tar.gz" in step]
+        run = run_block(tooling[0])
+        self.assertIn('-z "$binary"', run,
+                      "the located binary path is never tested for emptiness")
+        self.assertLess(run.index('-z "$binary"'), run.index("install -m"),
+                        "the emptiness guard runs after the install it is "
+                        "supposed to protect")
+        guard = run[run.index('-z "$binary"'):run.index("install -m")]
+        self.assertIn("difft", guard,
+                      "the failure message does not name the missing binary")
+        self.assertIn("exit 1", guard,
+                      "a binary-less archive does not fail the step")
+
     def test_the_cli_path_installs_the_copilot_cli(self):
         self.assertIn("npm install -g @github/copilot", self.script)
 
@@ -669,6 +745,22 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertIn("no verdict", branch.lower(),
                       "the fail-open description must say no verdict was "
                       "parsed")
+
+    def test_the_gate_job_reads_the_strictness_variable(self):
+        # The knob is a repository Actions variable, hoisted into the job's
+        # environment: a repository turns strictness on with `gh variable set`
+        # rather than by patching the installed workflow, which the next
+        # `shipd copilot add` would revert.
+        self.assertIn("SHIPD_GATE_FAIL_OPEN: ${{ vars.SHIPD_GATE_FAIL_OPEN }}",
+                      self.guard,
+                      "the gate job does not read the SHIPD_GATE_FAIL_OPEN "
+                      "repository variable into its environment")
+
+    def test_the_no_marker_outcome_branches_on_the_strictness_variable(self):
+        # Unset — which the runner interpolates as the empty string — or any
+        # value other than `false` keeps the fail-open default, so the test is
+        # on the one value that turns it off.
+        self.assertIn('"${SHIPD_GATE_FAIL_OPEN:-true}" == "false"', self.script)
 
     def test_the_verdict_match_is_an_anchored_equality_test(self):
         # Equality against the extracted last line, never containment: a
@@ -912,10 +1004,12 @@ class GateScriptCase(unittest.TestCase):
 
     def gate(self, event="pull_request", body="", ids="", cycles=(), heads=(),
              bodies=None, interval="0", timeout="0", run_timeout=30,
-             secret="", cli_out=None, cli_code=None, cli_timed_out=False):
+             secret="", cli_out=None, cli_code=None, cli_timed_out=False,
+             fail_open=""):
         """Run the gate script for ``event`` and return the statuses it posted,
         in order — one dict of ``-f key=value`` fields per post, with the URL
-        it posted to under ``"url"``.
+        it posted to under ``"url"``. What the run logged is left on
+        ``self.stdout``.
 
         ``secret`` is the ``COPILOT_GITHUB_TOKEN`` the runner would interpolate:
         empty (the default) leaves every existing case on the poll path, and a
@@ -923,6 +1017,11 @@ class GateScriptCase(unittest.TestCase):
         CLI writes on stdout, ``cli_code`` the status it exits with, and
         ``cli_timed_out`` makes the stubbed ``timeout`` kill it the way the real
         one does.
+
+        ``fail_open`` is the ``SHIPD_GATE_FAIL_OPEN`` repository variable as the
+        runner interpolates it: the empty string (the default) is the variable
+        being unset, ``None`` drops it from the environment altogether, and
+        ``"false"`` is the strict repository.
 
         ``ids`` is the reviews listing the poll sees every cycle (``cycles``
         overrides it call by call), ``heads`` the pull request's own head call
@@ -989,6 +1088,13 @@ class GateScriptCase(unittest.TestCase):
             "SHIPD_GATE_POLL_TIMEOUT": timeout,
             "SHIPD_GATE_CLI_TIMEOUT": "5",
         })
+        # The strictness variable, hoisted into the job's environment by the
+        # runner. `None` is the environment the variable never reaches at all;
+        # the empty string is what an unset repository variable interpolates to.
+        if fail_open is None:
+            env.pop("SHIPD_GATE_FAIL_OPEN", None)
+        else:
+            env["SHIPD_GATE_FAIL_OPEN"] = fail_open
         try:
             result = subprocess.run(["bash", script], cwd=self.tmp, env=env,
                                     capture_output=True, text=True,
@@ -998,6 +1104,7 @@ class GateScriptCase(unittest.TestCase):
                       "%d-character body — the poll or the verdict parse no "
                       "longer terminates" % (run_timeout, len(body)))
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.stdout = result.stdout
         return self.posted()
 
     def posted(self):
@@ -1235,6 +1342,111 @@ class GateVerdictParseTest(GateScriptCase):
         fields = self.classify("")
         self.assertEqual(fields.get("state"), "success")
         self.assertIn("no verdict", fields.get("description", "").lower())
+
+
+class GateStrictModeTest(GateScriptCase):
+    """The `SHIPD_GATE_FAIL_OPEN` repository variable (copilot-review-skill
+    gate-workflow-template). A repository that has ruled a marker-less review
+    must never green the required check sets it to `false`; everything else —
+    unset, or any other value — keeps the fail-open default. The knob is a
+    variable rather than a local edit to the installed workflow because the
+    next `shipd copilot add` reverts such an edit.
+
+    Every classify path is covered, because they share one classification
+    block: the polled review, the review event, and the CLI reviewer's own
+    output."""
+
+    SECRET = "ghp-stub-copilot-pat"
+
+    # -- strict: `false` --------------------------------------------------
+
+    def test_the_polled_path_leaves_pending_on_a_marker_less_review(self):
+        posts = self.gate(ids="42", body=QUOTING_BODY, fail_open="false")
+        self.assertStates(posts, ["pending"])
+
+    def test_the_review_event_path_posts_nothing_on_a_marker_less_review(self):
+        # A review event posts no pending of its own, so a strict marker-less
+        # classification posts nothing at all and the pull-request run's
+        # `pending` stands.
+        posts = self.gate(event="pull_request_review", body=QUOTING_BODY,
+                          fail_open="false")
+        self.assertEqual(posts, [],
+                         "a marker-less review event posted a status under "
+                         "strict mode")
+
+    def test_the_cli_path_leaves_pending_on_a_marker_less_review(self):
+        posts = self.gate(secret=self.SECRET, cli_out=QUOTING_BODY,
+                          fail_open="false")
+        self.assertStates(posts, ["pending"])
+
+    def test_the_cli_path_still_comments_what_it_could_not_classify(self):
+        # No status was derived from this text, which makes it exactly the
+        # text an operator has to read to decide what to do about the pending
+        # check. Posting it is what stops strict mode swallowing the review.
+        self.gate(secret=self.SECRET, cli_out=QUOTING_BODY, fail_open="false")
+        comment = self.recorded("comments")
+        self.assertEqual(comment[:2], ["pr", "comment"],
+                         "strict mode swallowed the reviewer's own text")
+        body_file = comment[comment.index("--body-file") + 1]
+        self.assertEqual(read(body_file), QUOTING_BODY,
+                         "the comment does not carry what the reviewer wrote")
+
+    def test_the_other_paths_still_comment_nothing(self):
+        # A Copilot-authored review is already on the pull request; only the
+        # CLI reviewer's own text is ever posted.
+        self.gate(ids="42", body=QUOTING_BODY, fail_open="false")
+        self.assertEqual(self.recorded("comments"), [])
+        self.gate(event="pull_request_review", body=QUOTING_BODY,
+                  fail_open="false")
+        self.assertEqual(self.recorded("comments"), [])
+
+    def test_the_strict_run_logs_the_no_verdict_condition_and_exits_zero(self):
+        # `exit 0`: the run judged nothing, which is not a failure of the run.
+        # The job's log is where an operator reads why the check stayed
+        # pending, so the condition is stated there.
+        self.gate(ids="42", body=QUOTING_BODY, fail_open="false")
+        self.assertIn("no verdict", self.stdout.lower(),
+                      "the strict run did not log that no verdict was parsed")
+
+    def test_a_fix_required_verdict_still_fails_the_check(self):
+        posts = self.gate(ids="42", body=FIX_MARKER + "\n", fail_open="false")
+        self.assertStates(posts, ["pending", "failure"])
+
+    def test_a_ship_it_verdict_still_passes_the_check(self):
+        posts = self.gate(ids="42", body=SHIP_MARKER + "\n", fail_open="false")
+        self.assertStates(posts, ["pending", "success"])
+
+    def test_the_cli_reviewers_own_verdicts_still_classify(self):
+        posts = self.gate(secret=self.SECRET, fail_open="false",
+                          cli_out="Blocking.\n\n" + FIX_MARKER + "\n")
+        self.assertStates(posts, ["pending", "failure"])
+
+    # -- the fail-open default --------------------------------------------
+
+    def test_an_unset_variable_keeps_the_fail_open_default(self):
+        # What the runner interpolates for a variable the repository never set.
+        posts = self.gate(ids="42", body=QUOTING_BODY, fail_open="")
+        self.assertStates(posts, ["pending", "success"])
+        self.assertIn("no verdict", posts[-1].get("description", "").lower())
+
+    def test_an_absent_variable_keeps_the_fail_open_default(self):
+        posts = self.gate(ids="42", body=QUOTING_BODY, fail_open=None)
+        self.assertStates(posts, ["pending", "success"])
+        self.assertIn("no verdict", posts[-1].get("description", "").lower())
+
+    def test_the_variable_set_true_keeps_the_fail_open_default(self):
+        posts = self.gate(ids="42", body=QUOTING_BODY, fail_open="true")
+        self.assertStates(posts, ["pending", "success"])
+
+    def test_the_default_fails_open_on_the_review_event_path(self):
+        posts = self.gate(event="pull_request_review", body=QUOTING_BODY)
+        self.assertStates(posts, ["success"])
+        self.assertIn("no verdict", posts[-1].get("description", "").lower())
+
+    def test_the_default_fails_open_on_the_cli_path(self):
+        posts = self.gate(secret=self.SECRET, cli_out=QUOTING_BODY)
+        self.assertStates(posts, ["pending", "success"])
+        self.assertIn("no verdict", posts[-1].get("description", "").lower())
 
 
 class CopilotVerbTest(unittest.TestCase):

@@ -150,33 +150,45 @@ naming the four files it manages (`.github/skills/code-review/SKILL.md`,
 and pushed because Copilot reads skills and workflows from the pull request's
 head branch; enabling reviews both per-PR (requesting Copilot as a reviewer)
 and automatically (a GitHub branch ruleset); the merge gate's two reviewer
-modes — the **CLI reviewer mode**, selected by a `COPILOT_GITHUB_TOKEN`
+modes — the CLI reviewer mode selected by a `COPILOT_GITHUB_TOKEN`
 repository secret (a fine-grained personal access token carrying the
 account-level "Copilot Requests" permission), in which the gate workflow
 posts `pending`, runs headless GitHub Copilot CLI following the installed
-SKILL.md so the engine executes and the verdict marker is authored,
-classifies the output's last non-empty line into the strict
+SKILL.md, classifies the output's last non-empty line into the strict
 `semantic-review` status, posts the review text as a pull-request comment,
-works on private repositories, consumes Copilot AI credits per review
-(order of ten per run), and leaves `pending` on a failed or timed-out run;
-and the **poll fallback mode**, used with no secret, in which the workflow
-polls the reviews API for GitHub's Copilot code review of the head because
-Copilot-authored review submissions never trigger workflow runs — with the
-documented reality that GitHub's code-review surface currently cannot
-execute the engine or author the verdict marker (its bash tool is disabled
-and its review body is pipeline-assembled), so the poll mode's operative
-guarantee is the fail-open "Copilot reviewed this commit" and the session
-flow `review_gate.py post` remains the strict alternative; the verdict
+works on private repositories, consumes Copilot AI credits per review, and
+leaves `pending` on a failed or timed-out run; and the poll fallback mode
+used with no secret, including why its operative guarantee is fail-open
+(GitHub's code-review surface cannot execute the engine or author the
+marker, and Copilot-authored review submissions trigger no workflow runs);
+a reviewer-token setup section — the `COPILOT_GITHUB_TOKEN` secret
+SHALL be documented as a dedicated minimal fine-grained personal access
+token with no repository access and only the account-level "Copilot
+Requests" permission, never a reused broad-scope token (any workflow run
+can read repository secrets), with the creation steps, the
+`gh secret set COPILOT_GITHUB_TOKEN` storage path, a bounded expiry with
+fail-safe semantics (an expired token fails the reviewer run and leaves
+the status `pending`, never passing), and removal returning the
+repository to the poll fallback; the strictness knob — the repository
+Actions variable
+`SHIPD_GATE_FAIL_OPEN`, default fail-open, where `false` makes every
+no-marker outcome leave the status `pending` instead of posting `success`,
+with `gh variable set` shown as the enable path, the session flow
+`review_gate.py post` named as the strict repo's manual out, and a
+cross-reference stating strict repositories should pair the knob with
+the reviewer token; the verdict
 classification shared by both modes (a `fix-required` last line posts
 `failure`, a `ship-it` last line posts `success`, any other last line
-posts `success` fail-open, markers quoted elsewhere never count); that the
-session review flow posts the same status context so any poster satisfies
-a required `semantic-review` check; that on pull requests from forks the
+follows the knob, markers quoted elsewhere never count); that the session
+review flow posts the same status context so any poster satisfies a
+required `semantic-review` check; that on pull requests from forks the
 workflow token is read-only so the gate cannot post there; a
 private-repository note scoped to the poll mode — GitHub's Copilot review
 runner cannot check out a private repository, so the skill never loads
-there and its reviews classify fail-open, while the CLI reviewer mode is
-unaffected; inspecting and maintaining the install via the bare
+there and its reviews classify per the knob, while the CLI reviewer mode
+is unaffected — including that the setup workflow's checkout is fail-soft,
+so the setup job completes rather than posting failure notices on such
+repositories; inspecting and maintaining the install via the bare
 `shipd copilot` report (the `installed`, `stale`, `foreign`, and `absent`
 states), re-running `add` to upgrade, `remove` to uninstall, and `--force`
 for foreign files; and the integration's scope: the Copilot code-review
@@ -190,28 +202,36 @@ degrades to its text engine without them.
   and states the files must be committed and pushed because Copilot reads
   them from the PR head branch
 
-#### Scenario: The CLI reviewer mode is documented end to end
+#### Scenario: The reviewer-token setup is documented minimally and safely
 - **WHEN** the guide's merge-gate section is read
-- **THEN** it documents the `COPILOT_GITHUB_TOKEN` secret (a fine-grained
-  PAT with the "Copilot Requests" account permission), the headless CLI
-  run following the installed SKILL.md, the strict status from the
-  output's last line, the review comment, private-repository support, the
-  per-review AI-credit cost, and `pending` standing on a failed or
-  timed-out run
+- **THEN** it directs creating a dedicated fine-grained PAT with no
+  repository access and only the "Copilot Requests" account permission,
+  warns against reusing a broad-scope token because workflow runs can
+  read repository secrets, shows the `gh secret set` storage path, and
+  states the fail-safe expiry semantics and that removing the secret
+  restores the poll fallback
 
-#### Scenario: The poll fallback and the CCR surface's limits are documented
+#### Scenario: The strictness knob is documented
 - **WHEN** the guide's merge-gate section is read
-- **THEN** it documents the no-secret poll mode, the recursion-suppression
-  rationale, and that GitHub's code-review surface currently cannot
-  execute the engine or author the marker — so poll mode's operative
-  guarantee is fail-open, with `review_gate.py post` as the strict
-  alternative
+- **THEN** it names `SHIPD_GATE_FAIL_OPEN`, states the fail-open default
+  and that `false` leaves a no-marker outcome `pending` on every classify
+  path, shows the `gh variable set` enable path, and names
+  `review_gate.py post` as the strict repo's manual out, and
+  cross-references pairing the knob with the reviewer token
 
-#### Scenario: The private-repository note is scoped to poll mode
+#### Scenario: Both reviewer modes stay documented end to end
+- **WHEN** the guide's merge-gate section is read
+- **THEN** the CLI reviewer mode (secret setup, SKILL.md-driven headless
+  run, strict status, review comment, private-repo support, credit cost,
+  pending on failure/timeout) and the poll fallback (with the CCR
+  surface's engine/marker limits) are both documented
+
+#### Scenario: The fail-soft setup behavior is documented for private repositories
 - **WHEN** the guide's prerequisites or merge-gate section is read
-- **THEN** the runner-checkout failure and its fail-open consequence are
-  attributed to GitHub's review runner (poll mode), and the CLI reviewer
-  mode is stated to be unaffected on private repositories
+- **THEN** it states the setup workflow's checkout is fail-soft so the
+  setup job completes on repositories where the runner cannot check out,
+  and that the poll-mode limitation and knob-dependent classification
+  still apply there while the CLI reviewer mode is unaffected
 
 #### Scenario: Maintenance documents the report states and upgrade path
 - **WHEN** the guide's maintenance section is read

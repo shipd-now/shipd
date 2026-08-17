@@ -170,5 +170,56 @@ class DiffTestCase(unittest.TestCase):
         self.assertTrue(by_path["src/code.py"]["hunks"])
 
 
+class EmptyEndpointTest(unittest.TestCase):
+    """A file present at an endpoint with empty content is not a file absent
+    from it. Emptying a tracked file is a modification, not a deletion, and
+    writing into a tracked empty file is a modification, not an addition —
+    both misreported while the blob reader answered ``""`` for either."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-empty-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+        self._write("emptied.py", "def gone():\n    return 1\n")
+        self._write("filled.py", "")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+        # The working tree: the non-empty file emptied, the empty file filled.
+        self._write("emptied.py", "")
+        self._write("filled.py", "def arrived():\n    return 2\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        with open(os.path.join(self.repo, rel), "w") as fh:
+            fh.write(text)
+
+    def _kinds(self, **kwargs):
+        rc, out, err = run_semdiff(self.repo, "diff", "HEAD", **kwargs)
+        self.assertEqual(rc, 0, err)
+        return {f["path"]: f["kind"] for f in out["files"]}
+
+    def test_text_engine_classifies_both_as_modified(self):
+        kinds = self._kinds(mask_difft=True, home=self.tmp)
+        self.assertEqual(kinds.get("emptied.py"), "modified",
+                         "an emptied tracked file was reported as deleted")
+        self.assertEqual(kinds.get("filled.py"), "modified",
+                         "a filled tracked empty file was reported as added")
+
+    @unittest.skipUnless(HAVE_DIFFT, "difftastic not installed")
+    def test_difft_engine_classifies_both_as_modified(self):
+        kinds = self._kinds()
+        self.assertEqual(kinds.get("emptied.py"), "modified",
+                         "an emptied tracked file was reported as deleted")
+        self.assertEqual(kinds.get("filled.py"), "modified",
+                         "a filled tracked empty file was reported as added")
+
+
 if __name__ == "__main__":
     unittest.main()

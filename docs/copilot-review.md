@@ -33,9 +33,21 @@ itself, and on a private repository that checkout has been observed to fail
 (`repository not found`, on a private individual-account repo). When it fails,
 nothing under `.github/skills` is on disk for the review: the skill never
 loads, the review is Copilot's generic one, it carries no verdict marker, and
-every review of that repository classifies **fail-open** — `success`,
-described as *no verdict marker was parsed*. Nothing here can fix that from
-the repository side; it is decided in Copilot's own runner.
+every review of that repository classifies by the
+[strictness knob](#strictness-shipd_gate_fail_open) — by default **fail-open**,
+`success` described as *no verdict marker was parsed*; with
+`SHIPD_GATE_FAIL_OPEN=false`, a `semantic-review` left `pending` on every pull
+request. Nothing here can fix that from the repository side; it is decided in
+Copilot's own runner.
+
+**The setup workflow is fail-soft about it.** `copilot-code-review.yml` checks
+the repository out `continue-on-error`, and runs its `difft`/`ripgrep` installs
+only where that checkout succeeded. So on a repository the review runner cannot
+check out, the setup job **completes** with the installs skipped rather than
+failing — which is what GitHub's PR-visible `ccr-setup-step-failure` notice
+keys on — and the review is the same one that repository was already getting.
+On a public repository the checkout succeeds and the toolchain lands exactly as
+before.
 
 That limit belongs to the [poll fallback mode](#the-poll-fallback-mode) alone.
 The [CLI reviewer mode](#the-cli-reviewer-mode) is **unaffected on private
@@ -156,20 +168,11 @@ the job leaves the required check reading *pending* rather than unreported.
 Give the gate a `COPILOT_GITHUB_TOKEN` and it stops waiting for anyone: it runs
 the shipd review itself, through GitHub Copilot CLI, on its own runner.
 
-**Set the secret.**
-
-1. Create a **fine-grained personal access token**
-   (**Settings** → **Developer settings** → **Personal access tokens** →
-   **Fine-grained tokens**) carrying the account-level **"Copilot Requests"**
-   permission. That permission is what lets a token drive Copilot headlessly;
-   without it the CLI refuses to start. Repository permissions are not needed —
-   the gate's own `github.token` does all the repository work.
-2. Add it to the repository as an Actions secret named
-   **`COPILOT_GITHUB_TOKEN`** (repository **Settings** → **Secrets and
-   variables** → **Actions** → **New repository secret**).
-
-Nothing else changes: the same workflow file handles both modes, so there is
-nothing to re-install after adding or removing the secret.
+**Set the secret** — a dedicated, minimally scoped fine-grained personal access
+token stored as `COPILOT_GITHUB_TOKEN`. That is a short job with a few sharp
+edges, so it has [its own section below](#the-reviewer-token). Nothing else
+changes: the same workflow file handles both modes, so there is nothing to
+re-install after adding or removing the secret.
 
 **What the job then does**, on every pull request opened, updated, or reopened:
 
@@ -190,7 +193,9 @@ nothing to re-install after adding or removing the secret.
    really did run the engine and really did author the marker, a `fix-required`
    verdict here **blocks the merge** — this is the strict mode.
 6. Posts the review text as a pull-request comment, so a human reads whatever
-   the gate just judged, whichever way it went.
+   the gate just judged, whichever way it went — including the case where it
+   parsed no verdict and [strict mode](#strictness-shipd_gate_fail_open) left
+   the check `pending`.
 
 Only the CLI's standard output is captured. Its run statistics (duration, AI
 credits, tokens) go to standard error and stay in the job log, where they
@@ -211,6 +216,67 @@ subscription's monthly allowance — on the order of **ten credits** for a small
 change (a measured run: 6.64 credits in 16 seconds), plus a couple of runner
 minutes for the installs. One review per push: the concurrency group cancels
 the run a new push supersedes, so a rapid-fire branch does not stack up reviews.
+
+### The reviewer token
+
+`COPILOT_GITHUB_TOKEN` is the one secret this integration asks for, and the
+only thing it must be able to do is spend Copilot requests. Give it exactly
+that and nothing else.
+
+**Create a dedicated token.** **Settings** → **Developer settings** →
+**Personal access tokens** → **Fine-grained tokens** → **Generate new token**:
+
+1. **Resource owner**: the account whose Copilot subscription pays for the
+   reviews.
+2. **Repository access**: **none**. Not "all repositories", not "only select
+   repositories" — the reviewer needs no repository permission at all. Every
+   repository operation in the gate (the checkout, the status post, the
+   comment) is done by the workflow's own `github.token`.
+3. **Account permissions**: **"Copilot Requests"** → *Read and write*, and
+   nothing else. That permission alone is what lets a token drive Copilot
+   headlessly; without it the CLI refuses to start.
+4. **Expiration**: pick a bounded one (90 days is a sensible default). See the
+   rotation note below — an expired token here is fail-safe.
+
+**Never reuse a broad-scope token.** Any workflow run in the repository can
+read its secrets, so a token stored here is a token every future workflow —
+including one added by a pull request you have not read closely — can use.
+A `repo`-scoped classic token or a fine-grained token with write access to your
+repositories would hand that reach to anything running in CI. The
+repository-access-free token above can do exactly one thing if it leaks: spend
+Copilot credits.
+
+**Store it as a repository secret.**
+
+```bash
+gh secret set COPILOT_GITHUB_TOKEN --repo <owner>/<repo>
+# paste the token at the prompt; it is never echoed
+```
+
+(Or repository **Settings** → **Secrets and variables** → **Actions** → **New
+repository secret**.) Note that the identity running `gh secret set` needs
+**Secrets: read and write** on the repository — that is the permission of
+whoever manages the repository, a *different* credential from the reviewer
+token being stored, which needs no repository access whatsoever.
+
+**Expiry is fail-safe; rotate by updating the secret.** When the token expires,
+the Copilot CLI refuses to start, the reviewer step exits nonzero, and the gate
+posts no terminal status: `semantic-review` stays `pending` on every pull
+request until you notice. An expired token can never turn into a passing check
+— the failure mode is a blocked merge, not a green one. To rotate, generate a
+new token the same way and re-run the same `gh secret set` command; no workflow
+change and no re-install is needed.
+
+**Removing the secret restores the poll fallback.** Delete
+`COPILOT_GITHUB_TOKEN` (`gh secret delete COPILOT_GITHUB_TOKEN`) and the very
+next run takes the [poll path](#the-poll-fallback-mode) instead — the workflow
+branches on the secret's presence at run time.
+
+**What it spends.** Reviews consume Copilot AI credits from the *token
+owner's* subscription allowance, not the repository's: about **7 credits** for
+a small change in the runs measured here. Budget it against the account that
+owns the token, and remember that the concurrency group caps this at one review
+per push.
 
 ### The poll fallback mode
 
@@ -276,7 +342,7 @@ whitespace tolerated) and compares it for equality:
 | --- | --- |
 | `<!-- shipd-verdict: fix-required -->` | `failure` — the merge is blocked. |
 | `<!-- shipd-verdict: ship-it -->` | `success`. |
-| *anything else* | `success`, described as *no verdict marker was parsed*. |
+| *anything else* | `success`, described as *no verdict marker was parsed* — unless the repository [turned strictness on](#strictness-shipd_gate_fail_open), in which case nothing is posted and the check stays `pending`. |
 
 **A marker quoted elsewhere in the text never counts.** A review that
 *describes* the markers — a pull request installing this very skill draws
@@ -294,6 +360,48 @@ In poll mode the gate acts only on a review whose author is
 request's current head: someone else's review, or Copilot's review of a
 superseded commit, changes nothing. That holds on both of its paths — it is
 what the poll searches for, and what the review event is guarded on.
+
+### Strictness: `SHIPD_GATE_FAIL_OPEN`
+
+Some repositories have ruled the opposite: a review that produced no verdict
+must never green the required check, and a merge waiting on a human is the
+correct outcome. That is one repository Actions variable, read by the gate at
+classification time:
+
+```bash
+gh variable set SHIPD_GATE_FAIL_OPEN --body false
+```
+
+| `SHIPD_GATE_FAIL_OPEN` | A last line matching neither marker |
+| --- | --- |
+| unset (**the default**), or any value but `false` | `success`, described as *no verdict marker was parsed* — fail-open. |
+| `false` | Nothing is posted. The `pending` from the run's first step stands and the run logs that no verdict was parsed. |
+
+Strict mode changes **only** that case, and it changes it on every classify
+path alike — the CLI reviewer's own output, a polled review, and a review
+event. A real verdict still decides: `fix-required` posts `failure` and
+`ship-it` posts `success` exactly as before.
+
+**The manual out.** With the check left `pending`, a strict repository merges
+by reviewing from a session and posting the status by hand — `/s:review`, then
+`review_gate.py post` — or by pushing a commit whose review does end in a
+marker.
+
+**Pair the knob with the reviewer token.** Set the variable knowing that: on
+the poll fallback, where the marker is
+[never authored today](#the-poll-fallback-mode), `false` means *every*
+Copilot-reviewed pull request stalls at `pending` and waits on that manual
+session review. Strictness only pays for itself in
+[CLI reviewer mode](#the-cli-reviewer-mode), where the marker is genuinely
+produced and a missing one really is an anomaly — so configure
+[the reviewer token](#the-reviewer-token) first, then turn the knob. In strict
+mode that reviewer still posts the text it captured as a pull-request comment
+even when it parsed no verdict, so the review you have to act on is on the
+pull request rather than buried in a job log.
+
+Set it as a **variable**, not by editing the installed workflow: `shipd copilot
+add` reinstalls that file from the plugin's template and would revert a local
+edit on the next upgrade. The variable outlives every upgrade.
 
 ### Tokens, permissions, and the session flow
 
