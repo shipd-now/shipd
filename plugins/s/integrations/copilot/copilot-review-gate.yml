@@ -1,44 +1,72 @@
 # shipd-copilot v{version}
 #
-# Bridges GitHub Copilot code review into the `semantic-review` commit status,
-# so a branch protection requiring that context is satisfied by the Copilot
-# run instead of hanging forever at "Expected — waiting for status". Installed
-# and upgraded by `shipd copilot add`; edit the template in the shipd plugin
-# (integrations/copilot/), not this copy.
+# Turns a semantic code review of a pull request into the `semantic-review`
+# commit status, so a branch protection requiring that context is satisfied by
+# the review instead of hanging forever at "Expected — waiting for status".
+# Installed and upgraded by `shipd copilot add`; edit the template in the shipd
+# plugin (integrations/copilot/), not this copy.
+#
+# Two reviewer modes, chosen by whether the repository configures a
+# COPILOT_GITHUB_TOKEN secret (a fine-grained PAT carrying the account-level
+# "Copilot Requests" permission):
+#
+#   * CLI reviewer — the secret is set. This workflow performs the review
+#     itself: it checks the reviewed commit out, installs the engine's optional
+#     tooling and the `@github/copilot` CLI, and runs that CLI headless over the
+#     repository's own .github/skills/code-review/SKILL.md. The CLI executes the
+#     engine and authors its own report, so the verdict marker is really
+#     produced and the resulting status is a strict one. The review text is
+#     posted as a pull-request comment, so a human reads whatever the gate
+#     judged. This works on private repositories, and spends Copilot AI credits
+#     per review (order of ten for a small one).
+#   * Poll fallback — no secret. GitHub's own Copilot code review is waited for
+#     by polling the reviews API, and whatever it wrote is classified. That
+#     surface runs with its bash tool disabled and assembles the review body in
+#     its own pipeline, so the shipd engine never executes there and no verdict
+#     marker is ever authored: in practice this mode fails open, and its
+#     operative guarantee is "Copilot reviewed this commit". It costs nothing
+#     and needs no secret, which is why it stays the default.
 #
 # What it does:
 #
 #   * On a pull request opening or updating, it posts `semantic-review` =
-#     pending on the new head commit, so a review of an older commit never
-#     counts for a newer one — and then it waits for Copilot's review of that
-#     commit itself, polling the reviews API.
+#     pending on the new head commit — so a review of an older commit never
+#     counts for a newer one — and then produces the verdict in whichever mode
+#     is configured.
 #   * On a review of the current head Copilot submits through an event GitHub
 #     does route here, it classifies that event's body directly.
-#   * Either way the verdict is the review body's LAST non-empty line — the
+#   * Either way the verdict is the reviewed text's LAST non-empty line — the
 #     marker the shipd review skill ends its report with — and the matching
 #     state is posted: `<!-- shipd-verdict: fix-required -->` fails the check,
 #     `<!-- shipd-verdict: ship-it -->` passes it. A marker quoted anywhere
-#     else in the body is prose, not a verdict, and counts for nothing.
-#   * A review whose last line is neither marker passes, fail-open, with a
+#     else in the text is prose, not a verdict, and counts for nothing.
+#   * Text whose last line is neither marker passes, fail-open, with a
 #     description saying no verdict was parsed. Skill pickup is
-#     relevance-driven, so a Copilot review that ignored the skill must not
-#     brick the merge.
+#     relevance-driven, so a review that ignored the skill must not brick the
+#     merge.
 #
-# Why it polls rather than waiting to be told: Copilot submits its review from
-# inside a dynamic Actions run, with the workflow-scoped token, and GitHub
-# does not start workflow runs from events raised by such a token. No
+# Why the fallback polls rather than waiting to be told: Copilot submits its
+# review from inside a dynamic Actions run, with the workflow-scoped token, and
+# GitHub does not start workflow runs from events raised by such a token. No
 # `pull_request_review` run ever fires for a Copilot-authored submission —
 # measured twice, against human reviews of the same repository that triggered
 # runs within three seconds. The `pull_request` run is therefore the only one
 # that reliably exists, so it is the one that waits. The
 # `pull_request_review` path is kept for any submission GitHub does route.
 #
-# Timeout semantics: a poll that finds no review of its head within the window
-# leaves the status `pending` and exits. Nothing happened, so no verdict is
-# invented; the session review flow (`review_gate.py post`) sets the same
-# context by hand where a run cannot. The concurrency group below caps the
-# cost at one live poll per pull request, and a new push cancels the poll it
-# supersedes.
+# Timeout semantics: a CLI run that exits nonzero or exceeds its bound, and a
+# poll that finds no review of its head within its window, both leave the status
+# `pending` and exit. Nothing was judged, so no verdict is invented; the session
+# review flow (`review_gate.py post`) sets the same context by hand where a run
+# cannot. The status is posted before any provisioning, so a failure anywhere
+# later still leaves the required check reading `pending` rather than unreported.
+# The concurrency group below caps the cost at one live run per pull request,
+# and a new push cancels the run it supersedes.
+#
+# Secrets: the only secret this workflow reads is the optional
+# COPILOT_GITHUB_TOKEN, and its value reaches nothing but the Copilot CLI's own
+# environment. Every `gh` call authenticates with the workflow's own
+# `github.token`.
 #
 # Known limit: on a pull request from a fork the workflow token is read-only,
 # so the status cannot be posted there. Same-repository branches are
@@ -55,18 +83,20 @@ on:
 permissions:
   contents: read
   statuses: write
-  pull-requests: read
+  # `write`, not the `read` the poll alone needed: the CLI reviewer posts the
+  # review text it judged as a pull-request comment.
+  pull-requests: write
 
-# One live gate per pull request. A push while a poll is running supersedes
+# One live gate per pull request. A push while a review is running supersedes
 # it — the new head's own run owns the gate from then on — and cancelling the
-# old run is what stops two polls posting over each other.
+# old run is what stops two runs posting over each other.
 concurrency:
   group: shipd-semantic-review-gate-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   gate:
-    name: Bridge the Copilot review verdict into semantic-review
+    name: Bridge the semantic review verdict into semantic-review
     # Both triggers land in this one job, so both share one classification.
     # A review event is worth a run only for Copilot's own review of the
     # commit that is currently the head: a stale review of an older commit is
@@ -76,30 +106,99 @@ jobs:
       || (github.event.review.user.login == 'copilot-pull-request-reviewer[bot]'
       && github.event.review.commit_id == github.event.pull_request.head.sha)
     runs-on: ubuntu-latest
+    env:
+      # Whether the CLI reviewer mode is configured. A step's `if:` cannot read
+      # the `secrets` context at all, so only the *presence* of the secret is
+      # hoisted here, as a boolean; the value itself never leaves the one step
+      # that runs the CLI. This is what keeps a repository on the poll fallback
+      # from paying for a checkout and a toolchain it will not use.
+      COPILOT_CLI_REVIEWER: ${{ secrets.COPILOT_GITHUB_TOKEN != '' }}
     steps:
-      - name: Post the semantic-review status for this head
+      - name: Post the pending semantic-review status for this head
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # First, before any provisioning: whatever fails after this, the
+          # required check reads `pending` rather than going unreported. A
+          # review event classifies a body that already exists, so it has
+          # nothing to wait for and posts no pending of its own.
+          if [[ "$EVENT_NAME" == 'pull_request' ]]; then
+            gh api --method POST "repos/$REPO/statuses/$HEAD_SHA" \
+              -f state=pending \
+              -f context=semantic-review \
+              -f description="Waiting for the Copilot code review of this commit."
+          fi
+
+      - name: Check out the reviewed commit
+        if: >-
+          github.event_name == 'pull_request'
+          && env.COPILOT_CLI_REVIEWER == 'true'
+        uses: actions/checkout@v4
+        with:
+          # The commit under review itself — not the merge commit — with the
+          # history behind it, which the engine's merge-base diff needs.
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Install difftastic and ripgrep for the review engine
+        if: >-
+          github.event_name == 'pull_request'
+          && env.COPILOT_CLI_REVIEWER == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o /tmp/difft.tar.gz \
+            https://github.com/Wilfred/difftastic/releases/latest/download/difft-x86_64-unknown-linux-gnu.tar.gz
+          mkdir -p /tmp/difft-release
+          tar -xzf /tmp/difft.tar.gz -C /tmp/difft-release
+          # The archive layout has varied across releases, so the binary is
+          # located by name rather than assumed at the archive root.
+          binary="$(find /tmp/difft-release -type f -name difft | head -n 1)"
+          install -m 0755 "$binary" "$HOME/.local/bin/difft"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+
+      - name: Review this commit and post the verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # The one repository secret, and the only place its value is bound.
+          # `gh` never sees it; the Copilot CLI inherits it from this step's
+          # environment, which is the authentication it documents for a
+          # headless run.
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           REVIEW_BODY: ${{ github.event.review.body }}
         run: |
           set -euo pipefail
-          # The poll's cadence and its bound. These defaults are what every
-          # run on a runner uses — nothing there sets the overrides, which
-          # exist so the test suite can drive the loop through its cycles
-          # without waiting fifteen minutes on it.
+          # The poll's cadence and its bound, and the CLI reviewer's runtime
+          # bound. These defaults are what every run on a runner uses — nothing
+          # there sets the overrides, which exist so the test suite can drive
+          # the loop through its cycles, and a timed-out review through its
+          # branch, without waiting minutes on either.
           poll_interval="${SHIPD_GATE_POLL_INTERVAL:-20}"
           poll_timeout="${SHIPD_GATE_POLL_TIMEOUT:-900}"
+          cli_timeout="${SHIPD_GATE_CLI_TIMEOUT:-600}"
 
-          # Where a polled review body lands. It is written by redirection and
-          # read back with `$(<file)`: a review body is never carried in an
-          # environment variable on this path — bodies reach 65,536 characters,
-          # close enough to the 128 KiB per-string limit to matter — and never
-          # piped anywhere, for the SIGPIPE reason spelled out below.
+          # Where the reviewed text lands. It is written by redirection and
+          # read back with `$(<file)`: the text is never carried in an
+          # environment variable on these paths — review bodies reach 65,536
+          # characters, close enough to the 128 KiB per-string limit to
+          # matter — and never piped anywhere, for the SIGPIPE reason spelled
+          # out below.
           body_file="${RUNNER_TEMP:-.}/shipd-copilot-review-body.md"
+          # Set once the reviewed text is this workflow's own work, and so
+          # worth showing a human. A Copilot-authored review is already on the
+          # pull request and is never re-posted.
+          comment_file=
 
           post_status() {
             gh api --method POST "repos/$REPO/statuses/$HEAD_SHA" \
@@ -108,12 +207,54 @@ jobs:
               -f description="$2"
           }
 
-          if [[ "$EVENT_NAME" == 'pull_request' ]]; then
-            post_status pending \
-              "Waiting for the Copilot code review of this commit."
-            # Wait for Copilot's review of this head. Each cycle re-reads the
-            # pull request's own head as well: once it has moved, the newer
-            # push's run owns the gate and this one is finished.
+          if [[ "$EVENT_NAME" == 'pull_request' \
+                && -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then
+            # The CLI reviewer. Unlike GitHub's code-review surface, this one
+            # can execute the engine and author its own report, which is what
+            # makes the resulting status strict rather than fail-open.
+            npm install -g @github/copilot
+            # The engine diffs base against the reviewed commit with merge-base
+            # semantics, so both must be present. The checkout brought the
+            # history behind the commit under review; this tops up a base the
+            # fetch may not have covered, and is only best-effort because the
+            # usual case is that it is already there.
+            git fetch --no-tags --quiet origin "$BASE_SHA" || true
+            # The prompt defers to the installed skill rather than restating
+            # the rubric, so one file stays the review contract for both
+            # reviewer modes.
+            prompt="Review this pull request.
+
+          Follow .github/skills/code-review/SKILL.md in this repository exactly:
+          run the bundled engine it names, reason from that structural output,
+          apply its severity rubric, and end with the verdict it mandates. Diff
+          $BASE_SHA against the reviewed commit $HEAD_SHA.
+
+          Do not post anything to GitHub yourself: no review, no comment, no
+          status, no label. The workflow that invoked you publishes the result.
+
+          Write ONLY the review report. Its last line must be the
+          machine-readable verdict marker the skill specifies, alone on that
+          line, with nothing after it."
+            # Only stdout is captured: the CLI writes its report there and its
+            # run statistics to stderr, which belongs in the job log rather
+            # than in the classified text — folded in, that footer would be the
+            # last non-empty line and every verdict would be thrown away.
+            # `--allow-all-tools` is what lets the CLI run the engine at all.
+            # A run that fails or is killed judged nothing, so nothing further
+            # is posted and the `pending` above stands.
+            if ! timeout "$cli_timeout" copilot -p "$prompt" --allow-all-tools \
+                > "$body_file"; then
+              echo "The Copilot CLI review of $HEAD_SHA failed or exceeded" \
+                "${cli_timeout}s; semantic-review stays pending."
+              exit 0
+            fi
+            body="$(<"$body_file")"
+            comment_file="$body_file"
+          elif [[ "$EVENT_NAME" == 'pull_request' ]]; then
+            # The poll fallback. Wait for Copilot's review of this head. Each
+            # cycle re-reads the pull request's own head as well: once it has
+            # moved, the newer push's run owns the gate and this one is
+            # finished.
             deadline=$(( SECONDS + poll_timeout ))
             while :; do
               current_head="$(gh api --jq '.head.sha' \
@@ -147,7 +288,7 @@ jobs:
             body="$REVIEW_BODY"
           fi
 
-          # The verdict is the body's LAST non-empty line, compared for
+          # The verdict is the text's LAST non-empty line, compared for
           # equality — never a substring match anywhere in the body. A review
           # describing a diff may quote the markers verbatim (a pull request
           # that ships the review skill itself quotes both), and an
@@ -222,3 +363,11 @@ jobs:
             description="Copilot reviewed this commit; no verdict marker was parsed."
           fi
           post_status "$state" "$description"
+
+          # What the gate judged, where a human can read it. Posted after the
+          # status, so a comment that fails cannot cost the verdict it
+          # explains.
+          if [[ -n "$comment_file" ]]; then
+            gh pr comment "$PR_NUMBER" --repo "$REPO" \
+              --body-file "$comment_file"
+          fi
