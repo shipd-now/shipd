@@ -6,9 +6,10 @@ same engine and the same rubric as `/s:review` — cohort by cohort, over a
 syntax-aware structural diff, with a high/medium/low severity rubric and a
 ship-it/fix-required verdict.
 
-The result is **advisory**. It posts as a Copilot review on the pull request
-and blocks nothing; if your repository requires the `semantic-review` status
-check, that check stays the merge gate. See
+The result posts as a Copilot review on the pull request, and a fourth managed
+file — the gate workflow — bridges its verdict into the `semantic-review`
+commit status, so the same check `/s:review` posts is satisfied by Copilot's
+run. See [The merge gate](#3-the-merge-gate) and
 [Scope and limits](#scope-and-limits).
 
 ## Prerequisites
@@ -35,10 +36,11 @@ shipd copilot add
 wrote .github/skills/code-review/SKILL.md
 wrote .github/skills/code-review/scripts/semdiff.py
 wrote .github/workflows/copilot-code-review.yml
+wrote .github/workflows/copilot-review-gate.yml
 Copilot code review reads these from a pull request's head branch. Enable automatic review with a GitHub branch ruleset.
 ```
 
-Those three files are everything the verb manages, and it touches nothing else
+Those four files are everything the verb manages, and it touches nothing else
 — no network, no `gh`, no other path:
 
 - **`.github/skills/code-review/SKILL.md`** — the review instructions Copilot
@@ -53,6 +55,10 @@ Those three files are everything the verb manages, and it touches nothing else
   for the review runner. It installs `difft` (difftastic) and `ripgrep` so the
   diff is syntax-aware and symbol lookups are fast. Both are optional; see
   [Scope and limits](#scope-and-limits).
+- **`.github/workflows/copilot-review-gate.yml`** — the gate workflow. It
+  posts the `semantic-review` commit status, bridging Copilot's submitted
+  review into the check your branch protection requires. See
+  [The merge gate](#3-the-merge-gate).
 
 To install into a repository you are not standing in, pass `--root`:
 
@@ -63,7 +69,9 @@ shipd copilot add --root ~/code/some-repo
 ### Commit and push them
 
 ```bash
-git add .github/skills/code-review .github/workflows/copilot-code-review.yml
+git add .github/skills/code-review \
+        .github/workflows/copilot-code-review.yml \
+        .github/workflows/copilot-review-gate.yml
 git commit -m "Install the shipd Copilot code-review skill"
 git push
 ```
@@ -88,7 +96,58 @@ protected branch requiring Copilot code review (repository **Settings** →
 **Rules** → **Rulesets**). From then on Copilot reviews each pull request
 targeting that branch without anyone asking.
 
-## 3. Check and upgrade the install
+## 3. The merge gate
+
+`.github/workflows/copilot-review-gate.yml` turns the review into a real
+check. It posts the **`semantic-review`** commit status — the same context
+`/s:review`'s poster (`review_gate.py post`) sets — so a branch protection
+requiring `semantic-review` is satisfied by whichever of the two ran last, and
+a pull request no longer waits forever at *"Expected — waiting for status to be
+reported"*.
+
+Two triggers, two behaviours:
+
+| Event | What the gate posts |
+| --- | --- |
+| A pull request **opens**, **updates** (a new push), or **reopens** | `pending` on the new head commit — the review of an older commit never counts for a newer one. |
+| Copilot **submits a review** of the current head commit | The verdict, mapped from the review body (below). |
+
+The review body carries a machine-readable marker, which the skill instructs
+the reviewer to emit as the body's last line:
+
+| Marker in the review body | Status posted |
+| --- | --- |
+| `<!-- shipd-verdict: fix-required -->` | `failure` — the merge is blocked. |
+| `<!-- shipd-verdict: ship-it -->` | `success`. |
+| *neither marker* | `success`, described as *no verdict marker was parsed*. |
+
+That last row is the **fail-open** rule, and it is deliberate. Skill pickup is
+relevance-driven (see [Scope and limits](#scope-and-limits)), so a Copilot
+review that ignored the skill produces no marker — failing closed there would
+brick every merge on a Copilot miss. A review that *did* run the skill and
+found blocking problems still posts `failure`.
+
+The bridge only acts on a review whose author is
+`copilot-pull-request-reviewer[bot]` and whose `commit_id` is the pull
+request's current head: someone else's review, or Copilot's review of a
+superseded commit, changes nothing.
+
+The workflow authenticates with its own `github.token` and needs no secret of
+yours. It also never *asks* for a review — triggering stays GitHub-side, per
+[step 2](#2-enable-reviews).
+
+**Coexisting with the session flow.** Running `/s:review` and posting the gate
+from a Claude session writes the same `semantic-review` context on the same
+commit. Neither poster excludes the other; the newest post on a commit is the
+one the check reflects.
+
+**Limit: pull requests from forks.** GitHub gives workflows triggered by a
+fork's pull request a **read-only** token, so the gate cannot post a status
+there and the check stays unreported. Same-repository branches — the shipd
+`change/<name>` flow — are unaffected. On a fork PR, post the status from a
+session with `review_gate.py post`.
+
+## 4. Check and upgrade the install
 
 Run the verb bare. It reports and changes nothing:
 
@@ -97,10 +156,11 @@ shipd copilot
 ```
 
 ```
-copilot review skill in /Users/you/code/some-repo (this install: v0.6.123)
-  installed .github/skills/code-review/SKILL.md — shipd-copilot v0.6.123
+copilot review skill in /Users/you/code/some-repo (this install: v0.6.127)
+  installed .github/skills/code-review/SKILL.md — shipd-copilot v0.6.127
   installed .github/skills/code-review/scripts/semdiff.py — byte-identical to the plugin's engine
-  installed .github/workflows/copilot-code-review.yml — shipd-copilot v0.6.123
+  installed .github/workflows/copilot-code-review.yml — shipd-copilot v0.6.127
+  installed .github/workflows/copilot-review-gate.yml — shipd-copilot v0.6.127
 `shipd copilot add` installs or refreshes those files; `shipd copilot remove` deletes the ones it owns.
 Automatic review is enabled on GitHub, not here — add a branch ruleset requiring Copilot code review on the protected branch.
 The Copilot code-review surface exposes no repository-side model selection, so nothing here pins a model.
@@ -118,9 +178,9 @@ Each managed file reports one of four states:
 | `absent` | Not installed. |
 
 Ownership is decided by a marker line the templates carry: `<!-- shipd-copilot
-v… -->` in `SKILL.md` and `# shipd-copilot v…` in the workflow. The installed
-`semdiff.py` has no marker of its own — it counts as owned exactly when the
-`SKILL.md` beside it is owned.
+v… -->` in `SKILL.md` and `# shipd-copilot v…` in each of the two workflows.
+The installed `semdiff.py` has no marker of its own — it counts as owned
+exactly when the `SKILL.md` beside it is owned.
 
 **To upgrade, run `add` again.** It is idempotent: it rewrites the files it
 owns at the current version, so a `stale` install becomes `installed` and an
@@ -132,7 +192,7 @@ branch.
 Edit the plugin's templates rather than the installed copies. A re-`add`
 overwrites them.
 
-## 4. Uninstall
+## 5. Uninstall
 
 ```bash
 shipd copilot remove
@@ -142,6 +202,7 @@ shipd copilot remove
 removed .github/skills/code-review/SKILL.md
 removed .github/skills/code-review/scripts/semdiff.py
 removed .github/workflows/copilot-code-review.yml
+removed .github/workflows/copilot-review-gate.yml
 ```
 
 It deletes only the files it owns, prunes the `.github/skills/code-review`
@@ -172,11 +233,14 @@ written or deleted when any one of them is foreign.
 
 ## Scope and limits
 
-- **Advisory, not a gate.** Copilot posts its own review on the pull request.
-  Nothing in Copilot code review is documented to set a third-party commit
-  status, so it does not set — or satisfy — the required `semantic-review`
-  check that `review_gate.py` drives. Treat the Copilot run as a second opinion beside
-  the required gate, not as a replacement for it.
+- **The gate is the workflow's, not Copilot's.** Nothing in Copilot code
+  review is documented to set a third-party commit status; the review itself
+  still only posts a review. What satisfies a required `semantic-review` check
+  is the installed gate workflow reading that review and posting the status
+  from Actions — so drop `copilot-review-gate.yml` and the Copilot run is once
+  again purely advisory beside whatever check you require. Its fail-open rule
+  means a `success` can also mean "reviewed, no verdict parsed"; the status
+  description says which.
 - **No repository-side model selection.** The Copilot code-review surface
   exposes no repository-side option to pin which model the review runs on, so
   nothing installed here configures one. This is documented rather than faked,
