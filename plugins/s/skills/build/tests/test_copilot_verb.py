@@ -8,7 +8,11 @@ Two layers, both black-box:
   disk and asserted on their content — the marker lines carrying the literal
   ``{version}`` placeholder, the instructions the reviewing agent follows, the
   setup workflow's single job and tooling steps, and the gate workflow's
-  triggers, guards, and verdict mapping.
+  triggers, guards, and verdict mapping. The gate's verdict parse is also
+  *executed*: its step body is extracted, its ``${{ … }}`` expressions
+  substituted, and the script run under bash against a stubbed ``gh``, so the
+  classification is proved on real review bodies rather than asserted on the
+  shape of a conditional.
 * **The verb** is driven through ``plugins/s/bin/shipd`` by path (so its
   shebang and exec bit are exercised too) against throwaway temp roots, in the
   subprocess-against-temp-roots style of ``test_shipd_cli.py``. ``HOME`` is
@@ -22,6 +26,7 @@ splitter: the engine's suite is stdlib-only, per the constitution.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -192,6 +197,59 @@ def verdict_branches(text):
         if current is not None:
             branches[current].append(stripped)
     return {key: "\n".join(lines) for key, lines in branches.items()}
+
+
+def gated_job(text, event):
+    """The body of the single job gated on ``event`` — the module-level twin
+    of :meth:`GateWorkflowTemplateTest.guard`, for helpers that need the job
+    outside a test case."""
+    matching = [body for body in job_blocks(text).values()
+                if "github.event_name == '%s'" % event in body]
+    if len(matching) != 1:
+        raise AssertionError(
+            "expected exactly one job gated on %r, found %d"
+            % (event, len(matching)))
+    return matching[0]
+
+
+def run_block(job_body):
+    """The dedented body of the first ``run: |`` block in ``job_body``."""
+    lines = job_body.splitlines()
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not (stripped.startswith("run:") and stripped.endswith("|")):
+            continue
+        head = len(line) - len(line.lstrip())
+        body = []
+        indent = None
+        for follow in lines[i + 1:]:
+            if not follow.strip():
+                body.append("")
+                continue
+            pad = len(follow) - len(follow.lstrip())
+            if pad <= head:
+                break
+            if indent is None:
+                indent = pad
+            body.append(follow[indent:])
+        while body and not body[-1].strip():
+            body.pop()
+        return "\n".join(body) + "\n" if body else ""
+    return ""
+
+
+# A GitHub Actions template expression, which the runner substitutes before
+# the shell ever sees it — bash would choke on the braces.
+ACTIONS_EXPRESSION = re.compile(r"\$\{\{[^}]*\}\}")
+
+
+def bridge_script(text, substitute="stub"):
+    """The gate's ``pull_request_review`` step body, runnable under bash: the
+    Actions expressions the runner would interpolate are replaced by
+    ``substitute``."""
+    return ACTIONS_EXPRESSION.sub(substitute,
+                                  run_block(gated_job(text,
+                                                      "pull_request_review")))
 
 
 class SkillTemplateTest(unittest.TestCase):
@@ -389,11 +447,37 @@ class GateWorkflowTemplateTest(unittest.TestCase):
                       "the fail-open description must say no verdict was "
                       "parsed")
 
-    def test_the_verdict_match_is_a_pure_bash_substring_test(self):
+    def test_the_verdict_match_is_an_anchored_equality_test(self):
+        # Equality against the extracted last line, never containment: a
+        # review that quotes a marker while describing the diff must not be
+        # classified by the quote.
         for marker in (FIX_MARKER, SHIP_MARKER):
-            self.assertIn("""[[ "$REVIEW_BODY" == *'%s'* ]]""" % marker,
-                          self.text,
-                          "%r is not matched by a bash substring test" % marker)
+            self.assertRegex(
+                self.text,
+                r"""\[\[ "\$\{?[A-Za-z_][A-Za-z0-9_]*\}?" == '%s' \]\]"""
+                % re.escape(marker),
+                "%r is not compared for equality against a single line"
+                % marker)
+            self.assertNotIn(
+                "*'%s'*" % marker, self.text,
+                "%r is still matched anywhere in the body" % marker)
+
+    def test_the_last_line_is_extracted_with_parameter_expansion_only(self):
+        # The extraction has to be pure bash for the same reason the match
+        # is: shelling out reintroduces the pipe the regression below forbids.
+        script = bridge_script(self.text)
+        self.assertIn("${", script,
+                      "the bridge step does no parameter expansion at all")
+        for line in script.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            words = line.replace("$(", " ").replace("`", " ").split()
+            for command in ("tail", "head", "awk", "sed", "grep", "cut", "tr",
+                            "python", "python3"):
+                self.assertNotIn(
+                    command, words,
+                    "the bridge step shells out to %r: %s"
+                    % (command, line.strip()))
 
     def test_the_review_body_is_never_piped_into_a_matcher(self):
         # `grep -q` exits at its first match, so on a review body larger than
@@ -423,6 +507,142 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertNotIn("requested_reviewers", self.text)
         self.assertNotIn("--add-reviewer", self.text)
         self.assertNotIn("gh pr edit", self.text)
+
+
+# The review that motivated the anchor. Dogfooding on shipd-now-website#18 —
+# the pull request that installs the skill — produced a Copilot review whose
+# body quotes both verdict markers while describing the diff and ends with
+# neither, which the shipped anywhere-in-body match classified `fix-required`
+# on a passing pull request.
+QUOTING_BODY = """## Pull Request Overview
+
+This pull request adds the shipd code-review skill. The skill tells the
+reviewing agent to end its report with `<!-- shipd-verdict: fix-required -->`
+when a high-severity finding blocks the merge, and with
+`<!-- shipd-verdict: ship-it -->` otherwise.
+
+No blocking findings were identified.
+"""
+
+
+class GateVerdictParseTest(unittest.TestCase):
+    """The gate's verdict parse, executed (copilot-review-skill
+    gate-workflow-template): the bridge step's script is extracted from the
+    template and run under bash with a stubbed ``gh``, so what is asserted is
+    the state a real review body posts."""
+
+    def setUp(self):
+        self.assertTrue(os.path.isfile(GATE_TEMPLATE),
+                        "missing template %s" % GATE_TEMPLATE)
+        self.script = bridge_script(read(GATE_TEMPLATE))
+        self.assertIn("gh api", self.script,
+                      "no runnable bridge step found in the template")
+        self.tmp = tempfile.mkdtemp(prefix="shipd-copilot-gate-test-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.record = os.path.join(self.tmp, "gh-args")
+        self.stub_bin = os.path.join(self.tmp, "bin")
+        os.makedirs(self.stub_bin)
+        stub = os.path.join(self.stub_bin, "gh")
+        with open(stub, "w", encoding="utf-8") as fh:
+            fh.write('#!/bin/sh\n'
+                     'for arg in "$@"; do printf \'%s\\n\' "$arg"; done'
+                     ' >> "$GH_ARGS"\n')
+        os.chmod(stub, 0o755)
+
+    def post(self, body, timeout=30):
+        """Run the bridge step against ``body``; return the ``-f key=value``
+        fields it posted.
+
+        The run is bounded: reintroducing a trim that is quadratic in a
+        trailing whitespace run makes the script crawl rather than misbehave
+        (the shipped one classified a 65,000-space body in ~64s on the
+        runner's bash, and minutes locally), and an unbounded ``run`` would
+        stall the whole suite instead of reporting that. The bound is
+        generous — every case here finishes in well under a second — so only
+        a real regression can trip it."""
+        script = os.path.join(self.tmp, "bridge.sh")
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write(self.script)
+        if os.path.exists(self.record):
+            os.remove(self.record)
+        env = dict(os.environ)
+        env.update({
+            "PATH": self.stub_bin + os.pathsep + env.get("PATH", ""),
+            "GH_ARGS": self.record,
+            "GH_TOKEN": "stub-token",
+            "REVIEW_BODY": body,
+        })
+        try:
+            result = subprocess.run(["bash", script], cwd=self.tmp, env=env,
+                                    capture_output=True, text=True,
+                                    timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.fail("the bridge step did not finish within %ss on a "
+                      "%d-character body — the verdict parse is no longer "
+                      "linear in the body's trailing whitespace"
+                      % (timeout, len(body)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(os.path.exists(self.record),
+                        "the bridge step posted no status at all")
+        args = read(self.record).splitlines()
+        fields = {}
+        for i, arg in enumerate(args):
+            if arg == "-f" and i + 1 < len(args) and "=" in args[i + 1]:
+                key, _sep, value = args[i + 1].partition("=")
+                fields[key] = value
+        return fields
+
+    def test_a_quoted_marker_never_beats_the_ship_it_last_line(self):
+        fields = self.post(QUOTING_BODY + "\n" + SHIP_MARKER + "\n")
+        self.assertEqual(fields.get("context"), STATUS_CONTEXT)
+        self.assertEqual(fields.get("state"), "success",
+                         "the quoted fix-required text won over the last line")
+
+    def test_a_fix_required_last_line_fails_the_check(self):
+        fields = self.post("One high-severity finding blocks.\n\n"
+                           + FIX_MARKER + "\n")
+        self.assertEqual(fields.get("context"), STATUS_CONTEXT)
+        self.assertEqual(fields.get("state"), "failure")
+
+    def test_a_fix_required_last_line_survives_crlf_and_whitespace(self):
+        fields = self.post("One high-severity finding blocks.\r\n\r\n  "
+                           + FIX_MARKER + "  \r\n\r\n")
+        self.assertEqual(fields.get("state"), "failure")
+
+    def test_a_long_trailing_whitespace_run_is_trimmed_promptly(self):
+        # The liveness guard. Every way of asking bash for the trailing
+        # whitespace in one shot is quadratic in the run — measured at 64s on
+        # bash 5.2 and minutes on bash 3.2 for a body-sized 65,000 spaces —
+        # and a bridge job that crawls strands the required check in progress
+        # until the job times out. Both placements of the run are covered: on
+        # its own line after the verdict, and on the verdict's own line.
+        fields = self.post("One high-severity finding blocks.\n\n"
+                           + FIX_MARKER + "\n" + " " * 65000 + "\n\n")
+        self.assertEqual(fields.get("state"), "failure")
+        fields = self.post("One high-severity finding blocks.\n\n"
+                           + FIX_MARKER + " " * 65000)
+        self.assertEqual(fields.get("state"), "failure")
+
+    def test_an_all_whitespace_body_fails_open(self):
+        # The trim pattern needs a non-space character to anchor on; with
+        # none, the whole string is the whitespace run and the line must come
+        # out empty rather than erroring under `set -euo pipefail`.
+        fields = self.post("   \n\n \t \n")
+        self.assertEqual(fields.get("state"), "success")
+        self.assertIn("no verdict", fields.get("description", "").lower())
+
+    def test_markers_quoted_only_mid_text_fail_open(self):
+        fields = self.post(QUOTING_BODY)
+        self.assertEqual(fields.get("state"), "success")
+        self.assertIn("no verdict",
+                      fields.get("description", "").lower(),
+                      "the fail-open description must say no verdict was "
+                      "parsed")
+
+    def test_an_empty_body_fails_open(self):
+        fields = self.post("")
+        self.assertEqual(fields.get("state"), "success")
+        self.assertIn("no verdict", fields.get("description", "").lower())
 
 
 class CopilotVerbTest(unittest.TestCase):

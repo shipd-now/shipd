@@ -11,13 +11,16 @@
 #   * On a pull request opening or updating, it posts `semantic-review` =
 #     pending on the new head commit, so a review of an older commit never
 #     counts for a newer one.
-#   * On Copilot submitting a review of the current head, it reads the verdict
-#     marker the shipd review skill ends its body with and posts the matching
-#     state: `<!-- shipd-verdict: fix-required -->` fails the check,
-#     `<!-- shipd-verdict: ship-it -->` passes it.
-#   * A review carrying neither marker passes, fail-open, with a description
-#     saying no verdict was parsed. Skill pickup is relevance-driven, so a
-#     Copilot review that ignored the skill must not brick the merge.
+#   * On Copilot submitting a review of the current head, it reads the review
+#     body's LAST non-empty line — the verdict marker the shipd review skill
+#     ends its report with — and posts the matching state:
+#     `<!-- shipd-verdict: fix-required -->` fails the check,
+#     `<!-- shipd-verdict: ship-it -->` passes it. A marker quoted anywhere
+#     else in the body is prose, not a verdict, and counts for nothing.
+#   * A review whose last line is neither marker passes, fail-open, with a
+#     description saying no verdict was parsed. Skill pickup is
+#     relevance-driven, so a Copilot review that ignored the skill must not
+#     brick the merge.
 #
 # Triggering the review itself stays GitHub-side — request Copilot as a
 # reviewer on the pull request, or require Copilot code review in a branch
@@ -73,19 +76,74 @@ jobs:
           REVIEW_BODY: ${{ github.event.review.body }}
         run: |
           set -euo pipefail
-          # The blocking verdict is tested first, so a body carrying both
-          # markers blocks rather than passes.
+          # The verdict is the body's LAST non-empty line, compared for
+          # equality — never a substring match anywhere in the body. A review
+          # describing a diff may quote the markers verbatim (a pull request
+          # that ships the review skill itself quotes both), and an
+          # anywhere-in-body match reads such a quote as the verdict and
+          # fails a passing pull request. The skill already mandates the
+          # marker as the report's last line; this enforces it.
           #
-          # The match is a pure-bash substring test, never a pipe into grep:
-          # `grep -q` exits at its first match, so on a review body larger
-          # than the pipe buffer the writer dies of SIGPIPE, `pipefail` makes
-          # the matched condition false, and a fix-required verdict would fall
-          # through to the fail-open branch and post success. Review bodies
-          # reach 65,536 characters, well past that buffer.
-          if [[ "$REVIEW_BODY" == *'<!-- shipd-verdict: fix-required -->'* ]]; then
+          # The extraction and both comparisons are pure bash — parameter
+          # expansion, `(( ))` and `[[ ]]` — never a pipe into grep: `grep -q`
+          # exits at its first match, so on a review body larger than the pipe
+          # buffer the writer dies of SIGPIPE, `pipefail` makes the matched
+          # condition false, and a fix-required verdict would fall through to
+          # the fail-open branch and post success. Review bodies reach 65,536
+          # characters, well past that buffer.
+          #
+          # Strip carriage returns, trim the body's trailing whitespace —
+          # blank lines included — take what follows the last newline, and
+          # trim that line's leading whitespace.
+          #
+          # The trailing trim walks backwards a bounded window at a time
+          # rather than matching the whole run at once, because every way of
+          # asking bash for "the trailing whitespace" outright is quadratic
+          # in that run: `${body##*[![:space:]]}` retries the leading `*` at
+          # every position (65,000 trailing spaces measured at 64s on bash
+          # 5.2 and minutes on bash 3.2), the extglob `${body%%+([[:space:]])}`
+          # crashes bash 3.2 outright, and peeling one character per
+          # iteration is quadratic by construction. A hung bridge job would
+          # strand the required check in progress until the job times out.
+          # Windowed, the same 65,000-space body trims in ~23ms. Each window
+          # is first tested for being all whitespace with `%%`, which is
+          # linear, so the quadratic `##` only ever runs on the one window
+          # holding the boundary.
+          body="${REVIEW_BODY//$'\r'/}"
+          end=${#body}
+          while (( end > 0 )); do
+            start=$(( end > 512 ? end - 512 : 0 ))
+            window="${body:start:end-start}"
+            lead_ws="${window%%[![:space:]]*}"
+            if (( ${#lead_ws} == ${#window} )); then
+              end=$start                       # all whitespace: drop it whole
+              continue
+            fi
+            tail_ws="${window##*[![:space:]]}"  # bounded: one window at most
+            end=$(( end - ${#tail_ws} ))
+            break
+          done
+          body="${body:0:end}"
+          # What follows the final newline. `%` (shortest suffix) is the
+          # cheap direction; it returns the string unchanged when the body is
+          # a single line, which the length test detects.
+          head="${body%$'\n'*}"
+          if (( ${#head} == ${#body} )); then
+            last_line="$body"
+          else
+            last_line="${body:${#head}+1}"
+          fi
+          # Only the leading side is left to trim: the body-wide trim above
+          # already took every trailing space off the last line.
+          lead_ws="${last_line%%[![:space:]]*}"
+          last_line="${last_line:${#lead_ws}}"
+          # The blocking verdict is tested first, so the conditional still
+          # reads blocking-first (with equality on one line, at most one
+          # marker can match anyway).
+          if [[ "$last_line" == '<!-- shipd-verdict: fix-required -->' ]]; then
             state=failure
             description="Copilot code review: fix required."
-          elif [[ "$REVIEW_BODY" == *'<!-- shipd-verdict: ship-it -->'* ]]; then
+          elif [[ "$last_line" == '<!-- shipd-verdict: ship-it -->' ]]; then
             state=success
             description="Copilot code review: ship it."
           else

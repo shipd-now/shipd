@@ -152,17 +152,23 @@ head branch; enabling reviews both per-PR (requesting Copilot as a reviewer)
 and automatically (a GitHub branch ruleset); the merge gate — the gate
 workflow posts the `semantic-review` commit status, `pending` when a pull
 request opens or updates and bridged from Copilot's submitted review on the
-head commit (a `fix-required` verdict marker posts `failure`; a `ship-it`
-marker, or a review with no parseable marker, posts `success` — the
-fail-open rule), that the session review flow posts the same status context
-so either poster satisfies a required `semantic-review` check, and that on
-pull requests from forks the workflow token is read-only so the gate cannot
-post there; inspecting and maintaining the install via the bare
-`shipd copilot` report (the `installed`, `stale`, `foreign`, and `absent`
-states), re-running `add` to upgrade, `remove` to uninstall, and `--force`
-for foreign files; and the integration's scope: the Copilot code-review
-surface exposes no repository-side model selection, skill pickup is
-relevance-driven, and difftastic/ripgrep are optional because the engine
+head commit (a review whose last non-empty line is the `fix-required` marker
+posts `failure`; a `ship-it` last line, or any review whose last line is
+neither marker, posts `success` — the fail-open rule; markers quoted
+elsewhere in the body never count), that the session review flow posts the
+same status context so either poster satisfies a required `semantic-review`
+check, that on pull requests from forks the workflow token is read-only so
+the gate cannot post there, and the bootstrap limit: GitHub runs
+`pull_request_review` workflows from the default branch's workflow file, so
+the bridge never fires on the pull request that first installs the gate —
+that one pull request needs its `semantic-review` status posted by the
+session flow (`review_gate.py post`) or a one-time admin bypass, and every
+later pull request is unaffected; inspecting and maintaining the install via
+the bare `shipd copilot` report (the `installed`, `stale`, `foreign`, and
+`absent` states), re-running `add` to upgrade, `remove` to uninstall, and
+`--force` for foreign files; and the integration's scope: the Copilot
+code-review surface exposes no repository-side model selection, skill pickup
+is relevance-driven, and difftastic/ripgrep are optional because the engine
 degrades to its text engine without them.
 
 #### Scenario: Install section names the managed files and the head-branch rule
@@ -176,12 +182,21 @@ degrades to its text engine without them.
 - **THEN** it explains requesting Copilot as a reviewer on a pull request and
   enabling automatic review through a GitHub branch ruleset
 
-#### Scenario: The merge-gate section states the bridge semantics
+#### Scenario: The merge-gate section states the anchored bridge semantics
 - **WHEN** the guide's merge-gate section is read
-- **THEN** it documents `pending` on pull-request open/update, `failure` on
-  a `fix-required` marker, `success` on a `ship-it` marker or a marker-less
-  review (fail-open), the session flow as a coexisting poster of the same
-  status context, and the fork read-only-token limit
+- **THEN** it documents `pending` on pull-request open/update, the last-line
+  verdict anchoring (`failure` for a `fix-required` last line, `success` for
+  a `ship-it` last line or any other last line, quoted markers never
+  counting), the session flow as a coexisting poster of the same status
+  context, and the fork read-only-token limit
+
+#### Scenario: The bootstrap limit is documented
+- **WHEN** the guide's merge-gate section is read
+- **THEN** it states that `pull_request_review` workflows run from the
+  default branch's workflow file, so the installing pull request's bridge
+  never fires, and names the session flow (`review_gate.py post`) or a
+  one-time admin bypass as the way to post that first `semantic-review`
+  status
 
 #### Scenario: Maintenance documents the report states and upgrade path
 - **WHEN** the guide's maintenance section is read
