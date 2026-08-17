@@ -2595,7 +2595,7 @@ def main(argv=None):
         description="Read/write spec lifecycle status and the current-spec "
                     "selection for the shipd spec engine.")
     parser.add_argument("--root", default=os.getcwd(),
-                        help="repo root containing am/ (default: cwd)")
+                        help="repo root containing the .shipd/ content directory (default: cwd)")
     sub = parser.add_subparsers(dest="verb")
 
     p_use = sub.add_parser("use", help="record the spec being worked on")

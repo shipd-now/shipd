@@ -7,7 +7,7 @@ Before authoring any spec artifacts, `/s:build` SHALL evaluate the request
 against the plan readiness checklist (problem clear; scope and non-goals
 bounded; affected capabilities/files identified; no open decision that changes
 the task list). If a linted change for the request already exists under
-`am/planned/`, build SHALL use it and skip planning entirely.
+`.shipd/planned/`, build SHALL use it and skip planning entirely.
 
 #### Scenario: Rich context proceeds directly
 - **WHEN** the user's request plus the repository satisfy the readiness
@@ -22,7 +22,7 @@ the task list). If a linted change for the request already exists under
 ### Requirement: Automatic hand-off to the plan flow
 id: automatic-hand-off-to-the-plan-flow
 
-When the readiness checklist is not met, build SHALL invoke the `am:plan` flow —
+When the readiness checklist is not met, build SHALL invoke the `shipd:plan` flow —
 including its codebase-first investigation and batched AskUserQuestion
 contract — and SHALL NOT begin spec authoring or spawn sub-agents until the plan
 flow emits a linted change.

@@ -16,14 +16,14 @@ artifacts (not waived) and lint re-run until clean.
 id: merge-and-archive-replace-openspec-archiving
 
 After all tasks are complete and verification passes, build SHALL apply the
-change with `spec_merge.py` — merging the delta specs into `am/verified/` and
-moving the change directory to `am/completed/` — instead of `openspec archive`.
+change with `spec_merge.py` — merging the delta specs into `.shipd/verified/` and
+moving the change directory to `.shipd/completed/` — instead of `openspec archive`.
 Build SHALL NOT invoke the OpenSpec CLI at any phase.
 
 #### Scenario: Completed build merges via the engine
 - **WHEN** verification passes for a completed change
 - **THEN** build runs `spec_merge.py`, the master library reflects the deltas,
-  and the change moves to `am/completed/`
+  and the change moves to `.shipd/completed/`
 
 #### Scenario: No OpenSpec dependency
 - **WHEN** `/s:build` runs end-to-end in a repo without the OpenSpec CLI
@@ -293,7 +293,7 @@ existing worktree before invoking the helper. The helper SHALL make no
 assumption about the repository beyond git itself.
 
 #### Scenario: Helper works in a fresh repo
-- **GIVEN** a brand-new git repository with one commit and no am layout
+- **GIVEN** a brand-new git repository with one commit and no shipd layout
 - **WHEN** the plugin's `worktree.sh my-change` runs from its root
 - **THEN** `.worktrees/my-change` exists on branch `change/my-change` and
   the exit code is zero

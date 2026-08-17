@@ -160,7 +160,7 @@ class PassPathTest(SpecGateTestBase):
     def test_new_file_in_existing_directory_passes(self):
         # A backticked task path whose parent directory exists is the new-file
         # case: no file-reference finding, gate passes.
-        os.makedirs(os.path.join(self.root, "plugins", "am"))
+        os.makedirs(os.path.join(self.root, "plugins", "s"))
         self.make_clean_change("feat", status="draft")
         self.write_tasks(
             "feat",

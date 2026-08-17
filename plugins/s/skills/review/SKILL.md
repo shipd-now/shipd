@@ -6,7 +6,7 @@ description: >-
   a syntax-aware structural diff (never raw file dumps), chase changed
   signatures to their call sites, and report findings by cohort with a
   high/medium/low severity rubric and a ship-it/fix-required verdict. When a
-  planned am change is in scope, verify the diff against its delta scenarios.
+  planned shipd change is in scope, verify the diff against its delta scenarios.
   Read-only; a `--json` mode feeds the future PR gate. Use when asked to
   "review my changes", run a "semantic review", review a diff/branch/PR before
   pushing, or "/s:review". Trigger phrases: "review my changes", "semantic
@@ -111,7 +111,7 @@ explicit **severity**.
 Any high **or** medium finding blocks (Fix required); low never blocks. When
 unsure between two levels, state the doubt rather than inflating.
 
-## Spec-aware review (when an am change is in scope)
+## Spec-aware review (when a shipd change is in scope)
 
 Trigger when the user names a change **or** exactly one change exists under
 `planned/`. Run `change <name>` — it returns the change's status, deltas
@@ -145,8 +145,10 @@ table, then the task-honesty and uncovered-code items.
    `--json` verdict — never let the two diverge. In the summary comment
    `review_gate.py post` upserts, the brand line `**☕ shipd** semantic review`
    precedes this header — it is the first visible line of the comment body,
-   directly after the hidden `<!-- am-semantic-review -->` marker, which stays
-   byte-identical.
+   directly after the hidden `<!-- shipd-semantic-review -->` marker, which
+   stays byte-identical. The pre-rename `<!-- am-semantic-review -->` marker is
+   still recognized on read, so a PR whose summary predates the rename is
+   edited in place rather than given a second summary comment.
 3. **Summary table** — one row per finding, most-severe first, columns
    `# | rating | details`; rating is 🔴 high / 🟠 med / 🟡 low (display label
    `med`; the severity value stays `medium`). No findings → print

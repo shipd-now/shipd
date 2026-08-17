@@ -5,7 +5,7 @@ id: eval-case-layout
 
 The system SHALL define an eval case as a directory under `evals/cases/<name>/`
 containing `prompt.md` (the user request given to the headless session) and
-`fixture/` (a minimal repository tree with an `am/` layout), and the runner
+`fixture/` (a minimal repository tree with a `.shipd/` layout), and the runner
 SHALL discover all cases automatically from that directory. When invoked with
 `--case <name>`, the runner SHALL run only the named case.
 
@@ -42,7 +42,7 @@ runner SHALL stop resuming and let the final grade decide the run.
 #### Scenario: Session runs against the working tree's plugin
 - **WHEN** a case run starts
 - **THEN** the `claude` invocation includes `--plugin-dir` pointing at the
-  host repo's `plugins/am`, so the session executes the skill sources
+  host repo's `plugins/s`, so the session executes the skill sources
   currently under edit, not the cached plugin snapshot
 
 #### Scenario: Fixture is isolated from the host repo

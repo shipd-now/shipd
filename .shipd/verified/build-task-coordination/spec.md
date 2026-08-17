@@ -11,7 +11,7 @@ ordinal ID equal to its 1-based position among all checkbox lines
 ready when every earlier group and barrier before its group is done, per the
 parallel task group format; `claim` SHALL never hand out a task whose group is
 not yet ready. The script SHALL resolve the change's `tasks.md` under
-`am/planned/<change>/`.
+`.shipd/planned/<change>/`.
 
 #### Scenario: Claiming returns a stable ID
 - **WHEN** a sub-agent runs `claim <change>` and a ready pending task exists

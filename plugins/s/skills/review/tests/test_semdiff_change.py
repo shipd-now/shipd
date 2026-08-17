@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for `semdiff change` — the planned-change review bridge over the
-am spec engine. Uses a copy of the build suite's sample fixture in a temp git
+shipd spec engine. Uses a copy of the build suite's sample fixture in a temp git
 repo; no network access."""
 
 import json

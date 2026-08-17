@@ -1,4 +1,4 @@
-# am/ — the shipd spec library
+# .shipd/ — the shipd spec library
 
 This directory is the on-disk home of shipd's LLM-free spec engine. It holds
 the canonical (master) specifications, the in-flight change artifacts, and the
@@ -9,7 +9,7 @@ over the markdown described here — no language model reads or writes these fil
 ## On-disk layout
 
 ```
-am/
+.shipd/
   README.md                      this document — the spec grammar authority
   constitution.md                optional steering rules (binding when present)
   verified/                      master library — the single source of truth

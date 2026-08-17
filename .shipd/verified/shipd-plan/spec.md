@@ -3,7 +3,7 @@
 ### Requirement: Convergent plan flow
 id: convergent-plan-flow
 
-The `am:plan` skill SHALL run an explore-stance flow whose explicit goal is
+The `shipd:plan` skill SHALL run an explore-stance flow whose explicit goal is
 reaching spec-readiness and stopping — not open-ended exploration. Once the
 readiness checklist is satisfied, the skill SHALL proceed to artifact emission
 rather than continuing to explore or ask further questions.
@@ -17,7 +17,7 @@ rather than continuing to explore or ask further questions.
 id: codebase-first-investigation
 
 Before asking the user anything, the skill SHALL investigate the repository —
-existing `am/verified/` capabilities, relevant code, and the user's request —
+existing `.shipd/verified/` capabilities, relevant code, and the user's request —
 and SHALL NOT ask the user any question whose answer is discoverable from the
 repo or the request.
 
@@ -143,7 +143,7 @@ line, separated from that sentence by a blank line — never inline
 mid-sentence.
 
 #### Scenario: Plan without build
-- **WHEN** a user invokes `am:plan` directly and the flow completes
+- **WHEN** a user invokes `shipd:plan` directly and the flow completes
 - **THEN** the skill summarizes what is being built and stops; no
   implementation work begins
 
@@ -210,7 +210,7 @@ leaving the change at the implied `full` profile.
 ### Requirement: Depth gate after investigation
 id: depth-gate
 
-When investigation completes, the `am:plan` skill SHALL classify the change as
+When investigation completes, the `shipd:plan` skill SHALL classify the change as
 fast-path or depth-path by counting explicit signals — multiple viable
 approaches whose choice changes the task list; an outcome-shaped rather than
 mechanism-shaped request; a new capability being added; blast radius spanning
@@ -447,13 +447,13 @@ id: version-announcement
 
 When the skill starts, it SHALL read the running plugin version from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include
-`am:plan v<version>` in its first user-visible status sentence, so a session
+`shipd:plan v<version>` in its first user-visible status sentence, so a session
 always displays which plugin snapshot it is running and a stale snapshot is
 recognizable on sight.
 
 #### Scenario: First status line names the running version
 - **WHEN** `/s:plan` starts in any repository
-- **THEN** the first user-visible sentence includes `am:plan v<version>` with
+- **THEN** the first user-visible sentence includes `shipd:plan v<version>` with
   the version read from the running snapshot's `plugin.json`
 
 #### Scenario: Stale snapshot is recognizable
@@ -624,7 +624,7 @@ choice SHALL govern.
 ### Requirement: Personal memory consultation during investigation
 id: memory-consultation
 
-During investigation and before any user question round, the `am:plan` skill
+During investigation and before any user question round, the `shipd:plan` skill
 SHALL read the personal memory store directly — resolving it with
 `spec_status.py wiki-show --personal` and reading its catalogue with `cat wiki
 index --personal` — and SHALL perform this as a direct store read that spawns no
@@ -668,7 +668,7 @@ SHALL govern.
 ### Requirement: Evidenced readiness attestation
 id: readiness-attestation
 
-Before proceeding from investigation to emission, the `am:plan` skill SHALL
+Before proceeding from investigation to emission, the `shipd:plan` skill SHALL
 print the user-visible readiness attestation as a markdown table with one
 cited row per checklist item, each row carrying the item's name and its
 concrete evidence: the rows for items 1–3 (problem and motivation, bounded

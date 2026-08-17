@@ -20,7 +20,8 @@ sys.path.insert(0, SCRIPTS)
 import review_gate  # noqa: E402
 
 
-MARKER = "<!-- am-semantic-review -->"
+MARKER = "<!-- shipd-semantic-review -->"
+LEGACY_MARKER = "<!-- am-semantic-review -->"
 
 
 class FakeGh:
@@ -221,7 +222,10 @@ class FakeGh:
     # -- assertion helpers --------------------------------------------------
 
     def marker_comments(self):
-        return [c for c in self._comments if MARKER in c["body"]]
+        # Either marker identifies a gate summary comment: a PR predating the
+        # rename still carries the legacy one until the next upsert rewrites it.
+        return [c for c in self._comments
+                if MARKER in c["body"] or LEGACY_MARKER in c["body"]]
 
     def summary_body(self):
         marked = self.marker_comments()
@@ -231,6 +235,13 @@ class FakeGh:
         return [(a, i) for a, i in self.calls
                 if a[0] == "api" and "/issues/comments/" in a[1]
                 and "-X" in a and a[a.index("-X") + 1] == "PATCH"]
+
+    def comment_create_calls(self):
+        """The POST creates of a new issue comment (the non-upsert path)."""
+        return [(a, i) for a, i in self.calls
+                if a[0] == "api" and a[1].split("?", 1)[0].endswith("/comments")
+                and "/issues/" in a[1]
+                and "-X" in a and a[a.index("-X") + 1] == "POST"]
 
 
 PATCH_A = (
@@ -788,6 +799,48 @@ class AutoreplyTest(unittest.TestCase):
         gh = FakeGh(review_threads=[_gate_thread(1, "low")])
         with self.assertRaises(SystemExit):
             _run_main(["autoreply", "7", "--disposition", "all"], gh)
+
+
+class MarkerMigrationTest(unittest.TestCase):
+    """The hidden gate marker is `<!-- shipd-semantic-review -->`; the legacy
+    `<!-- am-semantic-review -->` is still recognized on every read so a PR that
+    predates the rename is edited in place, never duplicated."""
+
+    def test_render_summary_opens_with_the_current_marker(self):
+        body = review_gate.render_summary(_review(verdict="pass"), [])
+        self.assertEqual(body.split("\n")[0], MARKER)
+        self.assertNotIn(LEGACY_MARKER, body)
+
+    def test_legacy_summary_is_patched_not_duplicated(self):
+        legacy = {"id": 42,
+                  "body": LEGACY_MARKER + "\n\n## Findings: ✅ Ship it\n",
+                  "html_url": "https://github.com/o/r/pull/7#issuecomment-42"}
+        gh = FakeGh(existing_comments=[legacy])
+        review_gate.post("7", _review(verdict="pass"), gh)
+        # The pre-rename comment was edited in place — no second summary POSTed.
+        self.assertTrue(gh.comment_patch_calls())
+        self.assertEqual(gh.comment_create_calls(), [])
+        self.assertEqual(len(gh.marker_comments()), 1)
+        # ... and the edited body now opens with the current marker only.
+        body = gh.summary_body()
+        self.assertEqual(body.split("\n")[0], MARKER)
+        self.assertNotIn(LEGACY_MARKER, body)
+
+    def test_resolve_recognizes_a_legacy_marker_rooted_thread(self):
+        threads = [_thread(1, author="gate-bot", replies=1,
+                           body=LEGACY_MARKER + "\n\n**high — boom**")]
+        gh = FakeGh(review_threads=threads)
+        result = review_gate.resolve("7", gh)
+        self.assertEqual(gh.resolved_thread_ids, ["T1"])
+        self.assertEqual(result["unresolved"], 0)
+
+    def test_autoreply_recognizes_a_legacy_marker_rooted_thread(self):
+        threads = [_thread(1, author="gate-bot",
+                           body=LEGACY_MARKER + "\n\n**low — boom**")]
+        gh = FakeGh(review_threads=threads)
+        result = review_gate.autoreply("7", gh, "none")
+        self.assertEqual(result["replied"], 1)
+        self.assertEqual(len(threads_from(gh, "T1")["comments"]), 2)
 
 
 if __name__ == "__main__":

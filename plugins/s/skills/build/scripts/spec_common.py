@@ -357,7 +357,7 @@ class ConfigError(Exception):
 
 # The fixed configuration filename. It is a constant, never renamed by the
 # ``dir`` key — otherwise upward discovery could not bootstrap. The ``dir`` key
-# renames the *content* directory (default ``.am``), never this file.
+# renames the *content* directory (default ``.shipd``), never this file.
 CONFIG_FILENAME = ".shipd-config.json"
 
 # Built-in defaults beneath all config files. Only ``dir`` carries a defined
@@ -434,7 +434,7 @@ def resolve_config(start):
 
 def specs_dirname(config):
     """Return the content-directory name from a resolved config's ``dir`` key
-    (shipd-config content-dir-key), defaulting to ``.am``. The value SHALL be a
+    (shipd-config content-dir-key), defaulting to ``.shipd``. The value SHALL be a
     single, non-empty path component; a value that is empty, non-string, ``.``,
     ``..``, or contains a path separator raises :class:`ConfigError` naming the
     offending value."""
@@ -809,7 +809,7 @@ def initiative_brief_path(ws_root, slug):
     """Return the on-disk path of an initiative brief:
     ``<ws_root>/<content-dir>/initiatives/<slug>/brief.md`` (shipd-workspace
     initiative-brief-format), the content directory resolved from the workspace
-    root's configuration (default ``.am``)."""
+    root's configuration (default ``.shipd``)."""
     return os.path.join(initiatives_dir(ws_root), slug, "brief.md")
 
 

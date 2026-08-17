@@ -23,8 +23,8 @@ update, no file edit runs before the consent dialog returns an approval that
 names it.
 
 **Announce the version first.** Read the running plugin version from
-`${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `am:doctor
-v<version>` in your first user-visible status sentence (e.g. "am:doctor
+`${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `shipd:doctor
+v<version>` in your first user-visible status sentence (e.g. "shipd:doctor
 v0.6.109 — running the preflight"), so the user can always see which plugin
 snapshot the session is running.
 

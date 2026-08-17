@@ -49,7 +49,7 @@ id: initiative-brief-format
 An initiative brief SHALL live at
 `<workspace-root>/<content-dir>/initiatives/<slug>/brief.md`, where
 `<content-dir>` is the name resolved from the workspace root's configuration
-(default `.am`). The brief SHALL begin with a `# <slug>` title matching its
+(default `.shipd`). The brief SHALL begin with a `# <slug>` title matching its
 directory and a `Status:` line whose value is one of `open`, `achieved`,
 `dropped`. The header MAY carry a metadata block whose only recognized key
 is `Project:` with a kebab-case value that SHALL name a project slug

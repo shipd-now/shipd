@@ -7,7 +7,7 @@
 # Input: Claude Code session JSON on stdin (uses workspace.current_dir).
 # Output: single line "☕ <name> · <status> · <done>/<total>", with position
 #         "(1 of X)" and aggregate "(<total> of <Y>)" brackets when more than
-#         one change is live; "☕ no active specs" for an am project with no
+#         one change is live; "☕ no active specs" for a shipd project with no
 #         live change; nothing at all when the workspace has no .shipd/ directory.
 #
 # Note: macOS ships bash 3.2, so we avoid `mapfile`, `set -u`, associative
@@ -145,8 +145,8 @@ if [ -z "$workspace" ]; then
   workspace="$PWD"
 fi
 
-# An am project is any workspace carrying a `.shipd/` directory. Without one the
-# statusline stays silent (non-am repo); with one it always reports.
+# A shipd project is any workspace carrying a `.shipd/` directory. Without one the
+# statusline stays silent (non-shipd repo); with one it always reports.
 if [ ! -d "$workspace/.shipd" ]; then
   exit 0
 fi
@@ -201,7 +201,7 @@ done
 
 X=${#cand_dir[@]}
 
-# An am project with no live change reports rather than vanishing.
+# A shipd project with no live change reports rather than vanishing.
 if [ "$X" -eq 0 ]; then
   printf '%s no active specs\n' "$COFFEE"
   exit 0
