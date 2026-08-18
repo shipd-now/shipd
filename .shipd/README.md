@@ -305,6 +305,39 @@ pydantic is not importable; `default` and `--expand default` need no
 third-party package at all. A preset-resolved pipeline reports its provenance
 as `preset:<name> (<config-path>)`.
 
+### PR mode — the `pr-mode` key
+
+`.shipd-config.json` MAY declare a `pr-mode` key: the string `auto` or the
+string `draft`, and nothing else.
+
+```json
+{ "pr-mode": "draft" }
+```
+
+**When no layer declares the key the mode is `auto`** — today's behavior, where
+a change ships as an auto-merging PR. Like every top-level key, `pr-mode`
+merges **nearest-wins-wholesale**, so declaring it once at a **workspace root**
+governs every member repo beneath it; a member repo declaring its own value
+overrides that for itself. A *declared* value that is neither `auto` nor
+`draft` is an error naming the key, the offending value, the accepted values,
+and the config file that supplied it — `shipd doctor`'s `config` check surfaces
+it, and every consuming flow stops rather than guessing. Inspect the effective
+value and its provenance with `spec_status.py config-show`.
+
+The mode governs **change-shipping PRs only** — the build ship phase and the
+autopilot's members. **Metadata PRs keep auto-merging regardless**: epic-close
+status derivations and initiative tagging are unaffected by the mode.
+
+Under `draft`, a shipping change opens its PR **as a draft**
+(`gh pr create --fill --draft`) and **no auto-merge is armed**. The
+semantic-review gate is still posted and its findings still dispositioned, but
+the merge watch and the merged close-out (worktree pruning, the `main` pull,
+the epic derivation) do not run: **the open draft PR is the terminal state**,
+reported with its full URL, with the worktree and branch left in place and
+merging left to a human. Such a member is recorded with the terminal outcome
+`drafted`, which the delivery board lanes under `review` with a `◇ drafted`
+badge — awaiting a human, never laned as shipped on the board.
+
 ### Context economy
 
 `plan.md` and each delta spec should stay under **~2,000 tokens** (roughly

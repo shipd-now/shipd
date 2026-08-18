@@ -161,6 +161,26 @@ class HeartbeatTest(HeartbeatTestBase):
         self.assertEqual(row["reason"], "grade unmet")
         self.assertEqual(row["session_id"], "sess-9")
 
+    def test_drafted_outcome_is_mapped_first_class(self):
+        # The drafted outcome (draft-mode's terminal open PR) is an explicit
+        # entry in the outcome→state map, not an unmapped fall-through
+        # (delivery-dashboard board-drafted-member spec).
+        self.assertEqual(heartbeat._OUTCOME_STATE.get("drafted"), "drafted")
+
+    def test_drafted_member_records_drafted_state_and_clears_stage(self):
+        hb = heartbeat.RunHeartbeat(self.root, "ep")
+        hb.run_started([_member("a", "low")], [], "default")
+        hb.member_started("a")
+        hb.stage_started("a", "ship", 1)
+        hb.member_finished(
+            "a", autopilot.MemberResult(outcome="drafted",
+                                        pr_url="http://pr/a"))
+        row = {r["slug"]: r for r in self._read("ep")["roster"]}["a"]
+        self.assertEqual(row["state"], "drafted")
+        self.assertNotIn("stage", row)
+        self.assertNotIn("attempt", row)
+        self.assertEqual(row["pr_url"], "http://pr/a")
+
     def test_write_failure_warns_once_and_never_raises(self):
         # Make the autopilot directory unwritable by planting a file where the
         # directory must go: makedirs then raises and the write is disabled.

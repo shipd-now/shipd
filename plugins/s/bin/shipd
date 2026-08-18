@@ -317,10 +317,18 @@ def check_git(which=shutil.which):
 def check_config(root):
     """The layered content-directory configuration at ``root``. A missing
     content directory is fine — ``/s:plan`` scaffolds it on first use; only an
-    unusable config file is a failure."""
+    unusable config file is a failure.
+
+    The layered config's ``pr-mode`` key is validated here too (shipd-cli
+    doctor-pr-mode-check spec) rather than under a check name of its own: an
+    invalid *declared* value fails this check carrying the accessor's own
+    error line, which already names the key, the offending value, the
+    accepted values, and the config file that supplied it. A valid or
+    undeclared key leaves the reporting below untouched."""
     _load_engine()
     try:
         content = sc.specs_dir(root)
+        sc.resolve_pr_mode(root)
     except sc.ConfigError as exc:
         return ("fail", "config", "%s" % exc)
     if os.path.isdir(content):
