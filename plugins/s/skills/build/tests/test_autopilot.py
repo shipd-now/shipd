@@ -1468,6 +1468,170 @@ class VanishedWorktreeTest(AutopilotTestBase):
 
 
 # ---------------------------------------------------------------------------
+# Draft PR mode (shipd-config pr-mode-key; epic-autopilot
+# pipeline-stage-execution, run-report-and-controls)
+# ---------------------------------------------------------------------------
+
+class DraftPrModeTest(AutopilotTestBase):
+    """Under `pr-mode: draft` a member ending with an open unmerged PR is the
+    expected terminal state, recorded `drafted` rather than parked; it reports
+    in its own bucket and triggers no close-out."""
+
+    PGB = [{"stage": "plan"}, {"stage": "gate"}, {"stage": "build"}]
+
+    def _declare_draft(self):
+        _write(os.path.join(self.root, ".shipd-config.json"),
+               json.dumps({"pr-mode": "draft"}))
+
+    def _open_pr_seams(self):
+        """A `_Seams` whose PR probe answers with an open, unmerged PR."""
+        s = _Seams()
+        base = s.command_fn
+
+        def command_fn(cmd, cwd):
+            if isinstance(cmd, list) and cmd[:3] == ["gh", "pr", "view"]:
+                s.commands.append((cmd, cwd))
+                return 0, "http://pr/m\tOPEN\n", ""
+            return base(cmd, cwd)
+
+        s.command_fn = command_fn
+        return s
+
+    def test_draft_mode_records_drafted_with_the_pr_url(self):
+        self._declare_draft()
+        s = self._open_pr_seams()
+        result = s.drive(self.PGB, self.root)
+        self.assertEqual(result.outcome, "drafted")
+        self.assertEqual(result.pr_url, "http://pr/m")
+        self.assertFalse(result.merged)
+
+    def test_auto_mode_still_parks_the_same_member(self):
+        # No `pr-mode` declared: the unmerged PR remains a stalled ship.
+        s = self._open_pr_seams()
+        result = s.drive(self.PGB, self.root)
+        self.assertEqual(result.outcome, "needs_human")
+        self.assertEqual(result.stage, "merge")
+
+    def test_draft_mode_without_a_pr_still_parks_at_merge(self):
+        self._declare_draft()
+        s = _Seams()
+        base = s.command_fn
+
+        def command_fn(cmd, cwd):
+            if isinstance(cmd, list) and cmd[:3] == ["gh", "pr", "view"]:
+                s.commands.append((cmd, cwd))
+                return 1, "", "no pull requests found"
+            return base(cmd, cwd)
+
+        s.command_fn = command_fn
+        result = s.drive(self.PGB, self.root)
+        self.assertEqual(result.outcome, "needs_human")
+        self.assertEqual(result.stage, "merge")
+
+    def test_draft_mode_leaves_the_vanished_worktree_path_unchanged(self):
+        # A draft-mode build leaves its worktree in place, so a vanished one
+        # stays an anomaly: it parks, exactly as under `auto`.
+        self._declare_draft()
+        worktree = os.path.join(self.root, ".worktrees", "m")
+
+        def command_fn(cmd, cwd):
+            if isinstance(cmd, list) and cmd and cmd[0] == autopilot.WORKTREE_SH:
+                os.makedirs(os.path.join(cwd, ".worktrees", cmd[1]),
+                            exist_ok=True)
+                return 0, "", ""
+            if isinstance(cmd, list) and cmd[:3] == ["gh", "pr", "view"]:
+                return 0, "http://pr/m\tOPEN\n", ""
+            return 0, "", ""
+
+        def session_fn(stage, member, cwd, prompt, timeout, max_resumes,
+                       on_session=None, model=None):
+            if stage == "build":
+                shutil.rmtree(worktree, ignore_errors=True)
+            return True, "sess-%s" % stage, None
+
+        result = autopilot.drive_member(
+            self.root, "ep", _member(), self.PGB + [{"stage": "review"}],
+            session_fn=session_fn, gate_fn=lambda *a: 0,
+            command_fn=command_fn, out=lambda *_: None)
+        self.assertEqual(result.outcome, "needs_human")
+        self.assertIn("worktree vanished", result.reason)
+
+    def test_draft_mode_build_prompt_names_a_draft_pr(self):
+        self._declare_draft()
+        s = self._open_pr_seams()
+        s.drive(self.PGB, self.root)
+        build_prompt = next(p for st, _m, p in s.sessions if st == "build")
+        self.assertIn("draft PR", build_prompt)
+        self.assertIn("do not enable auto-merge", build_prompt)
+        self.assertNotIn("auto-merging PR", build_prompt)
+
+    def test_auto_mode_build_prompt_is_unchanged(self):
+        s = _Seams()
+        s.drive(self.PGB, self.root)
+        build_prompt = next(p for st, _m, p in s.sessions if st == "build")
+        self.assertIn("auto-merging PR", build_prompt)
+
+    def test_targeted_drive_resolves_the_mode(self):
+        self._declare_draft()
+        _make_epic(self.root, "ep", [("m", "low")])
+        s = self._open_pr_seams()
+        result = autopilot.drive_single_member(
+            self.root, "ep", "m", session_fn=s.session_fn, gate_fn=s.gate_fn,
+            command_fn=s.command_fn, out=lambda *_: None)
+        self.assertEqual(result.outcome, "drafted")
+        self.assertEqual(result.pr_url, "http://pr/m")
+
+    def test_run_reports_drafted_members_and_skips_the_close_out(self):
+        _make_epic(self.root, "ep", [("a", "low"), ("b", "high")])
+        synced = []
+
+        def driver(root, epic, member, pipeline, heartbeat=None):
+            return autopilot.MemberResult(
+                outcome="drafted", pr_url="http://pr/" + member.slug)
+
+        lines = []
+        report = autopilot.run(
+            self.root, "ep", member_driver=driver,
+            sync_fn=lambda *a, **k: synced.append(a), out=lines.append)
+
+        self.assertEqual([r["member"] for r in report["drafted"]], ["a", "b"])
+        self.assertEqual(report["drafted"][0]["pr_url"], "http://pr/a")
+        self.assertEqual(report["shipped"], [])
+        self.assertEqual(report["needs_human"], [])
+        # Drafted members are not merges: no epic-sync close-out runs.
+        self.assertEqual(synced, [])
+        text = "\n".join(lines)
+        self.assertIn("drafted:", text)
+        self.assertIn("http://pr/a", text)
+
+    def test_run_member_reports_a_drafted_member(self):
+        _make_epic(self.root, "ep", [("m", "low")])
+        lines = []
+        autopilot.run_member(
+            self.root, "ep", "m", out=lines.append,
+            driver=lambda: autopilot.MemberResult(
+                outcome="drafted", pr_url="http://pr/m"))
+        path = os.path.join(self.root, ".shipd", "autopilot", "ep-report.json")
+        with open(path, encoding="utf-8") as fh:
+            report = json.load(fh)
+        self.assertEqual([r["member"] for r in report["drafted"]], ["m"])
+        self.assertIn("drafted:", "\n".join(lines))
+
+    def test_summarize_renders_drafted_lines(self):
+        report = {
+            "epic": "ep", "shipped": [], "rejected": [], "needs_human": [],
+            "skipped": [], "unreached": [],
+            "drafted": [{"member": "a", "pr_url": "http://pr/a"}],
+        }
+        lines = []
+        autopilot._summarize(report, lines.append)
+        text = "\n".join(lines)
+        self.assertIn("drafted:", text)
+        self.assertIn("a", text)
+        self.assertIn("http://pr/a", text)
+
+
+# ---------------------------------------------------------------------------
 # Heartbeat wiring: a seam-based run threads the live heartbeat through
 # ---------------------------------------------------------------------------
 

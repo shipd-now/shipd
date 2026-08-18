@@ -242,6 +242,18 @@ typed value is an error rather than silently ignored config; a declared list
 `spec_status.py pipeline-show` prints the effective pipeline and its provenance.
 See [`.shipd/README.md`](.shipd/README.md) for the full entry grammar.
 
+The config also carries **how changes ship** — an optional `pr-mode` key, either
+`auto` (the default when no layer declares it: today's auto-merging PR) or
+`draft`. Under `draft`, build opens the change's PR with `gh pr create --draft`
+and arms no auto-merge, still posting the semantic-review gate but running no
+merge watch and no post-merge close-out, so the worktree stays put and a human
+reviews and merges; the epic autopilot records such a member `drafted` with its
+PR URL rather than parking it. Because the key rides the same layered merge,
+declaring it once in a workspace root's `.shipd-config.json` governs every
+member repo beneath it. It governs change-shipping PRs only — metadata PRs
+(epic-close status derivations, initiative tagging) keep auto-merging — and any
+value other than `auto` or `draft` is an error naming the key.
+
 ```
 .shipd/
 ├── README.md                     # the format authority (grammar lives here)

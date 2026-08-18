@@ -941,6 +941,103 @@ class ResolvePipelineTest(unittest.TestCase):
             self.assertIn(sc.CONFIG_FILENAME, msg)
 
 
+class ResolvePrModeTest(unittest.TestCase):
+    """resolve_pr_mode: the layered `pr-mode` key governing change-shipping PR
+    flows (shipd-config pr-mode-key). Stdlib-only — no pydantic on any path.
+    ``$HOME`` is always overridden to an empty directory so the real home
+    config never leaks into a test."""
+
+    def _write_config(self, d, payload):
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, sc.CONFIG_FILENAME), "w",
+                  encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        return d
+
+    def test_key_constant(self):
+        self.assertEqual(sc.PR_MODE_KEY, "pr-mode")
+
+    def test_absent_key_defaults_to_auto(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            with imports_blocked("pipeline_schema", "pydantic"), \
+                    home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.resolve_pr_mode(os.path.realpath(tmp)), "auto")
+
+    def test_workspace_layer_governs_a_member_repo(self):
+        # A workspace root declaring the key governs every repo beneath it, and
+        # provenance names the workspace layer (what `config-show` prints).
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "repo")
+            self._write_config(ws, {"workspace": {}, "pr-mode": "draft"})
+            os.makedirs(repo, exist_ok=True)
+            with imports_blocked("pipeline_schema", "pydantic"), \
+                    home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.resolve_pr_mode(repo), "draft")
+                _config, prov = sc.resolve_config(repo)
+            self.assertEqual(
+                prov[sc.PR_MODE_KEY], os.path.join(ws, sc.CONFIG_FILENAME))
+
+    def test_nearest_layer_wins(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "repo")
+            self._write_config(ws, {"pr-mode": "draft"})
+            self._write_config(repo, {"pr-mode": "auto"})
+            with imports_blocked("pipeline_schema", "pydantic"), \
+                    home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.resolve_pr_mode(repo), "auto")
+
+    def test_invalid_value_errors_naming_key_and_values(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"pr-mode": "always"})
+            with imports_blocked("pipeline_schema", "pydantic"), \
+                    home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.resolve_pr_mode(root)
+            msg = str(cm.exception)
+            self.assertIn(sc.PR_MODE_KEY, msg)
+            self.assertIn("always", msg)
+            self.assertIn("auto", msg)
+            self.assertIn("draft", msg)
+            self.assertIn(os.path.join(root, sc.CONFIG_FILENAME), msg)
+
+    def test_declared_null_errors_rather_than_defaulting(self):
+        # Declaredness is key presence, never the value: an explicit JSON null
+        # is a bad value, not an absent key, so it fails like any other.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"pr-mode": None})
+            with imports_blocked("pipeline_schema", "pydantic"), \
+                    home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.resolve_pr_mode(root)
+            msg = str(cm.exception)
+            self.assertIn(sc.PR_MODE_KEY, msg)
+            self.assertIn("None", msg)
+            self.assertIn("auto", msg)
+            self.assertIn("draft", msg)
+            self.assertIn(os.path.join(root, sc.CONFIG_FILENAME), msg)
+
+    def test_non_string_value_errors_naming_key(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"pr-mode": ["draft"]})
+            with imports_blocked("pipeline_schema", "pydantic"), \
+                    home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.resolve_pr_mode(root)
+            self.assertIn(sc.PR_MODE_KEY, str(cm.exception))
+
+
 class ResolveModelTierTest(unittest.TestCase):
     """The stdlib model-tier authority the pipeline's consumers resolve a
     `model`/`subagent_model` option through (epic-autopilot

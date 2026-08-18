@@ -66,7 +66,10 @@ headless `/s:plan <member>` graded on a lint-clean member change at
 oracle-gate-enrichment) and the member parks as `rejected` only when that
 attempt does not end in a gate pass; `build` drives a headless `/s:build`
 graded on the change archived under `completed/` and
-a PR existing for the member branch; `review` drives a headless
+a PR existing for the member branch — where the resolved configuration
+declares `pr-mode: draft` (shipd-config pr-mode-key), the build stage's
+driving prompt SHALL name the draft-PR ship (a draft PR, no auto-merge
+arming) rather than an auto-merging PR; `review` drives a headless
 review-post-and-disposition session — its prompt naming the disposition
 loop (implement or reply, then resolve) — graded on the head SHA's
 `semantic-review` status being `success` **and** the gate's
@@ -78,10 +81,25 @@ then the autopilot SHALL resolve the member's outcome from the
 repository root via the member branch's pull request: a merged PR SHALL
 record the member `shipped` with its PR URL and skip the remaining
 stages; otherwise the member SHALL park as `needs-human` with a
-worktree-vanished reason and the most recent session id. In both cases
+worktree-vanished reason and the most recent session id — regardless of
+the resolved `pr-mode`, since a draft-mode build leaves its worktree in
+place and a vanished one stays an anomaly. In both cases
 the run SHALL continue with the next member.
 
-When the pipeline instead completes with the member's worktree still present, the autopilot SHALL resolve the member's outcome from its PR: a merged PR SHALL record the member `shipped` with its URL, while a PR that exists but has not merged SHALL park the member as needs-human at stage `merge` with the PR URL and the most recent session id — never recorded `shipped`. Because the driven build waits for its own PR to merge before returning (build-spec-lifecycle ship-changes-as-prs), the sequential member loop lands each member on a `main` already carrying the prior member, so an unmerged PR at drive end signals a stalled or timed-out ship rather than a success. The run SHALL continue with the next member.
+When the pipeline instead completes with the member's worktree still
+present, the autopilot SHALL resolve the member's outcome from its PR: a
+merged PR SHALL record the member `shipped` with its URL. Where the
+resolved configuration declares `pr-mode: draft`, a PR that exists but has
+not merged SHALL record the member `drafted` with its PR URL — the
+expected terminal state of a draft-mode ship, never parked — while a
+member with no PR at all SHALL still park as needs-human at stage `merge`.
+Under the default `auto` mode, a PR that exists but has not merged SHALL
+park the member as needs-human at stage `merge` with the PR URL and the
+most recent session id — never recorded `shipped` — because the driven
+build waits for its own PR to merge before returning (build-spec-lifecycle
+ship-changes-as-prs), so an unmerged PR at drive end signals a stalled or
+timed-out ship rather than a success. In every case the run SHALL continue
+with the next member.
 
 #### Scenario: Full pass ships a member
 - **GIVEN** a member whose plan gates clean and whose build succeeds
@@ -113,12 +131,19 @@ When the pipeline instead completes with the member's worktree still present, th
 - **THEN** the custom command runs in the member's worktree after build
 
 #### Scenario: Present worktree with an unmerged PR parks the member
-- **GIVEN** a member whose pipeline completes with its worktree present but
-  whose PR has not merged
+- **GIVEN** the default `auto` pr-mode and a member whose pipeline
+  completes with its worktree present but whose PR has not merged
 - **WHEN** the autopilot resolves the member's outcome
 - **THEN** the member parks as needs-human at stage `merge` with the PR URL
   and the most recent session id, is not recorded `shipped`, and the run
   continues with the next member
+
+#### Scenario: Draft mode records a drafted member
+- **GIVEN** `pr-mode: draft` resolved and a member whose pipeline
+  completes with its worktree present and an open unmerged PR
+- **WHEN** the autopilot resolves the member's outcome
+- **THEN** the member is recorded `drafted` with its PR URL, is not
+  parked, and the run continues with the next member
 
 #### Scenario: Vanished worktree with a merged PR records an early ship
 - **GIVEN** a build stage whose driven session merged the member's PR and
@@ -164,7 +189,8 @@ id: run-report-and-controls
 The autopilot SHALL accept `--max-members`, `--dry-run`, `--timeout`, and
 `--max-resumes`; `--dry-run` SHALL print the member order and the
 resolved pipeline and drive nothing. Every run SHALL end with a report
-listing shipped members with PR URLs, parked members split into rejected
+listing shipped members with PR URLs, drafted members with their draft PR
+URLs (draft-mode runs), parked members split into rejected
 and needs-human — needs-human entries with their session ids, rejected
 entries with the enrichment session id when an enrichment session ran —
 skipped members with their states, and members unreached due to
@@ -176,7 +202,9 @@ pointer entirely rather than print a null value. When at least one
 member PR merged during the run, the autopilot SHALL finish with the
 epic-sync close-out in a fresh worktree, invoking the status CLI with a
 well-formed invocation (the root option before the subcommand) so the
-derivation actually runs. When the close-out derivation succeeds and
+derivation actually runs; drafted members SHALL NOT trigger the
+close-out — it runs only on an actual merge. When the close-out
+derivation succeeds and
 leaves the close-out worktree unchanged, the autopilot SHALL remove that
 worktree and its branch; when it wrote a status change, the summary
 SHALL name the worktree path so a human can ship it.
@@ -193,6 +221,14 @@ SHALL name the worktree path so a human can ship it.
 - **THEN** the report lists each under its outcome, with a PR URL for
   the shipped member and a session id for both the needs-human and the
   rejected member
+
+#### Scenario: Drafted members are reported distinctly and trigger no close-out
+- **GIVEN** a draft-mode run where every driven member ends with an open
+  draft PR
+- **WHEN** the run ends
+- **THEN** the report lists each member under `drafted` with its PR URL,
+  the summary renders a `drafted:` line per member, and no epic-sync
+  close-out runs
 
 #### Scenario: Parked without a session omits the pointer
 - **WHEN** the summary renders a needs-human member whose entry has no
