@@ -12,11 +12,11 @@
 #
 #   * CLI reviewer — the secret is set. This workflow performs the review
 #     itself: it checks the reviewed commit out, installs the engine's optional
-#     tooling and the `@github/copilot` CLI, and runs that CLI headless over the
-#     repository's own .github/skills/code-review/SKILL.md. The CLI executes the
-#     engine and authors its own report, so the verdict marker is really
-#     produced and the resulting status is a strict one. The review text is
-#     posted as a pull-request comment, so a human reads whatever the gate
+#     tooling and a pinned `@github/copilot` CLI, and runs that CLI headless
+#     over the base ref's copy of .github/skills/code-review/SKILL.md. The CLI
+#     executes the engine and authors its own report, so the verdict marker is
+#     really produced and the resulting status is a strict one. The review text
+#     is posted as a pull-request comment, so a human reads whatever the gate
 #     judged. This works on private repositories, and spends Copilot AI credits
 #     per review (order of ten for a small one).
 #   * Poll fallback — no secret. GitHub's own Copilot code review is waited for
@@ -77,10 +77,35 @@
 # The concurrency group below caps the cost at one live run per pull request,
 # and a new push cancels the run it supersedes.
 #
-# Secrets: the only secret this workflow reads is the optional
-# COPILOT_GITHUB_TOKEN, and its value reaches nothing but the Copilot CLI's own
-# environment. Every `gh` call authenticates with the workflow's own
-# `github.token`.
+# Secrets, and the trust boundary they draw: the only secret this workflow
+# reads is the optional COPILOT_GITHUB_TOKEN, and its value reaches nothing but
+# the Copilot CLI's own environment. Every `gh` call authenticates with the
+# workflow's own `github.token`, which lives in a different step — the reviewer
+# runs `--allow-all-tools` on a diff whose content it cannot be trusted not to
+# be steered by, so the two credentials never share a process:
+#
+#   * The CLI step's environment binds COPILOT_GITHUB_TOKEN and nothing else.
+#     That PAT is documented as a minimal one — no repository access, only the
+#     account-level "Copilot Requests" permission — so a steered reviewer holds
+#     no credential with which to post a status, comment, or push: it can spend
+#     credits and write a misleading report, and that is the worst of it.
+#   * The classify-and-post step's environment binds `github.token` and not the
+#     secret. It reads the captured text out of a workspace file and decides
+#     the status by this workflow's own rules, never the reviewer's — and it
+#     trusts neither of the channels an earlier step can write to, invoking
+#     `gh` by absolute path (against a $GITHUB_PATH shim) and re-binding
+#     SHIPD_GATE_FAIL_OPEN from `vars` in its own step env (against a
+#     $GITHUB_ENV write). See that step's own commentary below.
+#   * The reviewer's instructions are materialized from the *base* ref, so a
+#     change under review cannot rewrite the rules it is reviewed under —
+#     falling back to the head's copy only where the base is confirmed not to
+#     carry one, and failing the step on any other read failure rather than
+#     un-pinning silently — and the CLI is installed at a pinned version
+#     rather than whatever the vendor published today.
+#
+# None of that makes an LLM reviewer immune to content in the diff it reads;
+# the session flow (`review_gate.py post`) stays the high-assurance path.
+# docs/copilot-review.md states the boundary and its residual risk in full.
 #
 # Known limit: on a pull request from a fork the workflow token is read-only,
 # so the status cannot be posted there. Same-repository branches are
@@ -145,6 +170,10 @@ jobs:
           # required check reads `pending` rather than going unreported. A
           # review event classifies a body that already exists, so it has
           # nothing to wait for and posts no pending of its own.
+          #
+          # A plain PATH lookup is fine here, unlike in the posting step: this
+          # step runs before the reviewer does, so there is no $GITHUB_PATH
+          # entry of the reviewer's for a lookup to find.
           if [[ "$EVENT_NAME" == 'pull_request' ]]; then
             gh api --method POST "repos/$REPO/statuses/$HEAD_SHA" \
               -f state=pending \
@@ -190,30 +219,182 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ripgrep
 
-      - name: Review this commit and post the verdict
+      # The reviewer, alone with its own credential. This step's environment
+      # binds the Copilot PAT and nothing else: `github.token` is not here, so
+      # a reviewer steered by adversarial content in the diff it is reading
+      # cannot post the required status, comment as the workflow, or carry a
+      # repository-scoped credential anywhere. What it can reach is bounded by
+      # what that PAT grants — Copilot Requests, no repository access — which
+      # bounds the worst case at spent credits and a misleading review body
+      # the next step publishes for a human to read.
+      - name: Review this commit with the Copilot CLI
+        if: >-
+          github.event_name == 'pull_request'
+          && env.COPILOT_CLI_REVIEWER == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
           # The one repository secret, and the only place its value is bound.
           # `gh` never sees it; the Copilot CLI inherits it from this step's
           # environment, which is the authentication it documents for a
           # headless run.
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          # The CLI reviewer's runtime bound. This default is what every run on
+          # a runner uses — nothing there sets the override, which exists so
+          # the test suite can drive a timed-out review through its branch
+          # without waiting ten minutes on it.
+          cli_timeout="${SHIPD_GATE_CLI_TIMEOUT:-600}"
+          # Where the captured review lands. The classifying step runs in its
+          # own shell with its own credential, so the workspace file that
+          # already held the text is what carries it across that boundary —
+          # and whether the file is there is that step's only signal that
+          # anything was judged here at all.
+          body_file="${RUNNER_TEMP:-.}/shipd-copilot-review-body.md"
+          # The instructions the reviewer follows, and the path they are
+          # installed at.
+          instructions_file="${RUNNER_TEMP:-.}/shipd-copilot-review-skill.md"
+          skill_path=".github/skills/code-review/SKILL.md"
+
+          if [[ "$EVENT_NAME" == 'pull_request' \
+                && -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then
+            # The CLI reviewer. Unlike GitHub's code-review surface, this one
+            # can execute the engine and author its own report, which is what
+            # makes the resulting status strict rather than fail-open.
+            rm -f "$body_file"
+            # Pinned deliberately. An unpinned install would let the CLI
+            # vendor change what this gate runs, and so what it decides, on
+            # their release schedule; upgrading is a bump of this line in the
+            # shipd plugin's template, reviewed like any other change.
+            npm install -g @github/copilot@1.0.80
+            # The engine diffs base against the reviewed commit with merge-base
+            # semantics, so both must be present. The checkout brought the
+            # history behind the commit under review; this tops up a base the
+            # fetch may not have covered, and is only best-effort because the
+            # usual case is that it is already there.
+            git fetch --no-tags --quiet origin "$BASE_SHA" || true
+            # The instructions are the one input the reviewed change must not
+            # be able to rewrite — a change editing the skill would otherwise
+            # be reviewed under the rules it is asking for — so they are
+            # materialized from the *base* ref into the workspace, and the
+            # prompt names that copy rather than the live file. The
+            # remote-tracking ref is topped up first: the checkout's fetch
+            # covers the reviewed commit, not necessarily the base branch.
+            git fetch --no-tags --quiet origin \
+              "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF" || true
+            # Falling back is only correct for one cause — the base genuinely
+            # not carrying the file — so the two failures are told apart
+            # rather than collapsed into one `||`. An unreachable base (the
+            # fetch above failed, the ref is gone) would otherwise un-pin the
+            # instructions silently, which is the whole thing this pinning
+            # exists to prevent: those fail the step, leaving `pending`.
+            base_commit="$(git rev-parse --verify --quiet \
+              "origin/$BASE_REF^{commit}" || true)"
+            if [[ -z "$base_commit" ]]; then
+              echo "The base ref $BASE_REF could not be resolved, so the" \
+                "reviewer instructions cannot be pinned to it;" \
+                "semantic-review stays pending." >&2
+              exit 1
+            fi
+            # `cat-file -e` exits nonzero for a path a readable tree does not
+            # carry — the one case the head's copy is the right answer.
+            if git cat-file -e "$base_commit:$skill_path" 2>/dev/null; then
+              if ! git show "$base_commit:$skill_path" \
+                  > "$instructions_file"; then
+                echo "The base ref $BASE_REF carries $skill_path but it could" \
+                  "not be read; semantic-review stays pending." >&2
+                exit 1
+              fi
+            else
+              # The pull request that installs the integration: there is no
+              # base copy to pin to, so the reviewed commit's own is used and
+              # the run says which it reviewed under.
+              echo "The base ref $BASE_REF carries no $skill_path; reviewing" \
+                "under the reviewed commit's own copy of it instead."
+              cp "$skill_path" "$instructions_file"
+            fi
+            # The prompt defers to the materialized instructions rather than
+            # restating the rubric, so one file stays the review contract for
+            # both reviewer modes.
+            prompt="Review this pull request.
+
+          Follow the review contract in $instructions_file exactly: run the
+          bundled engine it names, reason from that structural output, apply
+          its severity rubric, and end with the verdict it mandates. Diff
+          $BASE_SHA against the reviewed commit $HEAD_SHA.
+
+          Do not post anything to GitHub yourself: no review, no comment, no
+          status, no label. The workflow that invoked you publishes the result.
+
+          Write ONLY the review report. Its last line must be the
+          machine-readable verdict marker the contract specifies, alone on that
+          line, with nothing after it."
+            # Only stdout is captured: the CLI writes its report there and its
+            # run statistics to stderr, which belongs in the job log rather
+            # than in the classified text — folded in, that footer would be the
+            # last non-empty line and every verdict would be thrown away.
+            # `--allow-all-tools` is what lets the CLI run the engine at all.
+            # A run that fails or is killed judged nothing, so its partial
+            # output is dropped: the next step then finds no file, posts
+            # nothing further, and the `pending` above stands.
+            if ! timeout "$cli_timeout" copilot -p "$prompt" --allow-all-tools \
+                > "$body_file"; then
+              echo "The Copilot CLI review of $HEAD_SHA failed or exceeded" \
+                "${cli_timeout}s; semantic-review stays pending."
+              rm -f "$body_file"
+            fi
+          fi
+
+      # The publisher, alone with the workflow's own credential. The secret is
+      # not here: whatever the reviewer wrote, it is this step — running the
+      # workflow's own code, not the reviewer's instructions — that decides
+      # the status and posts it.
+      #
+      # A step running after the reviewer inherits two things the reviewer
+      # could have written to, so neither is trusted here:
+      #
+      #   * $GITHUB_PATH — a shim directory prepended to PATH would make the
+      #     next step's `gh` the reviewer's own program, running with
+      #     `github.token`. So `gh` is invoked by absolute path below.
+      #   * $GITHUB_ENV — an exported SHIPD_GATE_FAIL_OPEN=true would turn a
+      #     strict repository's `pending` into a `success`. So the knob is
+      #     re-bound here from the `vars` context: a step's `env:` is
+      #     evaluated as an expression by the runner and cannot be written to
+      #     by an earlier step, which makes this binding win over the
+      #     job-level one the other steps use.
+      - name: Classify the reviewed text and post the verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHIPD_GATE_FAIL_OPEN: ${{ vars.SHIPD_GATE_FAIL_OPEN }}
+          EVENT_NAME: ${{ github.event_name }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           REVIEW_BODY: ${{ github.event.review.body }}
         run: |
           set -euo pipefail
-          # The poll's cadence and its bound, and the CLI reviewer's runtime
-          # bound. These defaults are what every run on a runner uses — nothing
-          # there sets the overrides, which exist so the test suite can drive
-          # the loop through its cycles, and a timed-out review through its
-          # branch, without waiting minutes on either.
+          # Every `gh` call in this step goes through this path, not through a
+          # PATH lookup: `/usr/bin/gh` is where the GitHub-hosted runner image
+          # installs it. Hardcoded on purpose — deliberately *not* an
+          # environment override, the way the timing knobs below are. A
+          # variable written to $GITHUB_ENV by an earlier step lands in this
+          # step's process environment, so a path read from a variable — with
+          # this literal as its default — would hand the reviewer the same
+          # redirection that invoking `gh` through PATH would: a shim by
+          # another name. A step's `env:` cannot express "unset this" the way
+          # it re-binds the knob above, so the only way to be sure is to read
+          # no variable at all. The test suite rewrites this literal in the
+          # extracted script instead.
+          gh_bin=/usr/bin/gh
+          # The poll's cadence and its bound. These defaults are what every run
+          # on a runner uses — nothing there sets the overrides, which exist so
+          # the test suite can drive the loop through its cycles without
+          # waiting minutes on it.
           poll_interval="${SHIPD_GATE_POLL_INTERVAL:-20}"
           poll_timeout="${SHIPD_GATE_POLL_TIMEOUT:-900}"
-          cli_timeout="${SHIPD_GATE_CLI_TIMEOUT:-600}"
 
           # Where the reviewed text lands. It is written by redirection and
           # read back with `$(<file)`: the text is never carried in an
@@ -228,55 +409,30 @@ jobs:
           comment_file=
 
           post_status() {
-            gh api --method POST "repos/$REPO/statuses/$HEAD_SHA" \
+            "$gh_bin" api --method POST "repos/$REPO/statuses/$HEAD_SHA" \
               -f state="$1" \
               -f context=semantic-review \
               -f description="$2"
           }
 
           if [[ "$EVENT_NAME" == 'pull_request' \
-                && -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then
-            # The CLI reviewer. Unlike GitHub's code-review surface, this one
-            # can execute the engine and author its own report, which is what
-            # makes the resulting status strict rather than fail-open.
-            npm install -g @github/copilot
-            # The engine diffs base against the reviewed commit with merge-base
-            # semantics, so both must be present. The checkout brought the
-            # history behind the commit under review; this tops up a base the
-            # fetch may not have covered, and is only best-effort because the
-            # usual case is that it is already there.
-            git fetch --no-tags --quiet origin "$BASE_SHA" || true
-            # The prompt defers to the installed skill rather than restating
-            # the rubric, so one file stays the review contract for both
-            # reviewer modes.
-            prompt="Review this pull request.
-
-          Follow .github/skills/code-review/SKILL.md in this repository exactly:
-          run the bundled engine it names, reason from that structural output,
-          apply its severity rubric, and end with the verdict it mandates. Diff
-          $BASE_SHA against the reviewed commit $HEAD_SHA.
-
-          Do not post anything to GitHub yourself: no review, no comment, no
-          status, no label. The workflow that invoked you publishes the result.
-
-          Write ONLY the review report. Its last line must be the
-          machine-readable verdict marker the skill specifies, alone on that
-          line, with nothing after it."
-            # Only stdout is captured: the CLI writes its report there and its
-            # run statistics to stderr, which belongs in the job log rather
-            # than in the classified text — folded in, that footer would be the
-            # last non-empty line and every verdict would be thrown away.
-            # `--allow-all-tools` is what lets the CLI run the engine at all.
-            # A run that fails or is killed judged nothing, so nothing further
-            # is posted and the `pending` above stands.
-            if ! timeout "$cli_timeout" copilot -p "$prompt" --allow-all-tools \
-                > "$body_file"; then
-              echo "The Copilot CLI review of $HEAD_SHA failed or exceeded" \
-                "${cli_timeout}s; semantic-review stays pending."
+                && "${COPILOT_CLI_REVIEWER:-false}" == 'true' ]]; then
+            # The CLI reviewer's own report, captured by the step above. Its
+            # credential is gone from here, so the presence boolean selects
+            # this path and the file that step left behind — or did not —
+            # says whether there is anything to classify.
+            if [[ ! -f "$body_file" ]]; then
+              echo "The Copilot CLI review of $HEAD_SHA captured no output;" \
+                "semantic-review stays pending."
               exit 0
             fi
             body="$(<"$body_file")"
             comment_file="$body_file"
+            # A marker-less outcome on this path is the gate's own reviewer
+            # having produced no verdict, which is a different thing from
+            # GitHub's reviewer having produced none — so the status says
+            # which reviewer it is describing.
+            no_marker_description="The gate's Copilot CLI review of this commit produced no verdict marker."
           elif [[ "$EVENT_NAME" == 'pull_request' ]]; then
             # The poll fallback. Wait for Copilot's review of this head. Each
             # cycle re-reads the pull request's own head as well: once it has
@@ -284,7 +440,7 @@ jobs:
             # finished.
             deadline=$(( SECONDS + poll_timeout ))
             while :; do
-              current_head="$(gh api --jq '.head.sha' \
+              current_head="$("$gh_bin" api --jq '.head.sha' \
                 "repos/$REPO/pulls/$PR_NUMBER")"
               if [[ "$current_head" != "$HEAD_SHA" ]]; then
                 echo "The pull request has moved on to $current_head;" \
@@ -293,12 +449,12 @@ jobs:
               fi
               # Reviews come back in submission order, so the last id is
               # Copilot's latest word on this commit.
-              review_ids="$(gh api --paginate \
+              review_ids="$("$gh_bin" api --paginate \
                 --jq '.[] | select(.user.login == "copilot-pull-request-reviewer[bot]" and .commit_id == env.HEAD_SHA) | .id' \
                 "repos/$REPO/pulls/$PR_NUMBER/reviews")"
               if [[ -n "$review_ids" ]]; then
                 review_id="${review_ids##*$'\n'}"
-                gh api --jq '.body' \
+                "$gh_bin" api --jq '.body' \
                   "repos/$REPO/pulls/$PR_NUMBER/reviews/$review_id" \
                   > "$body_file"
                 body="$(<"$body_file")"
@@ -400,7 +556,9 @@ jobs:
               "pending."
           else
             state=success
-            description="Copilot reviewed this commit; no verdict marker was parsed."
+            # The shared wording, for the two paths that classify a review
+            # GitHub's own reviewer wrote; the CLI path set its own above.
+            description="${no_marker_description:-Copilot reviewed this commit; no verdict marker was parsed.}"
           fi
           if [[ -n "$state" ]]; then
             post_status "$state" "$description"
@@ -413,6 +571,6 @@ jobs:
           # request, so the poll and review-event paths leave `comment_file`
           # unset and post nothing.
           if [[ -n "$comment_file" ]]; then
-            gh pr comment "$PR_NUMBER" --repo "$REPO" \
+            "$gh_bin" pr comment "$PR_NUMBER" --repo "$REPO" \
               --body-file "$comment_file"
           fi

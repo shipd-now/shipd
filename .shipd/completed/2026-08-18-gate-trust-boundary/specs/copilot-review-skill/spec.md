@@ -1,106 +1,8 @@
-# copilot-review-skill
-
-### Requirement: Copilot review skill template
-id: skill-template
-
-The plugin SHALL carry a Copilot code-review skill template at
-`integrations/copilot/SKILL.md` containing: YAML frontmatter with `name` and
-`description` fields; the ownership marker line `<!-- shipd-copilot
-v{version} -->` with the literal `{version}` placeholder; instructions that
-direct the reviewing agent to run the bundled engine
-(`python3 .github/skills/code-review/scripts/semdiff.py`) with its `files`,
-`diff`, and `context` subcommands and to reason from that structural JSON
-rather than raw file dumps; the severity rubric (`high`/`medium`/`low`) with
-the ship-it/fix-required verdict rule (any high or medium finding blocks);
-an instruction that the review body ends with a visible verdict line plus
-the matching machine-readable marker — `<!-- shipd-verdict: ship-it -->` or
-`<!-- shipd-verdict: fix-required -->` — on its own line as the body's last
-line, stating that the marker is read from the last non-empty line by
-exact equality (never by a substring match elsewhere in the body); a
-statement that the skill is the review contract for both surfaces that
-consume it — GitHub's Copilot code-review runs and the gate workflow's
-headless Copilot CLI reviewer; a statement that the engine is read-only
-and degrades to its text engine when `difft` is unavailable; and
-documentation that the Copilot code-review surface exposes no
-repository-side model selection and that, where the repository's
-`copilot-review-gate.yml` workflow is installed, the verdict marker drives
-the required `semantic-review` commit status under the repository's
-`SHIPD_GATE_FAIL_OPEN` setting — a review without a marker passes
-fail-open by default, while `false` leaves the status pending — and the
-review stays advisory where no gate workflow is installed.
-
-#### Scenario: Template exists with the placeholder marker
-- **WHEN** `plugins/s/integrations/copilot/SKILL.md` is read
-- **THEN** it contains the literal line `<!-- shipd-copilot v{version} -->`
-  and frontmatter `name` and `description` fields
-
-#### Scenario: Template directs the agent to the bundled engine
-- **WHEN** the template body is read
-- **THEN** it names the `files`, `diff`, and `context` subcommands of the
-  bundled `semdiff.py`, the high/medium/low rubric, and the no-model-pin
-  documentation
-
-#### Scenario: The marker instruction states last-line equality
-- **WHEN** the template's report instructions are read
-- **THEN** they require exactly one marker as the body's last line and
-  state it is read from the last non-empty line by exact equality, with no
-  claim of a substring match anywhere in the body
-
-#### Scenario: The gate bullet names the strictness knob
-- **WHEN** the template's scope section is read
-- **THEN** the merge-gate statement names `SHIPD_GATE_FAIL_OPEN`, the
-  fail-open default for marker-less reviews, and that `false` leaves the
-  status pending
-
-#### Scenario: The skill names both consuming surfaces
-- **WHEN** the template body is read
-- **THEN** it states the skill is the contract for GitHub's Copilot
-  code-review runs and for the gate workflow's headless Copilot CLI
-  reviewer
-
-### Requirement: Copilot review setup workflow template
-id: setup-workflow-template
-
-The plugin SHALL carry a Copilot code-review environment workflow template
-at `integrations/copilot/copilot-code-review.yml` containing: the
-ownership marker line `# shipd-copilot v{version}` with the literal
-`{version}` placeholder; a single job named `copilot-setup-steps` running
-on `ubuntu-latest`; a repository checkout step that is marked
-`continue-on-error: true` and carries a step `id`, so a checkout the
-runner's token cannot perform (a private repository) never fails the
-setup job; and steps that install the prebuilt `difft` release binary
-onto the runner's `PATH` (the same release-tarball source `semdiff.py`'s
-own installer uses) and install `ripgrep`, each conditioned on the
-checkout step's outcome being `success`. If the extracted release archive
-contains no `difft` binary, then the difftastic step SHALL fail with a
-message naming the problem rather than invoking `install` with an empty
-path. The template SHALL NOT reference any secret or
-organization-specific value.
-
-#### Scenario: Workflow defines the setup job
-- **WHEN** `plugins/s/integrations/copilot/copilot-code-review.yml` is read
-- **THEN** it contains the marker line `# shipd-copilot v{version}` and
-  exactly one job, named `copilot-setup-steps`, on `ubuntu-latest`
-
-#### Scenario: The checkout is fail-soft and gates the installs
-- **WHEN** the template's steps are read
-- **THEN** the checkout step carries `continue-on-error: true` and an
-  `id`, and the difftastic and ripgrep steps each run only when that
-  step's outcome is `success`
-
-#### Scenario: A binary-less archive fails loudly
-- **WHEN** the difftastic step's script is read
-- **THEN** it tests the located binary path for emptiness and fails with
-  a clear message when the archive held no `difft`, never invoking
-  `install` with an empty path
-
-#### Scenario: Workflow provisions the diff tooling
-- **WHEN** the template's steps are read
-- **THEN** one step installs the `difft` release binary onto `PATH` and one
-  installs `ripgrep`
+## MODIFIED Requirements
 
 ### Requirement: Copilot review-gate workflow template
 id: gate-workflow-template
+base: ad36ef2ea0ae
 
 The plugin SHALL carry a Copilot review-gate workflow template at
 `integrations/copilot/copilot-review-gate.yml` containing: the ownership
@@ -226,3 +128,62 @@ reviewer.
   `github.token` and `${{ secrets.COPILOT_GITHUB_TOKEN }}`, the latter
   bound only in the CLI step's environment (plus the job-level
   presence-only boolean), and no step requests Copilot as a reviewer
+
+### Requirement: Copilot review skill template
+id: skill-template
+base: c713f602cbc6
+
+The plugin SHALL carry a Copilot code-review skill template at
+`integrations/copilot/SKILL.md` containing: YAML frontmatter with `name` and
+`description` fields; the ownership marker line `<!-- shipd-copilot
+v{version} -->` with the literal `{version}` placeholder; instructions that
+direct the reviewing agent to run the bundled engine
+(`python3 .github/skills/code-review/scripts/semdiff.py`) with its `files`,
+`diff`, and `context` subcommands and to reason from that structural JSON
+rather than raw file dumps; the severity rubric (`high`/`medium`/`low`) with
+the ship-it/fix-required verdict rule (any high or medium finding blocks);
+an instruction that the review body ends with a visible verdict line plus
+the matching machine-readable marker — `<!-- shipd-verdict: ship-it -->` or
+`<!-- shipd-verdict: fix-required -->` — on its own line as the body's last
+line, stating that the marker is read from the last non-empty line by
+exact equality (never by a substring match elsewhere in the body); a
+statement that the skill is the review contract for both surfaces that
+consume it — GitHub's Copilot code-review runs and the gate workflow's
+headless Copilot CLI reviewer; a statement that the engine is read-only
+and degrades to its text engine when `difft` is unavailable; and
+documentation that the Copilot code-review surface exposes no
+repository-side model selection and that, where the repository's
+`copilot-review-gate.yml` workflow is installed, the verdict marker drives
+the required `semantic-review` commit status under the repository's
+`SHIPD_GATE_FAIL_OPEN` setting — a review without a marker passes
+fail-open by default, while `false` leaves the status pending — and the
+review stays advisory where no gate workflow is installed.
+
+#### Scenario: Template exists with the placeholder marker
+- **WHEN** `plugins/s/integrations/copilot/SKILL.md` is read
+- **THEN** it contains the literal line `<!-- shipd-copilot v{version} -->`
+  and frontmatter `name` and `description` fields
+
+#### Scenario: Template directs the agent to the bundled engine
+- **WHEN** the template body is read
+- **THEN** it names the `files`, `diff`, and `context` subcommands of the
+  bundled `semdiff.py`, the high/medium/low rubric, and the no-model-pin
+  documentation
+
+#### Scenario: The marker instruction states last-line equality
+- **WHEN** the template's report instructions are read
+- **THEN** they require exactly one marker as the body's last line and
+  state it is read from the last non-empty line by exact equality, with no
+  claim of a substring match anywhere in the body
+
+#### Scenario: The gate bullet names the strictness knob
+- **WHEN** the template's scope section is read
+- **THEN** the merge-gate statement names `SHIPD_GATE_FAIL_OPEN`, the
+  fail-open default for marker-less reviews, and that `false` leaves the
+  status pending
+
+#### Scenario: The skill names both consuming surfaces
+- **WHEN** the template body is read
+- **THEN** it states the skill is the contract for GitHub's Copilot
+  code-review runs and for the gate workflow's headless Copilot CLI
+  reviewer

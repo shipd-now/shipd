@@ -57,6 +57,25 @@ SHIP_MARKER = "<!-- shipd-verdict: ship-it -->"
 # so either poster satisfies a required check of that name.
 STATUS_CONTEXT = "semantic-review"
 
+# Where the reviewing agent's instructions live in a repository that installed
+# the integration, forward-slashed the way the Linux runner sees them (whatever
+# this suite runs on). The gate materializes its own copy from the *base* ref
+# of this path rather than following the one on the ref under review.
+GATE_SKILL_PATH = ".github/skills/code-review/SKILL.md"
+
+# Where the posting step invokes `gh` from. It is a hardcoded literal in the
+# template rather than an environment override, because a variable an earlier
+# step could write to $GITHUB_ENV would redirect the credentialed binary just
+# as a $GITHUB_PATH shim would — so the runnable tests rewrite this path in the
+# extracted script, the way they rewrite the runner's own expressions.
+GH_PATH = "/usr/bin/gh"
+
+# The pinned global install of the reviewer CLI. The version is deliberate — a
+# floating tag would let the CLI vendor change gate behaviour on their own
+# schedule — so what is asserted is the pin's shape, not one release.
+CLI_PIN = re.compile(r"npm install -g @github/copilot@(\d+\.\d+\.\d+)\b")
+CLI_UNPINNED = re.compile(r"npm install -g @github/copilot(?!@)")
+
 # The four files the verb manages, relative to the target root.
 SKILL_PATH = os.path.join(".github", "skills", "code-review", "SKILL.md")
 SEMDIFF_PATH = os.path.join(".github", "skills", "code-review", "scripts",
@@ -240,6 +259,30 @@ def job_steps(job_body):
     return ["\n".join(chunk) for chunk in steps]
 
 
+def step_body(step):
+    """A step's own text. A chunk from :func:`job_steps` runs to the next
+    ``- name:``, so it also carries the *following* step's comment preamble;
+    those comments sit at the ``- `` indent, while every comment a step
+    carries of its own is nested deeper inside ``env:`` or ``run:``. Trimming
+    them is what lets an assertion say "this step mentions no credential"
+    without the next step's commentary answering for it."""
+    lines = step.splitlines()
+    if not lines:
+        return step
+    level = len(lines[0]) - len(lines[0].lstrip())
+    while lines:
+        last = lines[-1]
+        if not last.strip():
+            lines.pop()
+            continue
+        indent = len(last) - len(last.lstrip())
+        if last.lstrip().startswith("#") and indent <= level:
+            lines.pop()
+            continue
+        break
+    return "\n".join(lines)
+
+
 def run_block(job_body):
     """The dedented body of the first ``run: |`` block in ``job_body``."""
     lines = job_body.splitlines()
@@ -390,6 +433,29 @@ class SkillTemplateTest(unittest.TestCase):
         # Advisory is what remains where no gate workflow is installed.
         self.assertIn("advisory", lowered)
         self.assertIn("no gate workflow", lowered)
+
+    def test_the_gate_bullet_names_the_strictness_knob(self):
+        # The consequence of omitting the marker is not one thing: in a
+        # repository that set the knob, a marker-less review leaves the
+        # required check `pending` rather than greening it. A reviewer told
+        # only the fail-open half is told the wrong stakes.
+        scope = markdown_section(self.text, "## Scope of this review")
+        bullets = [bullet for bullet in scope.split("\n- ")
+                   if "copilot-review-gate.yml" in bullet]
+        self.assertEqual(len(bullets), 1,
+                         "expected exactly one merge-gate bullet, found %d"
+                         % len(bullets))
+        lowered = bullets[0].lower()
+        self.assertIn("shipd_gate_fail_open", lowered,
+                      "the merge-gate bullet does not name the strictness "
+                      "knob")
+        self.assertIn("fail-open", lowered,
+                      "the knob is named without its default")
+        self.assertIn("`false`", lowered,
+                      "the knob is named without the value that turns it on")
+        self.assertIn("pending", lowered,
+                      "the knob is named without what `false` does to the "
+                      "status")
 
 
 class WorkflowTemplateTest(unittest.TestCase):
@@ -597,7 +663,16 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertEqual(len(found), 1,
                          "expected exactly one step invoking the Copilot CLI, "
                          "found %d" % len(found))
-        return found[0]
+        return step_body(found[0])
+
+    def posting_step(self):
+        """The step that classifies the reviewed text and publishes it — the
+        one place the workflow's own token is allowed to reach."""
+        found = [step for step in self.steps if "pr comment" in step]
+        self.assertEqual(len(found), 1,
+                         "expected exactly one step posting the verdict, found "
+                         "%d" % len(found))
+        return step_body(found[0])
 
     def test_the_pull_request_path_branches_on_the_secret(self):
         # A non-empty secret selects the CLI reviewer; an empty one falls back
@@ -671,6 +746,170 @@ class GateWorkflowTemplateTest(unittest.TestCase):
     def test_the_cli_path_installs_the_copilot_cli(self):
         self.assertIn("npm install -g @github/copilot", self.script)
 
+    def test_the_cli_install_is_pinned_to_an_exact_version(self):
+        # An unpinned install changes what the gate runs on the CLI vendor's
+        # schedule rather than this template's. The upgrade is a deliberate
+        # bump in a template change, so the shipped install names a version.
+        self.assertRegex(self.script, CLI_PIN,
+                         "the Copilot CLI is not installed at an exact "
+                         "pinned version")
+        self.assertNotRegex(self.script, CLI_UNPINNED,
+                            "a floating install of the Copilot CLI remains")
+
+    def test_the_cli_step_carries_the_secret_and_no_other_credential(self):
+        # The security boundary. The CLI runs `--allow-all-tools` on
+        # instructions an adversarial change could try to steer, so the worst
+        # a steered agent can reach is bounded by what is in its environment:
+        # the minimal reviewer PAT (no repository access, Copilot Requests
+        # only) and nothing else. With `github.token` absent it cannot forge
+        # the required status or post as the workflow.
+        cli = self.cli_step()
+        self.assertIn("COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}",
+                      cli)
+        self.assertNotIn("GH_TOKEN", cli,
+                         "the Copilot CLI step's environment carries a gh "
+                         "credential")
+        self.assertNotIn("github.token", cli,
+                         "the Copilot CLI step's environment carries the "
+                         "workflow token")
+
+    def test_the_posting_step_carries_the_workflow_token_and_not_the_secret(
+            self):
+        posting = self.posting_step()
+        self.assertNotEqual(
+            posting, self.cli_step(),
+            "the CLI run and the status posting are still one step, so the "
+            "reviewer's environment holds the posting credential")
+        self.assertIn("GH_TOKEN: ${{ github.token }}", posting)
+        self.assertNotIn("COPILOT_GITHUB_TOKEN:", posting,
+                         "the posting step's environment carries the reviewer "
+                         "secret")
+
+    def test_the_captured_output_travels_between_the_steps_as_a_file(self):
+        # Splitting the credentials apart costs the shared shell, so the
+        # reviewed text crosses the boundary as the workspace file it already
+        # was, and the posting step picks its path off the job-level presence
+        # boolean rather than the secret it can no longer see.
+        expression = 'body_file="${RUNNER_TEMP:-.}/shipd-copilot-review-body.md"'
+        self.assertIn(expression, run_block(self.cli_step()))
+        posting = run_block(self.posting_step())
+        self.assertIn(expression, posting)
+        self.assertIn('"${COPILOT_CLI_REVIEWER:-false}" == \'true\'', posting,
+                      "the posting step does not select the CLI path off the "
+                      "job-level presence boolean")
+
+    def test_the_reviewer_instructions_are_materialized_from_the_base_ref(self):
+        # The instructions are the one input the reviewed change must not be
+        # able to rewrite: a change that edits SKILL.md would otherwise be
+        # reviewed under its own rules.
+        cli = self.cli_step()
+        self.assertIn("BASE_REF: ${{ github.event.pull_request.base.ref }}",
+                      cli)
+        run = run_block(cli)
+        self.assertIn('skill_path="%s"' % GATE_SKILL_PATH, run)
+        self.assertIn(
+            'instructions_file="${RUNNER_TEMP:-.}/shipd-copilot-review-skill.md"',
+            run)
+        self.assertIn('git rev-parse --verify --quiet', run,
+                      "the base ref is never resolved")
+        self.assertIn('git show "$base_commit:$skill_path"', run,
+                      "the reviewer instructions are not read from the base "
+                      "ref")
+        # The head's copy is the fallback — a pull request that installs the
+        # integration has no base copy to read — and the run says so.
+        fallback = run[run.index('git cat-file -e "$base_commit:$skill_path"'):]
+        fallback = fallback[:fallback.index("prompt=")]
+        self.assertIn('cp "$skill_path" "$instructions_file"', fallback,
+                      "there is no head-copy fallback for a base ref without "
+                      "the skill")
+        self.assertIn("echo", fallback,
+                      "the fallback to the head's copy is silent")
+
+    def test_only_a_confirmed_absence_falls_back_to_the_head_copy(self):
+        # The fallback un-pins the instructions, so it must be reachable from
+        # exactly one cause: the base tree not carrying the file. An
+        # unresolvable base ref, or a copy that is there and cannot be read,
+        # is a failure to pin — and a gate that cannot pin must not review.
+        run = run_block(self.cli_step())
+        self.assertIn('git cat-file -e "$base_commit:$skill_path"', run,
+                      "absence is never confirmed before falling back")
+        self.assertLess(run.index('git cat-file -e "$base_commit:$skill_path"'),
+                        run.index('cp "$skill_path" "$instructions_file"'),
+                        "the head's copy is used before absence is confirmed")
+        guard = run[run.index('base_commit="'):
+                    run.index('cp "$skill_path" "$instructions_file"')]
+        self.assertIn('if [[ -z "$base_commit" ]]; then', guard,
+                      "an unresolvable base ref is not detected")
+        self.assertEqual(
+            guard.count("exit 1"), 2,
+            "a base ref that cannot be resolved, and a skill that is present "
+            "but cannot be read, do not both fail the reviewer step")
+
+    def test_the_posting_step_is_insulated_from_the_reviewers_step(self):
+        # A reviewer step runs before this one and can append to $GITHUB_PATH
+        # and $GITHUB_ENV. Neither may reach the posting step: a shimmed `gh`
+        # would run with `github.token`, and an injected
+        # SHIPD_GATE_FAIL_OPEN=true would green a strict repository's
+        # marker-less outcome.
+        posting = self.posting_step()
+        run = run_block(posting)
+        self.assertIn("gh_bin=%s" % GH_PATH, run,
+                      "the posting step does not resolve gh to an absolute "
+                      "path")
+        # And the path carries no environment override. $GITHUB_ENV writes land
+        # in a later step's process environment, so a `${SHIPD_GATE_GH_BIN:-…}`
+        # here would be a $GITHUB_PATH shim by another name — and a step's
+        # `env:` cannot express "unset this" the way it re-binds the knob
+        # below. The suite substitutes the literal instead.
+        self.assertNotIn("SHIPD_GATE_GH_BIN", self.text,
+                         "the credentialed gh path is redirectable through "
+                         "the environment")
+        self.assertNotRegex(
+            run, r"gh_bin=.*\$\{?[A-Za-z_]",
+            "the gh path is read from a variable an earlier step could write")
+        for line in run.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            self.assertNotRegex(
+                stripped, r"(^|[|&;(]\s*)gh\s",
+                "the posting step invokes gh through PATH: %s" % stripped)
+        self.assertIn("SHIPD_GATE_FAIL_OPEN: ${{ vars.SHIPD_GATE_FAIL_OPEN }}",
+                      posting,
+                      "the posting step does not re-bind the strictness knob "
+                      "from the vars context, so a GITHUB_ENV write wins")
+
+    def test_the_prompt_names_the_materialized_instructions_file(self):
+        prompt = self.script[self.script.index("prompt="):
+                             self.script.index('timeout "$cli_timeout"')]
+        self.assertIn("$instructions_file", prompt,
+                      "the prompt does not name the materialized instructions")
+        self.assertNotIn(
+            GATE_SKILL_PATH, prompt,
+            "the prompt sends the reviewer to the live file on the ref under "
+            "review")
+
+    def test_the_cli_fail_open_description_names_the_cli_review(self):
+        # A status reader can tell which reviewer produced a marker-less
+        # outcome: the CLI path words its own, the poll and review-event paths
+        # keep the shared default.
+        posting = run_block(self.posting_step())
+        self.assertIn(
+            'description="${no_marker_description:-'
+            'Copilot reviewed this commit; no verdict marker was parsed.}"',
+            posting,
+            "the shared marker-less description is no longer the default")
+        overrides = [line.strip() for line in posting.splitlines()
+                     if line.strip().startswith("no_marker_description=")]
+        self.assertEqual(len(overrides), 1,
+                         "expected exactly one marker-less description "
+                         "override, found %d" % len(overrides))
+        lowered = overrides[0].lower()
+        self.assertIn("copilot cli", lowered,
+                      "the CLI path's marker-less description does not name "
+                      "the CLI review as its source")
+        self.assertIn("no verdict marker", lowered)
+
     def test_the_cli_runs_non_interactively_under_a_bounded_timeout(self):
         # The bound's default is what every runner uses; the override exists so
         # the suite can drive a simulated timeout without waiting ten minutes.
@@ -706,11 +945,11 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertIn('body="$(<"$body_file")"', self.script)
 
     def test_the_review_text_is_posted_as_a_pull_request_comment(self):
-        self.assertIn("gh pr comment", self.script)
+        self.assertIn('"$gh_bin" pr comment', self.script)
         self.assertIn('--body-file "$comment_file"', self.script)
         # After the verdict, so a failed comment cannot cost the status.
         self.assertLess(self.script.index('post_status "$state"'),
-                        self.script.index("gh pr comment"))
+                        self.script.index('"$gh_bin" pr comment'))
 
     def test_the_polled_body_reaches_the_classifier_through_a_file(self):
         # A polled review body is written to a workspace file and read back
@@ -840,8 +1079,12 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertIn(binding, self.cli_step(),
                       "the secret is bound outside the step running the CLI")
         # No `gh` call is handed the secret: it authenticates on GH_TOKEN.
+        # Both spellings count — the bare one the pending step uses and the
+        # resolved `"$gh_bin"` the posting step is required to use.
         for line in self.script.splitlines():
-            if line.lstrip().startswith("#") or "gh " not in line:
+            if line.lstrip().startswith("#"):
+                continue
+            if "gh " not in line and "$gh_bin" not in line:
                 continue
             self.assertNotIn("COPILOT_GITHUB_TOKEN", line,
                              "a gh call carries the Copilot secret: %s"
@@ -942,11 +1185,60 @@ if [ -f "$STUB_DIR/cli-timeout" ]; then exit 124; fi
 exec "$@"
 '''
 
+# A hostile `gh`, standing in for the one a reviewer would leave on PATH by
+# appending a directory of its own to $GITHUB_PATH. It records that it was
+# reached and answers nothing — so a step that finds it posts no status.
+SHIM_STUB = r'''#!/bin/sh
+for arg in "$@"; do printf '%s\n' "$arg"; done >> "$SHIM_ARGS"
+exit 0
+'''
+
 # `npm`, stubbed: the global install of the CLI is recorded, never run.
 NPM_STUB = r'''#!/bin/sh
 for arg in "$@"; do printf '%s\n' "$arg"; done >> "$NPM_ARGS"
 exit 0
 '''
+
+# `git`, stubbed. Three calls have answers that matter, because the CLI path
+# tells three outcomes apart: `rev-parse` resolving the base ref at all (a
+# fetch that failed leaves it unresolvable), `cat-file -e` saying whether the
+# base carries the review skill, and `show` reading it. Each is scriptable, so
+# a test can drive the fallback and both fail-closed branches.
+GIT_STUB = r'''#!/bin/sh
+for arg in "$@"; do printf '%s\n' "$arg"; done >> "$GIT_ARGS"
+case "$1" in
+  rev-parse)
+    if [ -f "$STUB_DIR/base-missing" ]; then exit 1; fi
+    printf '%s\n' "@BASE_COMMIT@"
+    exit 0 ;;
+  cat-file)
+    if [ -f "$STUB_DIR/base-skill" ]; then exit 0; fi
+    echo "fatal: path does not exist in that ref" >&2
+    exit 128 ;;
+  show)
+    if [ -f "$STUB_DIR/base-unreadable" ]; then
+      echo "fatal: unable to read object" >&2
+      exit 128
+    fi
+    if [ -f "$STUB_DIR/base-skill" ]; then cat "$STUB_DIR/base-skill"; exit 0; fi
+    echo "fatal: path does not exist in that ref" >&2
+    exit 128 ;;
+esac
+exit 0
+'''
+
+# What the stubbed `git rev-parse` resolves the base ref to. Every read of the
+# instructions must be addressed to *this* commit: an argument naming
+# `origin/<ref>` or a bare path would be a read of something the workflow never
+# pinned.
+BASE_COMMIT = "0" * 36 + "base"
+GIT_STUB = GIT_STUB.replace("@BASE_COMMIT@", BASE_COMMIT)
+
+# The review contract, in the two copies the CLI path chooses between: the base
+# ref's (what a reviewer must follow) and the reviewed commit's own (the
+# fallback, and what an adversarial change would rewrite).
+BASE_SKILL = "# Review contract, as the base ref carries it.\n"
+HEAD_SKILL = "# Review contract, as the reviewed commit carries it.\n"
 
 
 class GateScriptCase(unittest.TestCase):
@@ -960,25 +1252,45 @@ class GateScriptCase(unittest.TestCase):
 
     # Scripted files the stubs serve from, cleared before each run.
     SCRIPTED = ("ids", "head", "body", "reviews-calls", "head-calls",
-                "cli-out", "cli-code", "cli-timeout")
+                "cli-out", "cli-code", "cli-timeout", "base-skill",
+                "base-missing", "base-unreadable")
 
     def setUp(self):
         self.assertTrue(os.path.isfile(GATE_TEMPLATE),
                         "missing template %s" % GATE_TEMPLATE)
-        self.script = gate_script(read(GATE_TEMPLATE))
-        self.assertIn("gh api", self.script,
-                      "no runnable gate step found in the template")
         self.tmp = tempfile.mkdtemp(prefix="shipd-copilot-gate-test-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.record = os.path.join(self.tmp, "gh-args")
         self.stub_bin = os.path.join(self.tmp, "bin")
         os.makedirs(self.stub_bin)
         for name, source in (("gh", GH_STUB), ("copilot", COPILOT_STUB),
-                             ("timeout", TIMEOUT_STUB), ("npm", NPM_STUB)):
+                             ("timeout", TIMEOUT_STUB), ("npm", NPM_STUB),
+                             ("git", GIT_STUB)):
             stub = os.path.join(self.stub_bin, name)
             with open(stub, "w", encoding="utf-8") as fh:
                 fh.write(source)
             os.chmod(stub, 0o755)
+        script = gate_script(read(GATE_TEMPLATE))
+        self.assertIn("api --method POST", script,
+                      "no runnable gate step found in the template")
+        # The posting step's `gh` is an absolute path with no environment knob
+        # behind it, so pointing it at the stub is a rewrite of the extracted
+        # text — one more substitution beside the runner's `${{ … }}`
+        # expressions. Asserting the literal first is what stops a template
+        # change silently sending these runs at a real `gh`: on the CI runner
+        # this suite runs on, /usr/bin/gh exists and is authenticated.
+        self.assertIn(GH_PATH, script,
+                      "the posting step no longer names %s, so the stub "
+                      "substitution below would not bind" % GH_PATH)
+        self.script = script.replace(GH_PATH,
+                                     os.path.join(self.stub_bin, "gh"))
+        # The checkout the CLI path runs in: the reviewed commit's own copy of
+        # the review skill, at the path the workflow reads it from. It is the
+        # fallback source, never the preferred one.
+        head_skill = os.path.join(self.tmp, *GATE_SKILL_PATH.split("/"))
+        os.makedirs(os.path.dirname(head_skill))
+        with open(head_skill, "w", encoding="utf-8") as fh:
+            fh.write(HEAD_SKILL)
 
     def recorded(self, name):
         """The argument lines a stub recorded in the last run, or ``[]``."""
@@ -1002,10 +1314,27 @@ class GateScriptCase(unittest.TestCase):
         path = os.path.join(self.tmp, counter)
         return int(read(path)) if os.path.exists(path) else 0
 
+    def instructions_path(self):
+        """Where the CLI path materializes the reviewer's instructions."""
+        return os.path.join(self.tmp, "shipd-copilot-review-skill.md")
+
+    def instructions(self):
+        """What the last run put in front of the reviewer, or ``None`` where it
+        materialized nothing at all."""
+        path = self.instructions_path()
+        return read(path) if os.path.exists(path) else None
+
+    def prompt(self):
+        """The prompt the stubbed CLI was invoked with."""
+        args = self.cli_args()
+        self.assertIn("-p", args, "the CLI was never invoked with a prompt")
+        return args[args.index("-p") + 1]
+
     def gate(self, event="pull_request", body="", ids="", cycles=(), heads=(),
              bodies=None, interval="0", timeout="0", run_timeout=30,
              secret="", cli_out=None, cli_code=None, cli_timed_out=False,
-             fail_open=""):
+             fail_open="", base_skill=BASE_SKILL, base_ref_missing=False,
+             base_unreadable=False, expect_failure=False, path_shim=False):
         """Run the gate script for ``event`` and return the statuses it posted,
         in order — one dict of ``-f key=value`` fields per post, with the URL
         it posted to under ``"url"``. What the run logged is left on
@@ -1017,6 +1346,19 @@ class GateScriptCase(unittest.TestCase):
         CLI writes on stdout, ``cli_code`` the status it exits with, and
         ``cli_timed_out`` makes the stubbed ``timeout`` kill it the way the real
         one does.
+
+        ``base_skill`` is the review skill as the *base* ref carries it — the
+        instructions the CLI path must review under. ``None`` is the base ref
+        that has no copy at all (the pull request that installs the
+        integration), which falls back to the reviewed commit's own.
+        ``path_shim`` puts a hostile ``gh`` ahead of the stub on ``PATH``, the
+        way a reviewer that appended a directory to ``$GITHUB_PATH`` would:
+        it records that it was reached and answers nothing.
+
+        ``base_ref_missing`` is the base ref that does not resolve, and
+        ``base_unreadable`` the copy that is there but cannot be read: both
+        are failures to *pin*, not absences, so both fail the reviewer step —
+        which is what ``expect_failure`` allows the run to do.
 
         ``fail_open`` is the ``SHIPD_GATE_FAIL_OPEN`` repository variable as the
         runner interpolates it: the empty string (the default) is the variable
@@ -1054,22 +1396,42 @@ class GateScriptCase(unittest.TestCase):
             self.plant("cli-code", str(cli_code))
         if cli_timed_out:
             self.plant("cli-timeout", "")
+        if base_skill is not None:
+            self.plant("base-skill", base_skill)
+        if base_ref_missing:
+            self.plant("base-missing", "")
+        if base_unreadable:
+            self.plant("base-unreadable", "")
         script = os.path.join(self.tmp, "gate.sh")
         with open(script, "w", encoding="utf-8") as fh:
             fh.write(self.script)
         for name in ("gh-args", "comments-args", "copilot-args",
-                     "timeout-args", "npm-args"):
+                     "timeout-args", "npm-args", "git-args", "shim-args",
+                     "shipd-copilot-review-skill.md",
+                     "shipd-copilot-review-body.md"):
             path = os.path.join(self.tmp, name)
             if os.path.exists(path):
                 os.remove(path)
+        search_path = self.stub_bin
+        if path_shim:
+            shim_bin = os.path.join(self.tmp, "shim")
+            if not os.path.isdir(shim_bin):
+                os.makedirs(shim_bin)
+            shim = os.path.join(shim_bin, "gh")
+            with open(shim, "w", encoding="utf-8") as fh:
+                fh.write(SHIM_STUB)
+            os.chmod(shim, 0o755)
+            search_path = shim_bin + os.pathsep + search_path
         env = dict(os.environ)
         env.update({
-            "PATH": self.stub_bin + os.pathsep + env.get("PATH", ""),
+            "PATH": search_path + os.pathsep + env.get("PATH", ""),
+            "SHIM_ARGS": os.path.join(self.tmp, "shim-args"),
             "GH_ARGS": self.record,
             "GH_COMMENTS": os.path.join(self.tmp, "comments-args"),
             "COPILOT_ARGS": os.path.join(self.tmp, "copilot-args"),
             "TIMEOUT_ARGS": os.path.join(self.tmp, "timeout-args"),
             "NPM_ARGS": os.path.join(self.tmp, "npm-args"),
+            "GIT_ARGS": os.path.join(self.tmp, "git-args"),
             "GH_TOKEN": "stub-token",
             "STUB_DIR": self.tmp,
             "RUNNER_TEMP": self.tmp,
@@ -1078,9 +1440,14 @@ class GateScriptCase(unittest.TestCase):
             "PR_NUMBER": "7",
             "HEAD_SHA": self.HEAD,
             "BASE_SHA": "0" * 39 + "b",
+            "BASE_REF": "main",
             # The repository secret, interpolated by the runner: empty unless a
-            # test configures the CLI reviewer.
+            # test configures the CLI reviewer. It reaches only the step that
+            # runs the CLI; the classifying step selects its path off the
+            # job-level presence boolean below, which is all the runner gives
+            # it.
             "COPILOT_GITHUB_TOKEN": secret,
+            "COPILOT_CLI_REVIEWER": "true" if secret else "false",
             # What the runner interpolates on a review event, and the empty
             # string it interpolates on a pull-request one.
             "REVIEW_BODY": body if event == "pull_request_review" else "",
@@ -1103,8 +1470,14 @@ class GateScriptCase(unittest.TestCase):
             self.fail("the gate step did not finish within %ss on a "
                       "%d-character body — the poll or the verdict parse no "
                       "longer terminates" % (run_timeout, len(body)))
-        self.assertEqual(result.returncode, 0, result.stderr)
+        if expect_failure:
+            self.assertNotEqual(result.returncode, 0,
+                                "the run was expected to fail the reviewer "
+                                "step and exited zero instead")
+        else:
+            self.assertEqual(result.returncode, 0, result.stderr)
         self.stdout = result.stdout
+        self.stderr = result.stderr
         return self.posted()
 
     def posted(self):
@@ -1195,17 +1568,101 @@ class GateCliReviewerTest(GateScriptCase):
 
     def test_the_cli_is_installed_and_run_non_interactively(self):
         self.cli_gate(cli_out=self.REVIEW)
-        self.assertEqual(self.recorded("npm"),
-                         ["install", "-g", "@github/copilot"])
+        npm = self.recorded("npm")
+        self.assertEqual(npm[:2], ["install", "-g"])
+        self.assertRegex(npm[2], r"^@github/copilot@\d+\.\d+\.\d+$",
+                         "the CLI is not installed at an exact pinned version")
         args = self.cli_args()
         self.assertIn("-p", args)
         self.assertIn("--allow-all-tools", args)
-        prompt = args[args.index("-p") + 1]
-        self.assertIn(".github/skills/code-review/SKILL.md", prompt)
+        prompt = self.prompt()
+        self.assertIn(self.instructions_path(), prompt)
         self.assertIn(self.HEAD, prompt,
                       "the prompt does not name the commit under review")
         # The run is bounded, and the bound is the one the step computed.
         self.assertEqual(self.recorded("timeout"), ["5"])
+
+    def test_the_reviewer_reads_the_base_refs_instructions(self):
+        # The instructions the reviewer follows come off the base ref, so a
+        # change that edits SKILL.md is still reviewed under the rules it is
+        # asking to change.
+        self.cli_gate(cli_out=self.REVIEW)
+        self.assertEqual(self.instructions(), BASE_SKILL,
+                         "the reviewer was given instructions that did not "
+                         "come from the base ref")
+        git = self.recorded("git")
+        self.assertIn("origin/main^{commit}", git,
+                      "the base ref was never resolved")
+        reads = [arg for arg in git if arg.endswith(":" + GATE_SKILL_PATH)]
+        self.assertTrue(reads,
+                        "the base ref's copy of the skill was never read")
+        for arg in reads:
+            self.assertTrue(
+                arg.startswith(BASE_COMMIT + ":"),
+                "the skill was read from %r rather than the resolved base "
+                "commit" % arg)
+        prompt = self.prompt()
+        self.assertIn(self.instructions_path(), prompt)
+        self.assertNotIn(GATE_SKILL_PATH, prompt,
+                         "the prompt still sends the reviewer to the file on "
+                         "the ref under review")
+
+    def test_a_base_ref_without_the_skill_falls_back_to_the_head_copy(self):
+        # The pull request that installs the integration: there is no base
+        # copy to pin to, so the reviewed commit's own is used and the run
+        # says so rather than reviewing against nothing.
+        posts = self.cli_gate(cli_out=self.REVIEW, base_skill=None)
+        self.assertStates(posts, ["pending", "success"])
+        self.assertEqual(self.instructions(), HEAD_SKILL,
+                         "the run did not fall back to the reviewed commit's "
+                         "own copy of the skill")
+        self.assertIn(GATE_SKILL_PATH, self.stdout,
+                      "the fallback to the head's copy went unlogged")
+        self.assertIn("main", self.stdout,
+                      "the fallback log does not name the base ref that "
+                      "lacked the skill")
+
+    def test_a_path_shim_cannot_intercept_the_posting_steps_gh(self):
+        # The $GITHUB_PATH vector, exercised rather than asserted: a hostile
+        # `gh` sits ahead of the stub on PATH for the whole run. The posting
+        # step resolves its binary absolutely, so its calls go straight past
+        # the shim — while the *pending* step, which looks `gh` up on PATH
+        # because it runs before the reviewer exists, is caught by it. That
+        # split is the proof: the shim is live (it recorded the pending call)
+        # and the credentialed calls still reached the real binary.
+        posts = self.cli_gate(cli_out=self.REVIEW, path_shim=True)
+        self.assertTrue(self.recorded("shim"),
+                        "the shim was never on PATH, so this proves nothing")
+        self.assertStates(posts, ["success"])
+        self.assertNotEqual(self.recorded("comments"), [],
+                            "the shim swallowed the review comment too")
+
+    def test_an_unresolvable_base_ref_fails_rather_than_un_pinning(self):
+        # The fetch failed, or the branch is gone. Falling back here would
+        # quietly review the change under its own instructions, which is the
+        # thing the pinning exists to prevent — so the reviewer never runs.
+        posts = self.cli_gate(cli_out=self.REVIEW, base_ref_missing=True,
+                              expect_failure=True)
+        self.assertStates(posts, ["pending"])
+        self.assertEqual(self.cli_args(), [],
+                         "the reviewer ran without pinned instructions")
+        self.assertIn("main", self.stderr,
+                      "the failure does not name the base ref it could not "
+                      "resolve")
+        self.assertEqual(self.recorded("comments"), [])
+
+    def test_an_unreadable_base_skill_fails_rather_than_un_pinning(self):
+        # The base carries the file and it could not be read: an error, not
+        # an absence, so the head's copy is not substituted for it.
+        posts = self.cli_gate(cli_out=self.REVIEW, base_unreadable=True,
+                              expect_failure=True)
+        self.assertStates(posts, ["pending"])
+        self.assertEqual(self.cli_args(), [],
+                         "the reviewer ran without pinned instructions")
+        self.assertNotEqual(self.instructions(), HEAD_SKILL,
+                            "an unreadable base copy fell back to the ref "
+                            "under review")
+        self.assertIn(GATE_SKILL_PATH, self.stderr)
 
     def test_the_reviewed_text_is_posted_as_a_pull_request_comment(self):
         self.cli_gate(cli_out=self.REVIEW)
@@ -1230,7 +1687,13 @@ class GateCliReviewerTest(GateScriptCase):
     def test_a_review_without_a_marker_fails_open(self):
         posts = self.cli_gate(cli_out=QUOTING_BODY)
         self.assertStates(posts, ["pending", "success"])
-        self.assertIn("no verdict", posts[-1].get("description", "").lower())
+        description = posts[-1].get("description", "").lower()
+        self.assertIn("no verdict", description)
+        # Whose review produced no marker is exactly what a status reader
+        # needs, and the two reviewers are not interchangeable.
+        self.assertIn("copilot cli", description,
+                      "the CLI path's fail-open description does not name the "
+                      "CLI review as its source")
 
     def test_the_run_statistics_footer_never_reaches_the_classifier(self):
         # The real CLI writes its report on stdout and its statistics footer on
@@ -1427,7 +1890,12 @@ class GateStrictModeTest(GateScriptCase):
         # What the runner interpolates for a variable the repository never set.
         posts = self.gate(ids="42", body=QUOTING_BODY, fail_open="")
         self.assertStates(posts, ["pending", "success"])
-        self.assertIn("no verdict", posts[-1].get("description", "").lower())
+        description = posts[-1].get("description", "").lower()
+        self.assertIn("no verdict", description)
+        # The poll classified a review GitHub's own reviewer wrote, so the
+        # description keeps the shared wording rather than the CLI path's.
+        self.assertNotIn("copilot cli", description,
+                         "the polled path claims the CLI reviewer's wording")
 
     def test_an_absent_variable_keeps_the_fail_open_default(self):
         posts = self.gate(ids="42", body=QUOTING_BODY, fail_open=None)
