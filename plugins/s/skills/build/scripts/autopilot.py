@@ -83,6 +83,7 @@ class Member:
 @dataclasses.dataclass
 class MemberResult:
     """The outcome of driving one member. ``outcome`` is one of ``shipped``,
+    ``drafted`` (draft mode's terminal open PR — shipd-config pr-mode-key),
     ``rejected`` (gate bounced the plan), or ``needs_human`` (parked)."""
     outcome: str
     pr_url: str = None
@@ -464,25 +465,31 @@ def _review_prompt(member, entry):
     return head + loop + grade
 
 
-def _stage_prompt(stage, member, entry, model_anchor=None):
+def _stage_prompt(stage, member, entry, model_anchor=None, pr_mode="auto"):
     """The prompt driving ``stage`` for ``member``, conveying the resolved
     ``entry``'s declared options (epic-autopilot stage-options-in-prompts).
     ``model_anchor`` is the anchor a declared `subagent_model` resolves
     against — the stage's own resolved model, falling back to the run's tier
-    anchor. An entry declaring no options renders today's prompt unchanged."""
+    anchor. ``pr_mode`` is the run's resolved PR mode (shipd-config
+    pr-mode-key): under ``draft`` the build stage names the draft-PR ship
+    instead of the auto-merging one. An entry declaring no options renders
+    today's prompt unchanged."""
     entry = entry or {}
     if stage == "plan":
         base = ("Run /s:plan for the change `%s` — a member of an approved "
                 "epic. Investigate, spec it, and promote it to Status: ready."
                 % member)
     elif stage == "build":
+        ship = ("open its draft PR (draft mode — do not enable auto-merge)"
+                if pr_mode == "draft" else "open its auto-merging PR")
         base = ("Run /s:build for the change `%s`: implement every task, then "
-                "merge and archive it and open its auto-merging PR.\n\n"
+                "merge and archive it and %s.\n\n"
                 "If a sub-agent escalates a QUESTION: that the spec artifacts "
                 "and code cannot answer, consult the ask-mikk oracle (spawn "
                 "agent `s:oracle` with a compact question) before answering "
                 "on your own authority; on INSUFFICIENT, answer with your own "
-                "recommendation — never leave the sub-agent blocked." % member)
+                "recommendation — never leave the sub-agent blocked."
+                % (member, ship))
         base += _build_option_lines(entry, model_anchor)
     elif stage == "enrich":
         base = (
@@ -574,8 +581,8 @@ def _tier_anchor(session_model):
 
 def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
                  max_resumes=MAX_RESUMES_DEFAULT, claude_bin="claude",
-                 session_model=None, session_fn=None, gate_fn=None,
-                 command_fn=None, out=_noop, heartbeat=None):
+                 session_model=None, pr_mode=None, session_fn=None,
+                 gate_fn=None, command_fn=None, out=_noop, heartbeat=None):
     """Drive a single member through the resolved ``pipeline`` in its own
     worktree. Returns a :class:`MemberResult`.
 
@@ -587,13 +594,19 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
     ``session_model`` is the run's model-tier anchor: every entry's declared
     ``model`` resolves against it through
     :func:`spec_common.resolve_model_tier` (``None`` anchors at the ladder
-    top)."""
+    top).
+
+    ``pr_mode`` is the run's resolved PR mode (shipd-config pr-mode-key), which
+    the callers resolve once per run and thread in; ``None`` resolves it from
+    ``root`` here, so a direct caller still honors the configuration."""
     if command_fn is None:
         command_fn = _run_command
     if gate_fn is None:
         gate_fn = _default_gate_fn
     if session_fn is None:
         session_fn = _make_session_fn(claude_bin)
+    if pr_mode is None:
+        pr_mode = sc.resolve_pr_mode(root)
 
     slug = member.slug
     cwd = os.path.join(root, ".worktrees", slug)
@@ -781,7 +794,7 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
         # `subagent_model` resolves against this stage's own model, falling
         # back to the run's anchor.
         prompt = _stage_prompt(stage, slug, entry,
-                               entry_model or session_model)
+                               entry_model or session_model, pr_mode=pr_mode)
 
         def action(_attempt, prev_failure, _stage=stage, _prompt=prompt,
                    _timeout=entry_timeout, _resumes=entry_resumes,
@@ -802,13 +815,18 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
             return _park(stage, failure)
         out("  %s [ok]" % stage)
 
-    # All stages passed: read the member's PR from the repo root. Because the
-    # driven build waits for its own PR to merge before returning
-    # (build-spec-lifecycle ship-changes-as-prs), an unmerged PR here means the
-    # ship stalled or timed out — park it rather than record a false `shipped`.
+    # All stages passed: read the member's PR from the repo root. Under the
+    # default `auto` mode the driven build waits for its own PR to merge before
+    # returning (build-spec-lifecycle ship-changes-as-prs), so an unmerged PR
+    # here means the ship stalled or timed out — park it rather than record a
+    # false `shipped`. Under `draft` mode that premise is false: the ship's
+    # terminal state *is* an open unmerged PR, so record it `drafted`. Either
+    # way, no PR at all still parks at `merge`.
     url, merged = _pr_url(command_fn, root, slug)
     if merged:
         return _finish(MemberResult(outcome="shipped", pr_url=url, merged=True))
+    if pr_mode == "draft" and url:
+        return _finish(MemberResult(outcome="drafted", pr_url=url))
     return _finish(MemberResult(
         outcome="needs_human", stage="merge", pr_url=url,
         reason="pipeline completed but PR not merged: %s"
@@ -870,8 +888,8 @@ def drive_single_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
     return drive_member(
         root, epic, member, sliced, timeout=timeout, max_resumes=max_resumes,
         claude_bin=claude_bin, session_model=session_model,
-        session_fn=session_fn, gate_fn=gate_fn, command_fn=command_fn,
-        out=out, heartbeat=heartbeat)
+        pr_mode=sc.resolve_pr_mode(root), session_fn=session_fn,
+        gate_fn=gate_fn, command_fn=command_fn, out=out, heartbeat=heartbeat)
 
 
 def _run_gate(gate_fn, member, cwd, attempts=3, on_attempt=None):
@@ -942,6 +960,11 @@ def _summarize(report, out):
     out("=== autopilot report: %s ===" % report["epic"])
     for r in report["shipped"]:
         out("shipped:    %s  %s" % (r["member"], r.get("pr_url") or "(no PR url)"))
+    # `drafted` is read defensively: a report dict written before the bucket
+    # existed still summarizes.
+    for r in report.get("drafted") or []:
+        out("drafted:    %s  %s"
+            % (r["member"], r.get("pr_url") or "(no PR url)"))
     for r in report["rejected"]:
         line = "rejected:   %s  [%s] %s" % (r["member"], r["stage"], r["reason"])
         if r.get("session_id"):
@@ -1022,12 +1045,16 @@ def run(root, epic, *, max_members=None, dry_run=False,
     members = parse_members(root, epic)
     to_drive, skipped = select_and_order(members)
     pipeline, provenance = sc.resolve_pipeline(root)
+    # Resolved once per run and threaded into every member drive, so a bad
+    # `pr-mode` value fails the run before any member is driven.
+    pr_mode = sc.resolve_pr_mode(root)
 
     report = {
         "epic": epic,
         "pipeline_source": provenance,
         "tier_anchor": _tier_anchor(session_model),
         "shipped": [],
+        "drafted": [],
         "rejected": [],
         "needs_human": [],
         "skipped": [{"member": m.slug, "state": m.state} for m in skipped],
@@ -1054,7 +1081,8 @@ def run(root, epic, *, max_members=None, dry_run=False,
             return drive_member(
                 root_, epic_, member_, pipeline_, timeout=timeout,
                 max_resumes=max_resumes, claude_bin=claude_bin,
-                session_model=session_model, out=out, heartbeat=heartbeat_)
+                session_model=session_model, pr_mode=pr_mode, out=out,
+                heartbeat=heartbeat_)
 
     reached = to_drive if max_members is None else to_drive[:max_members]
     report["unreached"] = [{"member": m.slug} for m in to_drive[len(reached):]]
@@ -1073,6 +1101,12 @@ def run(root, epic, *, max_members=None, dry_run=False,
                     report["shipped"].append(
                         {"member": member.slug, "pr_url": result.pr_url})
                     any_merged = any_merged or result.merged
+                elif result.outcome == "drafted":
+                    # An open draft PR is a terminal success, never a merge:
+                    # `any_merged` stays keyed off actual merges, so a
+                    # draft-only run runs no epic-sync close-out.
+                    report["drafted"].append(
+                        {"member": member.slug, "pr_url": result.pr_url})
                 elif result.outcome == "rejected":
                     report["rejected"].append(
                         {"member": member.slug, "stage": result.stage,
@@ -1149,6 +1183,7 @@ def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
                 "pipeline_source": provenance,
                 "tier_anchor": _tier_anchor(session_model),
                 "shipped": [],
+                "drafted": [],
                 "rejected": [],
                 "needs_human": [],
                 "skipped": [],
@@ -1156,6 +1191,9 @@ def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
             }
             if result.outcome == "shipped":
                 report["shipped"].append(
+                    {"member": slug, "pr_url": result.pr_url})
+            elif result.outcome == "drafted":
+                report["drafted"].append(
                     {"member": slug, "pr_url": result.pr_url})
             elif result.outcome == "rejected":
                 report["rejected"].append(

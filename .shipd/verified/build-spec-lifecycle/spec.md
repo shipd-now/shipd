@@ -98,6 +98,21 @@ build SHALL give the full clickable PR URL, never just the number. If
 auto-merge is unavailable, build SHALL merge manually only after `ci` is
 green and SHALL say so in the report.
 
+Where the resolved configuration declares `pr-mode: draft` (shipd-config
+pr-mode-key), build SHALL instead open the PR as a draft
+(`gh pr create --fill --draft`) and SHALL NOT enable auto-merge. The
+gate-posting obligations below apply unchanged in draft mode — build SHALL
+still post the semantic-review gate with the review entry's declared options
+and run its disposition loop, honoring the skipped-review carve-out — but the
+merge watch and the merged close-out (worktree pruning, `main` pull, epic
+derivation) SHALL NOT run: the ship's terminal state is the open draft PR,
+and build SHALL end by reporting its full URL and that merging is now a
+human's step, leaving the worktree and branch in place. Draft mode governs
+change-shipping PRs only; metadata PRs (epic-close status derivations,
+initiative tagging) SHALL keep auto-merging regardless of the mode. If the
+resolved `pr-mode` value is neither `auto` nor `draft`, then build SHALL stop
+before pushing and report the error naming `pr-mode`.
+
 Arming auto-merge is not proof of merge. Immediately after arming it, build
 SHALL read the PR's `mergeStateStatus` once. `CLEAN` or `UNSTABLE`, and a
 `BLOCKED` state on a branch that is neither `BEHIND` nor `DIRTY` (merely
@@ -120,7 +135,8 @@ waiting on a merge that cannot happen. While a build is unattended (an
 autopilot-driven member), a non-trivial conflict SHALL park the member rather
 than prompt a human.
 
-Build SHALL then watch **its own** PR to a terminal state, polling `state` and
+Under `auto` mode, build SHALL then watch **its own** PR to a terminal state,
+polling `state` and
 `mergeStateStatus` together on each cycle: a transition to `DIRTY`, `BEHIND`, or
 `BLOCKED` SHALL be acted on within a poll cycle (reconcile or surface) exactly as
 `MERGED` ends the watch. The close-out SHALL wait for this PR to reach `MERGED`
@@ -138,6 +154,19 @@ current `main`.
   `change/dark-mode-toggle`
 - **THEN** the branch is pushed, a PR is opened with auto-merge (squash)
   enabled, and the completion report links the PR's full URL
+
+#### Scenario: Draft mode opens a draft PR without auto-merge
+- **GIVEN** a workspace config layer declaring `"pr-mode": "draft"`
+- **WHEN** build ships a verified change from a member repo
+- **THEN** the PR is created with `--draft`, no auto-merge is armed, the
+  semantic-review gate is still posted per the review entry, no merge watch
+  or close-out runs, and the report gives the draft PR's full URL as the
+  terminal state with the worktree left in place
+
+#### Scenario: Metadata PRs ignore draft mode
+- **GIVEN** `pr-mode: draft` resolved
+- **WHEN** an epic-close derivation ships its status edit as a PR
+- **THEN** that PR is opened auto-merging exactly as before
 
 #### Scenario: No direct main pushes
 - **WHEN** a build finishes while `ci` has not yet passed on its PR

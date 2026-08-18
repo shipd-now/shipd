@@ -501,14 +501,35 @@ mitigation, so it must reach the report — keep `WARN_JSON` for Phase 7. Never
 invoke the OpenSpec CLI.
 
 Commit the build — implementation plus the merged specs — as a single commit on
-the change branch, then ship it as an auto-merging PR. **Never commit or push to
+the change branch, then ship it as a PR. **Never commit or push to
 `main` directly**; branch protection blocks it and a `ci` status check gates the
 merge.
+
+**Read the PR mode before pushing.** How this change's PR opens is
+configuration, not a judgement call. Run the status CLI's `config-show` verb
+once and read its `pr-mode` line:
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" config-show
+```
+The verb prints each declared key as `<key> = <json>  [<source>]` — a workspace
+root's `.shipd-config.json` shows up here exactly like the repo's own. **No
+`pr-mode` line, or `pr-mode = "auto"`** → the auto-merging ship below (today's
+behavior). **`pr-mode = "draft"`** → the draft ship below. **Any other value**
+(`pr-mode = "always"`, a non-string, anything else) → **stop before pushing**:
+push nothing, open no PR, and report the error naming `pr-mode` and its
+accepted values `auto` and `draft`.
+
+Commit and push the branch in either mode:
 ```
 git add -A
 git commit -m "<short summary of what shipped>"
 COMMIT_HASH=$(git rev-parse --short HEAD)
 git push -u origin change/<change-name>
+```
+
+### Auto mode (the default) — an auto-merging PR
+
+```
 gh pr create --fill
 gh pr merge --auto --squash --delete-branch
 PR_URL=$(gh pr view --json url -q .url)
@@ -544,6 +565,39 @@ AGENTS.md), then return to Phase 7's watch. A **non-trivial conflict**:
 surface it as a blocker instead of guessing at a resolution — an interactive
 build stops and asks the human; an unattended autopilot-driven build (no human
 to ask) parks the member needs-human.
+
+### Draft mode (`pr-mode: draft`) — a draft PR a human merges
+
+```
+gh pr create --fill --draft
+PR_URL=$(gh pr view --json url -q .url)
+```
+**Arm no auto-merge**: run no `gh pr merge --auto`, and do not merge the PR
+yourself. The open draft PR *is* this ship's terminal state, so everything
+downstream of arming falls away — do not read `mergeStateStatus`, do not
+reconcile the branch against `origin/main`, do not run Phase 7's PR watch
+(step 4), and do not run its merged close-out (step 5): no worktree removal,
+no `main` pull, no plugin-snapshot refresh, no epic derivation. Leave the
+worktree and the branch in place — the human who merges the PR owns the
+cleanup.
+
+**The gate still posts.** Post the `semantic-review` gate and run its
+disposition loop exactly as the resolved `review` entry declares (the "Both
+modes" paragraphs below apply unchanged in draft mode), so the human reviewing
+the draft sees a disposed review. A `semantic-review` status that never turns
+green is a finding to report, not a blocker to reconcile — nothing is waiting
+on a merge.
+
+**Report and stop.** Phase 7's report runs as usual (steps 1–3), with `PR_URL`
+the draft PR's full clickable URL, and states plainly that the PR is a **draft
+awaiting human review and merge** and that the worktree remains in place.
+That report is the end of the build.
+
+**The mode governs change-shipping PRs only.** Metadata PRs — Phase 7's
+epic-close status derivation, initiative tagging — keep opening auto-merging,
+whatever `pr-mode` resolves to.
+
+### Both modes
 
 **The gate posting carries the review entry's declared options.** Whenever you
 post the `semantic-review` gate above — the first posting and every re-post on
@@ -635,7 +689,9 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
    {bullet list of actionable/interesting items, or the literal line: nothing to note}
    ```
    `{pr_url}` is the `PR_URL` captured in Phase 6 — always the full clickable URL,
-   never just the number.
+   never just the number. Under `pr-mode: draft`, mark it as the draft PR and
+   say in the description paragraph that merging it is a human's step and the
+   worktree stays in place.
    `{summary}` is the `TOKENS` value captured in step 1 (it already begins with
    `Tokens:`, so the rendered first line reads `Build complete. Tokens: …` — do
    not add the prefix yourself). `{warnings}` is the `WARNINGS` block from
@@ -655,7 +711,9 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
    the PR line, any `⚠ spec:` warnings, the description paragraph with the
    commit hash, and Observations. Step 2's build-log append is unaffected: it
    still runs, still best-effort.
-4. **Watch this PR to a terminal state.** Poll this PR's `state` together with
+4. **Watch this PR to a terminal state** — *auto mode only; in draft mode the
+   build ends with step 3's report, and steps 4–5 do not run.* Poll this PR's
+   `state` together with
    `mergeStateStatus` on every cycle — never another change's PR:
    ```
    gh pr view "$PR_URL" --json state,mergeStateStatus -q '[.state, .mergeStateStatus] | @tsv'
@@ -680,7 +738,9 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
    collect a result, so anything left running in your context is never
    observed, and the orchestrator grades the stage from the repository the
    moment your turn ends.
-5. **Close the build from the main checkout, now that the PR has merged.**
+5. **Close the build from the main checkout, now that the PR has merged** —
+   *auto mode only; a draft-mode ship never reaches this step, since its PR
+   has not merged.*
    Return to the main checkout and:
    ```
    "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/worktree.sh" remove <change-name>
@@ -761,7 +821,8 @@ message telling the caller to pass one.
 - Spec first, code second. Lint clean (`spec_lint.py` exit 0) before spawning
   sub-agents.
 - Ship via PR; never commit to `main` directly. One change = one worktree = one
-  branch = one auto-merging PR gated by `ci`, and reports link the full PR URL.
+  branch = one PR gated by `ci` — auto-merging by default, a draft a human
+  merges under `pr-mode: draft` — and reports link the full PR URL.
 - Sub-agents must ask, not guess. Enforce it.
 - Verify real behavior before merging. Lint passing is necessary, not sufficient.
 - Keep the user in the loop at the plan gate (Phase 2) and the finish (Phase 7).

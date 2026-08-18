@@ -604,6 +604,45 @@ def resolve_pipeline(root):
 
 
 # ---------------------------------------------------------------------------
+# PR mode (shipd-config pr-mode-key)
+# ---------------------------------------------------------------------------
+
+# The config key naming how change-shipping flows open their PRs.
+PR_MODE_KEY = "pr-mode"
+
+# The accepted `pr-mode` values: `auto` is today's auto-merging behavior and
+# the effective mode when no layer declares the key; `draft` opens draft PRs
+# and never arms auto-merge.
+PR_MODES = ("auto", "draft")
+
+
+def resolve_pr_mode(root):
+    """Resolve the effective PR mode for ``root`` (shipd-config pr-mode-key).
+
+    Reads the ``pr-mode`` key from ``root``'s layered configuration
+    (nearest-wins-wholesale, via :func:`resolve_config`), so a workspace root
+    declaring it governs every member repo beneath it. Returns ``"auto"`` when
+    no layer declares the key, otherwise the declared value. A *declared* value
+    that is not one of :data:`PR_MODES` raises :class:`ConfigError` naming the
+    key, the offending value, the accepted values, and the config file that
+    supplied it, so a consuming flow can stop and surface it directly —
+    declaredness is key presence, never the value, so an explicit JSON ``null``
+    is a bad value rather than an absent key. Stdlib-only: the mode is
+    standalone config, never a pipeline entry, so resolving it never imports
+    pydantic."""
+    config, prov = resolve_config(root)
+    if PR_MODE_KEY not in config:
+        return PR_MODES[0]
+    raw = config[PR_MODE_KEY]
+    if raw not in PR_MODES:
+        raise ConfigError(
+            "`%s` must be one of %s (from %s), got %r"
+            % (PR_MODE_KEY, " or ".join(PR_MODES),
+               prov.get(PR_MODE_KEY, "default"), raw))
+    return raw
+
+
+# ---------------------------------------------------------------------------
 # Workspace discovery (shipd-workspace workspace-root-discovery,
 # workspace-registry-loading)
 # ---------------------------------------------------------------------------
