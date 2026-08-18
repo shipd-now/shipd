@@ -138,11 +138,14 @@ no reflowing, no extra spaces inside the comment, no sign-off below it.
   marker above out of the review text — this body, or the report the CLI
   reviewer wrote — and posts it as the `semantic-review` commit status on the
   reviewed head commit: a `fix-required` marker posts
-  `failure` and blocks the merge, a `ship-it` marker posts `success`. The
-  bridging is **fail-open** — a review body carrying no marker posts `success`
-  with a description saying no verdict was parsed — so a missing marker never
-  bricks a merge, but it also throws away this review's judgement. Emit the
-  marker.
+  `failure` and blocks the merge, a `ship-it` marker posts `success`. A review
+  body carrying **no** marker follows the repository's `SHIPD_GATE_FAIL_OPEN`
+  Actions variable: unset — the default — it is **fail-open**, posting
+  `success` with a description saying no verdict was parsed, so a missing
+  marker never bricks a merge but throws this review's judgement away; set to
+  `false`, nothing is posted at all and the required check stays `pending`
+  until a human clears it. Either way the marker is what makes this review
+  count. Emit it.
 - **Advisory where no gate workflow is installed.** Without that workflow the
   review posts as an ordinary Copilot review and blocks nothing on its own;
   whatever status check the repository requires remains the merge gate. Either
