@@ -676,6 +676,33 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual((level, name), ("fail", "config"))
         self.assertIn(path, detail)
 
+    def test_invalid_pr_mode_fails_carrying_the_resolver_error(self):
+        # The `config` check also validates `pr-mode` (shipd-cli
+        # doctor-pr-mode-check spec), reporting the accessor's own error line.
+        root, path = self.repo_with_config("badmode", {"pr-mode": "always"})
+        level, name, detail = self.config_check(root)
+        self.assertEqual((level, name), ("fail", "config"))
+        self.assertIn("pr-mode", detail)
+        self.assertIn("auto", detail)
+        self.assertIn("draft", detail)
+        self.assertIn(path, detail)
+
+    def test_declared_draft_pr_mode_is_ok_with_the_usual_detail(self):
+        root, _path = self.repo_with_config("draftmode", {"pr-mode": "draft"})
+        os.makedirs(os.path.join(root, ".shipd", "planned"))
+        level, name, detail = self.config_check(root)
+        self.assertEqual((level, name), ("ok", "config"))
+        self.assertIn("content directory", detail)
+        self.assertIn(".shipd", detail)
+
+    def test_undeclared_pr_mode_leaves_the_check_unchanged(self):
+        root = os.path.join(self.tmp, "nomode")
+        os.makedirs(os.path.join(root, ".shipd", "planned"))
+        self.assertEqual(
+            self.config_check(root),
+            ("ok", "config",
+             "content directory %s" % os.path.join(root, ".shipd")))
+
     # -- pipeline ----------------------------------------------------------
 
     def pipeline_check(self, root, **kwargs):

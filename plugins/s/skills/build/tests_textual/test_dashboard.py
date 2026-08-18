@@ -2203,6 +2203,18 @@ class TaskCardRowTest(unittest.TestCase):
             card._card_text(),
             "[$text-error]†[/] sl[$fg-muted] · stale (died 8h ago)[/]")
 
+    def test_drafted_row_renders_the_info_glyph_in_the_accent_tier(self):
+        # A drafted member (delivery-dashboard board-drafted-member spec) is
+        # informational, not parked: its `◇` takes the accent tier, never the
+        # error colour, even though its change is already archived.
+        card = _bare_card("high", state="archived",
+                          entry={"state": "drafted"})
+        self.assertEqual(card._card_text(),
+                         "[$accent]◇[/] sl[$fg-muted] · drafted[/]")
+        self.assertNotIn("[$text-error]", card._card_text())
+        # The modal's matching state chip has an accent-tier class to wear.
+        self.assertIn(".badge-accent", dashboard.BoardApp.CSS)
+
     def test_live_build_row_appends_the_build_stage_in_muted_tier(self):
         card = _bare_card("low", state="archived")
         card.member["build_heartbeat"] = {

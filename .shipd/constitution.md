@@ -33,9 +33,13 @@ These are this repository's non-negotiable engineering rules.
 
 ## Workflow discipline
 
-- **Never commit or push to `main` directly.** Every change ships as an
-  auto-merging PR from its `change/<name>` branch, gated by the `ci` status
-  check — no exceptions, including the orchestrator's own merges.
+- **Never commit or push to `main` directly.** Every change ships as a PR from
+  its `change/<name>` branch, gated by the `ci` status check — no exceptions,
+  including the orchestrator's own merges. That PR auto-merges here: the engine
+  carves out a workspace-level `pr-mode: draft` (shipd-config pr-mode-key) under
+  which a change stops at an open draft PR for a human to merge, but **this repo
+  declares no `pr-mode`**, so its effective mode is `auto` and every change of
+  its own ships auto-merging.
 - **One change = one worktree = one branch = one PR.** A change is developed in
   `.worktrees/<name>` on branch `change/<name>`, and its whole lifecycle
   (plan → build → merge/archive) runs there so artifacts, implementation, and

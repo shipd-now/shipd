@@ -344,6 +344,23 @@ class MemberSignalTest(unittest.TestCase):
                                   "label": "stale (died 8h ago)",
                                   "reason": None})
 
+    def test_drafted_state_yields_the_informational_glyph(self):
+        # A drafted member (delivery-dashboard board-drafted-member spec) is
+        # not parked — its signal is informational, carrying the entry's
+        # reason when present.
+        member = _member("m")
+        signal = self.dashboard.member_signal(member, {"state": "drafted"})
+        self.assertEqual(signal, {"kind": "drafted", "glyph": "◇",
+                                  "label": "drafted", "reason": None})
+        with_reason = self.dashboard.member_signal(
+            member, {"state": "drafted", "reason": "awaiting review"})
+        self.assertEqual(with_reason["reason"], "awaiting review")
+
+    def test_drafted_member_state_yields_the_signal_without_an_entry(self):
+        member = dict(_member("m"), state="drafted")
+        self.assertEqual(self.dashboard.member_signal(member, {})["kind"],
+                         "drafted")
+
     def test_driving_ready_and_shipped_members_yield_no_signal(self):
         member = _member("m")
         self.assertIsNone(self.dashboard.member_signal(
@@ -529,6 +546,40 @@ class LaneLiveBuildTest(unittest.TestCase):
         member = self._member_with_build("review", 1000000.0)
         board = _board(standalone=[member])
         contents = self.dashboard._lane_contents(board, now=1000000.0)
+        self.assertEqual(self._slugs(contents, "review"), ["a"])
+        self.assertEqual(contents["shipped"], [])
+
+
+class LaneDraftedTest(unittest.TestCase):
+    """A member whose roster entry state is ``drafted`` (delivery-dashboard
+    board-drafted-member spec) awaits human review and merge, so it lands in
+    ``review`` — even though its change is archived and its worktree-derived
+    board state therefore reads ``archived``, which would otherwise carry it
+    into ``shipped``."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dashboard = _load_dashboard_stdlib()
+
+    def _slugs(self, contents, lane):
+        return [member["slug"] for _slug, _status, member, _entry
+                in contents[lane]]
+
+    def test_drafted_entry_over_an_archived_member_lands_in_review(self):
+        member = dict(_member("a"), state="archived")
+        self.assertEqual(
+            self.dashboard._member_column(member, {"state": "drafted"}),
+            "review")
+
+    def test_drafted_member_is_mounted_in_the_review_lane(self):
+        member = dict(_member("a"), state="archived")
+        hb = {"state": "finished", "host": socket.gethostname(),
+              "pid": os.getpid(), "updated_at": 1000.0,
+              "roster": [{"slug": "a", "state": "drafted"}]}
+        epic = {"slug": "ep", "status": "active", "heartbeat": hb,
+                "members": [member]}
+        contents = self.dashboard._lane_contents(_board(epics=[epic]),
+                                                 now=1000.0)
         self.assertEqual(self._slugs(contents, "review"), ["a"])
         self.assertEqual(contents["shipped"], [])
 

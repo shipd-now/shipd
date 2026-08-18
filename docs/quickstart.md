@@ -52,7 +52,9 @@ Nothing is installed or edited by this verb.
 
 `pydantic` is what unlocks the cheap-delivery opt-in: with it installed, putting
 `{"autonomous-pipeline": "eco"}` in `.shipd-config.json` runs deliveries on the
-eco preset.
+eco preset. Separately, declaring `{"pr-mode": "draft"}` at a workspace root
+makes deliveries beneath it stop at a draft PR for human review instead of
+auto-merging.
 
 ## 3. Take the guided tour: `/s:onboard`
 

@@ -758,7 +758,11 @@ def _member_column(member, entry, dead=False, now=None):
     ``now``) is placed by that heartbeat's stage instead — ``review`` while
     the stage is ``review``, else ``building`` — overriding the state mapping
     below, since an interactive build archives its change before the review
-    stage runs (delivery-dashboard board-live-build-lane spec); a
+    stage runs (delivery-dashboard board-live-build-lane spec); a ``drafted``
+    member in ``review``, where its open draft PR awaits a human
+    (delivery-dashboard board-drafted-member spec) — checked *before* the
+    archived branch, since a drafted member's change is archived while its PR
+    stays open and the archived mapping would otherwise call it shipped; a
     shipped/archived member in ``shipped``; a parked (needs-human/rejected)
     member stays in ``building`` where it needs attention; otherwise its
     lifecycle state maps straight through. A stale (aged-out or finished)
@@ -775,6 +779,8 @@ def _member_column(member, entry, dead=False, now=None):
     build_hb = member.get("build_heartbeat")
     if _build_is_live(build_hb, now):
         return "review" if build_hb.get("stage") == "review" else "building"
+    if live == "drafted":
+        return "review"
     if live == "shipped" or state == "archived":
         return "shipped"
     if live in ("needs-human", "rejected") or state == "rejected":
@@ -787,17 +793,21 @@ def _member_column(member, entry, dead=False, now=None):
 
 
 def member_signal(member, entry):
-    """The parked-signal predicate (delivery-dashboard board-parked-member-
-    signal spec): ``{"kind", "glyph", "label", "reason"}`` for a member the
-    delivery pipeline could not carry forward, or ``None`` for one
-    progressing normally. Checked in this order: a roster entry dead-run
-    detection marked ``stale`` (``_lane_contents`` overwrites its ``stage``
-    with the death age via :func:`_age`) yields ``†``/``stale (<stage>)``;
-    otherwise the entry's live ``state`` (falling back to the member's own
-    worktree-derived ``state`` when the entry carries none) of ``rejected``
-    yields ``⚠``/``rejected`` and ``needs-human`` yields ``⛔``/``needs-human``.
-    The entry's ``reason`` (when present) rides along unmodified. Pure and
-    dependency-free — no ``textual`` — so it is unit-testable without the
+    """The member-signal predicate (delivery-dashboard board-parked-member-
+    signal and board-drafted-member specs): ``{"kind", "glyph", "label",
+    "reason"}`` for a member the delivery pipeline could not carry forward or
+    left as an open draft PR, or ``None`` for one progressing normally.
+    Checked in this order: a roster entry dead-run detection marked ``stale``
+    (``_lane_contents`` overwrites its ``stage`` with the death age via
+    :func:`_age`) yields ``†``/``stale (<stage>)``; otherwise the entry's live
+    ``state`` (falling back to the member's own worktree-derived ``state``
+    when the entry carries none) of ``rejected`` yields ``⚠``/``rejected``,
+    ``needs-human`` yields ``⛔``/``needs-human``, and ``drafted`` yields
+    ``◇``/``drafted``. The first three are parked kinds the card renders in
+    the error tier; ``drafted`` is *informational* — the member is not parked,
+    only awaiting a human's merge — and the card renders it in the accent
+    tier. The entry's ``reason`` (when present) rides along unmodified. Pure
+    and dependency-free — no ``textual`` — so it is unit-testable without the
     TUI (design: a single predicate feeds both the card and the modal)."""
     entry = entry or {}
     reason = entry.get("reason")
@@ -810,6 +820,9 @@ def member_signal(member, entry):
                 "reason": reason}
     if state == "needs-human":
         return {"kind": "needs-human", "glyph": "⛔", "label": "needs-human",
+                "reason": reason}
+    if state == "drafted":
+        return {"kind": "drafted", "glyph": "◇", "label": "drafted",
                 "reason": reason}
     return None
 
@@ -1809,11 +1822,12 @@ class MemberDetailScreen(ModalScreen):
             meta.append("session: %s" % session_id)
         if actions:
             meta.append("actions: %s" % ", ".join(actions))
-        # A parked member (delivery-dashboard board-parked-member-signal spec)
-        # swaps the muted live-stage chip for an honest error-tier state chip
-        # — the stage is a stale leftover, not a live signal — and, when its
-        # entry carries a reason, surfaces it in a tinted callout above the
-        # artifact tabs.
+        # A signalling member (delivery-dashboard board-parked-member-signal
+        # and board-drafted-member specs) swaps the muted live-stage chip for
+        # an honest state chip — the stage is a stale leftover, not a live
+        # signal — error-tier for a parked kind, accent-tier for the
+        # informational `drafted` kind; and, when its entry carries a reason,
+        # surfaces it in a tinted callout above the artifact tabs.
         signal = member_signal(m, entry)
         # A member carried by a live interactive build heartbeat surfaces that
         # heartbeat's stage instead, so the chip matches the lane
@@ -1834,17 +1848,19 @@ class MemberDetailScreen(ModalScreen):
             # member carries a rating (an unrated member's row starts at the
             # lane chip, no `?` placeholder), a lane chip (via `_member_column`,
             # so it never disagrees with the board), a muted live-stage chip
-            # while actually being driven (never for a parked member whose
+            # while actually being driven (never for a signalling member whose
             # stage is a stale leftover) or, failing that, from a live build
-            # heartbeat, an error-tier state chip for a parked member, and the
-            # muted epic ref.
+            # heartbeat, a state chip for a signalling member (error-tier when
+            # parked, accent-tier when drafted), and the muted epic ref.
             with Horizontal(classes="modal-badge-row"):
                 if m.get("risk"):
                     yield _risk_badge(m.get("risk"))
                 yield _lane_badge(_member_column(m, entry))
                 if signal is not None:
+                    tier = "badge-accent" if signal["kind"] == "drafted" \
+                        else "badge-error"
                     yield Static(signal["label"],
-                                 classes="modal-badge badge-error",
+                                 classes="modal-badge %s" % tier,
                                  markup=False)
                 elif stage and entry.get("state") == "driving":
                     attempt = entry.get("attempt")
@@ -2519,14 +2535,18 @@ class TaskCard(Static):
         # board-tui / board-shipd-theme spec).
         if _member_column(self.member, self.entry) == "shipped":
             return "[$fg-subtle]✓[/] %s" % slug
-        # A parked member (delivery-dashboard board-parked-member-signal spec)
-        # renders its error-tier glyph and muted state label in place of the
-        # risk glyph and live stage, so it is never mistaken for an idle or
-        # actively-driving card.
+        # A signalling member (delivery-dashboard board-parked-member-signal
+        # and board-drafted-member specs) renders its glyph and muted state
+        # label in place of the risk glyph and live stage, so it is never
+        # mistaken for an idle or actively-driving card. A parked kind takes
+        # the error tier; the informational `drafted` kind takes the accent
+        # tier — its member is awaiting a merge, not stuck.
         signal = member_signal(self.member, self.entry)
         if signal is not None:
-            return "[$text-error]%s[/] %s[$fg-muted] · %s[/]" % (
-                signal["glyph"], slug, signal["label"])
+            glyph_var = "$accent" if signal["kind"] == "drafted" \
+                else "$text-error"
+            return "[%s]%s[/] %s[$fg-muted] · %s[/]" % (
+                glyph_var, signal["glyph"], slug, signal["label"])
         # A risk-coloured ● glyph precedes the slug; a missing or unknown risk
         # renders the glyph in the muted foreground tier.
         risk = (self.member.get("risk") or "").lower()
@@ -3558,6 +3578,10 @@ class BoardApp(App):
     .badge-error {
         background: $error 25%;
         color: $text-error;
+    }
+    .badge-accent {
+        background: $accent 25%;
+        color: $accent;
     }
     .modal-meta-lines {
         height: auto;

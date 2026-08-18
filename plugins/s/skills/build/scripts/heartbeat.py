@@ -35,8 +35,13 @@ def _noop(*_args, **_kwargs):
 
 
 # Map a MemberResult outcome to its live roster state (hyphenated for display).
+# Every terminal outcome is mapped first-class — `drafted` (draft mode's open
+# PR, shipd-config pr-mode-key) included, so the board's drafted lane/signal
+# handling (delivery-dashboard board-drafted-member spec) reads a state this
+# map names rather than an unmapped fall-through.
 _OUTCOME_STATE = {
     "shipped": "shipped",
+    "drafted": "drafted",
     "rejected": "rejected",
     "needs_human": "needs-human",
 }
