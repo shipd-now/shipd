@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
   "name": "s",
-  "version": "0.6.143",
+  "version": "0.6.144",
   "description": "Shipd commands and skills. Everything here is invoked under the /s: namespace.",
   "author": {
     "name": "Mikkel Bergmann",
