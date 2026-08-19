@@ -8,13 +8,15 @@ a versioned plugin cache snapshot alike. Delegation is process replacement
 (:func:`os.execv`), so the delegate's stdout, stderr, interactivity, and exit
 code are this binary's own — nothing is reimplemented or reformatted here.
 
-Only read/inspect verbs are exposed, with three deliberate exceptions, each
+Only read/inspect verbs are exposed, with four deliberate exceptions, each
 writing user-domain files and never a spec artifact, and each only under an
 explicit word: ``statusline install`` writes the statusline registration into
 the user's own Claude Code settings file, ``copilot add`` / ``copilot remove``
 maintain the shipd Copilot code-review skill's four files inside a target
-repository, and ``vendor add`` / ``vendor remove`` maintain a vendored per-repo
-shipd install there. The mutating verbs over the spec library (``set-status``,
+repository, ``vendor add`` / ``vendor remove`` maintain a vendored per-repo
+shipd install there, and ``harness add`` / ``harness remove`` maintain the
+generated ``/s:`` command files inside a repository or the user's own harness
+directories. The mutating verbs over the spec library (``set-status``,
 ``merge``, ``emit``, ``autopilot``, ``worktree remove``) stay behind their
 guarded scripts and skills.
 
@@ -54,8 +56,11 @@ ss = None
 
 # The registry the in-binary ``harness`` verb reads, imported on demand by
 # :func:`_load_registry` for the same reason and kept separate from the pair
-# above so neither path pays for the other's import.
+# above so neither path pays for the other's import. ``hg`` is the generation
+# engine behind that verb's writing actions, imported only when one runs, so
+# the read actions never load the body templates' renderer.
 hr = None
+hg = None
 
 # The curated verb table: verb -> (engine script, leading arguments). Trailing
 # arguments from the command line are appended verbatim, so ``--root``, slugs,
@@ -99,7 +104,9 @@ verbs:
   statusline [install]       report or register the shipd statusline
   copilot [add|remove]       maintain the Copilot code-review skill in a repo
   vendor [add|remove]        maintain a vendored per-repo shipd install
-  harness [list|show <id>]   the harness-adapter registry
+  harness [list|show|add|remove|status]
+                             the harness registry, and the generated /s:
+                             command files in a repo or in your home
 
 options:
   -h, --help                 print this banner
@@ -167,6 +174,17 @@ def _load_registry():
         sys.path.insert(0, str(SCRIPTS))
     import harness_registry
     hr = harness_registry
+
+
+def _load_generate():
+    """Import ``harness_generate`` into the module global ``hg``. Deferred to
+    the ``harness`` verb's writing actions, so ``list`` and ``show`` stay as
+    cheap — and as free of the body templates — as they were."""
+    global hg
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    import harness_generate
+    hg = harness_generate
 
 
 def _content_dir(root):
@@ -1765,38 +1783,88 @@ def _harness_field(value):
     return value
 
 
-def cmd_harness(args):
-    """Report the harness-adapter registry: every entry, or one in full.
+def _harness_selection(ids):
+    """``(entries, reason)`` — the registry entries ``ids`` names, or a single
+    reason naming the first unknown one."""
+    entries = []
+    for harness_id in ids:
+        entry = hr.get(harness_id)
+        if entry is None:
+            return None, ("unknown harness '%s' — `shipd harness` lists them"
+                          % harness_id)
+        entries.append(entry)
+    return entries, None
 
-    Read-only in the strongest sense — the registry is data declared in the
-    engine itself, so this verb opens no file, consults no repository, and
-    writes nothing anywhere.
+
+def _harness_status_report(root, mode, report):
+    """The ``status`` action's text rendering. Nothing here writes."""
+    where = root if mode == hg.REPO_MODE else "your home directory"
+    print("harness commands in %s" % where)
+    width = max(len(record["state"]) for record in report.values())
+    for harness_id, record in report.items():
+        # A harness with no surface here has nothing to name but the reason.
+        detail = record["detail"]
+        if record["surface"] is not None:
+            detail = "%s (%s)" % (record["surface"], detail)
+        print("  %-*s %s — %s" % (width, record["state"], harness_id, detail))
+    return 0
+
+
+def cmd_harness(args):
+    """Report the harness-adapter registry, or maintain the generated ``/s:``
+    command files it describes.
+
+    ``list``, ``show`` and ``status`` are read-only; only the explicit words
+    ``add`` and ``remove`` write, and only inside paths the registry itself
+    names. Nothing here touches the network.
     """
     parser = argparse.ArgumentParser(
         prog="shipd harness",
         description="The harness-adapter registry: the coding harnesses shipd "
-                    "generates commands for, and how each wants them.")
+                    "generates commands for, how each wants them, and the "
+                    "generated files themselves.")
     parser.add_argument(
-        "action", nargs="?", choices=["list", "show"], default="list",
+        "action", nargs="?",
+        choices=["list", "show", "add", "remove", "status"], default="list",
         help="list: one line per harness (the default); "
-             "show: every field of one harness")
-    parser.add_argument("id", nargs="?",
-                        help="the harness id `show` reports on")
+             "show: every field of one harness; "
+             "add/remove: maintain the generated command files; "
+             "status: report what is installed")
+    parser.add_argument(
+        "ids", nargs="*",
+        help="the harness ids to act on (`show` takes exactly one; "
+             "`status` defaults to all)")
+    parser.add_argument("--all", action="store_true", dest="all",
+                        help="act on every harness in the registry")
+    parser.add_argument("--root", default=os.getcwd(),
+                        help="repository to maintain (default: cwd)")
+    parser.add_argument("--user", action="store_true",
+                        help="act on the user-global surfaces instead of the "
+                             "repository's")
+    parser.add_argument("--force", action="store_true",
+                        help="act on a target file this install does not own")
     parser.add_argument("--json", action="store_true", dest="json",
                         help="emit one machine-readable JSON document on "
                              "stdout instead of the text report")
     opts = parser.parse_args(args)
     _load_registry()
 
+    if opts.action in ("add", "remove", "status"):
+        return _cmd_harness_files(opts)
+
     if opts.action == "show":
-        if not opts.id:
+        if not opts.ids:
             _err("shipd harness show needs a harness id — "
                  "`shipd harness` lists them")
             return 2
-        entry = hr.get(opts.id)
+        if len(opts.ids) > 1:
+            _err("shipd harness show takes one harness id, got %d"
+                 % len(opts.ids))
+            return 2
+        entry = hr.get(opts.ids[0])
         if entry is None:
             _err("unknown harness '%s' — `shipd harness` lists them"
-                 % opts.id)
+                 % opts.ids[0])
             return 1
         if opts.json:
             print(json.dumps(entry))
@@ -1806,9 +1874,9 @@ def cmd_harness(args):
             print("%-*s  %s" % (width, field, _harness_field(entry[field])))
         return 0
 
-    if opts.id:
+    if opts.ids:
         _err("shipd harness list takes no harness id — did you mean "
-             "`shipd harness show %s`?" % opts.id)
+             "`shipd harness show %s`?" % opts.ids[0])
         return 2
     if opts.json:
         print(json.dumps(list(hr.HARNESSES)))
@@ -1823,6 +1891,57 @@ def cmd_harness(args):
               % (id_width, entry["id"], name_width, entry["name"],
                  dialect_width, entry["dialect"], count,
                  "" if count == 1 else "s"))
+    return 0
+
+
+def _cmd_harness_files(opts):
+    """The ``add``/``remove``/``status`` actions over the generated files."""
+    _load_generate()
+    _load_engine()
+    root = os.path.abspath(opts.root)
+    mode = hg.USER_MODE if opts.user else hg.REPO_MODE
+
+    if opts.ids and opts.all:
+        _err("shipd harness %s takes harness ids or --all, not both"
+             % opts.action)
+        return 2
+    if opts.action in ("add", "remove") and not opts.ids and not opts.all:
+        _err("shipd harness %s needs one or more harness ids or --all — "
+             "`shipd harness` lists them" % opts.action)
+        return 2
+
+    if opts.ids:
+        entries, reason = _harness_selection(opts.ids)
+        if reason is not None:
+            _err(reason)
+            return 1
+    else:
+        entries = list(hr.HARNESSES)
+
+    try:
+        if opts.action == "status":
+            report = hg.status(entries, mode, root)
+            if opts.json:
+                print(json.dumps(report))
+                return 0
+            return _harness_status_report(root, mode, report)
+        action = hg.add if opts.action == "add" else hg.remove
+        lines, reason = action(entries, mode, root, force=opts.force)
+    except sc.ConfigError as exc:
+        _err("%s" % exc)
+        return 1
+    except ValueError as exc:
+        _err("cannot render the harness command files: %s" % exc)
+        return 1
+    except OSError as exc:
+        _err("cannot maintain the harness command files: %s" % exc)
+        return 1
+
+    if reason is not None:
+        _err(reason)
+        return 1
+    for line in lines:
+        print(line)
     return 0
 
 
