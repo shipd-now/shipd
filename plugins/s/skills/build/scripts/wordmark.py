@@ -64,11 +64,6 @@ def column_rgb(x):
     return tuple(int(round(a + (b - a) * t)) for a, b in zip(START_RGB, END_RGB))
 
 
-def _white(x):
-    """A ``color_for`` that paints every column white (the reveal phase)."""
-    return WHITE_RGB
-
-
 def frame_lines(color_for):
     """Return the art as decorated lines. ``color_for(x)`` gives column ``x``'s
     RGB triple, or ``None`` for a column that is not revealed yet — a hidden
