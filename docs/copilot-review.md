@@ -60,6 +60,17 @@ working gate and do not rely on the Copilot verdict.
 
 ## 1. Install the files
 
+**In a Claude Code session, `/s:copilot` does this whole guide's setup for
+you** — it preflights the prerequisites, runs `shipd copilot add`, offers to
+commit and push the four files, and then takes one batched consent round over
+the repository settings below (requiring the `semantic-review` check, enabling
+auto-merge, and the optional [strictness knob](#strictness-shipd_gate_fail_open)),
+relays [the reviewer token](#the-reviewer-token) recipe as a hand-off, and
+closes by verifying with `shipd doctor`. It changes nothing you did not
+approve. Everything from here on is the manual reference for the same steps —
+read it when you are setting the gate up by hand, or to understand what the
+skill just did.
+
 From the repository you want reviewed:
 
 ```bash

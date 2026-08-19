@@ -35,6 +35,7 @@ class FakeGh:
                  pr_url="https://github.com/o/r/pull/7",
                  default_branch="main", contexts=("ci",),
                  conversation_resolution=False, strict=True,
+                 protection_get_error=None,
                  files=None, existing_comments=None, review_fail_times=0,
                  viewer="gate-bot", review_threads=None, commits=None):
         self.head_sha = head_sha
@@ -45,6 +46,11 @@ class FakeGh:
         self.contexts = tuple(contexts)
         self.conversation_resolution = conversation_resolution
         self.strict = strict
+        # When set, a ``(rc, stdout, stderr)`` triple the protection GET answers
+        # with instead of a protection object — how an unprotected branch (404)
+        # or a denied read (403) looks at this seam. A successful PUT clears it:
+        # the branch is protected from then on.
+        self.protection_get_error = protection_get_error
         self.files = files if files is not None else []
         self.calls = []                 # list of (args, input)
         self.posted_status = None       # last statuses payload
@@ -162,6 +168,8 @@ class FakeGh:
 
         if path.endswith("/protection"):
             if method == "GET":
+                if self.protection_get_error is not None:
+                    return self.protection_get_error
                 # A nested GET-shaped protection object, including a field the
                 # verb must preserve untouched across the write.
                 return 0, json.dumps({
@@ -179,6 +187,7 @@ class FakeGh:
                 self.strict = bool(rsc.get("strict", self.strict))
                 self.conversation_resolution = bool(
                     payload.get("required_conversation_resolution"))
+                self.protection_get_error = None
                 return 0, json.dumps(payload), ""
 
         if path.endswith("/reviews"):
@@ -546,6 +555,72 @@ class ProtectTest(unittest.TestCase):
         text = "\n".join(lines)
         self.assertIn("semantic-review", text)
         self.assertIn("conversation resolution", text)
+
+
+# How the two protection-read failures look at the ``gh`` seam: an unprotected
+# branch answers the read with a 404 naming itself, while any other denial is a
+# genuine read failure the verb must not paper over.
+NOT_PROTECTED = (1, "", "gh: Branch not protected (HTTP 404)\n")
+READ_DENIED = (1, "", "gh: Must have admin rights to Repository. (HTTP 403)\n")
+
+
+class ProtectUnprotectedBranchTest(unittest.TestCase):
+    def test_creates_minimal_protection_on_a_404(self):
+        gh = FakeGh(protection_get_error=NOT_PROTECTED)
+        result = review_gate.protect(gh)
+        self.assertTrue(result["changed"])
+        self.assertEqual(result["contexts"], ["semantic-review"])
+        self.assertTrue(result["conversation_resolution"])
+        put = gh.protect_put
+        self.assertEqual(put["required_status_checks"],
+                         {"strict": False, "contexts": ["semantic-review"]})
+        self.assertTrue(put["required_conversation_resolution"])
+        # Every other protection field is null (or a bare false), never carried
+        # over from a protection object that does not exist.
+        self.assertFalse(put["enforce_admins"])
+        self.assertIsNone(put["required_pull_request_reviews"])
+        self.assertIsNone(put["restrictions"])
+        for field in ("required_linear_history", "allow_force_pushes",
+                      "allow_deletions", "block_creations",
+                      "required_signatures", "lock_branch",
+                      "allow_fork_syncing"):
+            self.assertNotIn(field, put)
+
+    def test_creation_prints_the_resulting_state(self):
+        gh = FakeGh(protection_get_error=NOT_PROTECTED)
+        lines = []
+        review_gate.protect(gh, out=lines.append)
+        text = "\n".join(lines)
+        self.assertIn("semantic-review", text)
+        self.assertIn("conversation resolution required", text)
+
+    def test_second_run_on_the_now_protected_branch_is_a_no_op(self):
+        gh = FakeGh(protection_get_error=NOT_PROTECTED)
+        review_gate.protect(gh)
+        gh.protect_put = None
+        result = review_gate.protect(gh)
+        self.assertFalse(result["changed"])
+        self.assertIsNone(gh.protect_put)
+
+    def test_remove_on_an_unprotected_branch_writes_nothing(self):
+        gh = FakeGh(protection_get_error=NOT_PROTECTED)
+        result = review_gate.protect(gh, remove=True)
+        self.assertFalse(result["changed"])
+        self.assertIsNone(gh.protect_put)
+
+    def test_other_read_failures_still_fail_without_writing(self):
+        gh = FakeGh(protection_get_error=READ_DENIED)
+        with self.assertRaises(review_gate.ReviewGateError) as caught:
+            review_gate.protect(gh)
+        self.assertIn("HTTP 403", str(caught.exception))
+        self.assertIsNone(gh.protect_put)
+
+    def test_existing_protection_keeps_its_strict_setting(self):
+        # The creation default (strict false) must not leak onto a branch that
+        # is already protected — that path preserves what it read.
+        gh = FakeGh(contexts=("ci",), strict=True)
+        review_gate.protect(gh)
+        self.assertTrue(gh.protect_put["required_status_checks"]["strict"])
 
 
 def _thread(tid, *, resolved=False, author="gate-bot", created="2024-01-01T00:00:00Z",
