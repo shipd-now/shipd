@@ -39,6 +39,15 @@ import harness_registry as hr  # noqa: E402
 # never depends on where the suite happens to run.
 REFS = ".shipd/harness/references"
 
+# The authored partials behind the `conventions-file` dialect, read from the
+# shipped tree so the tests compare the render against its actual source.
+BODIES = os.path.join(PLUGIN_ROOT, "harness", "bodies")
+
+
+def partial(name):
+    with open(os.path.join(BODIES, "%s.md" % name), encoding="utf-8") as fh:
+        return fh.read()
+
 _FIELD_RE = re.compile(r"^(?P<field>[A-Za-z0-9_-]+):(?: (?P<value>.*))?$")
 
 # A plain (unquoted) YAML scalar this generator is willing to emit: no colon,
@@ -216,6 +225,61 @@ class MarkdownHeadersDialectTest(unittest.TestCase):
         self.assertTrue(text.endswith(expected), text[-200:])
 
 
+class ConventionsDialectTest(unittest.TestCase):
+    """The single-file dialect: one whole-harness document, not one file per
+    command, so the command set arrives as an index rather than as files."""
+
+    def render(self):
+        return hg.render(hr.get("aider"))
+
+    def test_the_marker_leads_the_file(self):
+        self.assertTrue(self.render().startswith(hg.MARKER + "\n"),
+                        self.render()[:120])
+
+    def test_no_placeholder_survives(self):
+        text = self.render()
+        for placeholder in ("{preamble}", "{command_index}", "{refs}"):
+            with self.subTest(placeholder=placeholder):
+                self.assertNotIn(placeholder, text)
+
+    def test_every_command_is_indexed_with_its_description(self):
+        text = self.render()
+        for command in hb.commands():
+            with self.subTest(command=command):
+                self.assertIn("- shipd-%s — %s"
+                              % (command, hb.description(command)), text)
+
+    def test_the_preamble_is_spliced_in_whole(self):
+        text = self.render()
+        self.assertIn(partial("_preamble").strip(), text)
+        # The preamble's engine-scripts snippet is what makes the file usable.
+        self.assertIn(".claude/plugins/cache/shipd/s", text)
+
+    def test_the_authored_prose_survives(self):
+        text = self.render()
+        # The two flat substitutions are the only edits: the template's own
+        # opening line and its `.aider.conf.yml` wiring note come through.
+        source = partial("_conventions")
+        self.assertIn(source.splitlines()[0], text)
+        self.assertIn("read: shipd-conventions.md", text)
+
+    def test_no_frontmatter_and_no_command_heading(self):
+        text = self.render()
+        self.assertIsNone(frontmatter(text))
+        self.assertNotIn("# shipd-plan\n", text)
+
+
+class RenderDialectRefusalTest(unittest.TestCase):
+    def test_a_dialect_with_no_renderer_is_refused(self):
+        # Every dialect the registry declares now renders; the refusal is the
+        # guard on adding a fourth without a renderer, so it is exercised
+        # against a fabricated entry rather than a shipped one.
+        entry = dict(hr.get("cline"), id="invented", dialect="toml-preamble")
+        with self.assertRaises(ValueError) as caught:
+            hg.render(entry, "plan", refs=REFS)
+        self.assertIn("toml-preamble", str(caught.exception))
+
+
 class SurfaceTest(unittest.TestCase):
     def test_the_extension_follows_the_repo_pattern(self):
         cases = {
@@ -230,9 +294,12 @@ class SurfaceTest(unittest.TestCase):
                                  os.path.normpath(expected))
 
     def test_a_harness_without_a_repo_pattern_has_no_repo_surface(self):
-        for harness_id in ("codex", "aider"):
-            with self.subTest(harness=harness_id):
-                self.assertIsNone(hg.repo_relpath(hr.get(harness_id), "plan"))
+        self.assertIsNone(hg.repo_relpath(hr.get("codex"), "plan"))
+
+    def test_the_conventions_surface_is_one_whole_harness_file(self):
+        entry = hr.get("aider")
+        self.assertEqual(hg.command_paths(entry, hg.REPO_MODE, "/tmp/root"),
+                         ["/tmp/root/shipd-conventions.md"])
 
     def test_the_user_basename_follows_the_repo_pattern_when_there_is_one(self):
         self.assertEqual(
@@ -253,15 +320,6 @@ class SurfaceTest(unittest.TestCase):
         for harness_id in ("github-copilot", "cline", "aider"):
             with self.subTest(harness=harness_id):
                 self.assertIsNone(hg.user_path(hr.get(harness_id), "plan"))
-
-
-class RenderRefusalTest(unittest.TestCase):
-    def test_a_dialect_with_no_renderer_is_refused(self):
-        # aider's `conventions-file` never reaches rendering (it has no
-        # surface); the refusal is loud rather than a silent empty file.
-        with self.assertRaises(ValueError) as caught:
-            hg.render(hr.get("aider"), "plan", refs=REFS)
-        self.assertIn("conventions-file", str(caught.exception))
 
 
 # ---------------------------------------------------------------------------
@@ -374,14 +432,16 @@ class AddTest(ActionTestCase):
         self.assertIn("~/.shipd/harness/references/initiative.md", body)
 
     def test_a_modeless_harness_is_skipped_not_failed(self):
-        result = self.cli("add", "aider", "cursor", "--root", self.root)
+        # aider has a repo surface and no user-global one, so the skip path is
+        # user mode.
+        result = self.cli("add", "aider", "--user")
         self.assertEqual(result.returncode, 0, result.stderr)
-        written = self.tree(self.root)
-        self.assertIn(self.cursor_files()[0], written)
         skipped = [line for line in result.stdout.splitlines()
                    if "skipped" in line and "aider" in line]
         self.assertEqual(len(skipped), 1, result.stdout)
-        self.assertFalse(any("aider" in relative for relative in written))
+        self.assertEqual(self.tree(self.home), {})
+        self.assertEqual(self.tree(self.cwd), {})
+        self.assertEqual(self.tree(self.root), {})
 
     def test_all_covers_every_harness_with_a_surface(self):
         result = self.cli("add", "--all", "--root", self.root)
@@ -411,6 +471,71 @@ class AddTest(ActionTestCase):
         self.assertEqual(len(lines), 1, result.stderr)
         self.assertTrue(lines[0].startswith("Error: "), lines[0])
         self.assertEqual(self.tree(self.root), {})
+
+
+class ConventionsFileTest(ActionTestCase):
+    """aider's whole-harness surface: exactly one generated file, and the one
+    manual wiring step it still needs."""
+
+    TARGET = "shipd-conventions.md"
+
+    def test_add_writes_exactly_one_owned_file(self):
+        result = self.cli("add", "aider", "--root", self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        written = self.tree(self.root)
+        self.assertEqual(sorted(written), [self.TARGET])
+        self.assertIn(hg.MARKER, written[self.TARGET].decode("utf-8"))
+
+    def test_add_reports_the_conf_wiring_step(self):
+        result = self.cli("add", "aider", "--root", self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        pointer = [line for line in result.stdout.splitlines()
+                   if ".aider.conf.yml" in line]
+        self.assertEqual(len(pointer), 1, result.stdout)
+        self.assertIn("read: %s" % self.TARGET, pointer[0])
+
+    def test_re_running_add_changes_no_bytes(self):
+        self.assertEqual(self.cli("add", "aider", "--root",
+                                  self.root).returncode, 0)
+        before = self.tree(self.root)
+        self.assertEqual(self.cli("add", "aider", "--root",
+                                  self.root).returncode, 0)
+        self.assertEqual(self.tree(self.root), before)
+
+    def test_remove_deletes_the_owned_file_and_keeps_a_neighbor(self):
+        self.assertEqual(self.cli("add", "aider", "--root",
+                                  self.root).returncode, 0)
+        neighbor = os.path.join(self.root, "CONVENTIONS.md")
+        with open(neighbor, "w", encoding="utf-8") as handle:
+            handle.write("my own conventions\n")
+        result = self.cli("remove", "aider", "--root", self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sorted(self.tree(self.root)), ["CONVENTIONS.md"])
+
+    def test_a_foreign_conventions_file_is_refused_without_force(self):
+        path = os.path.join(self.root, self.TARGET)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("mine, not shipd's\n")
+        result = self.cli("add", "aider", "--root", self.root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(self.error_lines(result)), 1, result.stderr)
+        with open(path, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "mine, not shipd's\n")
+
+    def test_status_walks_absent_installed_stale(self):
+        def state():
+            result = self.cli("status", "aider", "--root", self.root, "--json")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads(result.stdout)["aider"]["state"]
+
+        self.assertEqual(state(), "absent")
+        self.assertEqual(self.cli("add", "aider", "--root",
+                                  self.root).returncode, 0)
+        self.assertEqual(state(), "installed")
+        with open(os.path.join(self.root, self.TARGET), "a",
+                  encoding="utf-8") as handle:
+            handle.write("\nedited by hand\n")
+        self.assertEqual(state(), "stale")
 
 
 class OwnershipTest(ActionTestCase):
@@ -518,7 +643,8 @@ class StatusTest(ActionTestCase):
         self.assertEqual(self.state_of("cursor"), "foreign")
 
     def test_status_reports_a_modeless_harness_as_skipped(self):
-        self.assertEqual(self.state_of("aider"), "skipped")
+        # codex is user-global only, so it has nothing to report in repo mode.
+        self.assertEqual(self.state_of("codex"), "skipped")
 
     def test_shared_references_do_not_make_another_harness_look_installed(self):
         # The refs root is shared, so cursor's install must leave every other

@@ -29,8 +29,9 @@ FEATURES = (
 #   id           kebab-case, unique, the name every verb and path uses
 #   name         display name, the vendor's own capitalization
 #   repo_pattern repo-relative generated-file path carrying a ``{command}``
-#                placeholder, or ``None`` for a harness with no per-repo
-#                command files
+#                placeholder — or, for the ``conventions-file`` dialect, a
+#                literal single-file path — or ``None`` for a harness with no
+#                per-repo files
 #   user_dir     the user-global command location, or ``None``
 #   dialect      how a generated file carries its metadata: ``yaml``
 #                frontmatter, ``markdown-headers``, or a single
@@ -82,7 +83,10 @@ HARNESSES = (
     {
         "id": "aider",
         "name": "Aider",
-        "repo_pattern": None,
+        # A literal path, not a per-command pattern: the `conventions-file`
+        # dialect writes one whole-harness file the user wires into
+        # `.aider.conf.yml` with `read:`.
+        "repo_pattern": "shipd-conventions.md",
         "user_dir": None,
         "dialect": "conventions-file",
         "frontmatter": (),
