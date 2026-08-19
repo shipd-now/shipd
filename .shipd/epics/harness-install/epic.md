@@ -174,10 +174,13 @@ independently testable under the stdlib-only test suite.
 
 | Tool | Calls | Output tokens |
 | --- | --- | --- |
-| Bash | 50 | 21.1k |
-| Write | 2 | 9.3k |
-| Edit | 9 | 5.5k |
-| (no tool) | 0 | 3.9k |
-| Agent | 2 | 789 |
-| Read | 7 | 767 |
-| **Total** | 70 | 41.4k |
+| Bash | 171 | 75.2k |
+| Edit | 35 | 23.6k |
+| Write | 7 | 23.2k |
+| (no tool) | 0 | 15.1k |
+| Read | 43 | 6.7k |
+| SendMessage | 4 | 3.8k |
+| Agent | 6 | 2.2k |
+| ToolSearch | 2 | 453 |
+| Skill | 1 | 159 |
+| **Total** | 269 | 150.4k |
