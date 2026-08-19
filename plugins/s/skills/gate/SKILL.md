@@ -1,17 +1,16 @@
 ---
-name: copilot
+name: gate
 description: >-
   Set up the shipd semantic review gate in a repository end to end: preflight
   the prerequisites, install the four managed files with `shipd copilot add`,
   commit and push them, then — on consent — require the `semantic-review`
   check, enable auto-merge, hand off the reviewer token, and verify with
-  `shipd doctor`. Use when asked to set up Copilot review, install the review
-  gate, block PRs on the semantic review, or turn on the merge gate. Trigger
-  phrases: "set up copilot review", "install the review gate", "copilot code
-  review", "block PRs on review", "/s:copilot".
+  `shipd doctor`. Use when asked to set up the review gate, block PRs on the
+  semantic review, or turn on the merge gate. Trigger phrases: "set up the
+  gate", "install the review gate", "block PRs on review", "/s:gate".
 ---
 
-# /s:copilot — install the review gate, with consent
+# /s:gate — install the review gate, with consent
 
 You are the **setup layer over the shipd Copilot review integration**. The
 pieces already exist — `shipd copilot add` writes the files, `review_gate.py
@@ -39,8 +38,8 @@ report a repository as gated when it only has half of the pair.
 
 **Announce the version first.** Read the running plugin version from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include
-`shipd:copilot v<version>` in your first user-visible status sentence (e.g.
-"shipd:copilot v0.6.144 — preflighting the repository"), so the user can see
+`shipd:gate v<version>` in your first user-visible status sentence (e.g.
+"shipd:gate v0.6.144 — preflighting the repository"), so the user can see
 which plugin snapshot the session is running.
 
 **One setup round per invocation.** Preflight → install → commit → consent →
@@ -128,8 +127,8 @@ protected against direct pushes — fall back to a branch and a pull request, an
 say that is what happened:
 
 ```bash
-git switch -c shipd-copilot-install
-git push -u origin shipd-copilot-install
+git switch -c shipd-gate-install
+git push -u origin shipd-gate-install
 gh pr create --fill
 ```
 

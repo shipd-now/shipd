@@ -1,5 +1,5 @@
 <!-- description: Set up the shipd semantic review gate in a repository, taking consent before anything changes on GitHub. -->
-# /s:copilot — install the review gate, with consent
+# /s:gate — install the review gate, with consent
 
 Run the existing engines in order: install the files, commit them, require the
 check, hand off the reviewer token, verify. Invent no mechanism, and change
@@ -34,7 +34,7 @@ Copilot reads skills and workflows from the pull request's **head branch**, so
 files left on disk are invisible to the review. Propose the commit and push of
 those four paths, and run it only on approval. If the push is rejected — the
 usual cause is a protected current branch — fall back to a
-`shipd-copilot-install` branch and a pull request (`gh pr create --fill`), say
+`shipd-gate-install` branch and a pull request (`gh pr create --fill`), say
 that is what happened, and report the pull request's full URL, never just its
 number. Do **not** arm auto-merge there: whether the repository allows it is the
 setting step 4 offers. Arm it (`gh pr merge --auto --squash --delete-branch`)

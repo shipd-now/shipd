@@ -60,7 +60,7 @@ working gate and do not rely on the Copilot verdict.
 
 ## 1. Install the files
 
-**In a Claude Code session, `/s:copilot` does this whole guide's setup for
+**In a Claude Code session, `/s:gate` does this whole guide's setup for
 you** — it preflights the prerequisites, runs `shipd copilot add`, offers to
 commit and push the four files, and then takes one batched consent round over
 the repository settings below (requiring the `semantic-review` check, enabling

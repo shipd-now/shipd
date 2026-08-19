@@ -104,7 +104,7 @@ configurable via `.shipd-config.json` (the `dir` key, default `.shipd`), resolve
 by layered upward search. The engine is the plugin's own scripts under
 `plugins/s/skills/build/scripts/`. Use `/s:plan` to
 spec work, `/s:build` to execute it, `/s:review` for a semantic review of
-local changes before pushing, `/s:copilot` to set up that review as a
+local changes before pushing, `/s:gate` to set up that review as a
 repository's merge gate, `/s:status` for lifecycle status,
 `/s:epic` to decompose features, `/s:research` to produce a cited research
 report an epic can link, `/s:workspace` to set up and inspect the
