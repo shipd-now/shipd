@@ -32,6 +32,13 @@ session, open `/plugin` → **Marketplaces** → `shipd` and toggle auto-update 
 and load in the next session, or right away after `/reload-plugins`; to update
 by hand at any time, run `claude plugin update s@shipd`.
 
+On a terminal the installer finishes by asking which harnesses you work in —
+Cursor, Copilot, Codex and the rest — and generates their `shipd` commands
+for you; a headless run (CI, no usable terminal) skips the question and prints
+instructions instead, and `shipd install` re-run later reopens the selection.
+Inside a repository, `shipd harness add` installs the generated command files
+repo-level. See [harness mode](../README.md#harness-mode) for the details.
+
 The [README's install section](../README.md#install) covers the by-hand
 equivalent and dev mode (running `/s:*` from a checkout).
 
@@ -155,9 +162,9 @@ lifecycle status, and task progress —
 [getting started](getting-started.md#1-set-up-the-statusline) explains what
 each part of the line shows.
 
-The read verbs `list`, `status`, `locate`, `epic`, `workspace`, and `lint` all
-take `--json` when you want to feed the output to something else. `shipd
---help` prints the full verb list; the
+The read verbs `list`, `status`, `locate`, `epic`, `workspace`, `lint`, and
+`harness` all take `--json` when you want to feed the output to something
+else. `shipd --help` prints the full verb list; the
 [README's CLI section](../README.md#the-shipd-cli) documents each one.
 
 ## Where to go next
