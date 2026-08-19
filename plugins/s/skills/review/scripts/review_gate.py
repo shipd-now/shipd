@@ -24,7 +24,8 @@ Subcommands:
                               without mutating
   protect [--remove]          add (or remove) `semantic-review` in the default
                               branch's required status check contexts and the
-                              conversation-resolution requirement
+                              conversation-resolution requirement, creating the
+                              protection when the branch has none
 
 The `gh` runner has signature ``gh(args, input=None) -> (rc, stdout, stderr)``
 where ``args`` is everything after the ``gh`` executable.
@@ -490,15 +491,27 @@ _PROTECTION_TOGGLES = (
 )
 
 
-def _protection_put_body(current, contexts, conversation):
+def _not_protected(err):
+    """True when a protection read failed because the branch simply has no
+    protection yet — the ``Branch not protected (HTTP 404)`` gh reports. Any
+    other failure (a denial, a missing repository, a transport error) is a real
+    read failure and must not be mistaken for "unprotected"."""
+    text = (err or "").lower()
+    return "branch not protected" in text and "http 404" in text
+
+
+def _protection_put_body(current, contexts, conversation, strict_default=True):
     """Build the full-protection PUT body from the ``current`` GET object,
     setting the required-check ``contexts`` and the ``conversation`` resolution
     flag while preserving every other protection field (translated to the PUT's
-    flatter shape). The four keys PUT requires are always present (nullable)."""
+    flatter shape). The four keys PUT requires are always present (nullable).
+    ``strict_default`` is the ``strict`` used when ``current`` names none — the
+    creation case, where false keeps auto-merged PRs off the update-branch
+    treadmill."""
     rsc = current.get("required_status_checks") or {}
     body = {
         "required_status_checks": {
-            "strict": bool(rsc.get("strict", True)),
+            "strict": bool(rsc.get("strict", strict_default)),
             "contexts": list(contexts),
         },
         "enforce_admins": _enabled(current.get("enforce_admins")),
@@ -518,16 +531,23 @@ def protect(gh, remove=False, out=_noop):
     **and** the ``required_conversation_resolution`` requirement on the default
     branch, preserving every other protection field. The pair is set together
     via the full-protection GET + PUT (conversation resolution has no
-    sub-resource endpoint). A no-op when already in the desired state — exits
-    zero and writes nothing. Returns
+    sub-resource endpoint). An unprotected branch — whose read 404s — gains the
+    minimal protection instead of failing: `semantic-review` required with
+    ``strict`` false and conversation resolution on. A no-op when already in the
+    desired state — exits zero and writes nothing. Returns
     ``{"changed": bool, "contexts": [...], "conversation_resolution": bool}``."""
     repo = _resolve_repo(gh)
     branch = _default_branch(gh)
     endpoint = "repos/%s/branches/%s/protection" % (repo, branch)
     rc, body, err = gh(["api", endpoint])
     if rc != 0:
-        _fail("reading branch protection failed: %s" % err.strip())
-    current = json.loads(body or "{}")
+        if not _not_protected(err):
+            _fail("reading branch protection failed: %s" % err.strip())
+        # No protection at all: create it from an empty current object rather
+        # than failing, so a fresh repository can be gated in one call.
+        current = {}
+    else:
+        current = json.loads(body or "{}")
     rsc = current.get("required_status_checks") or {}
     contexts = list(rsc.get("contexts") or [])
     present = CONTEXT in contexts
@@ -548,7 +568,8 @@ def protect(gh, remove=False, out=_noop):
     elif not present:
         contexts = contexts + [CONTEXT]
 
-    body_obj = _protection_put_body(current, contexts, want_conv)
+    body_obj = _protection_put_body(current, contexts, want_conv,
+                                    strict_default=bool(current))
     rc, _out, err = gh(["api", endpoint, "-X", "PUT", "--input", "-"],
                        input=json.dumps(body_obj))
     if rc != 0:
