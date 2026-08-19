@@ -41,13 +41,15 @@ entry or `None` and `ids()` returning the ordered id tuple.
 ### Requirement: Harness read verbs
 id: harness-read-verbs
 
-The `shipd` binary SHALL provide a read-only `harness` verb: bare or with
-`list` it SHALL print one line per registry entry; with `show <id>` it
-SHALL print every field of that entry; with `--json` it SHALL instead emit
-one machine-readable JSON document (the entry list, or the single entry for
-`show`). If `show` names an unknown id, then the binary SHALL print a
-single `Error: <reason>` line on stderr and exit nonzero. The verb SHALL
-create or modify no files.
+The `shipd` binary SHALL provide a `harness` verb whose read actions are
+read-only: bare or with `list` it SHALL print one line per registry entry;
+with `show <id>` it SHALL print every field of that entry; with `--json` it
+SHALL instead emit one machine-readable JSON document (the entry list, or
+the single entry for `show`). If `show` names an unknown id, then the
+binary SHALL print a single `Error: <reason>` line on stderr and exit
+nonzero. The `list` and `show` actions SHALL create or modify no files;
+the verb's writing actions (`add`, `remove`) are governed by the
+`harness-verb` capability.
 
 #### Scenario: List names every harness
 - **WHEN** `shipd harness` runs
@@ -67,7 +69,7 @@ create or modify no files.
 - **THEN** stderr carries a single line beginning `Error: ` and the exit
   code is nonzero
 
-#### Scenario: The verb writes nothing
+#### Scenario: The read actions write nothing
 - **WHEN** `shipd harness` and `shipd harness show cursor` run in a
   temporary directory
 - **THEN** the directory's contents are unchanged afterwards
