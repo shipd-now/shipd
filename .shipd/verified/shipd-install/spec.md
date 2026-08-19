@@ -13,8 +13,13 @@ install, the script SHALL print an auto-update notice naming the
 per-marketplace enable surfaces — the `/plugin` → Marketplaces toggle for
 `shipd` and the `"autoUpdate": true` settings entry — and the apply
 semantics (updates land after session start and activate at the next
-launch), while never editing any settings file itself. If `claude` or
-`python3` is
+launch), while never editing any settings file itself. Where a controlling
+terminal is available (`/dev/tty` opens read-write), the script SHALL then
+run the just-written launcher's `install` verb with its input and output
+bound to `/dev/tty`, fail-soft: a nonzero exit from that step SHALL print
+one note and SHALL NOT fail the installer. Where no controlling terminal is
+available, the script SHALL skip that step and its output SHALL remain
+unchanged. If `claude` or `python3` is
 missing, then the script SHALL exit nonzero with a single actionable error
 line and change nothing. The script SHALL treat an already-registered
 marketplace or already-installed plugin as success (idempotent re-run) and
@@ -44,6 +49,17 @@ SHALL download nothing itself beyond what the `claude` CLI performs.
 #### Scenario: Aborts print no auto-update notice
 - **WHEN** `install.sh` aborts on a missing prerequisite
 - **THEN** the auto-update notice is absent from the output
+
+#### Scenario: Headless runs skip the interactive finish unchanged
+- **WHEN** `install.sh` runs to success with no usable `/dev/tty`
+- **THEN** the launcher's `install` verb is not invoked, the script exits
+  0, and the output matches the pre-existing success output
+
+#### Scenario: A failing interactive finish never fails the installer
+- **WHEN** the guarded step runs and the launcher's `install` verb exits
+  nonzero
+- **THEN** the script prints one note about the skipped finish and still
+  exits 0
 
 ### Requirement: Version-independent launcher
 id: cache-launcher

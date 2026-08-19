@@ -16,6 +16,7 @@ Follows ``test_statusline.py``'s pattern of testing a repo file (outside
 """
 
 import os
+import pty
 import shutil
 import stat
 import subprocess
@@ -40,6 +41,9 @@ INSTALL_HINT = "claude plugin install s@shipd"
 # settings fragment doubles as the notice's sentinel: it appears nowhere else,
 # so its absence is the notice's absence.
 AUTO_UPDATE_SENTINEL = '"autoUpdate": true'
+# The one fragment the fail-soft note about a skipped interactive finish
+# carries, and nothing else does.
+SKIPPED_FINISH_SENTINEL = "skipped the harness picker"
 AUTO_UPDATE_FRAGMENTS = (
     "/plugin",
     "Marketplaces",
@@ -189,6 +193,8 @@ class InstallerTest(unittest.TestCase):
         self.bin = os.path.join(self.tmp, "stub-bin")
         os.makedirs(self.bin)
         self.log = os.path.join(self.tmp, "claude-argv.log")
+        self.verb_log = os.path.join(self.tmp, "launcher-argv.log")
+        self.cache = os.path.join(self.tmp, "plugin-cache")
         # python3 must stay reachable even on the pruned PATH the
         # missing-`claude` case uses.
         os.symlink(shutil.which("python3"), os.path.join(self.bin, "python3"))
@@ -201,7 +207,7 @@ class InstallerTest(unittest.TestCase):
     def stub_claude(self):
         write_exec(os.path.join(self.bin, "claude"), CLAUDE_STUB)
 
-    def run_install(self, mode="ok", local_bin_on_path=False):
+    def install_env(self, mode="ok", local_bin_on_path=False):
         env = {
             "HOME": self.home,
             "CLAUDE_STUB_LOG": self.log,
@@ -209,12 +215,67 @@ class InstallerTest(unittest.TestCase):
             # A pruned PATH: the stub dir plus the system directories the
             # script's utilities live in — never the real `claude`.
             "PATH": os.pathsep.join([self.bin, "/usr/bin", "/bin"]),
+            # The launcher resolves its snapshot here, so the interactive
+            # finish can only ever reach the stub one this suite plants.
+            "SHIPD_PLUGIN_CACHE": self.cache,
         }
         if local_bin_on_path:
             env["PATH"] = os.path.join(
                 self.home, ".local", "bin") + os.pathsep + env["PATH"]
+        return env
+
+    def run_install(self, mode="ok", local_bin_on_path=False):
+        """Run the installer with no controlling terminal —
+        ``start_new_session`` detaches the child, so the interactive finish
+        takes its headless path whether or not this suite runs in a
+        terminal."""
         return subprocess.run(
-            ["sh", INSTALL_SH], capture_output=True, text=True, env=env)
+            ["sh", INSTALL_SH], capture_output=True, text=True,
+            env=self.install_env(mode, local_bin_on_path),
+            start_new_session=True)
+
+    def run_install_on_tty(self, mode="ok"):
+        """Run the installer with a pseudo-terminal as its controlling
+        terminal, which is the only state in which the guarded interactive
+        finish runs at all. Returns ``(exit code, everything it wrote)``."""
+        env = self.install_env(mode)
+        pid, fd = pty.fork()
+        if pid == 0:                      # child: never returns
+            try:
+                os.execve("/bin/sh", ["sh", INSTALL_SH], env)
+            finally:
+                os._exit(127)
+        chunks = []
+        while True:
+            try:
+                data = os.read(fd, 4096)
+            except OSError:               # the child closed the terminal
+                break
+            if not data:
+                break
+            chunks.append(data)
+        _pid, status = os.waitpid(pid, 0)
+        os.close(fd)
+        return (os.waitstatus_to_exitcode(status),
+                b"".join(chunks).decode("utf-8", "replace"))
+
+    def stub_snapshot(self, exit_code=0):
+        """A stub plugin snapshot under ``SHIPD_PLUGIN_CACHE`` whose
+        ``bin/shipd`` records the verb it was handed and exits
+        ``exit_code`` — the launcher the installer writes is real, so this is
+        what stands in for the interactive flow."""
+        write_exec(
+            os.path.join(self.cache, "9.9.9", "bin", "shipd"),
+            '#!/bin/sh\n'
+            'printf \'%%s\\n\' "$*" >> "%s"\n'
+            'echo "stub snapshot ran: $*"\n'
+            'exit %d\n' % (self.verb_log, exit_code))
+
+    def verb_calls(self):
+        if not os.path.exists(self.verb_log):
+            return []
+        with open(self.verb_log, encoding="utf-8") as fh:
+            return fh.read().splitlines()
 
     def claude_calls(self):
         if not os.path.exists(self.log):
@@ -315,6 +376,36 @@ class InstallerTest(unittest.TestCase):
         self.stub_claude()
         r = self.run_install(mode="boom")
         self.assertNotEqual(r.returncode, 0)
+
+    # --- the guarded interactive finish -----------------------------------
+    def test_headless_run_skips_the_interactive_finish(self):
+        # No controlling terminal to ask on: the step is skipped outright,
+        # the launcher's `install` verb is never invoked, and the output is
+        # the success output this script printed before the step existed.
+        self.stub_claude()
+        self.stub_snapshot()
+        r = self.run_install()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.verb_calls(), [])
+        self.assertNotIn(SKIPPED_FINISH_SENTINEL, r.stdout)
+        self.assertIn("Installed the ☕ shipd launcher at ", r.stdout)
+        self.assertIn(AUTO_UPDATE_SENTINEL, r.stdout)
+
+    def test_a_controlling_terminal_runs_the_interactive_finish(self):
+        self.stub_claude()
+        self.stub_snapshot()
+        code, output = self.run_install_on_tty()
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.verb_calls(), ["install"])
+        self.assertNotIn(SKIPPED_FINISH_SENTINEL, output)
+
+    def test_a_failing_interactive_finish_never_fails_the_installer(self):
+        self.stub_claude()
+        self.stub_snapshot(exit_code=3)
+        code, output = self.run_install_on_tty()
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.verb_calls(), ["install"])
+        self.assertIn(SKIPPED_FINISH_SENTINEL, output)
 
 
 if __name__ == "__main__":
