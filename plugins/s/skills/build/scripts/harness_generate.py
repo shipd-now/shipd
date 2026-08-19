@@ -8,12 +8,17 @@ it turns an ``(entry, command)`` pair into the exact bytes of one generated
 file, and into the exact path that file takes in a repository or in the
 user's home.
 
+Most harnesses take one file per command; a ``conventions-file`` harness
+takes exactly one whole-harness document instead, rendered from an authored
+template rather than from the command bodies, so the join is a dialect
+branch rather than a per-command loop.
+
 Two ownership rules make the writing surface safe to automate. Every
 generated file's first body line — after the frontmatter block, or after the
-markdown header block — is :data:`MARKER`, so a later action can tell the
-files it wrote from the user's own. And every managed path derives from
-registry data alone, so nothing here can address a directory the registry
-does not name.
+markdown header block, or first of all in a conventions file — is
+:data:`MARKER`, so a later action can tell the files it wrote from the user's
+own. And every managed path derives from registry data alone, so nothing here
+can address a directory the registry does not name.
 
 Stdlib-only Python 3, per the engine's constitution.
 """
@@ -43,6 +48,22 @@ MODES = (REPO_MODE, USER_MODE)
 # being committed and read on another machine.
 REFS_SUBDIR = ("harness", "references")
 USER_REFS = "~/.shipd/harness/references"
+
+# The single-file dialect: one whole-harness conventions document instead of
+# a command file per command. Its source is the authored ``_conventions.md``
+# partial — underscore-prefixed, so the body engine's ``commands()`` ignores
+# it, exactly as it ignores the preamble — and it takes two flat
+# substitutions rather than the command bodies' feature gates.
+CONVENTIONS_DIALECT = "conventions-file"
+CONVENTIONS_TEMPLATE = "_conventions"
+PREAMBLE_PLACEHOLDER = "{preamble}"
+INDEX_PLACEHOLDER = "{command_index}"
+
+# The one step generation deliberately leaves to the user: aider reads a
+# conventions file only once its config points at it, and shipd never edits a
+# config it does not own. Named here because aider is the whole of the
+# ``conventions-file`` dialect today.
+CONVENTIONS_CONF = ".aider.conf.yml"
 
 # The registry feature whose harnesses get the fallback reference files. A
 # harness declaring it renders bodies that point at ``{refs}``; one that does
@@ -125,16 +146,62 @@ def _headers_head(command, base_dir):
     return "# %s\n%s\n\n" % (command_id(command), description)
 
 
-def render(entry, command, refs=None, base_dir=None):
+def _bodies_dir(base_dir):
+    """The body engine's own templates directory — the conventions template
+    and the preamble live beside the command bodies."""
+    base = harness_bodies.DEFAULT_BASE_DIR if base_dir is None else base_dir
+    return os.path.join(base, "bodies")
+
+
+def _partial(name, base_dir):
+    """The authored partial ``name``'s text. Raises ``ValueError`` naming the
+    path when it is missing, so a stripped plugin tree fails loudly rather
+    than writing a conventions file with a hole in it."""
+    path = os.path.join(_bodies_dir(base_dir), "%s.md" % name)
+    if not os.path.isfile(path):
+        raise ValueError("no %s.md partial to render the %s dialect (%s)"
+                         % (name, CONVENTIONS_DIALECT, path))
+    with open(path, "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
+def command_index(base_dir=None):
+    """One line per body-template command — its namespaced id and the
+    description the template declares — for a conventions file, which names
+    the command set it cannot ship as files."""
+    lines = []
+    for command in harness_bodies.commands(base_dir):
+        description = harness_bodies.description(command, base_dir) or ""
+        lines.append("- %s — %s" % (command_id(command), description))
+    return "\n".join(lines)
+
+
+def render_conventions(base_dir=None):
+    """The whole text of a ``conventions-file`` harness's single generated
+    file: :data:`MARKER`, then the authored template with ``{preamble}`` and
+    ``{command_index}`` substituted. No frontmatter, no feature gates — the
+    file describes shipd to the harness rather than declaring one command."""
+    text = _partial(CONVENTIONS_TEMPLATE, base_dir)
+    text = text.replace(PREAMBLE_PLACEHOLDER,
+                        _partial(harness_bodies.PREAMBLE, base_dir).strip())
+    text = text.replace(INDEX_PLACEHOLDER, command_index(base_dir))
+    return "%s\n\n%s" % (MARKER, text)
+
+
+def render(entry, command=None, refs=None, base_dir=None):
     """The full text of ``command``'s generated file for harness ``entry``.
 
     The dialect's metadata block comes first, then :data:`MARKER`, then the
     body scaled to the entry's declared features with ``{refs}`` resolved to
-    ``refs``. Raises ``ValueError`` for a dialect with no renderer — no
-    harness with a surface declares one today, and a silent empty file would
-    be worse than a refusal.
+    ``refs``. A ``conventions-file`` entry has no per-command files, so
+    ``command`` and ``refs`` are ignored and the single conventions document
+    is returned instead. Raises ``ValueError`` for a dialect with no renderer
+    — no registry entry declares one today, and a silent empty file would be
+    worse than a refusal.
     """
     dialect = entry["dialect"]
+    if dialect == CONVENTIONS_DIALECT:
+        return render_conventions(base_dir)
     if dialect == "yaml":
         head = _yaml_head(entry, command, base_dir)
     elif dialect == "markdown-headers":
@@ -152,12 +219,23 @@ def render(entry, command, refs=None, base_dir=None):
 # ---------------------------------------------------------------------------
 
 
-def repo_relpath(entry, command):
+def whole_file(entry):
+    """Whether ``entry``'s surface is one file for the whole harness rather
+    than one per command — the ``conventions-file`` dialect, whose
+    ``repo_pattern`` is a literal path with no ``{command}`` in it."""
+    return entry["dialect"] == CONVENTIONS_DIALECT
+
+
+def repo_relpath(entry, command=None):
     """``command``'s generated file for ``entry``, relative to a repository
-    root, or ``None`` when the harness has no per-repo surface."""
+    root, or ``None`` when the harness has no per-repo surface. A
+    whole-file harness's pattern carries no placeholder, so ``command`` does
+    not reach it."""
     pattern = entry["repo_pattern"]
     if pattern is None:
         return None
+    if whole_file(entry):
+        return os.path.normpath(pattern)
     return os.path.normpath(pattern.format(command=command))
 
 
@@ -169,10 +247,12 @@ def user_basename(entry, command):
     pattern = entry["repo_pattern"]
     if pattern is None:
         return "%s.md" % command_id(command)
+    if whole_file(entry):
+        return os.path.basename(pattern)
     return os.path.basename(pattern.format(command=command))
 
 
-def user_path(entry, command):
+def user_path(entry, command=None):
     """``command``'s generated file for ``entry`` in the user-global surface,
     absolute with ``~`` expanded, or ``None`` when it has no ``user_dir``."""
     directory = entry["user_dir"]
@@ -232,10 +312,12 @@ def ids_with_surface(mode):
 
 
 def command_paths(entry, mode, root=None, base_dir=None):
-    """Every generated command-file path for ``entry`` in ``mode``, empty
-    when it has no surface there."""
+    """Every generated file path for ``entry`` in ``mode``, empty when it has
+    no surface there — one per command, or the single whole-harness file."""
     if not has_surface(entry, mode):
         return []
+    if whole_file(entry):
+        return [target_path(entry, None, mode, root)]
     return [target_path(entry, command, mode, root)
             for command in harness_bodies.commands(base_dir)]
 
@@ -281,7 +363,11 @@ def _reference_payloads(mode, root, base_dir):
 
 
 def _command_payloads(entry, mode, root, base_dir, label):
-    """``[(path, text)]`` for one harness's own command files."""
+    """``[(path, text)]`` for one harness's own generated files — one per
+    command, or the single conventions file for a whole-file harness."""
+    if whole_file(entry):
+        return [(target_path(entry, None, mode, root),
+                 render(entry, base_dir=base_dir))]
     return [(target_path(entry, command, mode, root),
              render(entry, command, refs=label, base_dir=base_dir))
             for command in harness_bodies.commands(base_dir)]
@@ -391,6 +477,14 @@ def _prune(directory, boundaries):
         current = parent
 
 
+def _wiring_note(entry):
+    """The one manual step a conventions file still needs: the harness loads
+    it only once its own config names it, and shipd never edits that config
+    — the file it owns outright is the whole of what it writes."""
+    return ("%s: add `read: %s` to %s to load it"
+            % (entry["id"], entry["repo_pattern"], CONVENTIONS_CONF))
+
+
 def add(entries, mode, root=None, force=False, base_dir=None):
     """Write every selected harness's files. Returns ``(lines, error)``:
     ``error`` is a single reason string when a target this install does not
@@ -423,6 +517,10 @@ def add(entries, mode, root=None, force=False, base_dir=None):
     if not payloads:
         lines.append("nothing to write: no %s surface among the selected "
                      "harnesses" % mode)
+    # Last, so the step the user must still take by hand is the last thing
+    # the report says — on every run, not only the one that wrote the file.
+    lines.extend(_wiring_note(entry) for entry in entries
+                 if whole_file(entry) and has_surface(entry, mode))
     return lines, None
 
 

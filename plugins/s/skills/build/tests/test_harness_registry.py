@@ -78,11 +78,17 @@ class EntryShapeTest(unittest.TestCase):
                     % (entry["id"], entry["features"]))
 
     def test_repo_patterns_carry_the_command_placeholder(self):
+        # Every dialect but `conventions-file` writes one file per command, so
+        # its pattern must vary with the command; a `conventions-file` pattern
+        # is a literal single-file path and must *not* carry the placeholder.
         for entry in hr.HARNESSES:
             if entry["repo_pattern"] is None:
                 continue
             with self.subTest(harness=entry["id"]):
-                self.assertIn("{command}", entry["repo_pattern"])
+                if entry["dialect"] == "conventions-file":
+                    self.assertNotIn("{command}", entry["repo_pattern"])
+                else:
+                    self.assertIn("{command}", entry["repo_pattern"])
 
     def test_non_yaml_dialects_declare_no_frontmatter(self):
         for entry in hr.HARNESSES:
@@ -111,9 +117,11 @@ class ResearchedPathsTest(unittest.TestCase):
         self.assertEqual(set(hr.get("claude-code")["features"]),
                          set(hr.FEATURES))
 
-    def test_aider_has_no_commands_and_no_features(self):
+    def test_aider_is_a_single_conventions_file(self):
         entry = hr.get("aider")
-        self.assertIsNone(entry["repo_pattern"])
+        self.assertEqual(entry["repo_pattern"], "shipd-conventions.md")
+        self.assertEqual(entry["dialect"], "conventions-file")
+        self.assertIsNone(entry["user_dir"])
         self.assertEqual(entry["features"], ())
 
 

@@ -1,7 +1,8 @@
-# harness-verb
+## MODIFIED Requirements
 
 ### Requirement: Generation actions
 id: harness-add-remove
+base: 84e60401031a
 
 The `shipd harness` verb SHALL provide `add` and `remove` actions taking one
 or more harness ids or `--all`, a `--root DIR` (default: the working
@@ -66,29 +67,9 @@ and SHALL NOT fail the action. The actions SHALL never access the network.
 - **THEN** the generated files are gone, the unmarked file remains, and
   directories emptied by the removal are pruned
 
-### Requirement: Installation state report
-id: harness-status
-
-The `shipd harness` verb SHALL provide a read-only `status` action taking
-optional harness ids (default: all), `--root DIR`, `--user`, and `--json`,
-reporting
-per harness and surface one of `installed` (every expected file present and
-byte-identical to a fresh render), `stale` (present but differing),
-`foreign` (a target exists without the ownership marker), or `absent`. The
-action SHALL create or modify no files.
-
-#### Scenario: Status reflects the lifecycle
-- **WHEN** `status` runs before an `add`, after it, and after one generated
-  file is edited in place
-- **THEN** the harness reports `absent`, then `installed`, then `stale`,
-  and the temp root's contents are unchanged by every `status` run
-
-#### Scenario: JSON status is machine-readable
-- **WHEN** `shipd harness status --root <tmp> --json` runs
-- **THEN** stdout parses as one JSON document keyed by harness id
-
 ### Requirement: Dialect rendering
 id: dialect-rendering
+base: 10c61ed3dfce
 
 The generation SHALL render each harness's files per its registry dialect:
 `yaml` emits `---`-delimited frontmatter carrying exactly the entry's

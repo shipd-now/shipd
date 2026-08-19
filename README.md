@@ -229,6 +229,11 @@ only marker-carrying files (plus directories it empties), never yours. A
 harness with no surface for the mode you selected is reported as skipped and
 does not fail the run.
 
+Aider has no command files, so `shipd harness add aider` writes a single
+ownership-marked `shipd-conventions.md` — shipd's conventions and its command
+index — which you wire in by adding `read: shipd-conventions.md` to
+`.aider.conf.yml`.
+
 Branding stays additive: the animated wordmark appears only on the install
 surface, and ☕ remains the brand mark everywhere else.
 
