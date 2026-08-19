@@ -1,5 +1,5 @@
 # harness-install
-Status: ready
+Status: active
 Theme: developer-experience
 
 ## Introduction
@@ -169,3 +169,15 @@ independently testable under the stdlib-only test suite.
 | harness-verb | `shipd harness add`/`remove` `--root` generation verb: renders bodies through each adapter dialect into the repo-level and user-global dirs, with ownership markers, idempotent refresh, `--force`, and report-only bare mode, per the `copilot`/`vendor` family | high | high | medium | medium |
 | install-tui | Interactive `shipd install` verb: wordmark animation, `/dev/tty` harness multi-select, selection record, user-global generation for selected harnesses, non-TTY degradation, and the `install.sh` wiring that execs it at the end | high | high | medium | high |
 | harness-docs | README + quickstart harness mode: the selection step in the install flow, `shipd harness add` for repositories, the feature-scaling model, and the additive brand note | low | low | low | low |
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 50 | 21.1k |
+| Write | 2 | 9.3k |
+| Edit | 9 | 5.5k |
+| (no tool) | 0 | 3.9k |
+| Agent | 2 | 789 |
+| Read | 7 | 767 |
+| **Total** | 70 | 41.4k |
