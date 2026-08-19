@@ -1,5 +1,5 @@
 # harness-install
-Status: active
+Status: complete
 Theme: developer-experience
 
 ## Introduction
@@ -174,13 +174,15 @@ independently testable under the stdlib-only test suite.
 
 | Tool | Calls | Output tokens |
 | --- | --- | --- |
-| Bash | 171 | 75.2k |
-| Edit | 35 | 23.6k |
-| Write | 7 | 23.2k |
-| (no tool) | 0 | 15.1k |
-| Read | 43 | 6.7k |
-| SendMessage | 4 | 3.8k |
-| Agent | 6 | 2.2k |
+| Bash | 359 | 163.1k |
+| Edit | 79 | 65.1k |
+| Write | 15 | 58.9k |
+| (no tool) | 0 | 25.7k |
+| Read | 58 | 12.5k |
+| Agent | 10 | 4.6k |
+| SendMessage | 5 | 4.0k |
+| Monitor | 3 | 680 |
+| TaskStop | 3 | 470 |
 | ToolSearch | 2 | 453 |
 | Skill | 1 | 159 |
-| **Total** | 269 | 150.4k |
+| **Total** | 535 | 335.7k |
