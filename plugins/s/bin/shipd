@@ -300,12 +300,15 @@ def _version_key(name):
 
 def _gh_auth_status():
     """The exit code of ``gh auth status``; nonzero when gh cannot be run at
-    all. The one subprocess in the doctor path, isolated here so tests inject
-    a stub instead of touching the network."""
+    all. One of the two subprocess seams in the doctor path — the other is
+    :func:`_gh_run`, which the GitHub-side checks probe through — isolated here
+    so tests inject a stub instead of touching the network. Bounded by
+    :data:`GH_TIMEOUT` like the other seam, so a hung ``gh`` reads as
+    unusable rather than stalling the preflight."""
     try:
-        return subprocess.run(["gh", "auth", "status"],
-                              capture_output=True).returncode
-    except OSError:
+        return subprocess.run(["gh", "auth", "status"], capture_output=True,
+                              timeout=GH_TIMEOUT).returncode
+    except (OSError, subprocess.TimeoutExpired):
         return 1
 
 
@@ -550,9 +553,264 @@ def check_statusline(settings_path=None):
             "shipd statusline" % path)
 
 
+# --- the GitHub-side checks (shipd-cli doctor-github-checks) ---------------
+#
+# The merge gate is only as strong as the repository's own settings: without a
+# protected default branch requiring `semantic-review`, without auto-merge, or
+# without the reviewer token, the gate degrades silently. These three checks
+# read those settings — and only read them; the verb still mutates nothing, and
+# every degradation is a warning at worst, because an unreachable GitHub API
+# must never break a preflight that otherwise works offline.
+
+# ``gh api`` names the HTTP status in its error line — ``gh: Not Found (HTTP
+# 404)`` — which is how an unprotected branch (404) is told apart from a token
+# without admin permission (403) without a second request.
+HTTP_STATUS_RE = re.compile(r"\(HTTP (\d{3})\)")
+
+# The phrase a warning carries when the resolved token cannot apply the fix
+# itself. The doctor skill keys its report-only demotion off it — change both.
+ADMIN_MISSING = "the token lacks admin permission"
+
+# The copilot review gate's workflow, relative to a repository root. The
+# reviewer-token check activates only where this file is installed.
+GATE_WORKFLOW = os.path.join(".github", "workflows",
+                             "copilot-review-gate.yml")
+
+# The wall-clock ceiling on a single ``gh`` invocation. A hung credential
+# helper or a stalled connection must cost the preflight seconds, not the
+# whole session — a probe that runs out of time degrades exactly like one that
+# failed, so the check still reports its ``ok ... skipped`` line.
+GH_TIMEOUT = 10
+
+
+def _gh_run(args):
+    """``(returncode, stdout, stderr)`` for ``gh <args...>``.
+
+    The read-only subprocess seam the GitHub-side checks share, isolated here
+    so tests inject a stub instead of running the real ``gh``. Bounded by
+    :data:`GH_TIMEOUT`; a timeout reports as an ordinary failure, so the
+    caller degrades gracefully instead of waiting forever.
+    """
+    try:
+        proc = subprocess.run(["gh"] + list(args), capture_output=True,
+                              text=True, timeout=GH_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return (1, "", "gh timed out after %ds" % GH_TIMEOUT)
+    except OSError as exc:
+        return (1, "", str(exc))
+    return (proc.returncode, proc.stdout, proc.stderr)
+
+
+def _gh_api(path, run=_gh_run):
+    """``(status, payload)`` for a read-only ``gh api <path>``.
+
+    ``status`` is ``200`` on success, the HTTP status ``gh`` named in its error
+    line when it named one, and ``None`` otherwise — offline, a broken
+    credential helper, a body that is not JSON. ``payload`` is the decoded
+    JSON, or ``None`` wherever there is none to decode.
+    """
+    code, out, err = run(["api", path])
+    if code != 0:
+        found = HTTP_STATUS_RE.search(err or "")
+        return (int(found.group(1)) if found else None, None)
+    try:
+        return (200, json.loads(out))
+    except ValueError:
+        return (None, None)
+
+
+def _http_reason(status):
+    """How a non-200 probe is named in a detail line."""
+    return "HTTP %d" % status if status else "no response"
+
+
+def gh_context(which=shutil.which, gh_status=_gh_auth_status, run=_gh_run):
+    """The working directory's GitHub repository, resolved **once** and shared
+    by the three GitHub-side checks so one ``gh api repos/<nwo>`` serves them
+    all.
+
+    The mapping carries ``skip`` — the reason there is nothing to check —
+    whenever ``gh`` is unusable, the working directory resolves no GitHub
+    repository, or the repository payload cannot be read. A resolved context
+    instead carries ``nwo``, ``default_branch``, ``allow_auto_merge``, and
+    ``admin``, any of the last three ``None`` where the payload omits it, so
+    API drift degrades to an unverifiable ``ok`` rather than a false alarm.
+    """
+    if not which("gh"):
+        return {"skip": "gh is not on PATH, so the GitHub settings behind the "
+                        "merge gate cannot be read"}
+    if gh_status() != 0:
+        return {"skip": "gh is not authenticated — run `gh auth login` to let "
+                        "the preflight read the GitHub settings"}
+    code, out, _err = run(["repo", "view", "--json", "nameWithOwner",
+                           "-q", ".nameWithOwner"])
+    nwo = out.strip() if code == 0 else ""
+    if not nwo:
+        return {"skip": "the working directory resolves no GitHub repository"}
+    status, payload = _gh_api("repos/%s" % nwo, run=run)
+    if status != 200 or not isinstance(payload, dict):
+        return {"skip": "the GitHub repository %s could not be read (%s)"
+                        % (nwo, _http_reason(status))}
+    permissions = payload.get("permissions")
+    return {"nwo": nwo,
+            "default_branch": payload.get("default_branch"),
+            "allow_auto_merge": payload.get("allow_auto_merge"),
+            "admin": (permissions.get("admin")
+                      if isinstance(permissions, dict) else None)}
+
+
+def _admin_note(context):
+    """The clause a warning carries when the resolved token demonstrably cannot
+    apply the fix, and the empty string otherwise — an *unknown* permission is
+    not a known-missing one, so a payload without ``permissions`` stays
+    silent."""
+    if context.get("admin") is False:
+        return (" (%s on %s, so an admin has to apply the fix)"
+                % (ADMIN_MISSING, context.get("nwo")))
+    return ""
+
+
+def _branch_protected(context, branch, run=_gh_run):
+    """``branch``'s ``protected`` boolean from the branches listing, or
+    ``None``
+    when the listing is unreadable or does not name it.
+
+    The fallback for a token without admin permission: it may not read the
+    protection payload, but it may still see whether the branch is protected.
+    """
+    status, payload = _gh_api("repos/%s/branches" % context["nwo"], run=run)
+    if status != 200 or not isinstance(payload, list):
+        return None
+    for entry in payload:
+        if isinstance(entry, dict) and entry.get("name") == branch:
+            value = entry.get("protected")
+            return value if isinstance(value, bool) else None
+    return None
+
+
+def check_protection(context, run=_gh_run):
+    """Whether the default branch requires the ``semantic-review`` status
+    context. Until it does, the review gate's verdict is advisory: a PR merges
+    with a failing gate and nothing says so."""
+    if context.get("skip"):
+        return ("ok", "protection", "skipped: %s" % context["skip"])
+    branch = context.get("default_branch")
+    if not branch:
+        return ("ok", "protection",
+                "could not be verified: %s's payload names no default branch"
+                % context["nwo"])
+    unprotected = (
+        "the default branch `%s` of %s is not protected — nothing requires "
+        "the `semantic-review` status, so PRs merge with the gate's verdict "
+        "ignored"
+        % (branch, context["nwo"]))
+    status, payload = _gh_api(
+        "repos/%s/branches/%s/protection" % (context["nwo"], branch), run=run)
+    if status == 200 and isinstance(payload, dict):
+        required = payload.get("required_status_checks")
+        contexts = (required.get("contexts")
+                    if isinstance(required, dict) else None)
+        if not isinstance(contexts, list):
+            return ("ok", "protection",
+                    "could not be verified: `%s` is protected but its "
+                    "protection payload lists no required status contexts"
+                    % branch)
+        if "semantic-review" in contexts:
+            return ("ok", "protection",
+                    "`%s` requires the `semantic-review` status context"
+                    % branch)
+        return ("warn", "protection",
+                "`%s` of %s is protected but does not require the "
+                "`semantic-review` status context — the gate's verdict is "
+                "ignored at merge time%s"
+                % (branch, context["nwo"], _admin_note(context)))
+    if status == 404:
+        return ("warn", "protection", unprotected + _admin_note(context))
+    if status == 403:
+        protected = _branch_protected(context, branch, run=run)
+        if protected is None:
+            return ("ok", "protection",
+                    "could not be verified: reading `%s`'s protection needs "
+                    "admin permission on %s, and the branch listing did not "
+                    "resolve it either" % (branch, context["nwo"]))
+        if protected:
+            return ("ok", "protection",
+                    "`%s` is protected, but its required status contexts "
+                    "could not be verified: %s on %s"
+                    % (branch, ADMIN_MISSING, context["nwo"]))
+        return ("warn", "protection", unprotected + _admin_note(context))
+    return ("ok", "protection",
+            "could not be verified: the branch protection probe returned %s"
+            % _http_reason(status))
+
+
+def check_automerge(root, context, resolve=None):
+    """Whether the repository allows auto-merge — what ``gh pr merge --auto``
+    arms against, and what makes a gated PR land by itself once its checks
+    pass. Waived where the resolved ``pr-mode`` is ``draft``: that flow stops
+    at an open draft PR and never arms auto-merge at all."""
+    if context.get("skip"):
+        return ("ok", "automerge", "skipped: %s" % context["skip"])
+    allowed = context.get("allow_auto_merge")
+    if allowed is True:
+        return ("ok", "automerge",
+                "auto-merge is enabled on %s" % context["nwo"])
+    if allowed is not False:
+        return ("ok", "automerge",
+                "could not be verified: %s's payload carries no "
+                "`allow_auto_merge`" % context["nwo"])
+    _load_engine()
+    resolve = resolve or sc.resolve_pr_mode
+    try:
+        mode = resolve(root)
+    except sc.ConfigError:
+        mode = None
+    if mode == "draft":
+        return ("ok", "automerge",
+                "auto-merge is disabled on %s, but `pr-mode: draft` is "
+                "declared — the flow never arms auto-merge" % context["nwo"])
+    return ("warn", "automerge",
+            "auto-merge is disabled on %s — `gh pr merge --auto` cannot arm, "
+            "so every change stops at an open PR%s"
+            % (context["nwo"], _admin_note(context)))
+
+
+def check_copilot_secret(root, context, run=_gh_run):
+    """Whether the installed review gate has the reviewer token it needs to run
+    Copilot CLI itself. Probed only where the gate workflow is installed at
+    ``root`` — the secret matters to nothing else — and a warning at worst:
+    without it the gate degrades to the fail-open poll fallback rather than
+    breaking."""
+    if not os.path.isfile(os.path.join(root, GATE_WORKFLOW)):
+        return ("ok", "copilot-secret",
+                "skipped: no %s at %s" % (GATE_WORKFLOW, root))
+    if context.get("skip"):
+        return ("ok", "copilot-secret", "skipped: %s" % context["skip"])
+    status, payload = _gh_api("repos/%s/actions/secrets" % context["nwo"],
+                              run=run)
+    secrets = payload.get("secrets") if isinstance(payload, dict) else None
+    if status != 200 or not isinstance(secrets, list):
+        return ("ok", "copilot-secret",
+                "could not be verified: reading %s's Actions secrets was "
+                "denied (%s)" % (context["nwo"], _http_reason(status)))
+    names = [entry.get("name") for entry in secrets if isinstance(entry, dict)]
+    if "COPILOT_GITHUB_TOKEN" in names:
+        return ("ok", "copilot-secret",
+                "COPILOT_GITHUB_TOKEN is set on %s — the gate runs the CLI "
+                "reviewer mode" % context["nwo"])
+    return ("warn", "copilot-secret",
+            "the review gate is installed but COPILOT_GITHUB_TOKEN is not set "
+            "on %s — the gate degrades to the fail-open poll fallback; see "
+            "docs/copilot-review.md%s"
+            % (context["nwo"], _admin_note(context)))
+
+
 def default_checks(root):
     """Every preflight check, required ones first, as ``(level, name, detail)``
-    triples."""
+    triples. The three GitHub-side checks close the list and share one resolved
+    repository context, so the whole preflight makes at most two ``gh`` calls
+    beyond the per-check probes."""
+    context = gh_context()
     return [check_python(),
             check_git(),
             check_config(root),
@@ -562,7 +820,10 @@ def default_checks(root):
             check_textual(root),
             check_pydantic(root),
             check_snapshot(PLUGIN_ROOT),
-            check_statusline()]
+            check_statusline(),
+            check_protection(context),
+            check_automerge(root, context),
+            check_copilot_secret(root, context)]
 
 
 def doctor_report(results):
