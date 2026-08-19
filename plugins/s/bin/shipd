@@ -52,6 +52,11 @@ ARCHIVE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-(.+)$")
 sc = None
 ss = None
 
+# The registry the in-binary ``harness`` verb reads, imported on demand by
+# :func:`_load_registry` for the same reason and kept separate from the pair
+# above so neither path pays for the other's import.
+hr = None
+
 # The curated verb table: verb -> (engine script, leading arguments). Trailing
 # arguments from the command line are appended verbatim, so ``--root``, slugs,
 # and flags keep working exactly as they do against the script itself.
@@ -94,13 +99,14 @@ verbs:
   statusline [install]       report or register the shipd statusline
   copilot [add|remove]       maintain the Copilot code-review skill in a repo
   vendor [add|remove]        maintain a vendored per-repo shipd install
+  harness [list|show <id>]   the harness-adapter registry
 
 options:
   -h, --help                 print this banner
   --version                  print the plugin version
 
-The read verbs list, status, locate, epic, workspace, and lint accept --json,
-emitting one machine-readable JSON document instead of the text report.
+The read verbs list, status, locate, epic, workspace, lint, and harness accept
+--json, emitting one machine-readable JSON document instead of the text report.
 """
 
 
@@ -150,6 +156,17 @@ def _load_engine():
     import spec_status
     sc = spec_common
     ss = spec_status
+
+
+def _load_registry():
+    """Import ``harness_registry`` from the engine's scripts dir into the
+    module global ``hr``. Deferred to the ``harness`` path, exactly as
+    :func:`_load_engine` is to ``list``."""
+    global hr
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    import harness_registry
+    hr = harness_registry
 
 
 def _content_dir(root):
@@ -1453,6 +1470,87 @@ def cmd_vendor(args):
     return _vendor_remove(root, layout)
 
 
+# ---------------------------------------------------------------------------
+# harness (harness-registry harness-read-verbs)
+# ---------------------------------------------------------------------------
+
+# The registry fields ``show`` prints, in the order the entries declare them.
+HARNESS_FIELDS = ("id", "name", "repo_pattern", "user_dir", "dialect",
+                  "frontmatter", "features")
+
+
+def _harness_field(value):
+    """One registry field's text rendering: a tuple joins with commas, and an
+    absent value — ``None`` or an empty tuple — reads as ``none`` rather than
+    as a blank that looks like a truncated report."""
+    if value is None:
+        return "none"
+    if isinstance(value, (tuple, list)):
+        return ", ".join(value) if value else "none"
+    return value
+
+
+def cmd_harness(args):
+    """Report the harness-adapter registry: every entry, or one in full.
+
+    Read-only in the strongest sense — the registry is data declared in the
+    engine itself, so this verb opens no file, consults no repository, and
+    writes nothing anywhere.
+    """
+    parser = argparse.ArgumentParser(
+        prog="shipd harness",
+        description="The harness-adapter registry: the coding harnesses shipd "
+                    "generates commands for, and how each wants them.")
+    parser.add_argument(
+        "action", nargs="?", choices=["list", "show"], default="list",
+        help="list: one line per harness (the default); "
+             "show: every field of one harness")
+    parser.add_argument("id", nargs="?",
+                        help="the harness id `show` reports on")
+    parser.add_argument("--json", action="store_true", dest="json",
+                        help="emit one machine-readable JSON document on "
+                             "stdout instead of the text report")
+    opts = parser.parse_args(args)
+    _load_registry()
+
+    if opts.action == "show":
+        if not opts.id:
+            _err("shipd harness show needs a harness id — "
+                 "`shipd harness` lists them")
+            return 2
+        entry = hr.get(opts.id)
+        if entry is None:
+            _err("unknown harness '%s' — `shipd harness` lists them"
+                 % opts.id)
+            return 1
+        if opts.json:
+            print(json.dumps(entry))
+            return 0
+        width = max(len(field) for field in HARNESS_FIELDS)
+        for field in HARNESS_FIELDS:
+            print("%-*s  %s" % (width, field, _harness_field(entry[field])))
+        return 0
+
+    if opts.id:
+        _err("shipd harness list takes no harness id — did you mean "
+             "`shipd harness show %s`?" % opts.id)
+        return 2
+    if opts.json:
+        print(json.dumps(list(hr.HARNESSES)))
+        return 0
+
+    id_width = max(len(entry["id"]) for entry in hr.HARNESSES)
+    name_width = max(len(entry["name"]) for entry in hr.HARNESSES)
+    dialect_width = max(len(entry["dialect"]) for entry in hr.HARNESSES)
+    for entry in hr.HARNESSES:
+        count = len(entry["features"])
+        print("%-*s  %-*s  %-*s  %d feature%s"
+              % (id_width, entry["id"], name_width, entry["name"],
+                 dialect_width, entry["dialect"], count,
+                 "" if count == 1 else "s"))
+    return 0
+
+
 def main(argv):
     if not argv:
         sys.stderr.write(USAGE)
@@ -1473,6 +1571,8 @@ def main(argv):
         return cmd_copilot(rest)
     if verb == "vendor":
         return cmd_vendor(rest)
+    if verb == "harness":
+        return cmd_harness(rest)
     if verb not in VERB_TABLE:
         sys.stderr.write(USAGE)
         return 2

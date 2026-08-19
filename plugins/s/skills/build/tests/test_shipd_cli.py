@@ -40,7 +40,7 @@ MANIFEST = os.path.join(PLUGIN_ROOT, ".claude-plugin", "plugin.json")
 
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
 VERBS = ("list", "status", "locate", "epic", "workspace", "board", "metrics",
-         "lint", "doctor", "statusline", "copilot", "vendor")
+         "lint", "doctor", "statusline", "copilot", "vendor", "harness")
 
 
 def _load_binary():

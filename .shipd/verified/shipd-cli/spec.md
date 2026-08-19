@@ -5,15 +5,16 @@ id: cli-dispatch
 
 The `shipd` binary SHALL expose exactly the curated verbs `list`, `status`,
 `locate`, `epic`, `workspace`, `board`, `metrics`, `lint`, `doctor`,
-`statusline`, `copilot`, and `vendor`, and for every verb except `list`,
-`doctor`, `statusline`, `copilot`, and `vendor` SHALL delegate by replacing
-its own process with the mapped engine script invocation (`status` ->
-`spec_status.py show`, `locate` -> `spec_status.py locate`, `epic` ->
-`spec_status.py epic-show`, `workspace` -> `spec_status.py workspace-show`,
-`board` -> `dashboard.py` per the board-mode mapping below, `metrics` ->
-`metrics.py`, `lint` -> `spec_lint.py`), passing all trailing arguments
-through verbatim so the delegate's output and exit code are the binary's own.
-When `metrics` is given no trailing arguments, the binary SHALL delegate to
+`statusline`, `copilot`, `vendor`, and `harness`, and for every verb except
+`list`, `doctor`, `statusline`, `copilot`, `vendor`, and `harness` SHALL
+delegate by replacing its own process with the mapped engine script
+invocation (`status` -> `spec_status.py show`, `locate` ->
+`spec_status.py locate`, `epic` -> `spec_status.py epic-show`, `workspace`
+-> `spec_status.py workspace-show`, `board` -> `dashboard.py` per the
+board-mode mapping below, `metrics` -> `metrics.py`, `lint` ->
+`spec_lint.py`), passing all trailing arguments through verbatim so the
+delegate's output and exit code are the binary's own. When `metrics` is
+given no trailing arguments, the binary SHALL delegate to
 `metrics.py summary`. When invoked as `shipd board`, the binary SHALL select
 the delegate by the first trailing argument: the bare word `text` SHALL be
 consumed and delegate to `dashboard.py board`, and any other first trailing
@@ -73,6 +74,10 @@ SHALL print the same banner to stdout and exit `0`.
 #### Scenario: Vendor is a curated verb
 - **WHEN** `shipd --help` runs
 - **THEN** the usage banner lists `vendor` among the verbs
+
+#### Scenario: Harness is a curated verb
+- **WHEN** `shipd --help` runs
+- **THEN** the usage banner lists `harness` among the verbs
 
 ### Requirement: List in-flight changes
 id: cli-list
