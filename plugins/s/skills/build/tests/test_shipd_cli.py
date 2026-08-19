@@ -40,7 +40,8 @@ MANIFEST = os.path.join(PLUGIN_ROOT, ".claude-plugin", "plugin.json")
 
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
 VERBS = ("list", "status", "locate", "epic", "workspace", "board", "metrics",
-         "lint", "doctor", "statusline", "copilot", "vendor", "harness")
+         "lint", "doctor", "statusline", "copilot", "vendor", "harness",
+         "install")
 
 
 def _load_binary():
@@ -2309,6 +2310,68 @@ class VendorReportTest(VendorVerbTestBase):
         self.assertEqual(
             self.states(content="specs"),
             {key: "installed" for key in self.labels("specs")})
+
+
+class InstallVerbTest(unittest.TestCase):
+    """``shipd install`` (shipd-cli cli-dispatch, install-tui install-verb):
+    an in-binary verb, since it owns the terminal for the length of its
+    question and writes only the user's own files. The flow itself is
+    ``test_install_tui.py``'s subject; what is under test here is the verb.
+    """
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="shipd-install-verb-home-")
+
+    def tearDown(self):
+        shutil.rmtree(self.home, ignore_errors=True)
+
+    def cli(self, *args):
+        """Run the binary detached from any controlling terminal, so the verb
+        takes its headless path whether or not the suite runs in one."""
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        return subprocess.run(
+            [BIN, "install", *args], capture_output=True, text=True,
+            env=env, start_new_session=True)
+
+    def test_install_dispatches_in_binary_without_delegating(self):
+        self.assertNotIn("install", shipd.VERB_TABLE)
+        seen = []
+
+        def fake_install(args):
+            seen.append(args)
+            return 0
+
+        def no_exec(*args):
+            self.fail("install must not exec-delegate")
+
+        with unittest.mock.patch.object(shipd, "cmd_install", fake_install), \
+                unittest.mock.patch.object(shipd.os, "execv", no_exec):
+            code = shipd.main(["install"])
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, [[]])
+
+    def test_the_banner_lists_install(self):
+        r = subprocess.run([BIN, "--help"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("install", r.stdout)
+
+    def test_help_describes_the_verb_and_exits_zero(self):
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("shipd install", r.stdout)
+
+    def test_a_headless_run_writes_nothing_and_exits_zero(self):
+        r = self.cli()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("shipd install", r.stdout)
+        self.assertEqual(os.listdir(self.home), [],
+                         "the headless path must write nothing")
+
+    def test_an_argument_is_a_usage_error(self):
+        r = self.cli("codex")
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(os.listdir(self.home), [])
 
 
 if __name__ == "__main__":

@@ -163,3 +163,24 @@ printf '%s\n' \
   "Updates are fetched shortly after a session starts and load in the next" \
   "session (or after /reload-plugins). To update by hand at any time, run:" \
   "  claude plugin update s@shipd"
+
+# The interactive finish: ask which coding harnesses this machine works in and
+# install their /s: commands. It runs only where there is a controlling
+# terminal to ask on, and the question is bound to /dev/tty rather than to
+# this script's stdin, which a `curl ... | sh` pipeline owns.
+#
+# The guard opens /dev/tty rather than testing it with `[ -r ]`: the device
+# node is world read-write, so the permission test passes even in a session
+# that has no controlling terminal, where the open is what actually fails.
+# Both attempts run in subshells so a failed redirection can never take this
+# script down with it.
+#
+# Fail-soft in both directions: a headless machine skips the step and this
+# script's output is exactly what it was before, and a nonzero exit from the
+# picker prints one note and still leaves the install successful.
+if (: </dev/tty) 2>/dev/null && (: >/dev/tty) 2>/dev/null; then
+  printf '\n'
+  "$LAUNCHER" install </dev/tty >/dev/tty 2>&1 || printf '%s\n' \
+    "Note: skipped the harness picker — run 'shipd install' when you are" \
+    "ready to choose the coding harnesses you work in."
+fi

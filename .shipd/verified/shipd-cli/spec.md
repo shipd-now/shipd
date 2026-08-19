@@ -5,10 +5,10 @@ id: cli-dispatch
 
 The `shipd` binary SHALL expose exactly the curated verbs `list`, `status`,
 `locate`, `epic`, `workspace`, `board`, `metrics`, `lint`, `doctor`,
-`statusline`, `copilot`, `vendor`, and `harness`, and for every verb except
-`list`, `doctor`, `statusline`, `copilot`, `vendor`, and `harness` SHALL
-delegate by replacing its own process with the mapped engine script
-invocation (`status` -> `spec_status.py show`, `locate` ->
+`statusline`, `copilot`, `vendor`, `harness`, and `install`, and for every
+verb except `list`, `doctor`, `statusline`, `copilot`, `vendor`, `harness`,
+and `install` SHALL delegate by replacing its own process with the mapped
+engine script invocation (`status` -> `spec_status.py show`, `locate` ->
 `spec_status.py locate`, `epic` -> `spec_status.py epic-show`, `workspace`
 -> `spec_status.py workspace-show`, `board` -> `dashboard.py` per the
 board-mode mapping below, `metrics` -> `metrics.py`, `lint` ->
@@ -78,6 +78,10 @@ SHALL print the same banner to stdout and exit `0`.
 #### Scenario: Harness is a curated verb
 - **WHEN** `shipd --help` runs
 - **THEN** the usage banner lists `harness` among the verbs
+
+#### Scenario: Install is a curated verb
+- **WHEN** `shipd --help` runs
+- **THEN** the usage banner lists `install` among the verbs
 
 ### Requirement: List in-flight changes
 id: cli-list
