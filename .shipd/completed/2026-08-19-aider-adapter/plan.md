@@ -1,5 +1,5 @@
 # aider-adapter
-Status: complete
+Status: verified
 
 ## Idea
 

@@ -55,3 +55,15 @@
 
 - [x] 3.1 [req: *] Bump `plugins/s/.claude-plugin/plugin.json` `version` to
       the next patch above the branch's post-base-merge value.
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| (no tool) | 0 | 20.1k |
+| Bash | 38 | 19.5k |
+| Edit | 8 | 3.8k |
+| Write | 3 | 3.2k |
+| Agent | 2 | 2.0k |
+| Read | 3 | 324 |
+| **Total** | 54 | 49.0k |
