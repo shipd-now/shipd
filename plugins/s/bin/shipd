@@ -8,15 +8,17 @@ a versioned plugin cache snapshot alike. Delegation is process replacement
 (:func:`os.execv`), so the delegate's stdout, stderr, interactivity, and exit
 code are this binary's own — nothing is reimplemented or reformatted here.
 
-Only read/inspect verbs are exposed, with four deliberate exceptions, each
+Only read/inspect verbs are exposed, with five deliberate exceptions, each
 writing user-domain files and never a spec artifact, and each only under an
 explicit word: ``statusline install`` writes the statusline registration into
 the user's own Claude Code settings file, ``copilot add`` / ``copilot remove``
 maintain the shipd Copilot code-review skill's four files inside a target
 repository, ``vendor add`` / ``vendor remove`` maintain a vendored per-repo
-shipd install there, and ``harness add`` / ``harness remove`` maintain the
+shipd install there, ``harness add`` / ``harness remove`` maintain the
 generated ``/s:`` command files inside a repository or the user's own harness
-directories. The mutating verbs over the spec library (``set-status``,
+directories, and ``install`` asks which harnesses the user works in and
+installs the chosen ones' commands into their home directory. The mutating
+verbs over the spec library (``set-status``,
 ``merge``, ``emit``, ``autopilot``, ``worktree remove``) stay behind their
 guarded scripts and skills.
 
@@ -61,6 +63,11 @@ ss = None
 # the read actions never load the body templates' renderer.
 hr = None
 hg = None
+
+# The interactive ``install`` flow, imported on demand by
+# :func:`_load_install_tui` for the same reason — it pulls in the generation
+# engine and the wordmark, which no other verb needs.
+iu = None
 
 # The curated verb table: verb -> (engine script, leading arguments). Trailing
 # arguments from the command line are appended verbatim, so ``--root``, slugs,
@@ -107,6 +114,7 @@ verbs:
   harness [list|show|add|remove|status]
                              the harness registry, and the generated /s:
                              command files in a repo or in your home
+  install                    pick your harnesses and install their commands
 
 options:
   -h, --help                 print this banner
@@ -185,6 +193,16 @@ def _load_generate():
         sys.path.insert(0, str(SCRIPTS))
     import harness_generate
     hg = harness_generate
+
+
+def _load_install_tui():
+    """Import ``install_tui`` into the module global ``iu``. Deferred to the
+    ``install`` verb, which is the only caller of the interactive flow."""
+    global iu
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    import install_tui
+    iu = install_tui
 
 
 def _content_dir(root):
@@ -1945,6 +1963,24 @@ def _cmd_harness_files(opts):
     return 0
 
 
+# ---------------------------------------------------------------------------
+# install (install-tui install-verb)
+# ---------------------------------------------------------------------------
+
+
+def cmd_install(args):
+    """Ask which coding harnesses the user works in and install the chosen
+    ones' ``/s:`` commands into their home directory.
+
+    In-binary like ``harness``: it writes only user-domain files, and it owns
+    the terminal for the length of the question, so it must not replace this
+    process. Everything it does lives in ``install_tui``; this is the verb's
+    argument surface and nothing else.
+    """
+    _load_install_tui()
+    return iu.main(args)
+
+
 def main(argv):
     if not argv:
         sys.stderr.write(USAGE)
@@ -1967,6 +2003,8 @@ def main(argv):
         return cmd_vendor(rest)
     if verb == "harness":
         return cmd_harness(rest)
+    if verb == "install":
+        return cmd_install(rest)
     if verb not in VERB_TABLE:
         sys.stderr.write(USAGE)
         return 2
