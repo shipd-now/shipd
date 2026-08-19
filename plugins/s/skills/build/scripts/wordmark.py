@@ -28,14 +28,22 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cli_common as cc  # noqa: E402
 
-# The banner art — copy of README.md's opening fenced block, trailing spaces
-# preserved. Keep in sync with that fence (test_wordmark asserts equality).
+# The banner art — copy of README.md's opening fenced block, byte for byte.
+# Keep in sync with that fence (test_wordmark asserts equality).
 ART = (
-    "█▀▀▀ █    ▀         █    ▄▄   ▄▄  ▄   ▄",
-    "▀▀▀█ █▀▀▄ █ █▀▀▄ ▄▀▀█   █  █ █  █ █ ▄ █",
-    "▀▀▀▀ ▀  ▀ ▀ █▄▄▀ ▀▄▄▀ ▀ ▀  ▀  ▀▀   ▀▀▀ ",
-    "            █ ",
+    "╭───────────────────────────────────────────────╮",
+    "│                                               │",
+    "│    █▀▀▀ █  █ █ █▀▀▄ █▀▀▄   █▀▀▄ █▀▀█ █   █    │",
+    "│    ▀▀▀█ █▀▀█ █ █▀▀  █  █   █  █ █  █ █ ▄ █    │",
+    "│    ▀▀▀▀ ▀  ▀ ▀ ▀    ▀▀▀  ▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀▀    │",
+    "│                                               │",
+    "╰───────────────────────────────────────────────╯",
 )
+
+# The characters that form the letters themselves. Everything else non-blank
+# (the rounded box) is frame: it is drawn in its gradient color from the very
+# first animation frame and never takes part in the letter-by-letter reveal.
+LETTERS = frozenset("█▀▄")
 
 WIDTH = max(len(line) for line in ART)
 
@@ -66,9 +74,12 @@ def column_rgb(x):
 
 def frame_lines(color_for):
     """Return the art as decorated lines. ``color_for(x)`` gives column ``x``'s
-    RGB triple, or ``None`` for a column that is not revealed yet — a hidden
-    glyph becomes a blank, so every frame keeps the art's exact width and can
-    be overdrawn in place. Each line ends with an attribute reset."""
+    RGB triple for a **letter** glyph, or ``None`` for a letter column that is
+    not revealed yet — a hidden letter becomes a blank, so every frame keeps
+    the art's exact width and can be overdrawn in place. Frame characters (the
+    box) always render in their gradient color, so the box is present from the
+    first frame and the settled frame equals the static render. Each line ends
+    with an attribute reset."""
     lines = []
     for line in ART:
         parts = []
@@ -78,7 +89,7 @@ def frame_lines(color_for):
                 parts.append(ch)
                 last = None       # a gap breaks the run: recolor after it
                 continue
-            rgb = color_for(x)
+            rgb = column_rgb(x) if ch not in LETTERS else color_for(x)
             if rgb is None:
                 parts.append(" ")
                 last = None
@@ -116,10 +127,12 @@ def render(stream):
 
 def letter_groups():
     """Return the art's letters as ``(start, end)`` column ranges: maximal
-    runs of columns carrying a glyph on at least one line, split at the blank
-    columns between them. One reveal step per group is what makes the
-    animation advance letter by letter rather than column by column."""
-    filled = [any(x < len(line) and line[x] != " " for line in ART)
+    runs of columns carrying a **letter** glyph on at least one line, split at
+    the columns between them. Frame (box) characters never count — the box is
+    not a letter and does not get a reveal step of its own. One reveal step
+    per group is what makes the animation advance letter by letter rather
+    than column by column."""
+    filled = [any(x < len(line) and line[x] in LETTERS for line in ART)
               for x in range(WIDTH)]
     groups = []
     start = None
