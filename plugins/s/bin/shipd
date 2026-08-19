@@ -671,21 +671,22 @@ def _admin_note(context):
 
 
 def _branch_protected(context, branch, run=_gh_run):
-    """``branch``'s ``protected`` boolean from the branches listing, or
-    ``None``
-    when the listing is unreadable or does not name it.
+    """``branch``'s ``protected`` boolean from the single-branch endpoint, or
+    ``None`` when the payload is unreadable or carries no such boolean.
 
     The fallback for a token without admin permission: it may not read the
     protection payload, but it may still see whether the branch is protected.
+    The probe asks for the one branch by name rather than listing the
+    repository's branches, because that listing is paginated — a repository
+    with more than a page of branches could hide the default branch behind a
+    page boundary and degrade this fallback to unverifiable.
     """
-    status, payload = _gh_api("repos/%s/branches" % context["nwo"], run=run)
-    if status != 200 or not isinstance(payload, list):
+    status, payload = _gh_api(
+        "repos/%s/branches/%s" % (context["nwo"], branch), run=run)
+    if status != 200 or not isinstance(payload, dict):
         return None
-    for entry in payload:
-        if isinstance(entry, dict) and entry.get("name") == branch:
-            value = entry.get("protected")
-            return value if isinstance(value, bool) else None
-    return None
+    value = payload.get("protected")
+    return value if isinstance(value, bool) else None
 
 
 def check_protection(context, run=_gh_run):
@@ -708,9 +709,22 @@ def check_protection(context, run=_gh_run):
         "repos/%s/branches/%s/protection" % (context["nwo"], branch), run=run)
     if status == 200 and isinstance(payload, dict):
         required = payload.get("required_status_checks")
+        if required is None:
+            # Not an unverifiable read: a readable payload that carries no
+            # ``required_status_checks`` at all is the definitive answer that
+            # the branch requires *no* status checks, so the gate's status is
+            # among the checks nothing requires.
+            return ("warn", "protection",
+                    "`%s` of %s is protected but requires no status checks at "
+                    "all — nothing requires the `semantic-review` status, so "
+                    "the gate's verdict is ignored at merge time%s"
+                    % (branch, context["nwo"], _admin_note(context)))
         contexts = (required.get("contexts")
                     if isinstance(required, dict) else None)
         if not isinstance(contexts, list):
+            # Required status checks *are* configured but the payload's shape
+            # is not one this reads — API drift, which degrades to
+            # unverifiable silence rather than a false alarm.
             return ("ok", "protection",
                     "could not be verified: `%s` is protected but its "
                     "protection payload lists no required status contexts"
@@ -731,7 +745,7 @@ def check_protection(context, run=_gh_run):
         if protected is None:
             return ("ok", "protection",
                     "could not be verified: reading `%s`'s protection needs "
-                    "admin permission on %s, and the branch listing did not "
+                    "admin permission on %s, and the branch payload did not "
                     "resolve it either" % (branch, context["nwo"]))
         if protected:
             return ("ok", "protection",

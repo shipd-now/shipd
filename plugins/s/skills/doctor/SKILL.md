@@ -131,6 +131,16 @@ protected" is the PUT; "does not require the `semantic-review` status context"
 is the append POST. Getting this backwards would replace an existing
 protection ruleset, so read the detail before choosing.
 
+**A third `protection` warning — "requires no status checks at all" — is
+report-only.** The branch is protected but has no required status checks
+enabled, so neither remedy fits: the contexts-append POST 404s because there
+are no required status checks to append to, and the whole-protection PUT would
+clobber the branch's existing protection settings (reviews, restrictions,
+admin enforcement) with the minimal body above. Propose no `gh api` remedy.
+Relay the manual hint instead: an admin enables required status checks on that
+branch and adds `semantic-review` to them, in the branch's protection settings
+on GitHub.
+
 **A detail naming a missing admin permission makes the finding report-only.**
 Where a `protection`, `automerge`, or `copilot-secret` detail says *the token
 lacks admin permission*, propose **no** `gh api` remedy for it — the call would

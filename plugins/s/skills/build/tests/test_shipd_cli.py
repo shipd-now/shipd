@@ -1274,7 +1274,8 @@ class DoctorCheckTest(unittest.TestCase):
         responses = self.gh_responses(
             self.repo_payload(),
             {"branches/main/protection": self.HTTP_404,
-             "branches": self.ok_json([{"name": "main", "protected": False}]),
+             "branches/main": self.ok_json({"name": "main",
+                                            "protected": False}),
              "actions/secrets": self.ok_json({"secrets": []})})
         context, run = self.resolve_context(responses)
         shipd.check_protection(context, run=run)
@@ -1287,10 +1288,10 @@ class DoctorCheckTest(unittest.TestCase):
 
     # -- protection ---------------------------------------------------------
 
-    def protection(self, protection_response, repo=None, listing=None):
+    def protection(self, protection_response, repo=None, branch=None):
         probes = {"branches/main/protection": protection_response}
-        if listing is not None:
-            probes["branches"] = listing
+        if branch is not None:
+            probes["branches/main"] = branch
         context, run = self.resolve_context(
             self.gh_responses(repo or self.repo_payload(), probes))
         return shipd.check_protection(context, run=run)
@@ -1323,7 +1324,8 @@ class DoctorCheckTest(unittest.TestCase):
     def test_every_protection_warning_names_the_repository_and_branch(self):
         for probe in (self.HTTP_404,
                       self.ok_json({"required_status_checks":
-                                    {"contexts": ["ci"]}})):
+                                    {"contexts": ["ci"]}}),
+                      self.ok_json({})):
             level, _name, detail = self.protection(probe)
             self.assertEqual(level, "warn", detail)
             self.assertIn(self.NWO, detail)
@@ -1333,19 +1335,37 @@ class DoctorCheckTest(unittest.TestCase):
         level, name, detail = self.protection(
             self.HTTP_403,
             repo=self.repo_payload(permissions={"admin": False}),
-            listing=self.ok_json([{"name": "main", "protected": True},
-                                  {"name": "wip", "protected": False}]))
+            branch=self.ok_json({"name": "main", "protected": True}))
         self.assertEqual((level, name), ("ok", "protection"))
         self.assertIn("could not be verified", detail)
         self.assertIn("admin", detail)
+
+    def test_the_protected_fallback_asks_for_the_one_branch(self):
+        """The fallback reads ``repos/<nwo>/branches/<branch>``, never the
+        paginated branch listing — a repository with more than a page of
+        branches would hide the default branch behind a page boundary."""
+        self.protection(
+            self.HTTP_403,
+            repo=self.repo_payload(permissions={"admin": False}),
+            branch=self.ok_json({"name": "main", "protected": True}))
+        self.assertIn("api repos/%s/branches/main" % self.NWO, self.gh_calls)
+        self.assertNotIn("api repos/%s/branches" % self.NWO, self.gh_calls)
 
     def test_non_admin_unprotected_branch_warns(self):
         level, name, detail = self.protection(
             self.HTTP_403,
             repo=self.repo_payload(permissions={"admin": False}),
-            listing=self.ok_json([{"name": "main", "protected": False}]))
+            branch=self.ok_json({"name": "main", "protected": False}))
         self.assertEqual((level, name), ("warn", "protection"))
         self.assertIn("not protected", detail)
+
+    def test_a_branch_payload_without_the_boolean_is_unverifiable(self):
+        level, name, detail = self.protection(
+            self.HTTP_403,
+            repo=self.repo_payload(permissions={"admin": False}),
+            branch=self.ok_json({"name": "main"}))
+        self.assertEqual((level, name), ("ok", "protection"))
+        self.assertIn("could not be verified", detail)
 
     def test_missing_admin_permission_is_named_in_the_warn_detail(self):
         level, name, detail = self.protection(
@@ -1358,11 +1378,11 @@ class DoctorCheckTest(unittest.TestCase):
         _level, _name, detail = self.protection(self.HTTP_404)
         self.assertNotIn("lacks admin permission", detail)
 
-    def test_unreadable_branch_listing_is_ok_unverifiable(self):
+    def test_unreadable_branch_payload_is_ok_unverifiable(self):
         level, name, detail = self.protection(
             self.HTTP_403,
             repo=self.repo_payload(permissions={"admin": False}),
-            listing=self.HTTP_403)
+            branch=self.HTTP_403)
         self.assertEqual((level, name), ("ok", "protection"))
         self.assertIn("could not be verified", detail)
 
@@ -1371,10 +1391,39 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual((level, name), ("ok", "protection"))
         self.assertIn("could not be verified", detail)
 
-    def test_protection_payload_without_contexts_is_ok_unverifiable(self):
+    def test_protection_without_required_status_checks_warns(self):
+        """A readable 200 payload carrying no ``required_status_checks`` is not
+        an unverifiable read — it says the branch requires *no* status checks,
+        so nothing requires the gate's status and the verdict is ignored."""
         level, name, detail = self.protection(self.ok_json({}))
-        self.assertEqual((level, name), ("ok", "protection"))
-        self.assertIn("could not be verified", detail)
+        self.assertEqual((level, name), ("warn", "protection"), detail)
+        self.assertIn("requires no status checks at all", detail)
+        self.assertIn("semantic-review", detail)
+        self.assertNotIn("could not be verified", detail)
+        # The skill routes its remedies off the other two warnings'
+        # discriminators, and neither remedy fits this one: the append POST
+        # 404s, and the whole-protection PUT would clobber the branch's
+        # existing settings.
+        self.assertNotIn("is not protected", detail)
+        self.assertNotIn("does not require the `semantic-review` status "
+                         "context", detail)
+
+    def test_malformed_required_status_checks_is_ok_unverifiable(self):
+        """Required status checks *are* configured, but the payload's shape is
+        not one this reads. That is unknown, not definitive, so it degrades to
+        unverifiable silence rather than joining the warning above."""
+        for required in ({"contexts": "ci"}, {}, "ci", []):
+            level, name, detail = self.protection(self.ok_json(
+                {"required_status_checks": required}))
+            self.assertEqual((level, name), ("ok", "protection"), detail)
+            self.assertIn("could not be verified", detail)
+            self.assertNotIn("requires no status checks at all", detail)
+
+    def test_the_no_status_checks_warning_carries_the_admin_note(self):
+        _level, _name, detail = self.protection(
+            self.ok_json({}),
+            repo=self.repo_payload(permissions={"admin": False}))
+        self.assertIn("lacks admin permission", detail)
 
     # -- automerge ----------------------------------------------------------
 
