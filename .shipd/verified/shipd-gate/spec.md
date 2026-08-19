@@ -1,9 +1,9 @@
-# shipd-copilot
+# shipd-gate
 
-### Requirement: Copilot setup skill flow
-id: copilot-skill-flow
+### Requirement: Gate setup skill flow
+id: gate-skill-flow
 
-A `/s:copilot` skill SHALL set up the shipd semantic review gate in a
+A `/s:gate` skill SHALL set up the shipd semantic review gate in a
 repository, in this order. It SHALL announce the running plugin version in
 its first user-visible status sentence, then preflight: the working
 directory MUST be a git repository resolving a GitHub remote, and `gh` MUST
@@ -13,7 +13,7 @@ stop. It SHALL then run `shipd copilot add` — resolving the binary as
 `shipd` on PATH first, else `${CLAUDE_PLUGIN_ROOT}/bin/shipd` — and relay
 the verb's own report. It SHALL propose committing and pushing the four
 installed files on the current branch; if the push is rejected, it SHALL
-fall back to a `shipd-copilot-install` branch shipped as an auto-merging PR
+fall back to a `shipd-gate-install` branch shipped as an auto-merging PR
 and say so. It SHALL then collect explicit consent in a single batched
 selection honoring the dialog-prose separation rule over exactly these
 runnable steps: requiring the `semantic-review` check via
@@ -59,27 +59,27 @@ remains.
 - **THEN** the skill's closing report states the gate stays fail-open
   advisory until the secret exists
 
-### Requirement: Copilot skill registration
-id: copilot-skill-registration
+### Requirement: Gate skill registration
+id: gate-skill-registration
 
-The skill SHALL live at `plugins/s/skills/copilot/SKILL.md` with `name` and
-`description` frontmatter whose description carries the `/s:copilot`
+The skill SHALL live at `plugins/s/skills/gate/SKILL.md` with `name` and
+`description` frontmatter whose description carries the `/s:gate`
 trigger, SHALL carry the question-rejection recovery rule, and SHALL be
 listed in the repository `README.md` skills table and in `AGENTS.md`'s
 skill enumeration. A body template SHALL exist at
-`plugins/s/harness/bodies/copilot.md` opening with a
+`plugins/s/harness/bodies/gate.md` opening with a
 `<!-- description: … -->` marker, so the bodies/skills id-set equality the
 harness-command-bodies capability enforces holds.
 
 #### Scenario: Skill is discoverable and documented
 - **WHEN** the plugin's skills and the README table are compared
-- **THEN** `copilot` appears in both, with `/s:copilot` as its invocation
+- **THEN** `gate` appears in both, with `/s:gate` as its invocation
 
 #### Scenario: Body template keeps the id-set equality
 - **WHEN** the bodies directory listing is compared to the skills directory
   listing
-- **THEN** `copilot` appears in both sets
+- **THEN** `gate` appears in both sets
 
 #### Scenario: Recovery rule is carried
-- **WHEN** `plugins/s/skills/copilot/SKILL.md` is inspected
+- **WHEN** `plugins/s/skills/gate/SKILL.md` is inspected
 - **THEN** it contains the question-rejection recovery rule
