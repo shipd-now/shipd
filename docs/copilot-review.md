@@ -540,6 +540,40 @@ the gate is gated by the gate it installs, exactly like every later one. What
 does not fire is a run for a *Copilot-authored* review submission, on any
 branch, which is what the poll above exists to absorb.
 
+### Preflight the GitHub settings
+
+Installing the files is only half of it: the gate is as strong as the
+repository settings around it, and every one of them lives on GitHub rather
+than in the checkout. `shipd doctor` reads all three, read-only, and reports
+them as its last three lines:
+
+| Check | `ok` when | `warn` when |
+| --- | --- | --- |
+| `protection` | the default branch requires the `semantic-review` status context | the branch is unprotected, or protected without that context — either way the gate's verdict is ignored at merge time |
+| `automerge` | the repository allows auto-merge | it does not, so `gh pr merge --auto` cannot arm (waived where the workspace declares `pr-mode: draft`, which never arms it) |
+| `copilot-secret` | `COPILOT_GITHUB_TOKEN` is set, so runs take the CLI reviewer mode | the gate workflow is installed without it, so runs degrade to the [poll fallback](#the-poll-fallback-mode) |
+
+```
+ok protection — `main` requires the `semantic-review` status context
+ok automerge — auto-merge is enabled on acme/widget
+warn copilot-secret — the review gate is installed but COPILOT_GITHUB_TOKEN is
+  not set on acme/widget — the gate degrades to the fail-open poll fallback
+```
+
+None of the three can fail the preflight. Where `gh` is missing or
+unauthenticated, the directory resolves no GitHub repository, or the API is
+unreachable, each reports `ok` with a note naming why it could not be checked —
+so `shipd doctor` still works offline.
+
+`/s:doctor` turns the two settings findings into consent-gated `gh api` fixes:
+requiring `semantic-review` on an unprotected branch, appending it to the
+checks a protected branch already requires, and enabling auto-merge. All three
+need admin permission on the repository; where the finding's detail says the
+token lacks it, the skill reports the finding and offers no remedy. The
+`copilot-secret` warning is always a hand-off — the token has to be minted by a
+human, per [the reviewer token](#the-reviewer-token) above — so the skill
+relays the recipe and leaves `gh secret set COPILOT_GITHUB_TOKEN` to you.
+
 ## 4. Check and upgrade the install
 
 Run the verb bare. It reports and changes nothing:

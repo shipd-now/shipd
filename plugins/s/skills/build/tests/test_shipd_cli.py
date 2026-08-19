@@ -615,6 +615,27 @@ class DoctorCheckTest(unittest.TestCase):
             made.append(path)
         return made
 
+    # The full preflight roster, in the order ``default_checks`` reports it.
+    ALL_CHECKS = ("python", "git", "config", "pipeline", "gh", "difft",
+                  "textual", "pydantic", "snapshot", "statusline",
+                  "protection", "automerge", "copilot-secret")
+
+    def probed_check_names(self, root):
+        """The check names ``default_checks`` reports, with every check — and
+        the GitHub context resolution the last three share — stubbed out, so
+        ordering is asserted without touching PATH, the network, or ``gh``."""
+        patchers = [unittest.mock.patch.object(
+            shipd, "gh_context", lambda **kw: {"skip": "stubbed"})]
+        for check in self.ALL_CHECKS:
+            patchers.append(unittest.mock.patch.object(
+                shipd, "check_%s" % check.replace("-", "_"),
+                lambda *a, _n=check, **kw: ("ok", _n, "")))
+        with contextlib.ExitStack() as stack:
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            return [name for _level, name, _detail
+                    in shipd.default_checks(root)]
+
     # -- python ------------------------------------------------------------
 
     def test_python_at_the_floor_is_ok(self):
@@ -794,17 +815,7 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertIn("semdiff doctor --fix", detail)
 
     def test_default_checks_probe_difft_after_gh(self):
-        stubs = {}
-        for check in ("python", "git", "config", "pipeline", "gh", "difft",
-                      "textual", "pydantic", "snapshot", "statusline"):
-            stubs[check] = unittest.mock.patch.object(
-                shipd, "check_%s" % check,
-                lambda *a, _n=check, **kw: ("ok", _n, ""))
-        with contextlib.ExitStack() as stack:
-            for patcher in stubs.values():
-                stack.enter_context(patcher)
-            names = [name for _level, name, _detail
-                     in shipd.default_checks(self.tmp)]
+        names = self.probed_check_names(self.tmp)
         self.assertEqual(names.index("difft"), names.index("gh") + 1)
 
     # -- the pip install hint ----------------------------------------------
@@ -1036,20 +1047,10 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual((level, name), ("ok", "pydantic"))
 
     def test_default_checks_run_in_the_documented_order(self):
-        stubs = {}
-        for check in ("python", "git", "config", "pipeline", "gh", "difft",
-                      "textual", "pydantic", "snapshot", "statusline"):
-            stubs[check] = unittest.mock.patch.object(
-                shipd, "check_%s" % check,
-                lambda *a, _n=check, **kw: ("ok", _n, ""))
-        with contextlib.ExitStack() as stack:
-            for patcher in stubs.values():
-                stack.enter_context(patcher)
-            names = [name for _level, name, _detail
-                     in shipd.default_checks(self.tmp)]
-        self.assertEqual(names,
+        self.assertEqual(self.probed_check_names(self.tmp),
                          ["python", "git", "config", "pipeline", "gh", "difft",
-                          "textual", "pydantic", "snapshot", "statusline"])
+                          "textual", "pydantic", "snapshot", "statusline",
+                          "protection", "automerge", "copilot-secret"])
 
     # -- statusline --------------------------------------------------------
 
@@ -1097,17 +1098,7 @@ class DoctorCheckTest(unittest.TestCase):
                          (after.st_size, after.st_mtime))
 
     def test_default_checks_probe_statusline_after_snapshot(self):
-        stubs = {}
-        for check in ("python", "git", "config", "pipeline", "gh", "difft",
-                      "textual", "pydantic", "snapshot", "statusline"):
-            stubs[check] = unittest.mock.patch.object(
-                shipd, "check_%s" % check,
-                lambda *a, _n=check, **kw: ("ok", _n, ""))
-        with contextlib.ExitStack() as stack:
-            for patcher in stubs.values():
-                stack.enter_context(patcher)
-            names = [name for _level, name, _detail
-                     in shipd.default_checks(self.tmp)]
+        names = self.probed_check_names(self.tmp)
         self.assertEqual(names.index("statusline"),
                          names.index("snapshot") + 1)
 
@@ -1143,6 +1134,473 @@ class DoctorCheckTest(unittest.TestCase):
         level, name, detail = shipd.check_snapshot(plugin_root)
         self.assertEqual((level, name), ("ok", "snapshot"))
         self.assertIn("dev mode", detail)
+
+    # -- the GitHub-side checks (shipd-cli doctor-github-checks) -----------
+    #
+    # ``protection``, ``automerge``, and ``copilot-secret`` all probe GitHub
+    # through one injected runner, so every branch below is driven from canned
+    # ``gh`` responses — the suite never resolves a remote, never
+    # authenticates,
+    # and never reaches the network.
+
+    NWO = "acme/widget"
+    REPO_VIEW = "repo view --json nameWithOwner -q .nameWithOwner"
+    HTTP_403 = (1, "", "gh: Forbidden (HTTP 403)\n")
+    HTTP_404 = (1, "", "gh: Not Found (HTTP 404)\n")
+    OFFLINE = (1, "", "dial tcp: lookup api.github.com: no such host\n")
+
+    def gh_stub(self, responses):
+        """A ``_gh_run`` stand-in answering from ``responses`` (the joined
+        argument string -> ``(returncode, stdout, stderr)``). Every invocation
+        is recorded on ``self.gh_calls``; an unexpected one fails the test."""
+        self.gh_calls = []
+
+        def run(args):
+            key = " ".join(args)
+            self.gh_calls.append(key)
+            if key not in responses:
+                self.fail("unexpected gh invocation: %s" % key)
+            return responses[key]
+        return run
+
+    def repo_payload(self, **overrides):
+        """The ``gh api repos/<nwo>`` payload the context is resolved from."""
+        payload = {"default_branch": "main", "allow_auto_merge": True,
+                   "permissions": {"admin": True}}
+        payload.update(overrides)
+        return payload
+
+    def gh_responses(self, repo=None, probes=None):
+        """The two context-resolution responses plus ``probes`` — a mapping of
+        path suffix under ``repos/<nwo>/`` to a canned response."""
+        responses = {self.REPO_VIEW: (0, self.NWO + "\n", "")}
+        if repo is not None:
+            responses["api repos/%s" % self.NWO] = (0, json.dumps(repo), "")
+        for suffix, response in (probes or {}).items():
+            responses["api repos/%s/%s" % (self.NWO, suffix)] = response
+        return responses
+
+    def ok_json(self, payload):
+        return (0, json.dumps(payload), "")
+
+    def resolve_context(self, responses, which=None, gh_status=None):
+        """``(context, run)`` — the once-resolved repository context and the
+        shared stub runner the three checks go on probing through."""
+        run = self.gh_stub(responses)
+        context = shipd.gh_context(
+            which=self.stub_which({"gh": "/opt/bin/gh"})
+            if which is None else which,
+            gh_status=gh_status or (lambda: 0),
+            run=run)
+        return context, run
+
+    def repo_with_gate(self, name="gated"):
+        """A throwaway root carrying the installed copilot gate workflow."""
+        root = os.path.join(self.tmp, name)
+        path = os.path.join(root, ".github", "workflows",
+                            "copilot-review-gate.yml")
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("name: copilot review gate\n")
+        return root
+
+    def automerge_check(self, root, context):
+        """``check_automerge`` with ``HOME`` pointed at the throwaway home, so
+        the outermost ``pr-mode`` layer can never be the real user's."""
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            return shipd.check_automerge(root, context)
+
+    # -- context resolution -------------------------------------------------
+
+    def test_no_github_repository_skips_all_three(self):
+        root = self.repo_with_gate("nogithub")
+        context, _run = self.resolve_context(
+            {self.REPO_VIEW: (1, "", "none of the git remotes point to a "
+                                     "known GitHub host\n")})
+        results = [shipd.check_protection(context),
+                   self.automerge_check(root, context),
+                   shipd.check_copilot_secret(root, context)]
+        self.assertEqual([level for level, _n, _d in results],
+                         ["ok", "ok", "ok"])
+        self.assertEqual([name for _l, name, _d in results],
+                         ["protection", "automerge", "copilot-secret"])
+        for _level, name, detail in results:
+            self.assertIn("skipped", detail, name)
+            self.assertIn("GitHub repository", detail, name)
+
+    def test_gh_absent_skips_without_probing(self):
+        context, _run = self.resolve_context({}, which=self.stub_which({}))
+        self.assertEqual(self.gh_calls, [])
+        level, name, detail = shipd.check_protection(context)
+        self.assertEqual((level, name), ("ok", "protection"))
+        self.assertIn("skipped", detail)
+        self.assertIn("gh", detail)
+
+    def test_unauthenticated_gh_skips_without_probing(self):
+        context, _run = self.resolve_context({}, gh_status=lambda: 1)
+        self.assertEqual(self.gh_calls, [])
+        level, name, detail = shipd.check_automerge(self.tmp, context)
+        self.assertEqual((level, name), ("ok", "automerge"))
+        self.assertIn("skipped", detail)
+        self.assertIn("authenticated", detail)
+
+    def test_unreadable_repository_payload_skips(self):
+        context, _run = self.resolve_context(
+            {self.REPO_VIEW: (0, self.NWO + "\n", ""),
+             "api repos/%s" % self.NWO: self.OFFLINE})
+        level, name, detail = shipd.check_protection(context)
+        self.assertEqual((level, name), ("ok", "protection"))
+        self.assertIn("skipped", detail)
+
+    def test_the_repository_payload_is_fetched_once(self):
+        root = self.repo_with_gate("once")
+        responses = self.gh_responses(
+            self.repo_payload(),
+            {"branches/main/protection":
+                self.ok_json({"required_status_checks":
+                              {"contexts": ["ci", "semantic-review"]}}),
+             "actions/secrets":
+                self.ok_json({"secrets": [{"name": "COPILOT_GITHUB_TOKEN"}]})})
+        context, run = self.resolve_context(responses)
+        shipd.check_protection(context, run=run)
+        self.automerge_check(root, context)
+        shipd.check_copilot_secret(root, context, run=run)
+        self.assertEqual(self.gh_calls.count("api repos/%s" % self.NWO), 1)
+
+    def test_the_github_probes_never_mutate(self):
+        root = self.repo_with_gate("readonly")
+        responses = self.gh_responses(
+            self.repo_payload(),
+            {"branches/main/protection": self.HTTP_404,
+             "branches/main": self.ok_json({"name": "main",
+                                            "protected": False}),
+             "actions/secrets": self.ok_json({"secrets": []})})
+        context, run = self.resolve_context(responses)
+        shipd.check_protection(context, run=run)
+        self.automerge_check(root, context)
+        shipd.check_copilot_secret(root, context, run=run)
+        for call in self.gh_calls:
+            self.assertNotIn("-X", call)
+            self.assertTrue(call.startswith("api ") or call == self.REPO_VIEW,
+                            call)
+
+    # -- protection ---------------------------------------------------------
+
+    def protection(self, protection_response, repo=None, branch=None):
+        probes = {"branches/main/protection": protection_response}
+        if branch is not None:
+            probes["branches/main"] = branch
+        context, run = self.resolve_context(
+            self.gh_responses(repo or self.repo_payload(), probes))
+        return shipd.check_protection(context, run=run)
+
+    def test_required_semantic_review_context_is_ok(self):
+        level, name, detail = self.protection(self.ok_json(
+            {"required_status_checks": {"contexts": ["ci",
+                                                     "semantic-review"]}}))
+        self.assertEqual((level, name), ("ok", "protection"))
+        self.assertIn("semantic-review", detail)
+        self.assertIn("main", detail)
+
+    def test_unprotected_default_branch_warns(self):
+        level, name, detail = self.protection(self.HTTP_404)
+        self.assertEqual((level, name), ("warn", "protection"))
+        self.assertIn("main", detail)
+        self.assertIn("not protected", detail)
+        self.assertIn("semantic-review", detail)
+
+    def test_protection_missing_the_semantic_review_context_warns(self):
+        level, name, detail = self.protection(self.ok_json(
+            {"required_status_checks": {"contexts": ["ci"]}}))
+        self.assertEqual((level, name), ("warn", "protection"))
+        self.assertIn("semantic-review", detail)
+        # The contexts-append remedy needs both halves of the endpoint path,
+        # so every `protection` warning names the repository and the branch.
+        self.assertIn(self.NWO, detail)
+        self.assertIn("main", detail)
+
+    def test_every_protection_warning_names_the_repository_and_branch(self):
+        for probe in (self.HTTP_404,
+                      self.ok_json({"required_status_checks":
+                                    {"contexts": ["ci"]}}),
+                      self.ok_json({})):
+            level, _name, detail = self.protection(probe)
+            self.assertEqual(level, "warn", detail)
+            self.assertIn(self.NWO, detail)
+            self.assertIn("`main`", detail)
+
+    def test_non_admin_falls_back_to_the_protected_boolean(self):
+        level, name, detail = self.protection(
+            self.HTTP_403,
+            repo=self.repo_payload(permissions={"admin": False}),
+            branch=self.ok_json({"name": "main", "protected": True}))
+        self.assertEqual((level, name), ("ok", "protection"))
+        self.assertIn("could not be verified", detail)
+        self.assertIn("admin", detail)
+
+    def test_the_protected_fallback_asks_for_the_one_branch(self):
+        """The fallback reads ``repos/<nwo>/branches/<branch>``, never the
+        paginated branch listing — a repository with more than a page of
+        branches would hide the default branch behind a page boundary."""
+        self.protection(
+            self.HTTP_403,
+            repo=self.repo_payload(permissions={"admin": False}),
+            branch=self.ok_json({"name": "main", "protected": True}))
+        self.assertIn("api repos/%s/branches/main" % self.NWO, self.gh_calls)
+        self.assertNotIn("api repos/%s/branches" % self.NWO, self.gh_calls)
+
+    def test_non_admin_unprotected_branch_warns(self):
+        level, name, detail = self.protection(
+            self.HTTP_403,
+            repo=self.repo_payload(permissions={"admin": False}),
+            branch=self.ok_json({"name": "main", "protected": False}))
+        self.assertEqual((level, name), ("warn", "protection"))
+        self.assertIn("not protected", detail)
+
+    def test_a_branch_payload_without_the_boolean_is_unverifiable(self):
+        level, name, detail = self.protection(
+            self.HTTP_403,
+            repo=self.repo_payload(permissions={"admin": False}),
+            branch=self.ok_json({"name": "main"}))
+        self.assertEqual((level, name), ("ok", "protection"))
+        self.assertIn("could not be verified", detail)
+
+    def test_missing_admin_permission_is_named_in_the_warn_detail(self):
+        level, name, detail = self.protection(
+            self.HTTP_404,
+            repo=self.repo_payload(permissions={"admin": False}))
+        self.assertEqual((level, name), ("warn", "protection"))
+        self.assertIn("lacks admin permission", detail)
+
+    def test_admin_token_leaves_the_warn_detail_without_that_note(self):
+        _level, _name, detail = self.protection(self.HTTP_404)
+        self.assertNotIn("lacks admin permission", detail)
+
+    def test_unreadable_branch_payload_is_ok_unverifiable(self):
+        level, name, detail = self.protection(
+            self.HTTP_403,
+            repo=self.repo_payload(permissions={"admin": False}),
+            branch=self.HTTP_403)
+        self.assertEqual((level, name), ("ok", "protection"))
+        self.assertIn("could not be verified", detail)
+
+    def test_protection_probe_error_is_ok_unverifiable(self):
+        level, name, detail = self.protection(self.OFFLINE)
+        self.assertEqual((level, name), ("ok", "protection"))
+        self.assertIn("could not be verified", detail)
+
+    def test_protection_without_required_status_checks_warns(self):
+        """A readable 200 payload carrying no ``required_status_checks`` is not
+        an unverifiable read — it says the branch requires *no* status checks,
+        so nothing requires the gate's status and the verdict is ignored."""
+        level, name, detail = self.protection(self.ok_json({}))
+        self.assertEqual((level, name), ("warn", "protection"), detail)
+        self.assertIn("requires no status checks at all", detail)
+        self.assertIn("semantic-review", detail)
+        self.assertNotIn("could not be verified", detail)
+        # The skill routes its remedies off the other two warnings'
+        # discriminators, and neither remedy fits this one: the append POST
+        # 404s, and the whole-protection PUT would clobber the branch's
+        # existing settings.
+        self.assertNotIn("is not protected", detail)
+        self.assertNotIn("does not require the `semantic-review` status "
+                         "context", detail)
+
+    def test_malformed_required_status_checks_is_ok_unverifiable(self):
+        """Required status checks *are* configured, but the payload's shape is
+        not one this reads. That is unknown, not definitive, so it degrades to
+        unverifiable silence rather than joining the warning above."""
+        for required in ({"contexts": "ci"}, {}, "ci", []):
+            level, name, detail = self.protection(self.ok_json(
+                {"required_status_checks": required}))
+            self.assertEqual((level, name), ("ok", "protection"), detail)
+            self.assertIn("could not be verified", detail)
+            self.assertNotIn("requires no status checks at all", detail)
+
+    def test_the_no_status_checks_warning_carries_the_admin_note(self):
+        _level, _name, detail = self.protection(
+            self.ok_json({}),
+            repo=self.repo_payload(permissions={"admin": False}))
+        self.assertIn("lacks admin permission", detail)
+
+    # -- automerge ----------------------------------------------------------
+
+    def automerge(self, root, **repo_overrides):
+        context, _run = self.resolve_context(
+            self.gh_responses(self.repo_payload(**repo_overrides)))
+        return self.automerge_check(root, context)
+
+    def test_enabled_auto_merge_is_ok(self):
+        root = os.path.join(self.tmp, "am-ok")
+        os.makedirs(root)
+        level, name, detail = self.automerge(root)
+        self.assertEqual((level, name), ("ok", "automerge"))
+        self.assertIn(self.NWO, detail)
+
+    def test_disabled_auto_merge_warns_under_auto_pr_mode(self):
+        root = os.path.join(self.tmp, "am-warn")
+        os.makedirs(root)
+        level, name, detail = self.automerge(root, allow_auto_merge=False)
+        self.assertEqual((level, name), ("warn", "automerge"))
+        self.assertIn("auto-merge", detail)
+
+    def test_draft_pr_mode_waives_the_automerge_warning(self):
+        root, _path = self.repo_with_config("am-draft", {"pr-mode": "draft"})
+        level, name, detail = self.automerge(root, allow_auto_merge=False)
+        self.assertEqual((level, name), ("ok", "automerge"))
+        self.assertIn("draft", detail)
+
+    def test_absent_allow_auto_merge_field_is_ok_unverifiable(self):
+        root = os.path.join(self.tmp, "am-absent")
+        os.makedirs(root)
+        context, _run = self.resolve_context(self.gh_responses(
+            {"default_branch": "main", "permissions": {"admin": True}}))
+        level, name, detail = self.automerge_check(root, context)
+        self.assertEqual((level, name), ("ok", "automerge"))
+        self.assertIn("could not be verified", detail)
+
+    def test_automerge_warn_names_a_missing_admin_permission(self):
+        root = os.path.join(self.tmp, "am-noadmin")
+        os.makedirs(root)
+        level, name, detail = self.automerge(
+            root, allow_auto_merge=False, permissions={"admin": False})
+        self.assertEqual((level, name), ("warn", "automerge"))
+        self.assertIn("lacks admin permission", detail)
+
+    # -- copilot-secret -----------------------------------------------------
+
+    def copilot_secret(self, root, secrets_response=None):
+        probes = ({} if secrets_response is None
+                  else {"actions/secrets": secrets_response})
+        context, run = self.resolve_context(
+            self.gh_responses(self.repo_payload(), probes))
+        return shipd.check_copilot_secret(root, context, run=run)
+
+    def test_installed_gate_without_the_secret_warns_fail_open(self):
+        root = self.repo_with_gate("gate-nosecret")
+        level, name, detail = self.copilot_secret(
+            root, self.ok_json({"total_count": 0, "secrets": []}))
+        self.assertEqual((level, name), ("warn", "copilot-secret"))
+        self.assertIn("COPILOT_GITHUB_TOKEN", detail)
+        self.assertIn("fail-open", detail)
+        self.assertIn("poll", detail)
+
+    def test_installed_gate_with_the_secret_is_ok(self):
+        root = self.repo_with_gate("gate-secret")
+        level, name, detail = self.copilot_secret(root, self.ok_json(
+            {"total_count": 1,
+             "secrets": [{"name": "COPILOT_GITHUB_TOKEN"}]}))
+        self.assertEqual((level, name), ("ok", "copilot-secret"))
+        self.assertIn("COPILOT_GITHUB_TOKEN", detail)
+
+    def test_absent_gate_workflow_skips_the_secret_check(self):
+        root = os.path.join(self.tmp, "nogate")
+        os.makedirs(root)
+        level, name, detail = self.copilot_secret(root)
+        self.assertEqual((level, name), ("ok", "copilot-secret"))
+        self.assertIn("skipped", detail)
+        self.assertIn("copilot-review-gate.yml", detail)
+
+    def test_absent_gate_workflow_never_probes_the_secrets(self):
+        root = os.path.join(self.tmp, "nogate-quiet")
+        os.makedirs(root)
+        self.copilot_secret(root)
+        self.assertNotIn("api repos/%s/actions/secrets" % self.NWO,
+                         self.gh_calls)
+
+    def test_denied_secrets_listing_is_ok_unverifiable(self):
+        root = self.repo_with_gate("gate-denied")
+        level, name, detail = self.copilot_secret(root, self.HTTP_403)
+        self.assertEqual((level, name), ("ok", "copilot-secret"))
+        self.assertIn("could not be verified", detail)
+
+    def test_secret_warn_names_a_missing_admin_permission(self):
+        root = self.repo_with_gate("gate-noadmin")
+        context, run = self.resolve_context(self.gh_responses(
+            self.repo_payload(permissions={"admin": False}),
+            {"actions/secrets": self.ok_json({"secrets": []})}))
+        level, name, detail = shipd.check_copilot_secret(root, context,
+                                                         run=run)
+        self.assertEqual((level, name), ("warn", "copilot-secret"))
+        self.assertIn("lacks admin permission", detail)
+
+    # -- a gh that never answers --------------------------------------------
+
+    def timing_out_subprocess(self):
+        """A ``subprocess.run`` stand-in for a ``gh`` that never returns. It
+        asserts the call was bounded before raising, so the seam cannot lose
+        its timeout and still pass. Nothing here sleeps or runs a real gh."""
+        def run(cmd, **kwargs):
+            self.assertEqual(kwargs.get("timeout"), shipd.GH_TIMEOUT, cmd)
+            raise subprocess.TimeoutExpired(cmd=cmd,
+                                            timeout=shipd.GH_TIMEOUT)
+        return run
+
+    def test_a_timed_out_gh_degrades_instead_of_hanging(self):
+        """A hung ``gh`` reaches the checks as an ordinary probe failure: both
+        subprocess seams are bounded, the context resolves to a skip, and all
+        three checks still report ``ok`` rather than stalling the preflight."""
+        root = self.repo_with_gate("timed-out")
+        with unittest.mock.patch.object(shipd.subprocess, "run",
+                                        self.timing_out_subprocess()):
+            self.assertEqual(shipd._gh_auth_status(), 1)
+            code, out, err = shipd._gh_run(["repo", "view"])
+            self.assertEqual((code, out), (1, ""))
+            self.assertIn("timed out", err)
+            context = shipd.gh_context(
+                which=self.stub_which({"gh": "/opt/bin/gh"}),
+                gh_status=lambda: 0)
+        self.assertIn("skip", context)
+        results = [shipd.check_protection(context),
+                   self.automerge_check(root, context),
+                   shipd.check_copilot_secret(root, context)]
+        self.assertEqual([level for level, _n, _d in results], ["ok"] * 3)
+        for _level, name, detail in results:
+            self.assertIn("skipped", detail, name)
+
+    def test_a_timed_out_probe_is_unverifiable_not_a_failure(self):
+        """The same bound applies once the context *has* resolved: a per-check
+        probe that times out reads as no response, so the check degrades to an
+        unverifiable ``ok`` exactly like any other unreachable probe."""
+        root = self.repo_with_gate("timed-out-probe")
+        context, _run = self.resolve_context(
+            self.gh_responses(self.repo_payload(allow_auto_merge=None)))
+        with unittest.mock.patch.object(shipd.subprocess, "run",
+                                        self.timing_out_subprocess()):
+            results = [shipd.check_protection(context, run=shipd._gh_run),
+                       self.automerge_check(root, context),
+                       shipd.check_copilot_secret(root, context,
+                                                  run=shipd._gh_run)]
+        self.assertEqual([level for level, _n, _d in results], ["ok"] * 3)
+        for _level, name, detail in results:
+            self.assertIn("could not be verified", detail, name)
+        _lines, exit_code = shipd.doctor_report(results)
+        self.assertEqual(exit_code, 0)
+
+    # -- placement ----------------------------------------------------------
+
+    def test_the_github_checks_report_after_statusline(self):
+        names = self.probed_check_names(self.tmp)
+        self.assertEqual(names[names.index("statusline") + 1:],
+                         ["protection", "automerge", "copilot-secret"])
+
+    def test_the_github_checks_never_fail_the_preflight(self):
+        root = self.repo_with_gate("never-fail")
+        responses = self.gh_responses(
+            self.repo_payload(allow_auto_merge=False,
+                              permissions={"admin": False}),
+            {"branches/main/protection": self.HTTP_404,
+             "actions/secrets": self.ok_json({"secrets": []})})
+        context, run = self.resolve_context(responses)
+        results = [shipd.check_protection(context, run=run),
+                   self.automerge_check(root, context),
+                   shipd.check_copilot_secret(root, context, run=run)]
+        self.assertEqual([level for level, _n, _d in results],
+                         ["warn", "warn", "warn"])
+        _lines, code = shipd.doctor_report(results)
+        self.assertEqual(code, 0)
 
 
 class DoctorReportTest(unittest.TestCase):

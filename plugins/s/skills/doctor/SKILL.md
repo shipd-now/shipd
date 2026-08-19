@@ -60,8 +60,8 @@ code is `1` when a required check failed, `0` otherwise.
 
 Parse each line into `(level, check, detail)` and keep the whole output
 verbatim as the **before** state. The checks are `python`, `git`, `config`,
-`pipeline`, `gh`, `difft`, `textual`, `pydantic`, `snapshot`, and
-`statusline`.
+`pipeline`, `gh`, `difft`, `textual`, `pydantic`, `snapshot`, `statusline`,
+`protection`, `automerge`, and `copilot-secret`.
 
 **Unparseable output is your own failure.** If the command produced no output,
 no closing `doctor:` line, or lines that do not match the format above, report
@@ -89,6 +89,10 @@ exhaustive: a finding not listed here is **report-only**.
 | `warn statusline` — not registered | `<shipd> statusline install` | Runnable on consent, with the binary resolved exactly as step 1 resolved it for the preflight — the registration it writes points at that same installation. Always add the note that the statusline appears **in a new session**. |
 | `warn gh` — not on PATH | The platform-appropriate install command (macOS: `brew install gh`; Debian/Ubuntu: `sudo apt install gh`; otherwise point at https://cli.github.com) | Runnable on consent. **State the exact command in the dialog before it runs**, so a wrong platform guess is visible first. |
 | `fail git` — not on PATH | The platform-appropriate install command (macOS: `xcode-select --install` or `brew install git`; Debian/Ubuntu: `sudo apt install git`; otherwise point at https://git-scm.com/downloads) | Runnable on consent. Same rule: state the exact command first. |
+| `warn protection` — the default branch is **not protected** | `gh api -X PUT repos/<nwo>/branches/<default>/protection` with the minimal body below | Runnable on consent. Only for this finding — the PUT replaces the whole protection object, so it is offered **only** where the detail says the branch is not protected at all. |
+| `warn protection` — protected but **missing the `semantic-review` context** | `gh api -X POST repos/<nwo>/branches/<default>/protection/required_status_checks/contexts -f "contexts[]=semantic-review"` | Runnable on consent. This appends; it never clobbers contexts the branch already requires (`ci`, others). **Never** offer the whole-protection PUT for this finding. |
+| `warn automerge` — auto-merge disabled | `gh api -X PATCH repos/<nwo> -F allow_auto_merge=true` | Runnable on consent. |
+| `warn copilot-secret` — `COPILOT_GITHUB_TOKEN` not set | `gh secret set COPILOT_GITHUB_TOKEN` | **Never run by you.** The token cannot be minted programmatically and the command prompts for it. Relay the creation steps (below) and hand the storage step to the user as `! gh secret set COPILOT_GITHUB_TOKEN`. |
 | `warn gh` — present but not authenticated | `gh auth login` | **Never run by you.** It is interactive. Hand it to the user to run themselves as `! gh auth login`. |
 | `fail python` — interpreter below 3.9 | none | **Report-only.** Never install or switch an interpreter; relay the check's hint. |
 | `fail config` — unusable configuration | none | **Report-only.** Never edit a `.shipd-config.json`. Report the file and the error the check named, and propose no remedy command. |
@@ -97,10 +101,72 @@ exhaustive: a finding not listed here is **report-only**.
 Distinguish the two `gh` warnings by the detail text: "not on PATH" is the
 installable one; "is not authenticated" is the hand-off one.
 
+### The GitHub-side findings
+
+These three checks read the repository settings the merge gate depends on, and
+their remedies are the only ones here that **change state on GitHub**. Handle
+them by these rules.
+
+**Take `<nwo>` and `<default>` from the finding's own detail** — the preflight
+names both (e.g. ``the default branch `main` of acme/widget is not
+protected``). Never resolve them yourself, and never run a remedy against a
+repository the detail did not name.
+
+**The unprotected-branch PUT's body is fixed** — the minimal protection that
+requires the gate and changes nothing else:
+
+```bash
+gh api -X PUT repos/<nwo>/branches/<default>/protection \
+  --input - <<'JSON'
+{"required_status_checks": {"strict": false,
+                            "contexts": ["semantic-review"]},
+ "enforce_admins": false,
+ "required_pull_request_reviews": null,
+ "restrictions": null}
+JSON
+```
+
+**Distinguish the two `protection` warnings by the detail text**: "is not
+protected" is the PUT; "does not require the `semantic-review` status context"
+is the append POST. Getting this backwards would replace an existing
+protection ruleset, so read the detail before choosing.
+
+**A third `protection` warning — "requires no status checks at all" — is
+report-only.** The branch is protected but has no required status checks
+enabled, so neither remedy fits: the contexts-append POST 404s because there
+are no required status checks to append to, and the whole-protection PUT would
+clobber the branch's existing protection settings (reviews, restrictions,
+admin enforcement) with the minimal body above. Propose no `gh api` remedy.
+Relay the manual hint instead: an admin enables required status checks on that
+branch and adds `semantic-review` to them, in the branch's protection settings
+on GitHub.
+
+**A detail naming a missing admin permission makes the finding report-only.**
+Where a `protection`, `automerge`, or `copilot-secret` detail says *the token
+lacks admin permission*, propose **no** `gh api` remedy for it — the call would
+be denied. Report the finding, name what an admin has to change, and move on.
+Never offer a remedy you already know will fail.
+
+**The `copilot-secret` hand-off relays the creation steps.** The token has to
+be minted by a human, so report — as prose, never as a dialog option — the
+minimal-PAT recipe from `docs/copilot-review.md`: a **fine-grained** personal
+access token owned by the account whose Copilot subscription pays for the
+reviews, with **repository access: none** and exactly one account permission,
+**"Copilot Requests" → Read and write**, on a bounded expiry. Then hand over
+the storage step:
+
+```
+! gh secret set COPILOT_GITHUB_TOKEN --repo <nwo>
+```
+
+Do not run it, do not read the token, and do not suggest any broader-scope
+token.
+
 ## 5. One consent dialog
 
-Collect consent in **one batched selection** over the runnable remedies (the
-first seven rows above). Honor the dialog-and-prose-separation rule:
+Collect consent in **one batched selection** over the runnable remedies (every
+row above marked *Runnable on consent*, minus any the rules above demoted to
+report-only). Honor the dialog-and-prose-separation rule:
 
 - If the findings need a substantive brief — more than a one-line lead-in —
   **end that turn as plain text**: the findings, their remedies, and the
@@ -118,8 +184,16 @@ externally managed (PEP 668) interpreter — the option offering it states the
 distribution's guard is part of what the user consents to, so it is visible in
 the option, never only in the command that runs afterwards.
 
-Report-only findings and the `gh auth login` hand-off are **never** dialog
-options — they are prose in the report, since there is nothing to consent to.
+**State the mutation.** Every `gh api` remedy changes a setting on GitHub, so
+its option names the exact change in plain words — "require the
+`semantic-review` status check on `main` of `<nwo>`", "add `semantic-review` to
+the checks `main` already requires", "allow auto-merge on `<nwo>`" — alongside
+the command itself. Nothing about a repository's settings changes on a consent
+the user could not read.
+
+Report-only findings and the two hand-offs (`gh auth login`,
+`gh secret set COPILOT_GITHUB_TOKEN`) are **never** dialog options — they are
+prose in the report, since there is nothing to consent to.
 
 **Declining runs nothing.** If the user selects "Run none of them" (or declines
 every remedy), execute nothing, report the findings with their manual hints and
@@ -131,7 +205,8 @@ Run each approved command exactly as it was shown in the dialog, one at a time,
 and capture its exit code and output. A remedy that fails is reported with its
 error; it never blocks the remaining approved remedies, and it is never retried.
 
-Never run anything interactive. `gh auth login` stays with the user.
+Never run anything interactive. `gh auth login` and
+`gh secret set COPILOT_GITHUB_TOKEN` stay with the user.
 
 ## 7. Re-run and report before/after
 
@@ -147,7 +222,8 @@ Report:
 - what ran — each consented remedy and whether it succeeded,
 - the **after** state — the fresh `shipd doctor` lines,
 - anything still not `ok`, with its residual hint, plus the hand-offs
-  (`! gh auth login`) and report-only findings the user must handle themselves.
+  (`! gh auth login`, `! gh secret set COPILOT_GITHUB_TOKEN`) and report-only
+  findings the user must handle themselves.
 
 Then stop. Do not start a second remedy round.
 
