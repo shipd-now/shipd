@@ -313,7 +313,16 @@ code 2, listing every applicable reason — while the worktree shows work
 in progress: uncommitted or untracked files, any change still under its
 `.shipd/planned/`, task-claim marks (`[~]`) or a coordination lock in its
 planned checklists, or any file modified within the idle window (default
-30 minutes, overridable via `SHIPD_WORKTREE_IDLE_MINUTES`). When no guard
+30 minutes, overridable via `SHIPD_WORKTREE_IDLE_MINUTES`). The
+unshipped-change guard SHALL NOT fire for a planned change directory that
+is base content rather than the worktree's own work — one that is
+tracked, has no local modifications or untracked files, and is
+byte-identical to the same path on the base branch (the helper's resolved
+base: the root checkout's currently checked-out branch); where no base
+resolves, or the base is the worktree's own branch, the carve-out SHALL
+NOT apply and every planned change guards as before. The task-claim and
+coordination-lock guard SHALL keep scanning every planned checklist,
+base-tracked or not. When no guard
 fires, `remove` SHALL remove the worktree and prune, exiting zero; a
 `--force` flag SHALL override the guards but SHALL print each guard it
 overrode. Workflow documentation SHALL instruct removal through this verb,
@@ -360,6 +369,32 @@ assumption about the repository beyond git itself.
 - **WHEN** `remove my-change` runs without `--force`
 - **THEN** nothing is removed, both reasons are listed, and the exit code
   is 2
+
+#### Scenario: Base-tracked planned content does not guard
+- **GIVEN** a repository whose base branch carries
+  `.shipd/planned/other-change/` and a worktree checked out from it with
+  that directory unmodified, otherwise clean and idle
+- **WHEN** `remove my-change` runs without `--force`
+- **THEN** the worktree is removed and the exit code is zero
+
+#### Scenario: A modified base-tracked planned change still guards
+- **GIVEN** the same repository, with one file under
+  `.shipd/planned/other-change/` edited inside the worktree
+- **WHEN** `remove my-change` runs without `--force`
+- **THEN** the refusal lists the unshipped-change reason and nothing is
+  removed
+
+#### Scenario: A claim in base-tracked planned content still guards
+- **GIVEN** the same repository, where the base branch's
+  `.shipd/planned/other-change/tasks.md` itself carries a `[~]` mark
+- **WHEN** `remove my-change` runs without `--force`
+- **THEN** the refusal lists the task-claim reason
+
+#### Scenario: Detached base applies no carve-out
+- **GIVEN** the same repository with the root checkout's HEAD detached
+- **WHEN** `remove my-change` runs without `--force`
+- **THEN** the refusal lists the unshipped-change reason for the
+  base-tracked planned change, exactly as before the carve-out
 
 #### Scenario: Fresh activity refuses removal
 - **GIVEN** an otherwise clean worktree with a file modified two minutes

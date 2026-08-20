@@ -13,7 +13,10 @@
 # modified within the idle window (default 30 minutes,
 # `SHIPD_WORKTREE_IDLE_MINUTES` overrides; `0` disables the activity guard). This
 # stops a parallel session from pruning a worktree out from under a live one.
-# `--force` performs the removal anyway, printing each guard it overrode.
+# `--force` performs the removal anyway, printing each guard it overrode. The
+# unshipped-change guard skips a planned change that is base content — tracked,
+# locally clean, and identical to the base branch — since that is not the
+# worktree's own work; the claim/lock guard still scans every planned checklist.
 #
 # Shipped as a plugin engine script — invocable by plugin path from any git
 # repository. It assumes nothing about the repository beyond git itself: no shipd
@@ -96,6 +99,22 @@ branch_is_merged() {
   return 1
 }
 
+# Is a planned change directory *base content* rather than the worktree's own
+# work? True (exit 0) only when all three probes hold against the resolved
+# base: the path is tracked (an untracked-only directory is never base
+# content), it has no local modifications or untracked files, and it is
+# byte-identical to the same path on the base branch. Any probe failing — or no
+# base at all — returns false, and the unshipped-change guard fires as before.
+# `<rel>` is the directory's path relative to the worktree root.
+planned_is_base_content() {
+  local worktree="$1" base="$2" rel="$3"
+  [ -n "$base" ] || return 1
+  [ -n "$(git -C "$worktree" ls-files -- "$rel" 2>/dev/null)" ] || return 1
+  [ -z "$(git -C "$worktree" status --porcelain -- "$rel" 2>/dev/null)" ] || return 1
+  git -C "$worktree" diff --quiet "$base" -- "$rel" 2>/dev/null || return 1
+  return 0
+}
+
 # --- remove verb ------------------------------------------------------------
 #
 # Guards run in order dirty -> unshipped -> claims/lock -> recent activity,
@@ -145,6 +164,16 @@ cmd_remove() {
       return 1 ;;
   esac
 
+  # The base for guard #2's carve-out, resolved once. Fail closed: a detached
+  # root HEAD resolves empty, and a base that *is* the worktree's own branch
+  # would carve out the worktree's own work — both leave BASE empty, so every
+  # planned change guards exactly as it did before the carve-out.
+  BASE=$(resolve_base_branch)
+  WT_BRANCH=$(git -C "$WORKTREE" symbolic-ref -q --short HEAD 2>/dev/null || true)
+  if [ "$BASE" = "$WT_BRANCH" ]; then
+    BASE=""
+  fi
+
   reasons=()
 
   # 1. Dirty tree: any uncommitted or untracked path.
@@ -154,15 +183,25 @@ cmd_remove() {
 
   planned="$WORKTREE/.shipd/planned"
 
-  # 2. Unshipped changes still parked under .shipd/planned/.
+  # 2. Unshipped changes still parked under .shipd/planned/ — except the ones
+  # that are base content rather than this worktree's own work (a planned
+  # change committed on the base branch and checked out here unmodified). The
+  # worktree's *own* change never qualifies: `planned/<change>/` is absent from
+  # the base, so the identical-to-base probe fails and the guard fires.
   if [ -d "$planned" ]; then
     for d in "$planned"/*/; do
       [ -d "$d" ] || continue
-      reasons+=("unshipped change under .shipd/planned: ${d%/}")
+      dir="${d%/}"
+      if planned_is_base_content "$WORKTREE" "$BASE" "${dir#$WORKTREE/}"; then
+        continue
+      fi
+      reasons+=("unshipped change under .shipd/planned: $dir")
     done
   fi
 
-  # 3. Coordination in progress: a `[~]` task claim or a `.tasks.lock`.
+  # 3. Coordination in progress: a `[~]` task claim or a `.tasks.lock`. This
+  # guard scans every planned checklist, base-tracked or not — a `[~]` mark is
+  # live coordination wherever it sits, so guard #2's carve-out does not apply.
   if [ -d "$planned" ]; then
     for t in "$planned"/*/tasks.md; do
       [ -f "$t" ] || continue
