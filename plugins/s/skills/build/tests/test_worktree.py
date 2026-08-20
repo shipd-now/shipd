@@ -91,6 +91,20 @@ class WorktreeScriptTestBase(unittest.TestCase):
     def combined(self, r):
         return (r.stdout or "") + (r.stderr or "")
 
+    def commit_planned_on_base(self, name="other-change",
+                               tasks_body="# Tasks\n\n- [ ] 1.1 todo\n"):
+        """Commit a planned change onto the base branch, so every worktree cut
+        from it carries that directory as base content rather than own work."""
+        d = os.path.join(self.root, ".shipd", "planned", name)
+        os.makedirs(d)
+        with open(os.path.join(d, "spec.md"), "w") as fh:
+            fh.write("# spec\n")
+        with open(os.path.join(d, "tasks.md"), "w") as fh:
+            fh.write(tasks_body)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "planned change on base: " + name)
+        return d
+
     # --- helpers shared by the branch-hygiene tests ----------------------
 
     def branch_sha(self, ref):
@@ -482,6 +496,55 @@ class RemoveWorktreeTest(WorktreeScriptTestBase):
         out = self.combined(r).lower()
         self.assertIn("overrid", out)  # names what it overrode
         self.assertTrue("dirty" in out or "uncommitted" in out, out)
+
+    def test_base_tracked_planned_does_not_guard(self):
+        # A planned change committed on the base branch is base content, not
+        # this worktree's own work: guard #2 carves it out.
+        self.commit_planned_on_base()
+        wt = self.make_worktree("my-change")
+        r = self.run_helper(
+            "remove", "my-change", env={"SHIPD_WORKTREE_IDLE_MINUTES": "0"})
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertFalse(os.path.exists(wt))
+
+    def test_modified_base_tracked_planned_still_guards(self):
+        # Local modification means the worktree has made it its own work.
+        self.commit_planned_on_base()
+        wt = self.make_worktree("my-change")
+        with open(os.path.join(wt, ".shipd", "planned", "other-change",
+                               "spec.md"), "w") as fh:
+            fh.write("# spec\n\nedited in the worktree\n")
+        r = self.run_helper(
+            "remove", "my-change", env={"SHIPD_WORKTREE_IDLE_MINUTES": "0"})
+        self.assertEqual(r.returncode, 2, self.combined(r))
+        self.assertTrue(os.path.isdir(wt))
+        self.assertIn("unshipped change", self.combined(r))
+
+    def test_claim_in_base_tracked_planned_still_guards(self):
+        # The claims guard keeps scanning every planned checklist: a `[~]` mark
+        # is live coordination wherever it sits.
+        self.commit_planned_on_base(
+            tasks_body="# Tasks\n\n- [~] 1.1 claimed by a live session\n")
+        wt = self.make_worktree("my-change")
+        r = self.run_helper(
+            "remove", "my-change", env={"SHIPD_WORKTREE_IDLE_MINUTES": "0"})
+        self.assertEqual(r.returncode, 2, self.combined(r))
+        self.assertTrue(os.path.isdir(wt))
+        out = self.combined(r)
+        self.assertIn("claim", out.lower())
+        # The carve-out still applies to guard #2 — only the claim remains.
+        self.assertNotIn("unshipped change", out)
+
+    def test_detached_base_applies_no_carve_out(self):
+        # No base resolves -> fail closed, every planned dir guards as before.
+        self.commit_planned_on_base()
+        wt = self.make_worktree("my-change")
+        self.git("checkout", "-q", "--detach")
+        r = self.run_helper(
+            "remove", "my-change", env={"SHIPD_WORKTREE_IDLE_MINUTES": "0"})
+        self.assertEqual(r.returncode, 2, self.combined(r))
+        self.assertTrue(os.path.isdir(wt))
+        self.assertIn("unshipped change", self.combined(r))
 
     def test_non_kebab_name_refused(self):
         # A path-ish name must not escape .worktrees/ (see the remove verb's
