@@ -230,6 +230,8 @@ From here:
 
 - [Quickstart](quickstart.md) — the condensed six-step version, including
   `shipd doctor` and the `/s:onboard` guided tour
+- [Cheatsheet](cheatsheet.md) — the command lookup reference: every `/s:`
+  command and every `shipd` verb with its options and one example
 - [What is shipd?](what-is-shipd.md) — the model behind the loop
 - [`.shipd/README.md`](../.shipd/README.md) — the full requirement and delta
   grammar these artifacts follow
