@@ -16,8 +16,10 @@
 #     over the base ref's copy of .github/skills/code-review/SKILL.md. The CLI
 #     executes the engine and authors its own report, so the verdict marker is
 #     really produced and the resulting status is a strict one. The review text
-#     is posted as a pull-request comment, so a human reads whatever the gate
-#     judged. This works on private repositories, and spends Copilot AI credits
+#     is published as a pull-request review — carrying one anchored inline
+#     comment per finding this workflow could verify against the diff it read
+#     itself — so a human reads whatever the gate judged, on the lines it is
+#     about. This works on private repositories, and spends Copilot AI credits
 #     per review (order of ten for a small one).
 #   * Poll fallback — no secret. GitHub's own Copilot code review is waited for
 #     by polling the reviews API, and whatever it wrote is classified. That
@@ -51,8 +53,8 @@
 # (`gh variable set SHIPD_GATE_FAIL_OPEN --body false`). Every marker-less
 # outcome then logs that no verdict was parsed and leaves the status
 # `pending`, on all three classify paths alike; the session review flow
-# (`review_gate.py post`) is the manual out. The CLI reviewer still posts the
-# text it captured as a pull-request comment there — a review no status was
+# (`review_gate.py post`) is the manual out. The CLI reviewer still publishes
+# the text it captured as a review there — a review no status was
 # derived from is the one an operator most needs to read. Unset, or set to
 # anything else,
 # keeps the fail-open default above. It is a variable rather than a local edit
@@ -122,8 +124,8 @@ on:
 permissions:
   contents: read
   statuses: write
-  # `write`, not the `read` the poll alone needed: the CLI reviewer posts the
-  # review text it judged as a pull-request comment.
+  # `write`, not the `read` the poll alone needed: the CLI reviewer publishes
+  # the text it judged as a pull-request review with inline comments.
   pull-requests: write
 
 # One live gate per pull request. A push while a review is running supersedes
@@ -254,6 +256,12 @@ jobs:
           # and whether the file is there is that step's only signal that
           # anything was judged here at all.
           body_file="${RUNNER_TEMP:-.}/shipd-copilot-review-body.md"
+          # The findings, as data, beside the text. The posting step anchors
+          # them onto the diff — after checking every one against a diff it
+          # reads itself — so this file and the body are the whole of what
+          # crosses the credential boundary. A reviewer that writes no
+          # findings file costs its anchoring, not its review.
+          findings_file="${RUNNER_TEMP:-.}/shipd-copilot-review-findings.json"
           # The instructions the reviewer follows, and the path they are
           # installed at.
           instructions_file="${RUNNER_TEMP:-.}/shipd-copilot-review-skill.md"
@@ -264,7 +272,7 @@ jobs:
             # The CLI reviewer. Unlike GitHub's code-review surface, this one
             # can execute the engine and author its own report, which is what
             # makes the resulting status strict rather than fail-open.
-            rm -f "$body_file"
+            rm -f "$body_file" "$findings_file"
             # Pinned deliberately. An unpinned install would let the CLI
             # vendor change what this gate runs, and so what it decides, on
             # their release schedule; upgrading is a bump of this line in the
@@ -329,9 +337,15 @@ jobs:
           Do not post anything to GitHub yourself: no review, no comment, no
           status, no label. The workflow that invoked you publishes the result.
 
-          Write ONLY the review report. Its last line must be the
+          Write ONLY the review report on stdout. Its last line must be the
           machine-readable verdict marker the contract specifies, alone on that
-          line, with nothing after it."
+          line, with nothing after it.
+
+          Write the machine-readable findings file the contract specifies to
+          $findings_file — the workflow reads it from exactly that path to
+          anchor your findings onto the diff as inline comments. A finding
+          whose path or line range is not in the diff of this pull request is
+          folded into the body as prose instead, so give real ones."
             # Only stdout is captured: the CLI writes its report there and its
             # run statistics to stderr, which belongs in the job log rather
             # than in the classified text — folded in, that footer would be the
@@ -389,6 +403,15 @@ jobs:
           # no variable at all. The test suite rewrites this literal in the
           # extracted script instead.
           gh_bin=/usr/bin/gh
+          # The interpreter that builds the review payload below, named the
+          # same absolute way and for the same reason: shaping JSON out of a
+          # review body and the reviewer's findings needs correct escaping,
+          # and a PATH-resolved `python3` in this step would be one more thing
+          # a $GITHUB_PATH shim could replace with the reviewer's own program.
+          # It holds no credential — it reads two workspace files and writes a
+          # third — but it runs in the credentialed step, so it is pinned like
+          # `gh` is. The test suite rewrites this literal too.
+          py_bin=/usr/bin/python3
           # The poll's cadence and its bound. These defaults are what every run
           # on a runner uses — nothing there sets the overrides, which exist so
           # the test suite can drive the loop through its cycles without
@@ -564,13 +587,230 @@ jobs:
             post_status "$state" "$description"
           fi
 
-          # What the gate judged, where a human can read it. Posted after the
-          # status, so a comment that fails cannot cost the verdict it
-          # explains — and posted whenever this run captured the text itself,
-          # verdict or none. A Copilot-authored review is already on the pull
-          # request, so the poll and review-event paths leave `comment_file`
-          # unset and post nothing.
+          # What the gate judged, where a human can read it — published as a
+          # pull-request review rather than an issue comment, so the report
+          # arrives as a review with threads that can be anchored and
+          # dispositioned. The event is COMMENT, never REQUEST_CHANGES: the
+          # required `semantic-review` status posted above is the merge
+          # blocker, and a review decision would add a second block a human
+          # must dismiss by hand even after the fix landed.
+          #
+          # Posted after the status, so a publication that fails cannot cost
+          # the verdict it explains — and posted whenever this run captured
+          # the text itself, verdict or none. A Copilot-authored review is
+          # already on the pull request, so the poll and review-event paths
+          # leave `comment_file` unset and post nothing.
           if [[ -n "$comment_file" ]]; then
-            "$gh_bin" pr comment "$PR_NUMBER" --repo "$REPO" \
-              --body-file "$comment_file"
+            review_payload="${RUNNER_TEMP:-.}/shipd-copilot-review-payload.json"
+            # The same payload without its inline comments. GitHub rejects a
+            # whole review over one comment it will not accept, and the report
+            # must not be lost to a line the API refuses, so the retry below
+            # posts this instead.
+            review_fallback="${RUNNER_TEMP:-.}/shipd-copilot-review-plain.json"
+            # The findings the reviewer left beside its report — claims, not
+            # facts: that agent ran `--allow-all-tools` over a diff it cannot
+            # be trusted not to be steered by. So this step reads the pull
+            # request's own diff and checks every path and range against it
+            # before anchoring anything on them. Both reads are best effort:
+            # a missing findings file, or a diff that could not be read,
+            # anchors nothing and posts the body alone.
+            findings_file="${RUNNER_TEMP:-.}/shipd-copilot-review-findings.json"
+            files_file="${RUNNER_TEMP:-.}/shipd-copilot-review-files.json"
+            if ! "$gh_bin" api \
+                "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" \
+                > "$files_file"; then
+              echo "The diff of $HEAD_SHA could not be read; the review will" \
+                "be posted without inline comments."
+              : > "$files_file"
+            fi
+            "$py_bin" - "$comment_file" "$findings_file" "$files_file" \
+              "$review_payload" "$review_fallback" <<'PY'
+          """Shape the reviewed text and the reviewer's findings into a review payload.
+
+          Reads only workspace files and writes only workspace files: it holds no
+          credential and makes no network call. Every finding is checked against the
+          diff this step read itself — an entry naming a path or a range that diff does
+          not carry is folded into the body as prose rather than anchored on a line the
+          pull request never touched.
+          """
+
+          import json
+          import os
+          import re
+          import sys
+
+          body_path, findings_path, files_path, payload_path, fallback_path = \
+              sys.argv[1:6]
+
+          HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+          SEVERITIES = ("high", "medium", "low")
+          MARKERS = ("<!-- shipd-verdict: ship-it -->",
+                     "<!-- shipd-verdict: fix-required -->")
+
+
+          def load(path, fallback):
+              """The JSON at ``path``, or ``fallback`` when it is missing, unreadable,
+              or not JSON at all. A reviewer that wrote nothing usable costs its
+              anchoring, never the review."""
+              try:
+                  with open(path, encoding="utf-8") as handle:
+                      return json.load(handle)
+              except (OSError, ValueError):
+                  return fallback
+
+
+          def commentable(patch):
+              """The RIGHT-side (new-file) line numbers a unified-diff patch makes
+              commentable: context and added lines, which are the ones present on the
+              side a review comment attaches to."""
+              lines, number = set(), None
+              for row in (patch or "").splitlines():
+                  hunk = HUNK.match(row)
+                  if hunk:
+                      number = int(hunk.group(1))
+                  elif number is None or row.startswith(("-", "\\")):
+                      continue
+                  else:
+                      lines.add(number)
+                      number += 1
+              return lines
+
+
+          def is_line(value):
+              """True for a usable line number — an int, and not the bool that
+              ``isinstance(True, int)`` would otherwise admit."""
+              return isinstance(value, int) and not isinstance(value, bool)
+
+
+          def placed(finding, diff):
+              """The ``(path, start, end)`` a finding may be anchored on, or ``None``
+              when this step could not verify it against the diff: an unknown path, a
+              missing or inverted range, or a range covering a line the diff does not
+              carry — which GitHub would reject, costing every other comment with it."""
+              path = finding.get("path")
+              start, end = finding.get("start_line"), finding.get("end_line")
+              if not isinstance(path, str) or path not in diff:
+                  return None
+              if not (is_line(start) and is_line(end)) or start > end:
+                  return None
+              if not all(line in diff[path] for line in range(start, end + 1)):
+                  return None
+              return path, start, end
+
+
+          def severity(finding):
+              value = finding.get("severity")
+              return value if value in SEVERITIES else "low"
+
+
+          def detail(finding):
+              return " ".join(str(finding.get("detail") or "").split())
+
+
+          def replacement(finding):
+              """The whole replacement lines a confident fix carries, or ``None``. The
+              key's presence is the reviewer's confidence declaration; anything that is
+              not a non-empty list of lines is not a fix this can commit."""
+              lines = finding.get("replacement")
+              if not isinstance(lines, list) or not lines:
+                  return None
+              if not all(isinstance(line, str) for line in lines):
+                  return None
+              return lines
+
+
+          def inline_body(finding):
+              """One anchored comment's body: the severity marker and the detail, plus
+              the committable suggestion where the finding carries one."""
+              parts = ["**%s — %s**" % (severity(finding), detail(finding))]
+              lines = replacement(finding)
+              if lines:
+                  parts += ["", "```suggestion"] + lines + ["```"]
+              return "\n".join(parts)
+
+
+          def prose(findings):
+              """The block that carries the unanchorable findings in the body, so a
+              finding this step would not anchor is still reported rather than lost."""
+              if not findings:
+                  return []
+              block = ["", "### Findings not anchored to the diff", ""]
+              for finding in findings:
+                  where = finding.get("path")
+                  if not isinstance(where, str):
+                      where = "(no location)"
+                  elif is_line(finding.get("start_line")):
+                      where = "%s:%s" % (where, finding["start_line"])
+                  block.append("- **%s** [%s] — %s"
+                               % (where, severity(finding), detail(finding)))
+              return block
+
+
+          def fold(body, block):
+              """``body`` with ``block`` inserted above its verdict marker, so the
+              marker stays the last non-empty line the gate reads verdicts from."""
+              if not block:
+                  return body
+              lines = body.splitlines()
+              cut = len(lines)
+              for index in range(len(lines) - 1, -1, -1):
+                  if lines[index].strip():
+                      if lines[index].strip() in MARKERS:
+                          cut = index
+                      break
+              folded = lines[:cut] + block + [""] + lines[cut:]
+              return "\n".join(folded) + ("\n" if body.endswith("\n") else "")
+
+
+          with open(body_path, encoding="utf-8", errors="replace") as handle:
+              body = handle.read()
+
+          findings = load(findings_path, [])
+          if not isinstance(findings, list):
+              findings = []
+          files = load(files_path, [])
+          diff = {}
+          if isinstance(files, list):
+              for entry in files:
+                  if isinstance(entry, dict) and isinstance(entry.get("filename"), str):
+                      diff[entry["filename"]] = commentable(entry.get("patch"))
+
+          comments, unverified = [], []
+          for finding in findings:
+              if not isinstance(finding, dict):
+                  continue
+              place = placed(finding, diff)
+              if place is None:
+                  unverified.append(finding)
+                  continue
+              path, start, end = place
+              comment = {"path": path, "side": "RIGHT", "body": inline_body(finding)}
+              if start != end:
+                  comment["start_line"] = start
+                  comment["start_side"] = "RIGHT"
+              comment["line"] = end
+              comments.append(comment)
+
+          payload = {"commit_id": os.environ["HEAD_SHA"],
+                     "event": "COMMENT",
+                     "body": fold(body, prose(unverified)),
+                     "comments": comments}
+          with open(payload_path, "w", encoding="utf-8") as handle:
+              json.dump(payload, handle)
+          payload["comments"] = []
+          with open(fallback_path, "w", encoding="utf-8") as handle:
+              json.dump(payload, handle)
+          PY
+            if ! "$gh_bin" api --method POST \
+                "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+                --input "$review_payload"; then
+              # One comment GitHub will not accept rejects the whole review,
+              # and the report matters more than its anchoring: retry with the
+              # body alone rather than leave the pull request without it.
+              echo "The anchored review of $HEAD_SHA was rejected; posting" \
+                "it without inline comments."
+              "$gh_bin" api --method POST \
+                "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+                --input "$review_fallback"
+            fi
           fi

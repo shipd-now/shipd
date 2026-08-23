@@ -30,6 +30,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -57,6 +58,18 @@ SHIP_MARKER = "<!-- shipd-verdict: ship-it -->"
 # so either poster satisfies a required check of that name.
 STATUS_CONTEXT = "semantic-review"
 
+# The machine-readable findings the reviewer writes beside its report body, and
+# which the posting step reads to anchor inline comments. One literal, asserted
+# on both sides of that handoff: the skill template names where it is written,
+# the gate template names where it is read.
+FINDINGS_FILE = "shipd-copilot-review-findings.json"
+
+# The report shape the skill mandates: the verdict header first, then the
+# severity summary table, then the per-finding detail.
+VERDICT_HEADERS = ("## Findings: ✅ Ship it",
+                   "## Findings: ❌ Fix required")
+SEVERITY_TABLE = "| # | rating | details |"
+
 # Where the reviewing agent's instructions live in a repository that installed
 # the integration, forward-slashed the way the Linux runner sees them (whatever
 # this suite runs on). The gate materializes its own copy from the *base* ref
@@ -69,6 +82,12 @@ GATE_SKILL_PATH = ".github/skills/code-review/SKILL.md"
 # as a $GITHUB_PATH shim would — so the runnable tests rewrite this path in the
 # extracted script, the way they rewrite the runner's own expressions.
 GH_PATH = "/usr/bin/gh"
+
+# Where the posting step's payload builder runs from. Absolute for the same
+# reason `gh` is: an earlier step can prepend a directory to $GITHUB_PATH, so a
+# PATH-resolved interpreter in the credentialed step would run the reviewer's
+# own program. The runnable tests rewrite this literal too.
+PY_PATH = "/usr/bin/python3"
 
 # The pinned global install of the reviewer CLI. The version is deliberate — a
 # floating tag would let the CLI vendor change gate behaviour on their own
@@ -314,6 +333,27 @@ def run_block(job_body):
 ACTIONS_EXPRESSION = re.compile(r"\$\{\{[^}]*\}\}")
 
 
+HEREDOC = re.compile(r"<<'([A-Za-z_][A-Za-z0-9_]*)'")
+
+
+def shell_lines(script):
+    """The lines of ``script`` the shell runs as commands — every line outside
+    a quoted heredoc body. A heredoc's contents are data handed to a program,
+    so a shell-level rule (no pipes, no text tools) has nothing to say about
+    them."""
+    lines, terminator = [], None
+    for line in script.splitlines():
+        if terminator is not None:
+            if line.strip() == terminator:
+                terminator = None
+            continue
+        lines.append(line)
+        opened = HEREDOC.search(line)
+        if opened:
+            terminator = opened.group(1)
+    return lines
+
+
 def gate_script(text, substitute="stub"):
     """The gate's decision logic, runnable under bash: the ``run`` bodies of the
     steps that touch the ``semantic-review`` status, concatenated in the order
@@ -409,6 +449,46 @@ class SkillTemplateTest(unittest.TestCase):
                       "the instruction does not rule the substring match out")
         self.assertNotIn("exact substring match", self.text.lower(),
                          "the template still promises a substring match")
+
+    def test_the_report_opens_with_a_verdict_header_and_severity_table(self):
+        # A reader who stops after the first screen must already have the
+        # verdict and every finding's rating — the shape `/s:review` renders
+        # and the gate has never matched.
+        report = markdown_section(self.text, "### 5. Report")
+        self.assertTrue(report.strip(), "no report section in the template")
+        for header in VERDICT_HEADERS:
+            self.assertIn(header, report,
+                          "the report shape omits the verdict header %r"
+                          % header)
+        self.assertIn(SEVERITY_TABLE, report,
+                      "the report shape omits the severity summary table")
+        for dot in ("🔴", "🟠", "🟡"):
+            self.assertIn(dot, report, "the table omits the %s rating" % dot)
+        # Ordering, not just presence: header, then table, then the detail.
+        self.assertLess(report.index(VERDICT_HEADERS[0]),
+                        report.index(SEVERITY_TABLE),
+                        "the severity table precedes the verdict header")
+        self.assertLess(report.index(SEVERITY_TABLE),
+                        report.index("**The per-finding detail**"),
+                        "per-finding detail precedes the severity table")
+        self.assertIn("brief", report.lower(),
+                      "the template does not ask for brief findings")
+
+    def test_the_findings_file_is_specified_with_its_replacement_rule(self):
+        report = markdown_section(self.text, "### 5. Report")
+        self.assertTrue(report.strip(), "no report section in the template")
+        self.assertIn(FINDINGS_FILE, report,
+                      "the template names no machine-readable findings file")
+        for key in ("severity", "path", "start_line", "end_line", "detail",
+                    "replacement"):
+            self.assertIn('"%s"' % key, report,
+                          "the findings entry omits %r" % key)
+        lowered = report.lower()
+        # `replacement` is the confidence declaration, and it is whole lines or
+        # nothing: a one-click apply commits the reviewer's text unread.
+        self.assertIn("optional", lowered)
+        self.assertIn("confident", lowered)
+        self.assertIn("contiguous whole lines", lowered)
 
     def test_the_skill_is_the_contract_for_both_reviewer_surfaces(self):
         # One rubric, two consumers: GitHub's own code-review runs, and the
@@ -667,8 +747,10 @@ class GateWorkflowTemplateTest(unittest.TestCase):
 
     def posting_step(self):
         """The step that classifies the reviewed text and publishes it — the
-        one place the workflow's own token is allowed to reach."""
-        found = [step for step in self.steps if "pr comment" in step]
+        one place the workflow's own token is allowed to reach. Selected by
+        the status post it makes, which is the thing that defines it; how it
+        publishes the reviewed text is what this change moves."""
+        found = [step for step in self.steps if "post_status()" in step]
         self.assertEqual(len(found), 1,
                          "expected exactly one step posting the verdict, found "
                          "%d" % len(found))
@@ -797,6 +879,40 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertIn('"${COPILOT_CLI_REVIEWER:-false}" == \'true\'', posting,
                       "the posting step does not select the CLI path off the "
                       "job-level presence boolean")
+
+    def test_the_findings_file_is_the_only_channel_it_added(self):
+        # Anchoring gave the reviewer something new to say to the credentialed
+        # step, and it says it the way the body already did: one workspace
+        # file, written by a step holding only the reviewer PAT and read by a
+        # step holding only `github.token`. Nothing new travels through a step
+        # output or $GITHUB_ENV, which are channels the credentialed step
+        # deliberately does not trust.
+        expression = 'findings_file="${RUNNER_TEMP:-.}/%s"' % FINDINGS_FILE
+        cli, posting = self.cli_step(), self.posting_step()
+        self.assertIn(expression, run_block(cli),
+                      "the reviewer step names no findings file")
+        self.assertIn(expression, run_block(posting),
+                      "the posting step reads the findings from another path")
+        for step in (cli, posting):
+            run = run_block(step)
+            for channel in ("$GITHUB_OUTPUT", "$GITHUB_ENV"):
+                self.assertNotIn('>> "%s"' % channel, run,
+                                 "a step writes to %s" % channel)
+                self.assertNotIn(">> %s" % channel, run,
+                                 "a step writes to %s" % channel)
+            self.assertNotIn("${{ steps.", step,
+                             "a step output carries data between the steps")
+        # And the reviewer is told to write it, at that same path: the
+        # contract names the file, the prompt names where this run wants it.
+        self.assertIn("$findings_file", run_block(cli))
+
+    def test_the_findings_path_matches_the_skill_templates_own(self):
+        # The write side is specified in the review contract, the read side
+        # here. A path that drifted on either would silently post a review
+        # with nothing anchored.
+        self.assertIn(FINDINGS_FILE, read(SKILL_TEMPLATE),
+                      "the review contract names no findings file")
+        self.assertIn(FINDINGS_FILE, self.text)
 
     def test_the_reviewer_instructions_are_materialized_from_the_base_ref(self):
         # The instructions are the one input the reviewed change must not be
@@ -944,12 +1060,61 @@ class GateWorkflowTemplateTest(unittest.TestCase):
                          "stderr is folded into the classified text")
         self.assertIn('body="$(<"$body_file")"', self.script)
 
-    def test_the_review_text_is_posted_as_a_pull_request_comment(self):
-        self.assertIn('"$gh_bin" pr comment', self.script)
-        self.assertIn('--body-file "$comment_file"', self.script)
-        # After the verdict, so a failed comment cannot cost the status.
-        self.assertLess(self.script.index('post_status "$state"'),
-                        self.script.index('"$gh_bin" pr comment'))
+    def test_the_review_text_is_never_posted_as_an_issue_comment(self):
+        # The issue comment the gate used to post carried no anchoring and no
+        # thread; the reviews API replaces it outright rather than doubling up.
+        self.assertNotIn("pr comment", self.script,
+                         "the gate still posts its report as an issue comment")
+
+    def test_the_gates_own_review_is_posted_through_the_reviews_api(self):
+        # An issue comment carries no anchoring and no thread to disposition.
+        # The gate's own report is a pull-request review, submitted as a
+        # `COMMENT`: the required status is the merge blocker, and a
+        # `REQUEST_CHANGES` decision would need a human to dismiss it even
+        # after the fix landed.
+        posting = run_block(self.posting_step())
+        self.assertIn('"repos/$REPO/pulls/$PR_NUMBER/reviews"', posting,
+                      "the gate's own review is not posted through the "
+                      "pull-request reviews API")
+        self.assertIn('"event": "COMMENT"', posting,
+                      "the review is not submitted as a COMMENT")
+        for event in ("REQUEST_CHANGES", "APPROVE"):
+            self.assertNotIn('"%s"' % event, posting,
+                             "the review submits the event %s" % event)
+        # After the verdict, so a failed publication cannot cost the status.
+        # (`/reviews` alone would find the poll's own read of the endpoint,
+        # which runs long before the verdict is known.)
+        self.assertLess(posting.index('post_status "$state"'),
+                        posting.index("review_payload="))
+
+    def test_the_posting_step_verifies_findings_against_its_own_diff(self):
+        # The findings file crosses the trust boundary from a reviewer that
+        # ran `--allow-all-tools` over a steerable diff. Its paths and ranges
+        # are claims, checked here against the diff this step read itself
+        # before anything is anchored on them.
+        posting = run_block(self.posting_step())
+        self.assertIn('findings_file="${RUNNER_TEMP:-.}/%s"' % FINDINGS_FILE,
+                      posting,
+                      "the posting step reads no findings file")
+        self.assertIn('"repos/$REPO/pulls/$PR_NUMBER/files', posting,
+                      "the posting step never reads the diff it verifies "
+                      "findings against")
+        self.assertLess(posting.index("/files"),
+                        posting.index('--input "$review_payload"'),
+                        "the diff is read after the review is posted")
+
+    def test_the_payload_builder_runs_from_an_absolute_interpreter(self):
+        # Same hole `gh_bin` closes: an earlier step can prepend a directory
+        # to $GITHUB_PATH, so a PATH-resolved interpreter in the credentialed
+        # step would be the reviewer's own program.
+        posting = run_block(self.posting_step())
+        self.assertIn('py_bin=%s' % PY_PATH, posting,
+                      "the payload builder's interpreter is not an absolute "
+                      "literal")
+        self.assertNotIn("$(command -v python3)", posting)
+        self.assertNotIn('py_bin="${', posting,
+                         "the interpreter path is read from an environment "
+                         "variable an earlier step could write")
 
     def test_the_polled_body_reaches_the_classifier_through_a_file(self):
         # A polled review body is written to a workspace file and read back
@@ -1020,9 +1185,13 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         # The extraction has to be pure bash for the same reason the match
         # is: shelling out reintroduces the pipe the regression below forbids.
         # `gh` and `sleep` are the poll's business; no text tool is anyone's.
+        # Heredoc bodies are skipped: those lines are data the shell hands to
+        # a program, not commands it runs, and the payload builder they carry
+        # runs after the verdict is decided and reads its input from a file
+        # rather than through a pipe.
         self.assertIn("${", self.script,
                       "the gate step does no parameter expansion at all")
-        for line in self.script.splitlines():
+        for line in shell_lines(self.script):
             if line.lstrip().startswith("#"):
                 continue
             words = line.replace("$(", " ").replace("`", " ").split()
@@ -1128,14 +1297,29 @@ if [ "$1" = pr ]; then
 fi
 url=
 method=
+input=
+prev=
 for arg in "$@"; do
+  case "$prev" in
+    --input) input="$arg" ;;
+  esac
   case "$arg" in
     POST) method=POST ;;
     repos/*) url="$arg" ;;
   esac
+  prev="$arg"
 done
 if [ "$method" = POST ]; then
   for arg in "$@"; do printf '%s\n' "$arg"; done >> "$GH_ARGS"
+  # A review POST carries its payload in a file; record what was posted, not
+  # just that something was, so the anchoring can be asserted.
+  case "$url" in
+    */reviews)
+      if [ -n "$input" ] && [ -f "$input" ]; then
+        cat "$input" >> "$GH_REVIEWS"
+        printf '\n<<<REVIEW>>>\n' >> "$GH_REVIEWS"
+      fi ;;
+  esac
   exit 0
 fi
 serve() {
@@ -1147,6 +1331,8 @@ serve() {
   fi
 }
 case "$url" in
+  */files*)
+    if [ -f "$STUB_DIR/files" ]; then cat "$STUB_DIR/files"; else printf '[]'; fi ;;
   */reviews/*)
     id="${url##*/}"
     if [ -f "$STUB_DIR/body.$id" ]; then cat "$STUB_DIR/body.$id"
@@ -1169,6 +1355,11 @@ exit 0
 COPILOT_STUB = r'''#!/bin/sh
 for arg in "$@"; do printf '%s\n<<<ARG>>>\n' "$arg"; done >> "$COPILOT_ARGS"
 printf 'Total duration 16s\nAI Credits used 6.64\n' >&2
+# The findings file a reviewer following the contract writes beside its
+# report — scripted per test, and absent for the reviewer that writes none.
+if [ -f "$STUB_DIR/cli-findings" ]; then
+  cp "$STUB_DIR/cli-findings" "$STUB_DIR/shipd-copilot-review-findings.json"
+fi
 if [ -f "$STUB_DIR/cli-out" ]; then cat "$STUB_DIR/cli-out"; fi
 if [ -f "$STUB_DIR/cli-code" ]; then exit "$(cat "$STUB_DIR/cli-code")"; fi
 exit 0
@@ -1253,7 +1444,7 @@ class GateScriptCase(unittest.TestCase):
     # Scripted files the stubs serve from, cleared before each run.
     SCRIPTED = ("ids", "head", "body", "reviews-calls", "head-calls",
                 "cli-out", "cli-code", "cli-timeout", "base-skill",
-                "base-missing", "base-unreadable")
+                "base-missing", "base-unreadable", "files", "cli-findings")
 
     def setUp(self):
         self.assertTrue(os.path.isfile(GATE_TEMPLATE),
@@ -1282,8 +1473,16 @@ class GateScriptCase(unittest.TestCase):
         self.assertIn(GH_PATH, script,
                       "the posting step no longer names %s, so the stub "
                       "substitution below would not bind" % GH_PATH)
-        self.script = script.replace(GH_PATH,
-                                     os.path.join(self.stub_bin, "gh"))
+        script = script.replace(GH_PATH, os.path.join(self.stub_bin, "gh"))
+        # The payload builder's interpreter, named by the same kind of absolute
+        # literal and for the same reason — a PATH lookup would let a reviewer's
+        # $GITHUB_PATH shim run as the credentialed step. Pointed at whatever
+        # interpreter runs this suite, since the runner's own path need not
+        # exist here.
+        self.assertIn(PY_PATH, script,
+                      "the posting step no longer names %s, so the stub "
+                      "substitution below would not bind" % PY_PATH)
+        self.script = script.replace(PY_PATH, sys.executable)
         # The checkout the CLI path runs in: the reviewed commit's own copy of
         # the review skill, at the path the workflow reads it from. It is the
         # fallback source, never the preferred one.
@@ -1330,11 +1529,26 @@ class GateScriptCase(unittest.TestCase):
         self.assertIn("-p", args, "the CLI was never invoked with a prompt")
         return args[args.index("-p") + 1]
 
+    def findings_path(self):
+        """Where the reviewer leaves its machine-readable findings, and where
+        the posting step reads them from."""
+        return os.path.join(self.tmp, FINDINGS_FILE)
+
+    def reviews(self):
+        """The review payloads the run POSTed through the pull-request reviews
+        API, parsed, in order."""
+        path = os.path.join(self.tmp, "gh-reviews")
+        if not os.path.exists(path):
+            return []
+        return [json.loads(chunk)
+                for chunk in read(path).split("\n<<<REVIEW>>>\n")[:-1]]
+
     def gate(self, event="pull_request", body="", ids="", cycles=(), heads=(),
              bodies=None, interval="0", timeout="0", run_timeout=30,
              secret="", cli_out=None, cli_code=None, cli_timed_out=False,
              fail_open="", base_skill=BASE_SKILL, base_ref_missing=False,
-             base_unreadable=False, expect_failure=False, path_shim=False):
+             base_unreadable=False, expect_failure=False, path_shim=False,
+             files=None, findings=None):
         """Run the gate script for ``event`` and return the statuses it posted,
         in order — one dict of ``-f key=value`` fields per post, with the URL
         it posted to under ``"url"``. What the run logged is left on
@@ -1402,13 +1616,26 @@ class GateScriptCase(unittest.TestCase):
             self.plant("base-missing", "")
         if base_unreadable:
             self.plant("base-unreadable", "")
+        # The pull request's files as the API serves them — the diff the
+        # posting step verifies findings against — and the findings file the
+        # reviewer would have left beside its report.
+        if files is not None:
+            self.plant("files", json.dumps(files))
+        if findings is not None:
+            self.plant("cli-findings", findings if isinstance(findings, str)
+                       else json.dumps(findings))
         script = os.path.join(self.tmp, "gate.sh")
         with open(script, "w", encoding="utf-8") as fh:
             fh.write(self.script)
         for name in ("gh-args", "comments-args", "copilot-args",
                      "timeout-args", "npm-args", "git-args", "shim-args",
+                     "gh-reviews",
                      "shipd-copilot-review-skill.md",
-                     "shipd-copilot-review-body.md"):
+                     "shipd-copilot-review-body.md",
+                     "shipd-copilot-review-payload.json",
+                     "shipd-copilot-review-plain.json",
+                     "shipd-copilot-review-files.json",
+                     FINDINGS_FILE):
             path = os.path.join(self.tmp, name)
             if os.path.exists(path):
                 os.remove(path)
@@ -1428,6 +1655,7 @@ class GateScriptCase(unittest.TestCase):
             "SHIM_ARGS": os.path.join(self.tmp, "shim-args"),
             "GH_ARGS": self.record,
             "GH_COMMENTS": os.path.join(self.tmp, "comments-args"),
+            "GH_REVIEWS": os.path.join(self.tmp, "gh-reviews"),
             "COPILOT_ARGS": os.path.join(self.tmp, "copilot-args"),
             "TIMEOUT_ARGS": os.path.join(self.tmp, "timeout-args"),
             "NPM_ARGS": os.path.join(self.tmp, "npm-args"),
@@ -1481,7 +1709,9 @@ class GateScriptCase(unittest.TestCase):
         return self.posted()
 
     def posted(self):
-        """The recorded status posts, in order."""
+        """The recorded **status** posts, in order. The CLI path's review POST
+        goes through the same `gh api --method POST`, so it is filtered out
+        here by endpoint and read back through :meth:`reviews` instead."""
         if not os.path.exists(self.record):
             return []
         posts = []
@@ -1495,7 +1725,7 @@ class GateScriptCase(unittest.TestCase):
             elif "=" in arg and not arg.startswith("-"):
                 key, _sep, value = arg.partition("=")
                 posts[-1][key] = value
-        return posts
+        return [post for post in posts if "/statuses/" in post.get("url", "")]
 
     def assertStates(self, posts, expected):
         self.assertEqual([post.get("state") for post in posts], expected)
@@ -1634,8 +1864,8 @@ class GateCliReviewerTest(GateScriptCase):
         self.assertTrue(self.recorded("shim"),
                         "the shim was never on PATH, so this proves nothing")
         self.assertStates(posts, ["success"])
-        self.assertNotEqual(self.recorded("comments"), [],
-                            "the shim swallowed the review comment too")
+        self.assertNotEqual(self.reviews(), [],
+                            "the shim swallowed the review POST too")
 
     def test_an_unresolvable_base_ref_fails_rather_than_un_pinning(self):
         # The fetch failed, or the branch is gone. Falling back here would
@@ -1649,7 +1879,7 @@ class GateCliReviewerTest(GateScriptCase):
         self.assertIn("main", self.stderr,
                       "the failure does not name the base ref it could not "
                       "resolve")
-        self.assertEqual(self.recorded("comments"), [])
+        self.assertEqual(self.reviews(), [])
 
     def test_an_unreadable_base_skill_fails_rather_than_un_pinning(self):
         # The base carries the file and it could not be read: an error, not
@@ -1664,15 +1894,17 @@ class GateCliReviewerTest(GateScriptCase):
                             "under review")
         self.assertIn(GATE_SKILL_PATH, self.stderr)
 
-    def test_the_reviewed_text_is_posted_as_a_pull_request_comment(self):
+    def test_the_reviewed_text_is_posted_as_a_pull_request_review(self):
         self.cli_gate(cli_out=self.REVIEW)
-        comment = self.recorded("comments")
-        self.assertEqual(comment[:2], ["pr", "comment"],
-                         "the review text was not posted as a comment")
-        self.assertIn("7", comment)
-        body_file = comment[comment.index("--body-file") + 1]
-        self.assertEqual(read(body_file), self.REVIEW,
-                         "the comment does not carry what the gate judged")
+        posted = self.reviews()
+        self.assertEqual(len(posted), 1,
+                         "the reviewed text was not posted as a review")
+        self.assertEqual(posted[0]["body"], self.REVIEW,
+                         "the review does not carry what the gate judged")
+        self.assertEqual(posted[0]["event"], "COMMENT")
+        self.assertEqual(posted[0]["commit_id"], self.HEAD)
+        self.assertEqual(self.recorded("comments"), [],
+                         "the report was also posted as an issue comment")
 
     def test_the_cli_path_never_polls_the_reviews_api(self):
         self.cli_gate(cli_out=self.REVIEW)
@@ -1708,8 +1940,8 @@ class GateCliReviewerTest(GateScriptCase):
         self.assertNotEqual(self.cli_args(), [],
                             "the CLI was never invoked at all")
         self.assertStates(posts, ["pending"])
-        self.assertEqual(self.recorded("comments"), [],
-                         "a failed review was posted as a comment anyway")
+        self.assertEqual(self.reviews(), [],
+                         "a failed review was published anyway")
 
     def test_a_timed_out_cli_run_leaves_pending(self):
         posts = self.cli_gate(cli_timed_out=True)
@@ -1718,7 +1950,7 @@ class GateCliReviewerTest(GateScriptCase):
         self.assertStates(posts, ["pending"])
         self.assertEqual(self.cli_args(), [],
                          "the timeout did not stop the CLI")
-        self.assertEqual(self.recorded("comments"), [])
+        self.assertEqual(self.reviews(), [])
 
     def test_an_empty_secret_keeps_the_poll_path(self):
         # Every repository without the secret keeps today's behaviour: the poll
@@ -1727,8 +1959,147 @@ class GateCliReviewerTest(GateScriptCase):
         self.assertStates(posts, ["pending", "success"])
         self.assertEqual(self.cli_args(), [])
         self.assertEqual(self.recorded("npm"), [])
-        self.assertEqual(self.recorded("comments"), [])
+        self.assertEqual(self.reviews(), [])
         self.assertGreaterEqual(self.calls("reviews-calls"), 1)
+
+
+class GateReviewPostTest(GateScriptCase):
+    """The CLI path publishes what it judged as a pull-request review, anchoring
+    the reviewer's findings only where this step could verify them against the
+    diff it read itself (copilot-review-skill gate-workflow-template)."""
+
+    SECRET = "ghp-stub-copilot-pat"
+
+    REVIEW = ("## Findings: ❌ Fix required\n\n"
+              "| # | rating | details |\n| --- | --- | --- |\n"
+              "| 1 | 🔴 high | `src/api/handler.py:11` — the backoff never "
+              "resets |\n\n**Verdict: Fix required**\n\n" + FIX_MARKER + "\n")
+
+    # 10 (context), 11–12 (added) and 13 (context) are the RIGHT-side lines
+    # this diff makes commentable; 14 and beyond are not in it at all.
+    FILES = [{"filename": "src/api/handler.py",
+              "patch": ("@@ -10,2 +10,4 @@\n"
+                        " ctx\n"
+                        "+added one\n"
+                        "+added two\n"
+                        " ctx2\n")}]
+
+    ANCHORED = {"severity": "high", "path": "src/api/handler.py",
+                "start_line": 11, "end_line": 12,
+                "detail": "The backoff never resets.",
+                "replacement": ["    backoff = INITIAL", "    attempts = 0"]}
+
+    def cli_gate(self, **kwargs):
+        kwargs.setdefault("secret", self.SECRET)
+        kwargs.setdefault("cli_out", self.REVIEW)
+        kwargs.setdefault("files", self.FILES)
+        return self.gate(**kwargs)
+
+    def review(self):
+        """The single review payload the run posted."""
+        posted = self.reviews()
+        self.assertEqual(len(posted), 1,
+                         "expected exactly one review POST, got %d"
+                         % len(posted))
+        return posted[0]
+
+    def test_the_review_carries_the_judged_body_as_a_comment_event(self):
+        self.cli_gate(findings=[])
+        review = self.review()
+        self.assertEqual(review["event"], "COMMENT")
+        self.assertEqual(review["commit_id"], self.HEAD)
+        self.assertIn("**Verdict: Fix required**", review["body"])
+        self.assertEqual(review["body"].strip().splitlines()[-1], FIX_MARKER,
+                         "the verdict marker is no longer the body's last line")
+
+    def test_a_verified_finding_is_anchored_on_its_range(self):
+        self.cli_gate(findings=[self.ANCHORED])
+        comments = self.review()["comments"]
+        self.assertEqual(len(comments), 1)
+        comment = comments[0]
+        self.assertEqual(comment["path"], "src/api/handler.py")
+        self.assertEqual((comment["start_line"], comment["line"]), (11, 12))
+        self.assertEqual((comment["start_side"], comment["side"]),
+                         ("RIGHT", "RIGHT"))
+        self.assertIn("The backoff never resets.", comment["body"])
+
+    def test_a_single_line_finding_keeps_the_single_line_anchor(self):
+        finding = dict(self.ANCHORED, start_line=11, end_line=11)
+        self.cli_gate(findings=[finding])
+        comment = self.review()["comments"][0]
+        self.assertEqual(comment["line"], 11)
+        self.assertNotIn("start_line", comment)
+
+    def test_a_replacement_becomes_a_committable_suggestion(self):
+        self.cli_gate(findings=[self.ANCHORED])
+        body = self.review()["comments"][0]["body"]
+        self.assertIn("```suggestion\n    backoff = INITIAL\n    attempts = 0\n```",
+                      body)
+
+    def test_a_finding_without_a_replacement_carries_no_suggestion(self):
+        finding = {k: v for k, v in self.ANCHORED.items()
+                   if k != "replacement"}
+        self.cli_gate(findings=[finding])
+        comment = self.review()["comments"][0]
+        self.assertNotIn("```suggestion", comment["body"])
+        self.assertIn("The backoff never resets.", comment["body"])
+
+    def test_a_finding_on_an_untouched_file_is_folded_into_the_body(self):
+        # The reviewer names a file this pull request never touched. Anchoring
+        # it would be posting a comment onto the reviewer's own claim.
+        finding = dict(self.ANCHORED, path="other/module.py",
+                       detail="Claimed defect in an untouched file.")
+        self.cli_gate(findings=[finding])
+        review = self.review()
+        self.assertEqual(review.get("comments", []), [])
+        self.assertIn("Claimed defect in an untouched file.", review["body"])
+        self.assertIn("other/module.py", review["body"])
+        self.assertEqual(review["body"].strip().splitlines()[-1], FIX_MARKER,
+                         "the folded prose displaced the verdict marker")
+
+    def test_a_range_leaving_the_diff_is_folded_into_the_body(self):
+        # 13 is in the diff, 14 is not: a comment spanning both would be
+        # rejected outright and cost every other finding with it.
+        finding = dict(self.ANCHORED, start_line=13, end_line=14,
+                       detail="Range half outside the diff.")
+        self.cli_gate(findings=[finding])
+        review = self.review()
+        self.assertEqual(review.get("comments", []), [])
+        self.assertIn("Range half outside the diff.", review["body"])
+
+    def test_a_malformed_finding_is_folded_rather_than_dropped(self):
+        finding = {"severity": "medium", "path": "src/api/handler.py",
+                   "detail": "No range at all."}
+        self.cli_gate(findings=[finding])
+        review = self.review()
+        self.assertEqual(review.get("comments", []), [])
+        self.assertIn("No range at all.", review["body"])
+
+    def test_a_missing_findings_file_still_posts_the_body(self):
+        # Every reviewer that writes only a report — GitHub's surface, or a CLI
+        # run that could not write the file — keeps working: the body is the
+        # review, the findings file only anchors it.
+        self.cli_gate()
+        review = self.review()
+        self.assertEqual(review.get("comments", []), [])
+        self.assertIn("**Verdict: Fix required**", review["body"])
+
+    def test_an_unparseable_findings_file_still_posts_the_body(self):
+        self.cli_gate(findings="not json at all {")
+        review = self.review()
+        self.assertEqual(review.get("comments", []), [])
+        self.assertIn("**Verdict: Fix required**", review["body"])
+
+    def test_the_status_is_posted_whatever_the_findings_file_says(self):
+        posts = self.cli_gate(findings="not json at all {")
+        self.assertStates(posts, ["pending", "failure"])
+
+    def test_the_poll_path_posts_no_review_of_its_own(self):
+        # GitHub's own reviewer already posted its review; re-posting it would
+        # duplicate it under the workflow's account.
+        self.gate(ids="42", body=self.REVIEW, files=self.FILES,
+                  findings=[self.ANCHORED])
+        self.assertEqual(self.reviews(), [])
 
 
 class GateVerdictParseTest(GateScriptCase):
@@ -1842,26 +2213,25 @@ class GateStrictModeTest(GateScriptCase):
                           fail_open="false")
         self.assertStates(posts, ["pending"])
 
-    def test_the_cli_path_still_comments_what_it_could_not_classify(self):
+    def test_the_cli_path_still_publishes_what_it_could_not_classify(self):
         # No status was derived from this text, which makes it exactly the
         # text an operator has to read to decide what to do about the pending
         # check. Posting it is what stops strict mode swallowing the review.
         self.gate(secret=self.SECRET, cli_out=QUOTING_BODY, fail_open="false")
-        comment = self.recorded("comments")
-        self.assertEqual(comment[:2], ["pr", "comment"],
+        posted = self.reviews()
+        self.assertEqual(len(posted), 1,
                          "strict mode swallowed the reviewer's own text")
-        body_file = comment[comment.index("--body-file") + 1]
-        self.assertEqual(read(body_file), QUOTING_BODY,
-                         "the comment does not carry what the reviewer wrote")
+        self.assertEqual(posted[0]["body"], QUOTING_BODY,
+                         "the review does not carry what the reviewer wrote")
 
-    def test_the_other_paths_still_comment_nothing(self):
+    def test_the_other_paths_still_publish_nothing(self):
         # A Copilot-authored review is already on the pull request; only the
         # CLI reviewer's own text is ever posted.
         self.gate(ids="42", body=QUOTING_BODY, fail_open="false")
-        self.assertEqual(self.recorded("comments"), [])
+        self.assertEqual(self.reviews(), [])
         self.gate(event="pull_request_review", body=QUOTING_BODY,
                   fail_open="false")
-        self.assertEqual(self.recorded("comments"), [])
+        self.assertEqual(self.reviews(), [])
 
     def test_the_strict_run_logs_the_no_verdict_condition_and_exits_zero(self):
         # `exit 0`: the run judged nothing, which is not a failure of the run.

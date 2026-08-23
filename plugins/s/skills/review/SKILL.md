@@ -182,7 +182,13 @@ rendering changes. Shape:
       "why": "why it matters",
       "fix": "concrete fix",
       "status": "open",
-      "note": ""
+      "note": "",
+      "suggestion": {
+        "confident": true,
+        "start_line": 42,
+        "end_line": 44,
+        "lines": ["the whole replacement line", "and the next one"]
+      }
     }
   ],
   "spec_coverage": [ { "scenario": "WHEN … THEN …", "state": "met" | "unmet" | "cant-tell" } ],
@@ -196,6 +202,35 @@ finding with severity `high`. `spec_coverage` is present only when a change is
 in scope. Valid JSON only — no fences, no commentary, **no emoji**. If the
 analysis cannot run, still emit a well-formed object with `could_not_verify`
 explaining why.
+
+### The optional `suggestion` object
+
+`suggestion` is **optional** and belongs on a finding only when you would stake
+the fix on being applied unread: clicking Apply on a GitHub suggestion commits
+your lines verbatim, so the correctness judgement moves to whoever clicks.
+Omit it and the finding renders as prose, which is the right answer whenever
+you are less than sure.
+
+The poster commits it as a `suggestion` block only when **all** of these hold —
+anything else quietly degrades to prose, never an error, so a shape you got
+wrong costs a suggestion and not the review:
+
+- `confident` is exactly `true`;
+- `start_line` and `end_line` are integers with `start_line <= end_line` — one
+  contiguous range, the only shape GitHub can commit;
+- `lines` is a non-empty list of the **whole** replacement lines. Its length
+  need not match the range: a fix may add or remove lines. Never express an
+  edit inside a line — no `start_column`/`end_column`, whose mere presence
+  declares a partial-line edit and degrades the finding;
+- the finding's `location` anchors to a RIGHT-side line of the PR diff (the
+  same rule that decides inline-vs-summary for every finding), and every line
+  in `start_line..end_line` is in that diff too — a comment spanning a line the
+  diff does not carry is rejected outright.
+
+The range is what the suggestion replaces, and it need not be the `location`
+line; the comment anchors on the range. The block changes nothing else about
+the finding — same severity marker, same what/why/fix prose — and `--json`
+stays emoji- and prose-free.
 
 ## Posting to a PR (the gate)
 
@@ -264,10 +299,19 @@ When posting is requested:
    on the acting scope:
    - **`all` (the default) — every finding, low included.** Walk the findings
      (newest post first) and give each exactly one of two dispositions — never
-     leave a finding with neither:
+     leave a finding with neither. A finding that is neither implemented (by
+     your edit or by its suggestion having been applied) nor replied to is
+     undispositioned, and `resolve` will refuse it:
      - **Implement** it when the suggestion is correct: make the edit, commit,
        and push. The push re-triggers the gate, so re-run the review + poster
        afterwards so the summary and status track the new head SHA.
+
+       A finding whose committable `suggestion` block has already been
+       **applied** on the pull request is implemented by that very act — the
+       commit GitHub made is the evidence — so it needs no edit and **no
+       separate reply**. Do not reply "applied" onto such a thread; `resolve`
+       reads the later commit as the disposition, exactly as it does for a fix
+       you pushed yourself.
      - **Push back** when you judge it not worth implementing: post a concrete,
        reasoned reply onto the finding's thread with
 

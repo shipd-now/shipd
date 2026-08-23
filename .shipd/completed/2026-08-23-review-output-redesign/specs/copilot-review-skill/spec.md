@@ -1,7 +1,8 @@
-# copilot-review-skill
+## MODIFIED Requirements
 
 ### Requirement: Copilot review skill template
 id: skill-template
+base: 5f511738283d
 
 The plugin SHALL carry a Copilot code-review skill template at
 `integrations/copilot/SKILL.md` containing: YAML frontmatter with `name` and
@@ -58,49 +59,9 @@ contiguous whole lines — a replacement for those lines.
   severity, path, line range, and detail, and carry a replacement only for a
   fix the agent judges confident and expressible as contiguous whole lines
 
-### Requirement: Copilot review setup workflow template
-id: setup-workflow-template
-
-The plugin SHALL carry a Copilot code-review environment workflow template
-at `integrations/copilot/copilot-code-review.yml` containing: the
-ownership marker line `# shipd-copilot v{version}` with the literal
-`{version}` placeholder; a single job named `copilot-setup-steps` running
-on `ubuntu-latest`; a repository checkout step that is marked
-`continue-on-error: true` and carries a step `id`, so a checkout the
-runner's token cannot perform (a private repository) never fails the
-setup job; and steps that install the prebuilt `difft` release binary
-onto the runner's `PATH` (the same release-tarball source `semdiff.py`'s
-own installer uses) and install `ripgrep`, each conditioned on the
-checkout step's outcome being `success`. If the extracted release archive
-contains no `difft` binary, then the difftastic step SHALL fail with a
-message naming the problem rather than invoking `install` with an empty
-path. The template SHALL NOT reference any secret or
-organization-specific value.
-
-#### Scenario: Workflow defines the setup job
-- **WHEN** `plugins/s/integrations/copilot/copilot-code-review.yml` is read
-- **THEN** it contains the marker line `# shipd-copilot v{version}` and
-  exactly one job, named `copilot-setup-steps`, on `ubuntu-latest`
-
-#### Scenario: The checkout is fail-soft and gates the installs
-- **WHEN** the template's steps are read
-- **THEN** the checkout step carries `continue-on-error: true` and an
-  `id`, and the difftastic and ripgrep steps each run only when that
-  step's outcome is `success`
-
-#### Scenario: A binary-less archive fails loudly
-- **WHEN** the difftastic step's script is read
-- **THEN** it tests the located binary path for emptiness and fails with
-  a clear message when the archive held no `difft`, never invoking
-  `install` with an empty path
-
-#### Scenario: Workflow provisions the diff tooling
-- **WHEN** the template's steps are read
-- **THEN** one step installs the `difft` release binary onto `PATH` and one
-  installs `ripgrep`
-
 ### Requirement: Copilot review-gate workflow template
 id: gate-workflow-template
+base: 8c2c52395947
 
 The plugin SHALL carry a review-gate workflow template at
 `integrations/copilot/copilot-review-gate.yml` that posts a terminal
