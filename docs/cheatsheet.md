@@ -13,8 +13,6 @@ below:
 - `--json` — emit machine-readable JSON instead of the text report.
 - `--root DIR` — run against a repository root other than the current
   directory.
-- `--all` — (`shipd list` only) also list applied changes from `completed/`,
-  not just the in-flight ones.
 
 ## /s: commands
 
@@ -44,7 +42,7 @@ below:
 
 | Command | What it does | Example |
 |---|---|---|
-| `list` | In-flight changes across the root and its worktrees. | `shipd list` |
+| `list [--all]` | In-flight changes across the root and its worktrees; `--all` adds the applied ones from `completed/`. | `shipd list` |
 | `status [change]` | A change's status and progress. | `shipd status` |
 | `locate [change]` | Where an installed change lives. | `shipd locate` |
 | `related <term> [term...]` | Spec artifacts ranked by term-hit count. | `shipd related statusline` |
@@ -55,7 +53,7 @@ below:
 | `lint [change] [--epic EPIC] [--initiative INITIATIVE] [--workspace] [--wiki]` | Structurally validate specs and change deltas. | `shipd lint` |
 | `doctor` | Preflight this environment for shipd. | `shipd doctor` |
 | `statusline [install] [--settings FILE] [--force]` | Report or register the shipd statusline. | `shipd statusline` |
-| `copilot [add\|remove] [--force]` | Maintain the Copilot code-review skill in a repo. | `shipd copilot` |
+| `copilot [add\|remove] [--force]` | Maintain the Copilot code-review skill — the `/s:gate` merge gate — in a repo. | `shipd copilot` |
 | `vendor [add\|remove] [--force]` | Maintain a vendored per-repo shipd install. | `shipd vendor` |
-| `harness [list\|show\|add\|remove\|status] [ids...] [--all] [--user] [--force]` | The harness registry, and the generated `/s:` command files in a repo or in your home. | `shipd harness list` |
+| `harness [list\|show\|add\|remove\|status] [ids...] [--all] [--user] [--force]` | The harness registry, and the generated `/s:` command files in a repo or in your home; `--all` acts on every harness in it. | `shipd harness list` |
 | `install` | Pick your harnesses and install their commands. | `shipd install` |
