@@ -42,6 +42,12 @@ import sys
 
 PROG = "review_gate"
 CONTEXT = "semantic-review"
+# The event every review this poster submits carries. `COMMENT` deliberately,
+# never `REQUEST_CHANGES`: the required `semantic-review` commit status set
+# below is the merge-blocking signal, and a review decision would add a second
+# block that a human must dismiss by hand even after the fix has landed. The
+# review POST is the carrier for inline comments, not a gate of its own.
+REVIEW_EVENT = "COMMENT"
 MARKER = "<!-- shipd-semantic-review -->"
 # The pre-rename marker. Every *read* still recognizes it — a PR whose summary
 # predates the rename is edited in place, never duplicated — while every write
@@ -295,9 +301,64 @@ def parse_severity(body):
     return match.group(1) if match else None
 
 
-def _inline_body(f):
+def _line_number(value):
+    """True when ``value`` is a usable line number — an int, and not the bool
+    that ``isinstance(True, int)`` would otherwise let through."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _suggestion(f, commentable=None):
+    """The ``(start_line, end_line, lines)`` of a finding's committable
+    suggestion, or ``None`` when it declares none or declares one this poster
+    will not commit.
+
+    The reviewer supplies the judgement in an optional ``suggestion`` object —
+    ``{"confident": true, "start_line": n, "end_line": m, "lines": [...]}`` —
+    and this is the whitelist it must pass. Anything else degrades to prose
+    rather than failing: a wrong shape costs a suggestion, never a review.
+
+    * ``confident`` must be exactly ``True``: the reviewer's own declaration
+      that the fix is right, which is what a one-click apply rests on.
+    * A ``start_column``/``end_column`` key declares an edit *inside* a line,
+      which a whole-line suggestion cannot express.
+    * ``start_line``/``end_line`` must be ints with ``start_line <= end_line``:
+      one contiguous range is the only shape GitHub commits, so a missing or
+      inverted bound is a discontiguous fix by another name.
+    * ``lines`` must be a non-empty list of strings — the whole replacement
+      lines. Its length need not match the range: a fix may add or remove
+      lines.
+    * Given a ``commentable`` set, every line in the range must be in it; a
+      comment spanning a line the diff does not carry is rejected outright,
+      which would cost the whole review POST. ``None`` skips that check.
+    """
+    sug = f.get("suggestion")
+    if not isinstance(sug, dict) or sug.get("confident") is not True:
+        return None
+    if "start_column" in sug or "end_column" in sug:
+        return None
+    start, end = sug.get("start_line"), sug.get("end_line")
+    if not (_line_number(start) and _line_number(end)) or start > end:
+        return None
+    lines = sug.get("lines")
+    if not isinstance(lines, list) or not lines:
+        return None
+    if not all(isinstance(line, str) for line in lines):
+        return None
+    if commentable is not None and not all(
+            n in commentable for n in range(start, end + 1)):
+        return None
+    return start, end, lines
+
+
+def _inline_body(f, suggestion=None):
     """The text body of one anchored inline comment — the finding's what / why
-    / fix as prose. No committable suggestion blocks, no emoji."""
+    / fix as prose, followed by a committable ``suggestion`` fenced block when
+    ``suggestion`` is the ``(start, end, lines)`` triple ``_suggestion``
+    accepted for this finding. The prose and the leading severity marker are
+    the same either way, so ``parse_severity`` reads a suggestion-carrying body
+    exactly as it reads any other.
+
+    No emoji."""
     sev = f.get("severity", "low")
     parts = [_sev_marker(sev) + "%s**" % (f.get("what") or "")]
     if f.get("why"):
@@ -306,6 +367,8 @@ def _inline_body(f):
     if f.get("fix"):
         parts.append("")
         parts.append("Fix: %s" % f["fix"])
+    if suggestion:
+        parts += ["", "```suggestion"] + list(suggestion[2]) + ["```"]
     return "\n".join(parts)
 
 
@@ -390,16 +453,41 @@ def _set_status(gh, repo, sha, state, description, target_url):
         _fail("setting commit status failed: %s" % err.strip())
 
 
-def _post_review(gh, repo, number, sha, anchored):
-    """Post one COMMENT review with the ``anchored`` inline comments. Returns
-    True on success, False on rejection (e.g. a 422 from an un-anchorable
-    line)."""
-    comments = [{"path": p, "line": ln, "side": "RIGHT", "body": _inline_body(f)}
-                for f, p, ln in anchored]
+def _review_comment(f, path, line, commentable=None):
+    """One inline comment payload for an anchored finding. A finding carrying
+    a committable suggestion anchors on the range that suggestion replaces —
+    GitHub applies a suggestion to the lines its comment spans — and a
+    multi-line range takes the ``start_line``/``line`` pair; every other
+    finding keeps its location-line anchor unchanged."""
+    suggestion = _suggestion(f, commentable)
+    comment = {"path": path, "side": "RIGHT",
+               "body": _inline_body(f, suggestion)}
+    if suggestion is None:
+        comment["line"] = line
+        return comment
+    start, end, _lines = suggestion
+    if start != end:
+        comment["start_line"] = start
+        comment["start_side"] = "RIGHT"
+    comment["line"] = end
+    return comment
+
+
+def _post_review(gh, repo, number, sha, anchored, commentable=None):
+    """Post one COMMENT review with the ``anchored`` inline comments, each
+    carrying its finding's committable suggestion where ``commentable`` — the
+    per-path RIGHT-side line sets ``post`` already computed — admits one.
+    Returns True on success, False on rejection (e.g. a 422 from an
+    un-anchorable line)."""
+    comments = [
+        _review_comment(f, p, ln,
+                        None if commentable is None
+                        else commentable.get(p, set()))
+        for f, p, ln in anchored]
     body = ("Semantic review — see the summary comment for the full report."
             if comments else
             "Semantic review posted — see the summary comment.")
-    payload = json.dumps({"commit_id": sha, "event": "COMMENT",
+    payload = json.dumps({"commit_id": sha, "event": REVIEW_EVENT,
                           "body": body, "comments": comments})
     rc, _out, _err = gh(["api", "repos/%s/pulls/%d/reviews" % (repo, number),
                          "-X", "POST", "--input", "-"], input=payload)
@@ -429,7 +517,12 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None):
     out("summary comment: %s" % (comment_url or "(created)"))
 
     if anchored:
-        if not _post_review(gh, repo, number, sha, anchored):
+        # ``commentable`` travels with the anchored findings: `_split_findings`
+        # above stays the one decision on inline-vs-fold — an unanchorable
+        # finding is already folded here, suggestion or not — and the same
+        # sets it consulted then decide whether a suggestion's range is
+        # committable, rather than a second anchoring pass over the diff.
+        if not _post_review(gh, repo, number, sha, anchored, commentable):
             # The inline review was rejected: fold every finding into the
             # summary so nothing is lost, then retry the review with no inline.
             out("inline review rejected; folding findings into the summary")

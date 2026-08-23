@@ -72,9 +72,99 @@ how it is called is wrong even though its line exists.
 
 ### 5. Report
 
-Group findings by cohort, most severe first. For each finding give the
-**location**, **what** is wrong, **why** it matters, a concrete **fix**, and an
-explicit **severity**.
+Write a report that is **scanned**, not read start to finish: the verdict
+first, then a table that rates every finding, then the detail. A reader who
+stops after the first screen must already know whether the pull request ships
+and what the worst problem is. Never open with a transcript of your
+investigation.
+
+The body's shape, in this order:
+
+1. **The verdict header, as the body's first line** — the header states the
+   verdict the rubric below produces:
+
+   ```
+   ## Findings: ✅ Ship it
+   ```
+
+   ```
+   ## Findings: ❌ Fix required
+   ```
+
+2. **A severity summary table, before any per-finding detail** — one row per
+   finding, numbered, rating it 🔴 high / 🟠 med / 🟡 low, with its location
+   and a one-line statement of the defect:
+
+   ```
+   | # | rating | details |
+   | --- | --- | --- |
+   | 1 | 🔴 high | `src/api/handler.py:88` — the retry loop never resets the backoff |
+   ```
+
+   No findings: say `No findings.` in place of the table.
+
+3. **The per-finding detail**, grouped by cohort, most severe first, each
+   numbered to match its table row. For each finding give the **location**,
+   **what** is wrong, **why** it matters, a concrete **fix**, and its
+   **severity**.
+
+   Keep each finding brief — a few sentences, the evidence that makes it
+   checkable, and nothing else. Detail that a reader must wade through is
+   detail that does not get read: no restating the diff, no narrating how you
+   found it, no repeating the table.
+
+The 🔴/🟠/🟡 dots of the table and the ✅/❌ of the verdict header are the only
+emoji this report carries. Nowhere else: not in prose, in the detail, or in
+other tables.
+
+**Also write the findings as data.** Beside the report body, write a
+machine-readable findings file at
+
+```
+$RUNNER_TEMP/shipd-copilot-review-findings.json
+```
+
+(the working directory when `RUNNER_TEMP` is unset, matching the workflow's
+`${RUNNER_TEMP:-.}`). It is how the gate workflow anchors your findings onto
+the diff as inline comments — you never post anything yourself. Writing it is
+best effort: a surface where you cannot write files simply produces the body,
+and the gate posts that body with nothing anchored.
+
+The file is a JSON array, one entry per finding, in the same order and
+numbering as the summary table:
+
+```json
+[
+  {
+    "severity": "high",
+    "path": "src/api/handler.py",
+    "start_line": 88,
+    "end_line": 92,
+    "detail": "The retry loop never resets the backoff, so a recovered call keeps the maximum delay for the rest of the session.",
+    "replacement": ["        backoff = INITIAL_BACKOFF", "        attempts = 0"]
+  }
+]
+```
+
+- `severity` is `high`, `medium`, or `low` — the same rubric as the table.
+- `path` is repo-relative, exactly as the diff names the file.
+- `start_line`/`end_line` are the RIGHT-side (new-file) line range the finding
+  is about, `start_line <= end_line`; a single line repeats it in both.
+- `detail` is the prose a reader gets on the inline comment — brief, the same
+  substance as the report's per-finding detail.
+- `replacement` is **optional** and carries the whole replacement lines for the
+  range. Include it **only** where you judge the fix confident and expressible
+  as one or more contiguous whole lines — its presence is that judgement, and
+  it becomes a one-click committable suggestion whose correctness rests on
+  whoever clicks. A partial-line edit, a fix spanning separate ranges, or one
+  you are unsure of: omit `replacement` and let the detail say it in prose. The
+  line count need not match the range; a fix may add or remove lines.
+- Valid JSON only, no emoji, no fences around the file's own content.
+
+The workflow verifies every `path` and range against the diff it computes
+itself; a finding it cannot place there is folded into the posted body as prose
+instead of being anchored. So the file never decides what the review says — the
+body remains the review, and the verdict marker below is what gates the merge.
 
 **Severity rubric.**
 

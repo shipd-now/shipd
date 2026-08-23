@@ -400,6 +400,167 @@ class PostTest(unittest.TestCase):
         self.assertEqual(gh.review_posts, [])
 
 
+SUGGESTION_FENCE = "```suggestion"
+
+
+def _finding(location="a.py:5", *, severity="high", what="boom",
+             suggestion=None):
+    f = {"id": "f1", "severity": severity, "location": location,
+         "what": what, "why": "w", "fix": "x"}
+    if suggestion is not None:
+        f["suggestion"] = suggestion
+    return f
+
+
+def _post_finding(finding, files=None):
+    """Post a one-finding red review and hand back the fake, so every
+    suggestion assertion runs through the real eligibility gate rather than a
+    hand-built call to the renderer."""
+    gh = FakeGh(files=files if files is not None
+                else [{"filename": "a.py", "patch": PATCH_A}])
+    review_gate.post(
+        "7", _review(verdict="changes-requested", findings=[finding]), gh)
+    return gh
+
+
+def _inline_comments(gh):
+    return gh.review_posts[0]["comments"] if gh.review_posts else []
+
+
+class SuggestionTest(unittest.TestCase):
+    """A confident, contiguous whole-line replacement that anchors carries a
+    committable ```suggestion block; every other shape degrades to prose."""
+
+    # The eligible shape the degradation cases below vary one field of.
+    OK = {"confident": True, "start_line": 5, "end_line": 5,
+          "lines": ["    return None"]}
+
+    def _degrades(self, suggestion):
+        """Assert a suggestion shape still renders an ordinary inline comment:
+        prose, today's single-line anchor, and no fenced block."""
+        comment = _inline_comments(_post_finding(_finding(
+            suggestion=suggestion)))[0]
+        self.assertNotIn(SUGGESTION_FENCE, comment["body"])
+        self.assertEqual((comment["path"], comment["line"]), ("a.py", 5))
+        self.assertNotIn("start_line", comment)
+
+    def test_confident_whole_line_fix_becomes_committable(self):
+        comment = _inline_comments(_post_finding(_finding(
+            suggestion=dict(self.OK))))[0]
+        self.assertIn("```suggestion\n    return None\n```", comment["body"])
+        # A single-line replacement keeps the single-`line` anchor shape.
+        self.assertEqual((comment["path"], comment["line"]), ("a.py", 5))
+        self.assertEqual(comment["side"], "RIGHT")
+
+    def test_multi_line_replacement_carries_every_line(self):
+        comment = _inline_comments(_post_finding(_finding(suggestion={
+            "confident": True, "start_line": 3, "end_line": 5,
+            "lines": ["one", "two", "three"]})))[0]
+        self.assertIn("```suggestion\none\ntwo\nthree\n```", comment["body"])
+        # The comment spans the replaced range: GitHub applies a suggestion to
+        # the lines its comment covers.
+        self.assertEqual((comment["start_line"], comment["line"]), (3, 5))
+        self.assertEqual((comment["start_side"], comment["side"]),
+                         ("RIGHT", "RIGHT"))
+
+    def test_a_replacement_may_change_the_line_count(self):
+        # len(lines) need not equal the range: a fix may add or remove lines.
+        comment = _inline_comments(_post_finding(_finding(suggestion={
+            "confident": True, "start_line": 3, "end_line": 5,
+            "lines": ["collapsed"]})))[0]
+        self.assertIn("```suggestion\ncollapsed\n```", comment["body"])
+        self.assertEqual((comment["start_line"], comment["line"]), (3, 5))
+
+    def test_unanchorable_confident_fix_is_folded_and_carries_no_suggestion(
+            self):
+        gh = _post_finding(_finding(location="b.py:99", suggestion={
+            "confident": True, "start_line": 99, "end_line": 99,
+            "lines": ["fixed"]}))
+        self.assertEqual(_inline_comments(gh), [])
+        body = gh.summary_body()
+        self.assertIn("Additional findings", body)
+        self.assertNotIn(SUGGESTION_FENCE, body)
+
+    def test_partial_line_replacement_renders_no_suggestion(self):
+        # A column key declares an edit inside a line, which a whole-line
+        # suggestion cannot express.
+        self._degrades(dict(self.OK, start_column=4, end_column=12))
+        self._degrades(dict(self.OK, end_column=12))
+
+    def test_unconfident_replacement_renders_no_suggestion(self):
+        self._degrades(dict(self.OK, confident=False))
+        self._degrades({k: v for k, v in self.OK.items() if k != "confident"})
+        self._degrades(dict(self.OK, confident="true"))
+
+    def test_malformed_or_discontiguous_ranges_render_no_suggestion(self):
+        self._degrades({k: v for k, v in self.OK.items() if k != "lines"})
+        self._degrades(dict(self.OK, lines=[]))
+        self._degrades(dict(self.OK, lines="one line"))
+        self._degrades(dict(self.OK, start_line=5, end_line=3))
+        self._degrades(dict(self.OK, start_line="5"))
+        self._degrades({k: v for k, v in self.OK.items() if k != "end_line"})
+
+    def test_a_range_leaving_the_diff_renders_no_suggestion(self):
+        # PATCH_A makes a.py:1–5 commentable; 6 and 7 are outside it, and a
+        # comment spanning them would be rejected by GitHub outright.
+        self._degrades(dict(self.OK, start_line=5, end_line=7))
+
+    def test_suggestion_body_still_opens_with_the_severity_marker(self):
+        for sev in ("high", "medium", "low"):
+            comment = _inline_comments(_post_finding(_finding(
+                severity=sev, suggestion=dict(self.OK))))[0]
+            self.assertIn(SUGGESTION_FENCE, comment["body"])
+            self.assertEqual(review_gate.parse_severity(comment["body"]), sev)
+
+    def test_a_finding_without_a_suggestion_is_unchanged(self):
+        comment = _inline_comments(_post_finding(_finding()))[0]
+        self.assertNotIn(SUGGESTION_FENCE, comment["body"])
+        self.assertEqual((comment["path"], comment["line"]), ("a.py", 5))
+        self.assertNotIn("start_line", comment)
+
+
+class ReviewEventTest(unittest.TestCase):
+    """Every review this poster submits is a `COMMENT`. The required
+    `semantic-review` status is the merge blocker; a `REQUEST_CHANGES` decision
+    would need a human dismissal even after the fix landed, so the event is
+    pinned here and cannot drift silently."""
+
+    FINDINGS = [
+        _finding(location="a.py:5"),
+        _finding(location="b.py:99", severity="medium", what="out of diff"),
+        _finding(location="a.py:3", severity="low", what="fixable",
+                 suggestion={"confident": True, "start_line": 3,
+                             "end_line": 4, "lines": ["one", "two"]}),
+    ]
+
+    def _events(self, gh):
+        return [p["event"] for p in gh.review_posts]
+
+    def test_the_constant_is_comment(self):
+        self.assertEqual(review_gate.REVIEW_EVENT, "COMMENT")
+
+    def test_every_posted_review_submits_comment(self):
+        gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
+        review_gate.post("7", _review(verdict="changes-requested",
+                                      findings=self.FINDINGS), gh)
+        self.assertEqual(self._events(gh), ["COMMENT"])
+
+    def test_the_retry_without_inline_is_also_a_comment(self):
+        gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}],
+                    review_fail_times=1)
+        review_gate.post("7", _review(verdict="changes-requested",
+                                      findings=self.FINDINGS), gh)
+        self.assertEqual(self._events(gh), ["COMMENT", "COMMENT"])
+
+    def test_no_disposition_scope_changes_the_event(self):
+        for scope in review_gate.DISPOSITIONS:
+            gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
+            review_gate.post("7", _review(verdict="changes-requested",
+                                          findings=self.FINDINGS), gh,
+                             disposition=scope)
+            self.assertEqual(self._events(gh), ["COMMENT"], scope)
+
+
 class PostDispositionTest(unittest.TestCase):
     """`post --disposition <scope>` maps the commit status by merge policy while
     the summary body and verdict stay severity-honest."""

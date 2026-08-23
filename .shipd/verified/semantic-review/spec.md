@@ -187,72 +187,55 @@ workflow.
 ### Requirement: PR posting of a review verdict
 id: gate-poster
 
-The system SHALL provide `review_gate.py post <pr> --from <json|->` which,
-given a `/s:review --json` object, publishes it to the named pull request
-via `gh`: it SHALL upsert a single summary comment identified by the hidden
-marker `<!-- shipd-semantic-review -->` (editing the existing marker comment
-in place on re-runs), SHALL post inline comments only for findings whose
-`location` anchors to a RIGHT-side commentable line of the PR diff (folding
-unanchorable findings into the summary, and retrying once with no inline
-comments if the review POST is rejected), and SHALL set a commit status with
-context `semantic-review` on the PR's head SHA. The summary-comment
-upsert lookup SHALL also recognize the legacy marker
-`<!-- am-semantic-review -->`, while every write SHALL emit only the current
-marker, so a PR whose summary predates the rename is edited in place rather
-than duplicated (`reply`, `autoreply`, and `resolve` identify gate threads
-by their gate-authored root comment, which needs no marker matching). The verb SHALL accept
-`--disposition <scope>` (`all`, `high-only`, or `none`, default `all`) and
-SHALL map the status state by scope: under `all`, `success` iff the verdict
-is `pass`; under `high-only`, `success` iff no finding has severity `high`;
-under `none`, always `success` — the findings JSON and rendered verdict
-stay severity-honest in every scope. When the scope is not `all`, the
-summary comment SHALL carry a `Disposition: <scope>` line and the status
-description SHALL name the scope. The verb SHALL also accept
-`--model <tier>` and, when given, SHALL record it verbatim as a
-`Model: <tier>` line in the summary comment without resolving symbolic
-tiers. The script SHALL be stdlib-only and perform no analysis of its own.
+`review_gate.py post <pr> --from <json|->` SHALL publish a `/s:review --json`
+object to the named pull request via `gh`: upserting a single summary comment
+identified by the hidden marker `<!-- shipd-semantic-review -->` (editing the
+existing marker comment in place on re-runs, and recognizing the legacy marker
+`<!-- am-semantic-review -->` on lookup while writing only the current one),
+posting inline comments only for findings whose `location` anchors to a
+RIGHT-side commentable line of the pull request diff, folding unanchorable
+findings into the summary, retrying once with no inline comments if the review
+POST is rejected, submitting that review with the event `COMMENT`, and setting
+a commit status with context `semantic-review` on the pull request's head SHA.
 
-#### Scenario: Pass verdict posts green
-- **WHEN** `post` runs with a JSON whose verdict is `pass` and no prior
-  marker comment exists
-- **THEN** a summary comment carrying the marker is created and the
-  `semantic-review` status on the head SHA is `success`
+Where a finding declares its fix confident and supplies a replacement covering
+one or more contiguous whole lines that anchor to a RIGHT-side commentable
+line, its inline comment SHALL carry that replacement as a committable
+`suggestion` block so the fix can be applied without retyping. A finding whose
+replacement is absent, covers part of a line, spans a discontiguous range, or
+does not anchor SHALL render as prose instead. Emitting a suggestion SHALL NOT
+change the comment's leading severity marker, and the `--json` mode SHALL stay
+free of emoji and prose.
 
-#### Scenario: Re-post updates instead of stacking
-- **WHEN** `post` runs twice against the same PR
-- **THEN** the second run edits the existing marker comment and exactly one
-  marker comment exists afterward
+#### Scenario: A confident whole-line fix becomes committable
+- **WHEN** a finding declares its fix confident with a replacement covering
+  contiguous whole lines that anchor to the diff
+- **THEN** its inline comment contains a `suggestion` fenced block carrying
+  that replacement
 
-#### Scenario: Legacy-marker summary is updated, not duplicated
-- **WHEN** `post` runs against a PR whose existing summary comment carries
-  the legacy `<!-- am-semantic-review -->` marker
-- **THEN** that comment is edited in place, the edited body opens with the
-  current `<!-- shipd-semantic-review -->` marker, and exactly one gate
-  summary comment exists afterward
+#### Scenario: A multi-line replacement is supported
+- **WHEN** a confident finding's replacement covers more than one contiguous
+  whole line
+- **THEN** the suggestion block carries every one of those lines
 
-#### Scenario: Red verdict anchors findings inline
-- **WHEN** `post` runs with verdict `changes-requested`, one finding whose
-  `path:LINE` is in the PR diff and one whose is not
-- **THEN** the in-diff finding becomes an inline comment, the other appears
-  in the summary, and the status state is `failure`
+#### Scenario: An unanchorable fix stays prose
+- **WHEN** a finding declares its fix confident but its location does not
+  anchor to a RIGHT-side commentable line
+- **THEN** it is folded into the summary and carries no suggestion block
 
-#### Scenario: High-only greens over mediums
-- **WHEN** `post --disposition high-only` runs with verdict
-  `changes-requested` from one medium and one low finding and no high
-- **THEN** the status state is `success`, its description names the
-  scope, and the summary carries the findings and a
-  `Disposition: high-only` line
+#### Scenario: A partial-line fix stays prose
+- **WHEN** a confident finding's replacement covers part of a line rather than
+  whole lines
+- **THEN** its comment carries no suggestion block
 
-#### Scenario: High-only stays red on a high
-- **WHEN** `post --disposition high-only` runs with a JSON carrying a
-  high finding
-- **THEN** the status state is `failure`
+#### Scenario: The review is submitted as a comment
+- **WHEN** the poster publishes a review for any verdict
+- **THEN** the submitted event is `COMMENT`
 
-#### Scenario: None is always green and stays honest
-- **WHEN** `post --disposition none --model tier-below` runs with a JSON
-  carrying a high finding
-- **THEN** the status state is `success` and the summary comment carries
-  the finding, a `Disposition: none` line, and a `Model: tier-below` line
+#### Scenario: The severity marker is unchanged by a suggestion
+- **WHEN** an inline comment carries a suggestion block
+- **THEN** its body still opens with the shared severity marker that
+  `parse_severity` reads
 
 ### Requirement: Required-check protection verb
 id: required-check-protect
@@ -300,56 +283,37 @@ resulting contexts and conversation-resolution state.
 id: skill-post-flow
 
 Where the user explicitly asks for a review to be posted, the `/s:review`
-skill SHALL run the review, emit the machine verdict, and publish it via
-the poster, passing through the disposition scope and model tier when the
-invoker supplied them (defaults: scope `all`, no tier). The skill SHALL
-then disposition findings by scope. Under `all`, the flow SHALL run the
-full loop over every posted finding regardless of severity: implement the
-suggestion (edit, commit, push) when it is correct, otherwise reply on the
-finding's thread with the concrete reason via the gate's reply verb —
-never leaving a finding with neither. Under `high-only`, the flow SHALL
-implement (or push back with a reasoned reply) only the high-severity
-findings, re-reviewing and re-posting after any push, and SHALL then run
-the gate's autoreply verb so the remaining threads carry disposition
-evidence. Under `none`, the flow SHALL perform no per-finding judgment and
-SHALL run the autoreply verb over every gate thread. Every scope SHALL
-finish by running the gate's resolve verb and reporting the posted status
-state, the summary comment URL, the acting scope when it is not `all`, and
-the unresolved count, which SHALL be zero on a completed disposition. The
-skill SHALL document that applying the model tier is the spawning driver's
-concern, and SHALL NOT resolve the pipeline configuration or post as a
-side effect of a plain review request.
+skill SHALL run the review, emit the machine verdict, and publish it via the
+poster, passing through the disposition scope and model tier when the invoker
+supplied them (defaults: scope `all`, no tier). The skill SHALL then
+disposition findings by scope. Under `all`, the flow SHALL run the full loop
+over every posted finding regardless of severity: implement the suggestion
+when it is correct — by editing, committing and pushing, or by the finding's
+committable suggestion having been applied on the pull request, which counts
+as the same implement branch and needs no separate reply — otherwise reply on
+the finding's thread with the concrete reason via the gate's reply verb, never
+leaving a finding with neither. Under `high-only`, the flow SHALL implement (or
+push back with a reasoned reply) only the high-severity findings, re-reviewing
+and re-posting after any push, and SHALL then run the gate's autoreply verb so
+the remaining threads carry disposition evidence. Under `none`, the flow SHALL
+perform no per-finding judgment and SHALL run the autoreply verb over every
+gate thread. Every scope SHALL finish by running the gate's resolve verb and
+reporting the posted status state, the summary comment URL, the acting scope
+when it is not `all`, and the unresolved count, which SHALL be zero on a
+completed disposition.
 
-#### Scenario: Sensible suggestion is implemented before merge
-- **GIVEN** a posted low finding whose fix is correct under scope `all`
-- **WHEN** the disposition loop reaches it
-- **THEN** the fix is committed and pushed rather than left as advice
+#### Scenario: An applied suggestion needs no reply
+- **WHEN** a posted finding's committable suggestion has been applied on the
+  pull request and the disposition loop runs under scope `all`
+- **THEN** that finding is treated as implemented, no reply is required on its
+  thread, and the completed disposition still reports an unresolved count of
+  zero
 
-#### Scenario: Disagreement is answered, not ignored
-- **WHEN** the session judges a posted finding not worth implementing
-  under scope `all`
-- **THEN** the finding's thread gains a reasoned reply and is then
-  resolved
-
-#### Scenario: Flow ends with zero unresolved
-- **WHEN** the posting flow completes in any scope
-- **THEN** the report includes `unresolved=0` from the resolve verb
-
-#### Scenario: High-only spends judgment only on highs
-- **GIVEN** an invocation passing disposition `high-only` and a posted
-  review with one high and two medium findings
-- **WHEN** the posting flow runs
-- **THEN** the high finding is implemented or answered with a reasoned
-  reply, the medium threads are covered by the autoreply verb instead of
-  individual judgment, and the flow ends with resolve reporting zero
-  unresolved
-
-#### Scenario: None costs no disposition judgment
-- **GIVEN** an invocation passing disposition `none`
-- **WHEN** the posting flow runs
-- **THEN** the review is posted, the autoreply verb covers every gate
-  thread, resolve reports zero unresolved, and no finding receives an
-  individually authored disposition
+#### Scenario: An unimplemented finding still needs a reason
+- **WHEN** a posted finding is neither implemented nor carries an applied
+  suggestion
+- **THEN** the flow replies on its thread with the concrete reason before
+  resolving
 
 ### Requirement: Poster test coverage in ci
 id: gate-test-coverage
