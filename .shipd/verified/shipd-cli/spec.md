@@ -4,17 +4,17 @@
 id: cli-dispatch
 
 The `shipd` binary SHALL expose exactly the curated verbs `list`, `status`,
-`locate`, `epic`, `workspace`, `board`, `metrics`, `lint`, `doctor`,
-`statusline`, `copilot`, `vendor`, `harness`, and `install`, and for every
-verb except `list`, `doctor`, `statusline`, `copilot`, `vendor`, `harness`,
-and `install` SHALL delegate by replacing its own process with the mapped
-engine script invocation (`status` -> `spec_status.py show`, `locate` ->
-`spec_status.py locate`, `epic` -> `spec_status.py epic-show`, `workspace`
--> `spec_status.py workspace-show`, `board` -> `dashboard.py` per the
-board-mode mapping below, `metrics` -> `metrics.py`, `lint` ->
-`spec_lint.py`), passing all trailing arguments through verbatim so the
-delegate's output and exit code are the binary's own. When `metrics` is
-given no trailing arguments, the binary SHALL delegate to
+`locate`, `related`, `epic`, `workspace`, `board`, `metrics`, `lint`,
+`doctor`, `statusline`, `copilot`, `vendor`, `harness`, and `install`, and
+for every verb except `list`, `doctor`, `statusline`, `copilot`, `vendor`,
+`harness`, and `install` SHALL delegate by replacing its own process with the
+mapped engine script invocation (`status` -> `spec_status.py show`, `locate`
+-> `spec_status.py locate`, `related` -> `spec_status.py related`, `epic` ->
+`spec_status.py epic-show`, `workspace` -> `spec_status.py workspace-show`,
+`board` -> `dashboard.py` per the board-mode mapping below, `metrics` ->
+`metrics.py`, `lint` -> `spec_lint.py`), passing all trailing arguments
+through verbatim so the delegate's output and exit code are the binary's own.
+When `metrics` is given no trailing arguments, the binary SHALL delegate to
 `metrics.py summary`. When invoked as `shipd board`, the binary SHALL select
 the delegate by the first trailing argument: the bare word `text` SHALL be
 consumed and delegate to `dashboard.py board`, and any other first trailing
@@ -82,6 +82,13 @@ SHALL print the same banner to stdout and exit `0`.
 #### Scenario: Install is a curated verb
 - **WHEN** `shipd --help` runs
 - **THEN** the usage banner lists `install` among the verbs
+
+#### Scenario: Related is a curated verb that delegates
+- **WHEN** `shipd related zzz-no-such-term` runs from a repo whose spec
+  library contains no such term
+- **THEN** the banner of `shipd --help` lists `related` among the verbs, and
+  the invocation exits non-zero with the `Error:` line of
+  `spec_status.py related`, proving the delegation
 
 ### Requirement: List in-flight changes
 id: cli-list

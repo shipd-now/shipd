@@ -75,6 +75,7 @@ iu = None
 VERB_TABLE = {
     "status": ("spec_status.py", ["show"]),
     "locate": ("spec_status.py", ["locate"]),
+    "related": ("spec_status.py", ["related"]),
     "epic": ("spec_status.py", ["epic-show"]),
     "workspace": ("spec_status.py", ["workspace-show"]),
     "board": ("dashboard.py", ["tui"]),
@@ -102,6 +103,7 @@ verbs:
   list [--root DIR] [--all]  in-flight changes across the root and its worktrees
   status [change]            a change's status and progress
   locate [change]            where an installed change lives
+  related <term> [term...]   spec artifacts ranked by term-hit count
   epic <slug>                an epic's status, metadata, and member states
   workspace                  the workspace root, its projects, and initiatives
   board [text] [args]        the delivery board (default: full-screen)
@@ -120,8 +122,9 @@ options:
   -h, --help                 print this banner
   --version                  print the plugin version
 
-The read verbs list, status, locate, epic, workspace, lint, and harness accept
---json, emitting one machine-readable JSON document instead of the text report.
+The read verbs list, status, locate, related, epic, workspace, lint, and
+harness accept --json, emitting one machine-readable JSON document instead of
+the text report.
 """
 
 
