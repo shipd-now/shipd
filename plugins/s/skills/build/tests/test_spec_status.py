@@ -2840,6 +2840,298 @@ class LocateTest(SpecStatusTestBase):
         self.assertIn("no change given and no spec selected", r.stderr)
 
 
+class RelatedTest(SpecStatusTestBase):
+    """`related <term> [<term>...]` ranks the spec library's artifacts by
+    case-insensitive term-hit count (spec-status related-verb), printing one
+    keyed block per match — ``kind``/``slug``/``score``/``path`` — in
+    descending score order, capped at ten blocks with a remainder line, or one
+    JSON array with ``--json``.
+
+    ``self.root`` doubles as the workspace root in the wiki cases; the
+    no-workspace cases simply omit the declaration, so the wiki surface must
+    degrade silently."""
+
+    # -- fixture helpers ---------------------------------------------------
+
+    def make_verified(self, slug, text):
+        vdir = os.path.join(self.root, ".shipd", "verified", slug)
+        os.makedirs(vdir, exist_ok=True)
+        with open(os.path.join(vdir, "spec.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return os.path.join(".shipd", "verified", slug, "spec.md")
+
+    def make_planned(self, slug, plan="", tasks=None, delta=None):
+        cdir = os.path.join(self.root, ".shipd", "planned", slug)
+        os.makedirs(cdir, exist_ok=True)
+        with open(os.path.join(cdir, "plan.md"), "w", encoding="utf-8") as fh:
+            fh.write(plan)
+        if tasks is not None:
+            with open(os.path.join(cdir, "tasks.md"), "w",
+                      encoding="utf-8") as fh:
+                fh.write(tasks)
+        if delta is not None:
+            sdir = os.path.join(cdir, "specs", "example")
+            os.makedirs(sdir, exist_ok=True)
+            with open(os.path.join(sdir, "spec.md"), "w",
+                      encoding="utf-8") as fh:
+                fh.write(delta)
+        return os.path.join(".shipd", "planned", slug)
+
+    def make_completed(self, slug, date, plan="", tasks=None, delta=None):
+        name = "%s-%s" % (date, slug)
+        cdir = os.path.join(self.root, ".shipd", "completed", name)
+        os.makedirs(cdir, exist_ok=True)
+        with open(os.path.join(cdir, "plan.md"), "w", encoding="utf-8") as fh:
+            fh.write(plan)
+        if tasks is not None:
+            with open(os.path.join(cdir, "tasks.md"), "w",
+                      encoding="utf-8") as fh:
+                fh.write(tasks)
+        if delta is not None:
+            sdir = os.path.join(cdir, "specs", "example")
+            os.makedirs(sdir, exist_ok=True)
+            with open(os.path.join(sdir, "spec.md"), "w",
+                      encoding="utf-8") as fh:
+                fh.write(delta)
+        return os.path.join(".shipd", "completed", name)
+
+    def make_research(self, slug, text):
+        rdir = os.path.join(self.root, ".shipd", "research", slug)
+        os.makedirs(rdir, exist_ok=True)
+        with open(os.path.join(rdir, "report.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(text)
+        return os.path.join(".shipd", "research", slug, "report.md")
+
+    def make_epic(self, slug, text):
+        edir = os.path.join(self.root, ".shipd", "epics", slug)
+        os.makedirs(edir, exist_ok=True)
+        with open(os.path.join(edir, "epic.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return os.path.join(".shipd", "epics", slug, "epic.md")
+
+    def make_wiki_page(self, slug, text):
+        pages = os.path.join(self.root, ".shipd", "wiki", "wiki")
+        os.makedirs(pages, exist_ok=True)
+        with open(os.path.join(pages, slug + ".md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(text)
+        return os.path.join(".shipd", "wiki", "wiki", slug + ".md")
+
+    # -- output parsing ----------------------------------------------------
+
+    def blocks(self, stdout):
+        """Split the verb's stdout into a list of {key: value} dicts, one per
+        blank-line-separated keyed block (the trailing remainder line, which
+        carries no ``key: value`` pairs, is skipped)."""
+        result = []
+        for chunk in stdout.strip().split("\n\n"):
+            block = {}
+            for line in chunk.splitlines():
+                if ":" in line:
+                    key, _, value = line.partition(":")
+                    block[key.strip()] = value.strip()
+            if block:
+                result.append(block)
+        return result
+
+    def remainder(self, stdout):
+        """The trailing line naming the un-printed matches, or None."""
+        lines = [ln for ln in stdout.strip().splitlines() if ln.strip()]
+        if lines and ":" not in lines[-1]:
+            return lines[-1]
+        return None
+
+    # -- ranking -----------------------------------------------------------
+
+    def test_matches_print_ranked_keyed_blocks(self):
+        vpath = self.make_verified(
+            "reporting",
+            "# reporting\n\nThe system SHALL export. Export again.\n"
+            "A third export here.\n")
+        cpath = self.make_completed(
+            "old-work", "2026-08-14",
+            plan="# old-work\nStatus: verified\n\n## Idea\nOne export.\n")
+        r = self.cli("related", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 2)
+        self.assertEqual(blocks[0]["kind"], "verified")
+        self.assertEqual(blocks[0]["slug"], "reporting")
+        self.assertEqual(blocks[0]["score"], "3")
+        self.assertEqual(blocks[0]["path"], vpath)
+        # The completed slug prints with its YYYY-MM-DD- prefix stripped, so it
+        # feeds `cat change <slug>` directly.
+        self.assertEqual(blocks[1]["kind"], "completed")
+        self.assertEqual(blocks[1]["slug"], "old-work")
+        self.assertEqual(blocks[1]["score"], "1")
+        self.assertEqual(blocks[1]["path"], cpath)
+
+    def test_matching_is_case_insensitive_and_sums_over_terms(self):
+        self.make_verified("reporting", "# reporting\n\nEXPORT the Ledger.\n")
+        r = self.cli("related", "export", "ledger")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["score"], "2")
+
+    def test_score_sums_over_a_changes_files(self):
+        """A planned change's plan, tasks, and delta specs all count toward the
+        one artifact's score."""
+        ppath = self.make_planned(
+            "dark-mode",
+            plan="# dark-mode\n\nAn export.\n",
+            tasks="- [ ] 1.1 Wire the export.\n",
+            delta="### Requirement: Export\nid: export\n")
+        r = self.cli("related", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["kind"], "planned")
+        self.assertEqual(blocks[0]["slug"], "dark-mode")
+        self.assertEqual(blocks[0]["score"], "4")
+        self.assertEqual(blocks[0]["path"], ppath)
+
+    def test_research_and_epic_surfaces_are_searched(self):
+        rpath = self.make_research(
+            "payment-apis", "# Payment APIs\n\nExport support is broad [1].\n")
+        epath = self.make_epic(
+            "reporting-overhaul",
+            "# reporting-overhaul\nStatus: draft\n\n## Introduction\n"
+            "Export, then export again.\n")
+        r = self.cli("related", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        by_kind = {b["kind"]: b for b in self.blocks(r.stdout)}
+        self.assertEqual(sorted(by_kind), ["epic", "research"])
+        self.assertEqual(by_kind["epic"]["slug"], "reporting-overhaul")
+        self.assertEqual(by_kind["epic"]["score"], "2")
+        self.assertEqual(by_kind["epic"]["path"], epath)
+        self.assertEqual(by_kind["research"]["slug"], "payment-apis")
+        self.assertEqual(by_kind["research"]["score"], "1")
+        self.assertEqual(by_kind["research"]["path"], rpath)
+
+    def test_non_matching_artifacts_are_dropped(self):
+        self.make_verified("reporting", "# reporting\n\nAn export.\n")
+        self.make_verified("auth", "# auth\n\nA login.\n")
+        r = self.cli("related", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual([b["slug"] for b in blocks], ["reporting"])
+
+    def test_ties_break_by_kind_then_slug(self):
+        self.make_verified("zeta", "export\n")
+        self.make_verified("alpha", "export\n")
+        self.make_epic("omega", "export\n")
+        r = self.cli("related", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual([(b["kind"], b["slug"]) for b in blocks],
+                         [("epic", "omega"), ("verified", "alpha"),
+                          ("verified", "zeta")])
+
+    # -- cap ---------------------------------------------------------------
+
+    def test_output_caps_at_ten_with_a_remainder_line(self):
+        for n in range(1, 13):
+            self.make_verified("cap-%02d" % n, "export\n")
+        r = self.cli("related", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 10)
+        self.assertEqual([b["slug"] for b in blocks],
+                         ["cap-%02d" % n for n in range(1, 11)])
+        line = self.remainder(r.stdout)
+        self.assertIsNotNone(line, r.stdout)
+        self.assertIn("2", line)
+        self.assertIn("more", line)
+
+    def test_no_remainder_line_at_ten_or_fewer(self):
+        for n in range(1, 11):
+            self.make_verified("cap-%02d" % n, "export\n")
+        r = self.cli("related", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.blocks(r.stdout)), 10)
+        self.assertIsNone(self.remainder(r.stdout))
+
+    # -- JSON --------------------------------------------------------------
+
+    def test_json_is_one_array_of_objects(self):
+        vpath = self.make_verified("reporting", "export export\n")
+        cpath = self.make_completed(
+            "old-work", "2026-08-14", plan="One export.\n")
+        r = self.cli("related", "export", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            json.loads(r.stdout),
+            [{"kind": "verified", "slug": "reporting", "score": 2,
+              "path": vpath},
+             {"kind": "completed", "slug": "old-work", "score": 1,
+              "path": cpath}])
+
+    def test_json_caps_at_ten_too(self):
+        for n in range(1, 13):
+            self.make_verified("cap-%02d" % n, "export\n")
+        r = self.cli("related", "export", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = json.loads(r.stdout)
+        self.assertEqual([row["slug"] for row in rows],
+                         ["cap-%02d" % n for n in range(1, 11)])
+
+    # -- errors and degradation --------------------------------------------
+
+    def test_no_match_is_a_single_error_line(self):
+        self.make_verified("reporting", "An export.\n")
+        r = self.cli("related", "zzz-no-such-term")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, "")
+        lines = [ln for ln in r.stderr.strip().splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 1, r.stderr)
+        self.assertTrue(lines[0].startswith("Error:"), lines[0])
+        self.assertIn("zzz-no-such-term", lines[0])
+
+    def test_no_match_in_json_mode_still_errors(self):
+        r = self.cli("related", "zzz-no-such-term", "--json")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, "")
+        self.assertIn("Error:", r.stderr)
+
+    def test_at_least_one_term_is_required(self):
+        r = self.cli("related")
+        self.assertEqual(r.returncode, 2)
+
+    def test_absent_workspace_skips_the_wiki_silently(self):
+        """No workspace is discoverable from the temp root, so the wiki surface
+        is skipped without an error and every other surface still prints."""
+        self.make_verified("reporting", "An export.\n")
+        r = self.cli("related", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr, "")
+        self.assertNotIn("workspace", r.stdout.lower())
+        self.assertEqual([b["slug"] for b in self.blocks(r.stdout)],
+                         ["reporting"])
+
+    def test_wiki_pages_match_when_a_workspace_resolves(self):
+        self.declare_workspace()
+        wpath = self.make_wiki_page(
+            "export-conventions", "# Export conventions\n\nExport nightly.\n")
+        r = self.cli("related", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["kind"], "wiki")
+        self.assertEqual(blocks[0]["slug"], "export-conventions")
+        self.assertEqual(blocks[0]["score"], "2")
+        self.assertEqual(blocks[0]["path"], wpath)
+
+    def test_missing_corpus_directories_are_skipped(self):
+        """An empty content directory — no verified/, planned/, completed/,
+        research/, or epics/ — is a clean no-match, not a crash."""
+        os.makedirs(os.path.join(self.root, ".shipd"), exist_ok=True)
+        r = self.cli("related", "export")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("Error:", r.stderr)
+
+
 class WorkspaceSyncTest(SpecStatusTestBase):
     """The ``workspace-sync`` verb (spec-status workspace-sync-verb): keyed
     member blocks plus a gitignore section, ``--json`` records, opt-in

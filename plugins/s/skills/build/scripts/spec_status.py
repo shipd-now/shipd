@@ -28,6 +28,14 @@ Verbs (see the spec-status + statusline capabilities for the contract):
   locate [change]    find an installed change by probing the invocation root's
                      planned/ then each .worktrees/<name> directory, printing a
                      keyed block (change/root/dir/status) per match
+  related <term> [<term>...]
+                     rank the spec library's artifacts (verified capabilities,
+                     planned changes, completed archives, research reports,
+                     epics, and — where a workspace is discoverable — the
+                     workspace wiki's pages) by case-insensitive term-hit
+                     count, printing a keyed block (kind/slug/score/path) per
+                     match, top ten first plus a remainder line; the wiki and
+                     any missing corpus directory are skipped silently
   check-base [change]
                      compare the change's delta specs against the current master
                      library (read-only), printing one finding line per
@@ -92,7 +100,8 @@ Verbs (see the spec-status + statusline capabilities for the contract):
                      --write-gitignore, rewrites only the marked member-repos
                      .gitignore block to match the manifest's member paths
 
-The five read verbs — ``show``, ``status``, ``locate``, ``epic-show``, and
+The six read verbs — ``show``, ``status``, ``locate``, ``related``,
+``epic-show``, and
 ``workspace-show`` — additionally accept ``--json``, emitting exactly one JSON
 document on stdout in place of their text report, derived from the same data
 (spec-status json-output); ``pipeline-show`` accepts it on the same terms, as
@@ -696,6 +705,169 @@ def cmd_locate(root, change, as_json=False):
         "change: %s\nroot: %s\ndir: %s\nstatus: %s"
         % (row["change"], row["root"], row["dir"], row["status"])
         for row in rows))
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Related-artifacts search (spec-status related-verb)
+# ---------------------------------------------------------------------------
+
+# Archived change directories are ``<YYYY-MM-DD>-<slug>``; the date prefix is
+# stripped from the printed slug so it feeds ``cat change <slug>`` directly
+# (the same shape ``bin/shipd``'s ``ARCHIVE_DIR_RE`` matches).
+ARCHIVE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-(.+)$")
+
+# ``related`` prints at most this many keyed blocks, then a remainder line.
+RELATED_MAX_BLOCKS = 10
+
+
+def _dir_names(parent):
+    """The sorted names of ``parent``'s subdirectories, or an empty list when
+    it does not exist — a missing corpus directory is skipped, not an error."""
+    if not os.path.isdir(parent):
+        return []
+    return sorted(name for name in os.listdir(parent)
+                  if os.path.isdir(os.path.join(parent, name)))
+
+
+def _change_artifact_files(cdir):
+    """The files a change directory contributes to the search corpus: its
+    ``plan.md``, its ``tasks.md``, and every delta ``specs/*/spec.md``."""
+    paths = []
+    for name in ("plan.md", "tasks.md"):
+        path = os.path.join(cdir, name)
+        if os.path.isfile(path):
+            paths.append(path)
+    specs_root = os.path.join(cdir, "specs")
+    if os.path.isdir(specs_root):
+        for capability in sorted(os.listdir(specs_root)):
+            spec = os.path.join(specs_root, capability, "spec.md")
+            if os.path.isfile(spec):
+                paths.append(spec)
+    return paths
+
+
+def _related_wiki_artifacts(root):
+    """The workspace wiki's ``wiki/<slug>.md`` pages as corpus records. The
+    store is resolved through workspace discovery, and *any* resolution failure
+    — no discoverable workspace, a malformed config, an unreadable store —
+    yields no pages, so the wiki surface degrades silently while every other
+    surface still searches (spec-status related-verb)."""
+    try:
+        pages = os.path.join(_wiki_store(root, personal=False), "wiki")
+        names = sorted(os.listdir(pages))
+    except (StatusError, sc.ConfigError, OSError):
+        return []
+    artifacts = []
+    for name in names:
+        path = os.path.join(pages, name)
+        if name.endswith(".md") and os.path.isfile(path):
+            artifacts.append(("wiki", name[:-len(".md")], path, [path]))
+    return artifacts
+
+
+def _related_corpus(root):
+    """One ``(kind, slug, path, files)`` record per searchable artifact: the
+    resolved content directory's verified capabilities, planned changes,
+    completed archives (slug date-stripped), research reports, and epics, plus
+    the workspace wiki's pages where one is discoverable. ``path`` identifies
+    the artifact — its single file for the one-file kinds, its directory for a
+    change — while ``files`` is everything the score sums over."""
+    specs = sc.specs_dir(root)
+    artifacts = []
+
+    for slug in _dir_names(os.path.join(specs, "verified")):
+        path = os.path.join(specs, "verified", slug, "spec.md")
+        if os.path.isfile(path):
+            artifacts.append(("verified", slug, path, [path]))
+
+    for slug in _dir_names(os.path.join(specs, "planned")):
+        cdir = os.path.join(specs, "planned", slug)
+        files = _change_artifact_files(cdir)
+        if files:
+            artifacts.append(("planned", slug, cdir, files))
+
+    completed = os.path.join(specs, "completed")
+    for name in _dir_names(completed):
+        cdir = os.path.join(completed, name)
+        files = _change_artifact_files(cdir)
+        if files:
+            match = ARCHIVE_DIR_RE.match(name)
+            artifacts.append(
+                ("completed", match.group(1) if match else name, cdir, files))
+
+    for slug in _dir_names(os.path.join(specs, "research")):
+        path = os.path.join(specs, "research", slug, "report.md")
+        if os.path.isfile(path):
+            artifacts.append(("research", slug, path, [path]))
+
+    for slug in _dir_names(os.path.join(specs, "epics")):
+        path = os.path.join(specs, "epics", slug, "epic.md")
+        if os.path.isfile(path):
+            artifacts.append(("epic", slug, path, [path]))
+
+    artifacts.extend(_related_wiki_artifacts(root))
+    return artifacts
+
+
+def _related_score(files, terms):
+    """The artifact's hit count: for every term, its case-insensitive substring
+    occurrences, summed over every one of the artifact's files. An unreadable
+    file contributes nothing rather than raising."""
+    total = 0
+    for path in files:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                text = fh.read().lower()
+        except OSError:
+            continue
+        for term in terms:
+            total += text.count(term)
+    return total
+
+
+def _related_path(root, path):
+    """An artifact's reported path: relative to ``root`` when it lives inside
+    it, absolute otherwise (a wiki store hosted outside the repo)."""
+    rel = os.path.relpath(path, root)
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep):
+        return os.path.abspath(path)
+    return rel
+
+
+def cmd_related(root, terms, as_json=False):
+    """Rank the spec library's artifacts by case-insensitive term-hit count
+    (spec-status related-verb) — the retrieval step ``/s:fix`` runs before it
+    reads any code. Artifacts with no hits are dropped; the rest sort by score
+    descending, then kind, then slug, so the ordering is fully deterministic.
+    At most :data:`RELATED_MAX_BLOCKS` keyed blocks print (``kind:``, ``slug:``,
+    ``score:``, ``path:``), followed by a single line naming the remaining
+    matches when more matched. With ``as_json``, the same capped rows are
+    emitted as one JSON array instead. No match raises (exit 1). Read-only: no
+    git, model, or network calls."""
+    lowered = [term.lower() for term in terms]
+    rows = []
+    for kind, slug, path, files in _related_corpus(root):
+        score = _related_score(files, lowered)
+        if score:
+            rows.append({"kind": kind, "slug": slug, "score": score,
+                         "path": _related_path(root, path)})
+    if not rows:
+        raise StatusError(
+            "no artifacts match %s"
+            % ", ".join("'%s'" % term for term in terms))
+    rows.sort(key=lambda row: (-row["score"], row["kind"], row["slug"]))
+    shown = rows[:RELATED_MAX_BLOCKS]
+    remaining = len(rows) - len(shown)
+    if as_json:
+        print(json.dumps(shown))
+        return 0
+    print("\n\n".join(
+        "kind: %s\nslug: %s\nscore: %d\npath: %s"
+        % (row["kind"], row["slug"], row["score"], row["path"])
+        for row in shown))
+    if remaining:
+        print("… and %d more" % remaining)
     return 0
 
 
@@ -2581,7 +2753,7 @@ def cmd_wiki_remove(root, slug, personal=False):
 
 def _add_json_flag(subparser, help_text=None):
     """Give one read verb's subparser the ``--json`` machine-output flag
-    (spec-status json-output). The five read verbs and ``pipeline-show`` get it
+    (spec-status json-output). The six read verbs and ``pipeline-show`` get it
     — the mutating and guarded verbs stay text-only. ``help_text`` overrides the
     generic help for a verb whose JSON document warrants describing."""
     subparser.add_argument(
@@ -2633,6 +2805,13 @@ def main(argv=None):
         help="find an installed change across the root and its worktrees")
     p_locate.add_argument("change", nargs="?", default=None)
     _add_json_flag(p_locate)
+
+    p_related = sub.add_parser(
+        "related",
+        help="rank the spec library's artifacts by term-hit count (keyed "
+             "blocks, top ten plus a remainder line)")
+    p_related.add_argument("terms", nargs="+", metavar="term")
+    _add_json_flag(p_related)
 
     p_check_base = sub.add_parser(
         "check-base",
@@ -2804,6 +2983,8 @@ def main(argv=None):
             return cmd_sync(root, args.change)
         if args.verb == "locate":
             return cmd_locate(root, args.change, as_json=args.json)
+        if args.verb == "related":
+            return cmd_related(root, args.terms, as_json=args.json)
         if args.verb == "check-base":
             return cmd_check_base(root, args.change)
         if args.verb == "epic-show":

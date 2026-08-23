@@ -39,9 +39,9 @@ BIN = os.path.join(PLUGIN_ROOT, "bin", "shipd")
 MANIFEST = os.path.join(PLUGIN_ROOT, ".claude-plugin", "plugin.json")
 
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
-VERBS = ("list", "status", "locate", "epic", "workspace", "board", "metrics",
-         "lint", "doctor", "statusline", "copilot", "vendor", "harness",
-         "install")
+VERBS = ("list", "status", "locate", "related", "epic", "workspace", "board",
+         "metrics", "lint", "doctor", "statusline", "copilot", "vendor",
+         "harness", "install")
 
 
 def _load_binary():
@@ -224,6 +224,43 @@ class DispatchTest(ShipdCliTestBase):
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("unrecognized arguments", r.stderr)
         self.assertIn("frobnicate", r.stderr)
+
+    def test_related_is_a_curated_verb_mapped_to_the_status_script(self):
+        """The `related` row delegates to ``spec_status.py related``
+        (shipd-cli cli-dispatch)."""
+        self.assertEqual(shipd.VERB_TABLE.get("related"),
+                         ("spec_status.py", ["related"]))
+
+    def test_the_banner_names_related_as_json_capable(self):
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        # The note wraps across lines, so match the whole trailing paragraph
+        # naming the --json-capable read verbs.
+        note = [para for para in r.stdout.split("\n\n") if "--json" in para]
+        self.assertEqual(len(note), 1, r.stdout)
+        self.assertIn("related", note[0])
+
+    def test_related_no_match_preserves_output_and_exit_code(self):
+        # ``--root`` is the engine parser's *global* option, so it precedes the
+        # verb; running from the repo root is the equivalent the sibling
+        # ``locate`` delegation test uses.
+        direct = self.script("spec_status.py", "--root", self.root,
+                             "related", "zzz-no-such-term")
+        r = self.cli("related", "zzz-no-such-term")
+        self.assertNotEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, direct.returncode)
+        self.assertEqual(r.stderr, direct.stderr)
+        self.assertIn("Error:", r.stderr)
+
+    def test_related_delegates_the_ranked_report(self):
+        self.make_change(self.root, "dark-mode")
+        direct = self.script("spec_status.py", "--root", self.root,
+                             "related", "dark-mode")
+        r = self.cli("related", "dark-mode")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+        self.assertIn("kind: planned", r.stdout)
+        self.assertIn("slug: dark-mode", r.stdout)
 
     def test_retired_tui_verb_is_a_usage_error(self):
         r = self.cli("tui")
