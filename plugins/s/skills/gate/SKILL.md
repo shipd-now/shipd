@@ -5,9 +5,13 @@ description: >-
   the prerequisites, install the four managed files with `shipd copilot add`,
   commit and push them, then — on consent — require the `semantic-review`
   check, enable auto-merge, hand off the reviewer token, and verify with
-  `shipd doctor`. Use when asked to set up the review gate, block PRs on the
-  semantic review, or turn on the merge gate. Trigger phrases: "set up the
-  gate", "install the review gate", "block PRs on review", "/s:gate".
+  `shipd doctor`. With the `update` argument, run the refresh-only flow
+  instead: re-read the managed files' states, refresh what is stale or
+  absent, and ship the refresh — no settings, no token. Use when asked to
+  set up the review gate, block PRs on the semantic review, turn on the
+  merge gate, or refresh an already-installed gate to the running plugin
+  version. Trigger phrases: "set up the gate", "install the review gate",
+  "block PRs on review", "/s:gate", "/s:gate update", "update the gate".
 ---
 
 # /s:gate — install the review gate, with consent
@@ -45,6 +49,19 @@ which plugin snapshot the session is running.
 **One setup round per invocation.** Preflight → install → commit → consent →
 apply → verify, and stop. A step that fails is reported with its manual hint;
 you never loop, retry, or escalate to a second round.
+
+## Arguments
+
+Parse the invocation argument into exactly one flow:
+
+- **No argument** — the full setup flow: steps 1–8 below, in order.
+- **`update`** — the refresh-only flow for a repository that already
+  completed setup: steps 1 and 2 (resolve the binary, preflight) apply
+  unchanged, then follow **Update — refresh an installed gate** instead of
+  steps 3–8. It refreshes the four managed files to the running plugin
+  version and ships the refresh; the settings consent round (step 5), the
+  token hand-off (step 7), and the doctor verification (step 8) are
+  setup-only and never run here.
 
 ## 1. Resolve the binary
 
@@ -264,6 +281,93 @@ the verification of what was set up:
 evidence. If the preflight output cannot be parsed into
 `ok|warn|fail <check> — <detail>` lines, report exactly what you got and say
 the verification could not be read.
+
+## Update — refresh an installed gate (`/s:gate update`)
+
+The gate's four managed files are vendored into the repository, so a plugin
+release changes nothing here until they are refreshed. This flow brings an
+already-gated repository to the running plugin version and ships the
+refresh — nothing more. It runs after steps 1 and 2 (binary resolution and
+the same three preflight checks, stopping with the hand-off on any failure),
+and the version announcement rule applies here too.
+
+**The invocation is the consent.** `/s:gate update` names its entire scope —
+refresh the four managed files — so this flow commits and pushes without a
+further confirmation round. Everything wider stays setup-only: **no
+repository setting is touched** — no branch-protection write, no auto-merge
+`PATCH`, no Actions variable, no secret hand-off, no `shipd doctor`
+verification.
+
+### Read the states
+
+```
+<shipd> copilot
+```
+
+The bare verb is read-only. It prints one `<state> <path> — <detail>` line
+per managed file, classifying each as `installed`/`stale`/`foreign`/`absent`
+against the running plugin version. Read the states from those lines —
+**never re-derive versions from file contents yourself.**
+
+- **All four `installed` at the running version** — the repository is
+  already current. Report that and stop: no write, no commit, no push.
+- **Any managed path `foreign`** — refuse: name the file and stop. Do not
+  pass `--force` on your own judgement — that overwrites a file somebody
+  else wrote. Offer it as a choice only if the user asks to proceed, and say
+  what it replaces.
+- **Anything `stale` or `absent`** — refresh.
+
+### Refresh, commit, push
+
+```
+<shipd> copilot add
+```
+
+Relay the verb's per-file report. If it refuses because a managed path is
+foreign, the refusal rule above applies: report the file it named and stop.
+
+Then commit **exactly the four managed paths** and push the current branch —
+no consent round:
+
+```bash
+git add .github/skills/code-review \
+        .github/workflows/copilot-code-review.yml \
+        .github/workflows/copilot-review-gate.yml
+git commit -m "Refresh the shipd Copilot code-review skill"
+git push
+```
+
+**If the push is rejected** — the usual cause is a protected current
+branch — fall back to a `shipd-gate-update` branch shipped as a pull
+request, and say that is what happened:
+
+```bash
+git switch -c shipd-gate-update
+git push -u origin shipd-gate-update
+gh pr create --fill
+```
+
+Unlike setup's fallback, **attempt auto-merge here**: this repository
+already completed setup, so the setting may well exist —
+
+```bash
+gh pr merge --auto --squash --delete-branch
+```
+
+Where GitHub rejects arming it, report that the pull request awaits a human
+merge. Either way, report the PR's **full URL**, never just the number.
+
+### Close with the post-refresh states
+
+Re-run the bare verb and relay its per-file state lines verbatim as the
+evidence of what the repository now carries:
+
+```
+<shipd> copilot
+```
+
+Then stop. The reviewer token, the branch protection, and every other
+repository setting are exactly as this flow found them.
 
 ## Enabling reviews is a GitHub-side setting
 

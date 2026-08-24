@@ -106,7 +106,9 @@ by layered upward search. The engine is the plugin's own scripts under
 spec work, `/s:build` to execute it, `/s:fix` to debug a reported problem
 against the spec library and fix it, `/s:review` for a semantic review of
 local changes before pushing, `/s:gate` to set up that review as a
-repository's merge gate, `/s:status` for lifecycle status,
+repository's merge gate (and `/s:gate update` to refresh an already-gated
+repository's managed files to the running plugin version),
+`/s:status` for lifecycle status,
 `/s:epic` to decompose features, `/s:research` to produce a cited research
 report an epic can link, `/s:workspace` to set up and inspect the
 workspace, `/s:initiative` to run workspace initiatives, `/s:ask` to
