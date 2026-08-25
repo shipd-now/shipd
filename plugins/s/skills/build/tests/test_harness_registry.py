@@ -117,6 +117,16 @@ class ResearchedPathsTest(unittest.TestCase):
         self.assertEqual(set(hr.get("claude-code")["features"]),
                          set(hr.FEATURES))
 
+    def test_opencode_paths(self):
+        entry = hr.get("opencode")
+        self.assertEqual(entry["repo_pattern"],
+                         ".opencode/commands/shipd-{command}.md")
+        self.assertEqual(entry["user_dir"], "~/.config/opencode/commands/")
+        self.assertEqual(entry["dialect"], "yaml")
+        self.assertEqual(entry["frontmatter"], ("description",))
+        self.assertEqual(entry["features"],
+                         ("subagents", "file-references"))
+
     def test_aider_is_a_single_conventions_file(self):
         entry = hr.get("aider")
         self.assertEqual(entry["repo_pattern"], "shipd-conventions.md")
