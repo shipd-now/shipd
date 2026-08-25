@@ -17,6 +17,7 @@ import tempfile
 import textwrap
 import time
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
@@ -616,6 +617,72 @@ class RemindOutput(GuardrailCase):
     def test_a_disabled_remind_rule_stays_silent(self):
         self.write_config({"guardrails": {"disable": ["no-console-log"]}})
         self.assertSilent(self.hook(self.post(self.logging_edit())))
+
+
+class StatePruning(GuardrailCase):
+    """guardrail-state-prune: the sweep that runs on the state write path."""
+
+    REMIND_CONSOLE = r"""
+        ---
+        pattern: console\.log\(
+        mode: remind
+        ---
+        Use the logger, not console.log.
+        """
+
+    STALE_AGE = 8 * 24 * 3600
+
+    def setUp(self):
+        super().setUp()
+        self.write_rule(self.repo_rules(), "no-console-log",
+                        self.REMIND_CONSOLE)
+
+    def logging_edit(self):
+        return self.edit("", "console.log(user)\n", file_path="app.js")
+
+    def sibling(self, name, age=0):
+        """Write a state-directory entry named ``name`` whose modification
+        time sits ``age`` seconds in the past, and return its path."""
+        os.makedirs(self.state_dir(), exist_ok=True)
+        path = os.path.join(self.state_dir(), name)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"no-console-log": 1}, fh)
+        stamp = time.time() - age
+        os.utime(path, (stamp, stamp))
+        return path
+
+    def test_a_stale_session_file_is_pruned_on_write(self):
+        stale = self.sibling("sess-old.json", age=self.STALE_AGE)
+        self.assertReminded(self.hook(self.post(self.logging_edit())))
+        self.assertFalse(os.path.exists(stale))
+        self.assertTrue(os.path.exists(self.state_path()))
+
+    def test_a_fresh_session_file_survives_the_sweep(self):
+        fresh = self.sibling("sess-recent.json", age=60)
+        self.assertReminded(self.hook(self.post(self.logging_edit())))
+        self.assertTrue(os.path.exists(fresh))
+
+    def test_a_non_json_entry_is_never_touched(self):
+        other = self.sibling("sess-old.log", age=self.STALE_AGE)
+        self.assertReminded(self.hook(self.post(self.logging_edit())))
+        self.assertTrue(os.path.exists(other))
+
+    def test_no_fire_means_no_sweep(self):
+        stale = self.sibling("sess-old.json", age=self.STALE_AGE)
+        result = self.hook(self.post(self.edit("", "total = count + 1\n")))
+        self.assertSilent(result)
+        self.assertTrue(os.path.exists(stale))
+
+    def test_a_failing_sweep_does_not_disturb_the_write(self):
+        import guardrails
+        stale = self.sibling("sess-old.json", age=self.STALE_AGE)
+        path = self.state_path()
+        with mock.patch.object(guardrails.os, "remove",
+                               side_effect=OSError("nope")):
+            guardrails.save_state(path, {"no-console-log": time.time()})
+        self.assertTrue(os.path.exists(stale))
+        with open(path, encoding="utf-8") as fh:
+            self.assertIn("no-console-log", json.load(fh))
 
 
 class FailOpen(GuardrailCase):
