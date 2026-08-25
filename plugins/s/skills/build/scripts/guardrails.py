@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
-"""guardrails.py — the PreToolUse guardrail hook (stdlib only, no network, no
-third-party imports).
+"""guardrails.py — the guardrail hook (stdlib only, no network, no third-party
+imports).
 
-Claude Code invokes this script before every ``Edit`` and ``Write`` tool call,
+Claude Code invokes this script around every ``Edit`` and ``Write`` tool call,
 handing it the hook payload as JSON on stdin. The script extracts the lines the
-call would *add*, matches them against the resolved rule registry, and — when a
-rule fires — prints a PreToolUse ``deny`` decision whose reason carries the
-violated rule's corrective message. The model reads that reason and retries
-differently, so the unwanted line never reaches the file.
+call would *add* and matches them against the resolved rule registry; which
+rules it consults, and what a match produces, follows the payload's
+``hook_event_name``:
 
-Three built-in rules ship active in every repository (change-log comments,
-step-narration comments, placeholder comments); ``.shipd-config.json``'s
-``guardrails`` key disables the hook, drops individual rules, or adds its own.
+- **PreToolUse** consults ``deny`` rules and prints a ``deny`` decision whose
+  reason carries the violated rule's corrective message. The model reads that
+  reason and retries differently, so the unwanted line never reaches the file.
+- **PostToolUse** consults ``remind`` rules and prints the firing rules'
+  messages as ``additionalContext``. The edit stands — the guidance simply
+  reaches the model — so a remind rule fires at most once per session by
+  default, or every ``cooldown`` seconds when it declares one.
+
+Rules are markdown files — flat ``---`` frontmatter over a message body — read
+from three sources in precedence order: the repo's ``<content-dir>/rules/`` in
+each ancestor directory, the user's ``~/.shipd/rules/``, and the plugin's own
+``hooks/rules/``, where the three built-ins live (change-log comments,
+step-narration comments, placeholder comments). ``.shipd-config.json``'s
+``guardrails`` key holds the kill-switches only: ``false`` turns the hook off,
+``disable`` drops rules by name.
 
 **The hook fails open, always.** Unparseable stdin, malformed config, an
 uncompilable pattern, or any unexpected exception exits 0 without denying: this
@@ -24,36 +35,24 @@ import json
 import os
 import re
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-DEFAULT_RULES = [
-    {
-        "name": "changelog-comment",
-        "pattern": r"(?i)(?:#|//)\s*(?:added|updated|changed|fixed|new|"
-                   r"refactored)\s*:",
-        "message": "Change-log comments narrate the edit rather than the code. "
-                   "Drop the comment, or replace it with a constraint the code "
-                   "itself cannot show.",
-    },
-    {
-        "name": "narrating-comment",
-        "pattern": r"(?i)(?:#|//)\s*(?:now|then|next|first|finally),?\s+"
-                   r"(?:we|i|it)\s",
-        "message": "Step-narration comments restate the line below them. "
-                   "Delete the comment and let the code speak.",
-    },
-    {
-        "name": "filler-placeholder",
-        "pattern": r"(?i)(?:#|//)\s*(?:\.\.\.\s*)?(?:rest of |existing code|"
-                   r"remains? unchanged|unchanged below|no changes? "
-                   r"(?:here|needed))",
-        "message": "Placeholder comments stand in for content that must be "
-                   "written. Write the full content instead of eliding it.",
-    },
-]
+# The recognized rule modes. ``deny`` blocks the call before it runs;
+# ``remind`` lets it land and injects the message afterwards.
+MODES = ("deny", "remind")
+
+# The plugin's own built-in rule files, resolved relative to this script so the
+# hook finds them from whatever cache snapshot it is running out of. The script
+# carries no rule content of its own (guardrail-default-rules).
+PLUGIN_RULES_DIR = os.path.normpath(
+    os.path.join(HERE, "..", "..", "..", "hooks", "rules"))
+
+# The user's cross-repository rulebook, and where remind cooldown state lives.
+USER_SHIPD_DIR = "~/.shipd"
 
 
 def added_lines(tool_name, tool_input):
@@ -73,56 +72,170 @@ def added_lines(tool_name, tool_input):
     return []
 
 
-def declared_guardrails(start):
-    """Return the ``guardrails`` value resolved for ``start``, or ``None``.
+def resolved_config(start):
+    """Return the layered configuration resolved for ``start``, or ``{}``.
 
     Resolution is the standard layered per-key merge (shipd-config
-    layered-key-merge): the nearest ``.shipd-config.json`` declaring the key
-    wins it wholesale. A missing key, an unreadable layer, or a malformed
-    config file all read as undeclared — this hook never errors on config.
+    layered-key-merge): the nearest ``.shipd-config.json`` declaring a key wins
+    it wholesale. An unreadable layer or a malformed config file reads as no
+    configuration at all — this hook never errors on config.
     """
     try:
         import spec_common
         config, _ = spec_common.resolve_config(start)
-        return config.get("guardrails")
+        return config if isinstance(config, dict) else {}
     except Exception:
+        return {}
+
+
+def content_dirname(config):
+    """Return the content-directory name a resolved config names, defaulting to
+    ``.shipd`` when the ``dir`` key is absent or malformed."""
+    try:
+        import spec_common
+        return spec_common.specs_dirname(config)
+    except Exception:
+        return ".shipd"
+
+
+def parse_frontmatter(text):
+    """Split a rule file's ``text`` into its frontmatter fields and its body.
+
+    The frontmatter is the block between the opening ``---`` line and the next
+    ``---`` line, read as flat ``key: value`` pairs split on the first colon
+    with both sides stripped; a line carrying no colon is ignored. Returns
+    ``(fields, body)``, or ``None`` when the text does not open with ``---`` or
+    the block is never closed. The format stays deliberately flat: the engine
+    is stdlib-only, so there is no YAML parser to lean on.
+    """
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
         return None
+    for index in range(1, len(lines)):
+        if lines[index].strip() != "---":
+            continue
+        fields = {}
+        for line in lines[1:index]:
+            key, sep, value = line.partition(":")
+            if sep:
+                fields[key.strip()] = value.strip()
+        return fields, "\n".join(lines[index + 1:])
+    return None
 
 
-def valid_rule(rule):
-    """Whether a config-declared rule carries the required string members."""
-    if not isinstance(rule, dict):
-        return False
-    return all(isinstance(rule.get(key), str) and rule.get(key)
-               for key in ("name", "pattern", "message"))
+def parse_rule_file(path):
+    """Return the rule ``path`` declares, or ``None`` when it declares none
+    (guardrail-rulebook-format).
+
+    The rule's name is the filename stem. ``pattern`` is required and must
+    compile, the body after the frontmatter is the corrective message and must
+    be non-empty, ``mode`` defaults to ``deny`` and must otherwise name a
+    recognized mode, ``files`` is a comma-separated glob list, and ``cooldown``
+    is a positive whole number of seconds. Anything else — an unreadable file,
+    absent or unclosed frontmatter, a malformed field — skips the file, because
+    one bad rule must never take the rulebook down with it.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    parsed = parse_frontmatter(text)
+    if parsed is None:
+        return None
+    fields, body = parsed
+    pattern = fields.get("pattern")
+    message = body.strip()
+    if not pattern or not message:
+        return None
+    try:
+        re.compile(pattern)
+    except re.error:
+        return None
+    mode = fields.get("mode") or "deny"
+    if mode not in MODES:
+        return None
+    rule = {
+        "name": os.path.splitext(os.path.basename(path))[0],
+        "pattern": pattern,
+        "message": message,
+        "mode": mode,
+    }
+    globs = [glob.strip() for glob in fields.get("files", "").split(",")]
+    globs = [glob for glob in globs if glob]
+    if globs:
+        rule["files"] = globs
+    declared_cooldown = fields.get("cooldown")
+    if declared_cooldown:
+        try:
+            cooldown = int(declared_cooldown)
+        except ValueError:
+            return None
+        if cooldown <= 0:
+            return None
+        rule["cooldown"] = cooldown
+    return rule
+
+
+def load_rules_dir(directory):
+    """Return the rules declared by ``directory``'s ``*.md`` files, ordered by
+    filename. A directory that is absent or cannot be listed contributes
+    nothing."""
+    try:
+        names = sorted(name for name in os.listdir(directory)
+                       if name.endswith(".md"))
+    except OSError:
+        return []
+    rules = []
+    for name in names:
+        rule = parse_rule_file(os.path.join(directory, name))
+        if rule is not None:
+            rules.append(rule)
+    return rules
+
+
+def rules_dirs(start, dirname):
+    """Return the rulebook directories governing ``start``, nearest first
+    (guardrail-rulebook-discovery): every ancestor's ``<dirname>/rules`` walked
+    parent-by-parent to the filesystem root, then the user's
+    ``~/.shipd/rules``, then the plugin's own built-ins."""
+    dirs = []
+    current = os.path.abspath(start)
+    while True:
+        dirs.append(os.path.join(current, dirname, "rules"))
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    dirs.append(os.path.join(os.path.expanduser(USER_SHIPD_DIR), "rules"))
+    dirs.append(PLUGIN_RULES_DIR)
+    return dirs
 
 
 def resolve_rules(start):
     """Return the rule registry governing ``start``, or ``None`` when the hook
     is turned off there (shipd-config guardrails-key).
 
-    Start from the built-ins in order; a config rule repeating a ``name``
-    replaces that rule in place, the rest append; then every name in
-    ``disable`` is dropped. A malformed ``guardrails`` value is treated as
-    undeclared, and an individual malformed rule is skipped.
+    Walk the rulebook sources in precedence order, keeping the first rule to
+    claim each name — so a repo rule overrides a user rule overrides a built-in
+    — then drop every name the config's ``disable`` lists. Rule definitions
+    live in the rulebook, never in configuration: a ``guardrails`` object's
+    ``rules`` member, like any other unrecognized member, is ignored, and a
+    value that is neither ``false`` nor an object reads as undeclared.
     """
-    declared = declared_guardrails(start)
+    config = resolved_config(start)
+    declared = config.get("guardrails")
     if declared is False:
         return None
-    rules = list(DEFAULT_RULES)
-    if not isinstance(declared, dict):
-        return rules
-    declared_rules = declared.get("rules")
-    for rule in declared_rules if isinstance(declared_rules, list) else []:
-        if not valid_rule(rule):
-            continue
-        for index, existing in enumerate(rules):
-            if existing["name"] == rule["name"]:
-                rules[index] = rule
-                break
-        else:
+    rules = []
+    claimed = set()
+    for directory in rules_dirs(start, content_dirname(config)):
+        for rule in load_rules_dir(directory):
+            if rule["name"] in claimed:
+                continue
+            claimed.add(rule["name"])
             rules.append(rule)
-    disable = declared.get("disable")
+    disable = declared.get("disable") if isinstance(declared, dict) else None
     if isinstance(disable, list):
         dropped = {name for name in disable if isinstance(name, str)}
         rules = [rule for rule in rules if rule["name"] not in dropped]
@@ -186,8 +299,83 @@ def deny(found):
     sys.stdout.write("\n")
 
 
-def evaluate(payload):
-    """Return the violations for ``payload``, or ``[]`` to allow the call."""
+def remind_text(found):
+    """Render the ``additionalContext`` for the firing remind rules."""
+    parts = ["shipd guardrails flagged this edit. It stands — but note:"]
+    for rule, line in found:
+        parts.append(
+            "\n- %s: %s\n  flagged line: %s"
+            % (rule["name"], rule["message"], line.strip()))
+    parts.append(
+        "\nCorrect the flagged lines in a follow-up edit where the note "
+        "applies. To change the rules, see the `guardrails` key in the "
+        "content directory's README.md.")
+    return "".join(parts)
+
+
+def remind(found):
+    """Print the PostToolUse reminder (guardrail-remind-output)."""
+    json.dump({"hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "additionalContext": remind_text(found),
+    }}, sys.stdout)
+    sys.stdout.write("\n")
+
+
+def state_path(session_id):
+    """Return the cooldown-state file for ``session_id``, or ``None`` when the
+    payload names no usable session — a rule then fires without recording."""
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    if session_id in (".", "..") or "/" in session_id or os.sep in session_id:
+        return None
+    return os.path.join(os.path.expanduser(USER_SHIPD_DIR), "guardrails",
+                        session_id + ".json")
+
+
+def load_state(path):
+    """Return the recorded last-fire times for a session, or ``{}``. Missing,
+    unreadable, and malformed state all read as nothing recorded."""
+    if path is None:
+        return {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            state = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def save_state(path, state):
+    """Record the last-fire times, best effort. A state directory that cannot
+    be created or written is not worth failing an edit over: the reminder has
+    already been delivered, and the worst outcome is that it repeats."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(state, fh)
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def rule_is_due(rule, state, now):
+    """Whether a remind rule may fire (guardrail-remind-output).
+
+    A rule fires once per session by default; one declaring ``cooldown`` re-arms
+    that many seconds after its last fire. A nonsense recorded time re-arms the
+    rule rather than silencing it for the rest of the session.
+    """
+    last = state.get(rule["name"])
+    if not isinstance(last, (int, float)) or isinstance(last, bool):
+        return True
+    cooldown = rule.get("cooldown")
+    if not isinstance(cooldown, int):
+        return False
+    return now - last >= cooldown
+
+
+def evaluate(payload, mode):
+    """Return the ``mode`` rules ``payload`` violates, or ``[]``."""
     tool_name = payload.get("tool_name")
     if tool_name not in ("Edit", "Write"):
         return []
@@ -203,7 +391,36 @@ def evaluate(payload):
     rules = resolve_rules(start)
     if rules is None:
         return []
+    rules = [rule for rule in rules if rule.get("mode") == mode]
     return violations(rules, lines, tool_input.get("file_path"))
+
+
+def run_remind(payload):
+    """Deliver the reminders ``payload``'s remind rules earn, and record the
+    fires against the session's cooldown state."""
+    found = evaluate(payload, "remind")
+    if not found:
+        return
+    path = state_path(payload.get("session_id"))
+    state = load_state(path)
+    now = time.time()
+    due = [(rule, line) for rule, line in found
+           if rule_is_due(rule, state, now)]
+    if not due:
+        return
+    remind(due)
+    if path is None:
+        return
+    for rule, _ in due:
+        state[rule["name"]] = now
+    save_state(path, state)
+
+
+def run_deny(payload):
+    """Deny ``payload`` when one of its deny rules fires."""
+    found = evaluate(payload, "deny")
+    if found:
+        deny(found)
 
 
 def main():
@@ -215,9 +432,10 @@ def main():
         return 0
     if not isinstance(payload, dict):
         return 0
-    found = evaluate(payload)
-    if found:
-        deny(found)
+    if payload.get("hook_event_name") == "PostToolUse":
+        run_remind(payload)
+    else:
+        run_deny(payload)
     return 0
 
 
