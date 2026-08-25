@@ -155,6 +155,15 @@ HARNESSES = (
         "frontmatter": ("description",),
         "features": ("subagents", "file-references"),
     },
+    {
+        "id": "opencode",
+        "name": "OpenCode",
+        "repo_pattern": ".opencode/commands/shipd-{command}.md",
+        "user_dir": "~/.config/opencode/commands/",
+        "dialect": "yaml",
+        "frontmatter": ("description",),
+        "features": ("subagents", "file-references"),
+    },
 )
 
 

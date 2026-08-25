@@ -278,7 +278,7 @@ id: harness-mode-docs
 
 The `README.md` SHALL document the harness mode inside its installation
 documentation: the interactive install finish (`shipd install`) — the
-animated wordmark, the harness multi-select over the registry's twelve
+animated wordmark, the harness multi-select over the registry's thirteen
 harnesses, the selection record at `~/.shipd/harnesses.json`, user-global
 command generation for harnesses declaring a user-global directory, the
 headless degradation that prints a note and writes nothing, and re-running
