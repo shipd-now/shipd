@@ -338,17 +338,75 @@ merging left to a human. Such a member is recorded with the terminal outcome
 `drafted`, which the delivery board lanes under `review` with a `◇ drafted`
 badge — awaiting a human, never laned as shipped on the board.
 
-### Guardrails — the `guardrails` key
+### Guardrails — the rulebook and the `guardrails` key
 
-The plugin ships a **PreToolUse guardrail hook** that runs before every `Edit`
-and `Write` tool call, matches the lines the call would *add* against a rule
-registry, and **denies** the call with the violated rule's corrective message
-when one fires — redirecting the agent before the unwanted line lands in a
-file. Only added lines are evaluated: a line present in both an Edit's
-`old_string` and its `new_string` is never re-flagged.
+The plugin ships a **guardrail hook** that runs around every `Edit` and `Write`
+tool call and matches the lines the call would *add* against a rulebook. Only
+added lines are evaluated: a line present in both an Edit's `old_string` and
+its `new_string` is never re-flagged.
 
-**Three built-in rules are active in every repository when no layer declares
-the key**:
+Each rule declares one of two **modes**, which decide when it is consulted and
+what a match produces:
+
+| Mode | Runs on | Effect |
+| --- | --- | --- |
+| `deny` (the default) | `PreToolUse`, before the call | the call is **blocked** with the rule's message, so the unwanted line never lands |
+| `remind` | `PostToolUse`, after the call | the edit **stands** and the rule's message reaches the model as context |
+
+Use `deny` for lines that must not exist and `remind` for guidance too fuzzy to
+block on.
+
+#### The rule file format
+
+A rule is a markdown file `<name>.md` — the filename stem is the rule's name,
+and what a deny reason or reminder cites. It opens with a frontmatter block
+between `---` lines, read as flat `key: value` pairs (split on the first colon,
+unknown keys ignored), and everything after the block is the rule's corrective
+message:
+
+```markdown
+---
+pattern: console\.log\(
+mode: remind
+files: *.js, *.ts
+cooldown: 600
+---
+Use the logger, not console.log — it carries the request id.
+```
+
+| Key | Meaning |
+| --- | --- |
+| `pattern` | **required**; Python `re` syntax, applied per added line with `re.search`. Written plainly — no JSON double-escaping |
+| `mode` | `deny` when absent, or `remind` |
+| `files` | optional comma-separated `fnmatch` globs tested against the call's `file_path`; a rule with `files` applies only where a glob accepts the path |
+| `cooldown` | optional positive integer seconds, meaningful only with `mode: remind` |
+
+The message body must be non-empty. A file that declares no `pattern`, carries
+an empty body, names an unrecognized `mode`, or whose pattern does not compile
+is **skipped**, and the rest of the rulebook keeps loading.
+
+A `remind` rule fires **once per session** by default, so a standing note never
+becomes noise. Declaring `cooldown: <seconds>` re-arms it that many seconds
+after its last fire instead. The per-session record lives under
+`~/.shipd/guardrails/`.
+
+#### Where rules come from
+
+The registry merges three sources, **deduplicated by rule name with the first
+source winning**:
+
+1. **The repo** — `<content-dir>/rules/*.md` in each ancestor directory of the
+   working directory, nearer ancestors first (`.shipd/rules/` by default, or
+   whatever the `dir` key names).
+2. **The user** — `~/.shipd/rules/*.md`, applying in every repository.
+3. **The plugin** — its own `hooks/rules/*.md` built-ins.
+
+So a repo rule overrides a user rule overrides a built-in **by name**: dropping
+a `changelog-comment.md` into `.shipd/rules/` replaces the built-in of that
+name wholesale, pattern and message together.
+
+**Three built-in rules are active in every repository** unless a source
+overrides or a config layer disables them:
 
 | Rule | Denies |
 | --- | --- |
@@ -356,53 +414,40 @@ the key**:
 | `narrating-comment` | step narration — `# now we build the index` |
 | `filler-placeholder` | elisions standing in for content — `// ... rest of the file` |
 
-`.shipd-config.json` MAY declare a `guardrails` key in either of two forms.
-The boolean `false` turns the hook off wholesale — nothing is evaluated and
-every call is allowed:
+They are ordinary rule files, readable and copyable as templates for your own.
+
+#### The `guardrails` config key
+
+Rules are authored as files; the config key holds only the **kill-switches**.
+`.shipd-config.json` MAY declare `guardrails` in either of two forms. The
+boolean `false` turns the hook off wholesale — no source is consulted and every
+call is allowed:
 
 ```json
 { "guardrails": false }
 ```
 
-Or an object with two optional members — `disable`, a list of rule names to
-drop, and `rules`, a list of rule objects:
+Or an object whose one recognized member is `disable`, a list of rule names
+dropped after the sources merge:
 
 ```json
-{
-  "guardrails": {
-    "disable": ["narrating-comment"],
-    "rules": [
-      {
-        "name": "no-console-log",
-        "pattern": "console\\.log\\(",
-        "message": "Use the logger, not console.log.",
-        "files": ["*.js", "*.ts"]
-      }
-    ]
-  }
-}
+{ "guardrails": { "disable": ["narrating-comment"] } }
 ```
 
-A rule object carries a required `name` (its identity, and what the deny
-reason cites), `pattern` (Python `re` syntax, applied per added line with
-`re.search`), and `message` (the corrective instruction handed back to the
-agent), plus an optional `files` list of `fnmatch` globs tested against the
-tool call's `file_path` — a rule with `files` applies only where a glob
-accepts the path.
+An earlier version of this key also accepted a `rules` member holding rule
+objects. **The rulebook supersedes it**: a `rules` member is now ignored
+without erroring, and any such rule should be moved to a file under
+`<content-dir>/rules/` or `~/.shipd/rules/`. Like every top-level key,
+`guardrails` merges **nearest-wins-wholesale** — declaring it at a workspace
+root governs every member repo beneath it, and there is no deep merge, so a
+member repo's declaration replaces the root's entirely.
 
-The registry resolves by starting from the built-in rules in order, **replacing
-in place** any built-in whose `name` a config rule repeats, appending the
-remaining config rules, and then dropping every name listed in `disable`. Like
-every top-level key, `guardrails` merges **nearest-wins-wholesale** — declaring
-it at a workspace root governs every member repo beneath it, and there is no
-deep merge, so a member repo's declaration replaces the root's entirely.
-
-The hook **fails open**: a declared value that is neither `false` nor such an
-object is treated as undeclared rather than erroring, an individual malformed
-or uncompilable rule is skipped while the rest stay active, and any unexpected
-failure allows the call. Setting the environment variable `SHIPD_GUARDRAILS`
-to `off` bypasses the hook entirely for that session — the emergency escape
-hatch when a rule misfires.
+The hook **fails open**: a declared value that is neither `false` nor an object
+is treated as undeclared rather than erroring, a malformed or uncompilable rule
+is skipped while the rest stay active, cooldown-state failures still let the
+reminder through, and any unexpected failure allows the call. Setting the
+environment variable `SHIPD_GUARDRAILS` to `off` bypasses the hook entirely for
+that session — the emergency escape hatch when a rule misfires.
 
 ### Context economy
 
