@@ -338,6 +338,72 @@ merging left to a human. Such a member is recorded with the terminal outcome
 `drafted`, which the delivery board lanes under `review` with a `◇ drafted`
 badge — awaiting a human, never laned as shipped on the board.
 
+### Guardrails — the `guardrails` key
+
+The plugin ships a **PreToolUse guardrail hook** that runs before every `Edit`
+and `Write` tool call, matches the lines the call would *add* against a rule
+registry, and **denies** the call with the violated rule's corrective message
+when one fires — redirecting the agent before the unwanted line lands in a
+file. Only added lines are evaluated: a line present in both an Edit's
+`old_string` and its `new_string` is never re-flagged.
+
+**Three built-in rules are active in every repository when no layer declares
+the key**:
+
+| Rule | Denies |
+| --- | --- |
+| `changelog-comment` | comments narrating the edit — `// Fixed: off-by-one` |
+| `narrating-comment` | step narration — `# now we build the index` |
+| `filler-placeholder` | elisions standing in for content — `// ... rest of the file` |
+
+`.shipd-config.json` MAY declare a `guardrails` key in either of two forms.
+The boolean `false` turns the hook off wholesale — nothing is evaluated and
+every call is allowed:
+
+```json
+{ "guardrails": false }
+```
+
+Or an object with two optional members — `disable`, a list of rule names to
+drop, and `rules`, a list of rule objects:
+
+```json
+{
+  "guardrails": {
+    "disable": ["narrating-comment"],
+    "rules": [
+      {
+        "name": "no-console-log",
+        "pattern": "console\\.log\\(",
+        "message": "Use the logger, not console.log.",
+        "files": ["*.js", "*.ts"]
+      }
+    ]
+  }
+}
+```
+
+A rule object carries a required `name` (its identity, and what the deny
+reason cites), `pattern` (Python `re` syntax, applied per added line with
+`re.search`), and `message` (the corrective instruction handed back to the
+agent), plus an optional `files` list of `fnmatch` globs tested against the
+tool call's `file_path` — a rule with `files` applies only where a glob
+accepts the path.
+
+The registry resolves by starting from the built-in rules in order, **replacing
+in place** any built-in whose `name` a config rule repeats, appending the
+remaining config rules, and then dropping every name listed in `disable`. Like
+every top-level key, `guardrails` merges **nearest-wins-wholesale** — declaring
+it at a workspace root governs every member repo beneath it, and there is no
+deep merge, so a member repo's declaration replaces the root's entirely.
+
+The hook **fails open**: a declared value that is neither `false` nor such an
+object is treated as undeclared rather than erroring, an individual malformed
+or uncompilable rule is skipped while the rest stay active, and any unexpected
+failure allows the call. Setting the environment variable `SHIPD_GUARDRAILS`
+to `off` bypasses the hook entirely for that session — the emergency escape
+hatch when a rule misfires.
+
 ### Context economy
 
 `plan.md` and each delta spec should stay under **~2,000 tokens** (roughly
