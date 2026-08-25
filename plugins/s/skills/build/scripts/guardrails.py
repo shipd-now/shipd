@@ -54,6 +54,11 @@ PLUGIN_RULES_DIR = os.path.normpath(
 # The user's cross-repository rulebook, and where remind cooldown state lives.
 USER_SHIPD_DIR = "~/.shipd"
 
+# How long a cooldown-state file survives without being written to. A state
+# file means nothing outside its own session, so the state directory sweeps
+# itself on every write rather than accumulating one file per session forever.
+PRUNE_AGE_SECONDS = 7 * 24 * 3600
+
 
 def added_lines(tool_name, tool_input):
     """Return the lines the call would add (guardrail-added-line-matching).
@@ -346,15 +351,50 @@ def load_state(path):
     return state if isinstance(state, dict) else {}
 
 
-def save_state(path, state):
-    """Record the last-fire times, best effort. A state directory that cannot
-    be created or written is not worth failing an edit over: the reminder has
-    already been delivered, and the worst outcome is that it repeats."""
+def prune_state_dir(directory, now):
+    """Delete ``directory``'s ``*.json`` files untouched for
+    ``PRUNE_AGE_SECONDS`` (guardrail-state-prune).
+
+    A state file records nothing but one session's remind dedup, so losing a
+    stale one costs at most a repeated reminder in a weeks-old resumed
+    session — which is why a coarse mtime threshold is enough, and why every
+    step here is swallowed: an unlistable directory, an unstattable entry, an
+    undeletable file, or a file that vanishes mid-sweep all leave the
+    directory as it was. Subdirectories and non-JSON entries are left alone.
+    """
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        names = os.listdir(directory)
+    except OSError:
+        return
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        entry = os.path.join(directory, name)
+        try:
+            if not os.path.isfile(entry):
+                continue
+            if now - os.path.getmtime(entry) <= PRUNE_AGE_SECONDS:
+                continue
+            os.remove(entry)
+        except OSError:
+            continue
+
+
+def save_state(path, state):
+    """Record the last-fire times, best effort, and sweep the state directory
+    afterwards. A state directory that cannot be created or written is not
+    worth failing an edit over: the reminder has already been delivered, and
+    the worst outcome is that it repeats."""
+    try:
+        directory = os.path.dirname(path)
+        os.makedirs(directory, exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(state, fh)
     except (OSError, ValueError, TypeError):
+        return
+    try:
+        prune_state_dir(directory, time.time())
+    except Exception:
         pass
 
 

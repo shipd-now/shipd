@@ -135,7 +135,9 @@ blocks nothing — so reminders are rate-limited:
 The record is kept per session under `~/.shipd/guardrails/`, keyed by the
 session id the hook payload carries. If a payload arrives without one, the
 rule fires without recording — guidance delivered is better than guidance
-lost. State that cannot be read or written never suppresses a reminder.
+lost. State that cannot be read or written never suppresses a reminder. The
+directory keeps itself small: state files from past sessions are removed
+automatically about a week after their last use.
 
 ## Turning it off
 

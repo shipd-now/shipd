@@ -388,7 +388,8 @@ is **skipped**, and the rest of the rulebook keeps loading.
 A `remind` rule fires **once per session** by default, so a standing note never
 becomes noise. Declaring `cooldown: <seconds>` re-arms it that many seconds
 after its last fire instead. The per-session record lives under
-`~/.shipd/guardrails/`.
+`~/.shipd/guardrails/`, whose state files from past sessions are removed
+automatically about a week after their last use.
 
 #### Where rules come from
 
