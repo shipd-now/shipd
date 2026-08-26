@@ -1913,6 +1913,37 @@ def _cat_files(root, paths):
             sys.stdout.write(fh.read())
 
 
+def _cat_artefacts_listing(root, cdir):
+    """Print a change's ``artefacts/`` tree as a listing, never its content
+    (spec-io mediated-read-verb): a ``--- artefacts`` header followed by one
+    sorted line per file giving its path relative to ``root`` and its size in
+    bytes. A change carrying no such directory, or one holding no files,
+    prints nothing. An entry whose size cannot be read (a dangling symlink,
+    an unreadable file) is skipped rather than raised: a mediated read is a
+    listing aid and must never fail on a change that lints clean."""
+    adir = os.path.join(cdir, "artefacts")
+    if not os.path.isdir(adir):
+        return
+    entries = []
+    for dirpath, _dirnames, filenames in os.walk(adir):
+        for name in filenames:
+            entries.append(os.path.join(dirpath, name))
+    if not entries:
+        return
+    lines = []
+    for path in sorted(entries):
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            continue
+        lines.append("%s (%d bytes)" % (os.path.relpath(path, root), size))
+    if not lines:
+        return
+    print("--- artefacts")
+    for line in lines:
+        print(line)
+
+
 def cmd_cat(root, kind, slug, personal=False):
     """Print a named artifact's content through the engine's resolved locations
     (spec-io mediated-read-verb). For a change: its ``plan.md``, every delta
@@ -1942,6 +1973,7 @@ def cmd_cat(root, kind, slug, personal=False):
         if not paths:
             raise StatusError("change '%s' has no artifacts (%s)" % (slug, cdir))
         _cat_files(root, paths)
+        _cat_artefacts_listing(root, cdir)
         return 0
     if kind == "verified":
         path = os.path.join(sc.specs_dir(root), "verified", slug, "spec.md")

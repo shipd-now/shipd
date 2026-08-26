@@ -61,6 +61,9 @@ wrong tree.)
      the paths-inside-the-worktree rule — read it verbatim as a **read-only**
      reference and build to match it; never edit it. Where no such directory
      is named, this step is a no-op.
+   - When the change carries an `artefacts/` directory, read the artefacts the
+     artifacts reference and treat their content as binding. Where none is
+     present, this step is a no-op.
 2. Claim the next task atomically:
    `bash <CLAIM_SCRIPT> claim <change-name>`
    It prints `ID<TAB>TASK_TEXT`, or **nothing** if no task is currently ready.

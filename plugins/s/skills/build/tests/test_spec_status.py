@@ -2236,6 +2236,98 @@ class CatTest(SpecStatusTestBase):
             r.stdout)
         self.assertNotIn("2026-08-14-my-change", r.stdout)
 
+    def test_cat_change_lists_one_artefact(self):
+        """`cat change` lists a single artefact's path and size after the
+        artifact content, printing no content of its own (spec-io
+        mediated-read-verb)."""
+        cdir = self.make_change(
+            "my-change", status="draft",
+            tasks="# Tasks\n\n- [ ] 1.1 [req: *] Do the thing.\n")
+        self.make_valid_delta("my-change")
+        adir = os.path.join(cdir, "artefacts")
+        os.makedirs(adir)
+        apath = os.path.join(adir, "policy.md")
+        with open(apath, "w", encoding="utf-8") as fh:
+            fh.write("Policy text.\n")
+        size = os.path.getsize(apath)
+        r = self.cli("cat", "change", "my-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--- artefacts", r.stdout)
+        rel = os.path.join(
+            ".shipd", "planned", "my-change", "artefacts", "policy.md")
+        self.assertIn("%s (%d bytes)" % (rel, size), r.stdout)
+        self.assertNotIn("Policy text.", r.stdout)
+        # The artefacts listing comes after the existing artifact output.
+        self.assertLess(
+            r.stdout.index("Do the thing"), r.stdout.index("--- artefacts"))
+
+    def test_cat_change_lists_artefacts_sorted(self):
+        """Two artefacts are listed sorted by path."""
+        cdir = self.make_change(
+            "my-change", status="draft",
+            tasks="# Tasks\n\n- [ ] 1.1 [req: *] Do the thing.\n")
+        self.make_valid_delta("my-change")
+        adir = os.path.join(cdir, "artefacts")
+        os.makedirs(adir)
+        with open(os.path.join(adir, "zeta.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("Z.\n")
+        with open(os.path.join(adir, "alpha.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("A.\n")
+        r = self.cli("cat", "change", "my-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertLess(
+            r.stdout.index("alpha.md"), r.stdout.index("zeta.md"))
+
+    def test_cat_change_nested_artefact_uses_full_path(self):
+        """A nested artefact's listed path includes its subdirectory."""
+        cdir = self.make_change(
+            "my-change", status="draft",
+            tasks="# Tasks\n\n- [ ] 1.1 [req: *] Do the thing.\n")
+        self.make_valid_delta("my-change")
+        adir = os.path.join(cdir, "artefacts", "sub")
+        os.makedirs(adir)
+        apath = os.path.join(adir, "notes.md")
+        with open(apath, "w", encoding="utf-8") as fh:
+            fh.write("Notes.\n")
+        size = os.path.getsize(apath)
+        r = self.cli("cat", "change", "my-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rel = os.path.join(
+            ".shipd", "planned", "my-change", "artefacts", "sub", "notes.md")
+        self.assertIn("%s (%d bytes)" % (rel, size), r.stdout)
+
+    def test_cat_change_artefacts_skips_unreadable_entry(self):
+        """A dangling symlink under artefacts/ is skipped, not raised: the
+        mediated read is a listing aid and must never fail on a change that
+        lints clean (spec-io mediated-read-verb)."""
+        cdir = self.make_change(
+            "my-change", status="draft",
+            tasks="# Tasks\n\n- [ ] 1.1 [req: *] Do the thing.\n")
+        self.make_valid_delta("my-change")
+        adir = os.path.join(cdir, "artefacts")
+        os.makedirs(adir)
+        with open(os.path.join(adir, "policy.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("Policy text.\n")
+        os.symlink("/nonexistent/target", os.path.join(adir, "dangling.md"))
+        r = self.cli("cat", "change", "my-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--- artefacts", r.stdout)
+        self.assertIn("policy.md (", r.stdout)
+        self.assertNotIn("dangling.md", r.stdout)
+
+    def test_cat_change_without_artefacts_has_no_header(self):
+        """A change with no `artefacts/` directory prints no such header."""
+        self.make_change(
+            "my-change", status="draft",
+            tasks="# Tasks\n\n- [ ] 1.1 [req: *] Do the thing.\n")
+        self.make_valid_delta("my-change")
+        r = self.cli("cat", "change", "my-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("--- artefacts", r.stdout)
+
     def test_cat_verified(self):
         vdir = os.path.join(self.root, ".shipd", "verified", "auth")
         os.makedirs(vdir)
