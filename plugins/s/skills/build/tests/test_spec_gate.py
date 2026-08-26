@@ -268,6 +268,54 @@ class TaskFileReferenceCheckTest(SpecGateTestBase):
         self.assertIn("Status: rejected", self.read_plan("feat"))
 
 
+class ArtefactReferenceResolutionTest(SpecGateTestBase):
+    def write_artefact(self, change, relpath, text="content\n"):
+        full = os.path.join(self._change_dir(change), "artefacts", relpath)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def test_change_relative_artefact_reference_resolves(self):
+        # The change directory holds artefacts/policy.md; a task naming it
+        # change-relatively in backticks produces no file-reference finding.
+        self.make_clean_change("feat", status="draft")
+        self.write_artefact("feat", "policy.md")
+        self.write_tasks(
+            "feat",
+            "# Tasks\n\n"
+            "- [ ] 1.1 [req: widget] Apply `artefacts/policy.md`.\n")
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 0, self.out(r))
+        self.assertIn("Status: ready", self.read_plan("feat"))
+
+    def test_missing_artefact_reference_is_still_a_finding(self):
+        # The change directory holds no artefacts/ghost.md: the token is still
+        # a finding.
+        self.make_clean_change("feat", status="draft")
+        self.write_tasks(
+            "feat",
+            "# Tasks\n\n"
+            "- [ ] 1.1 [req: widget] Apply `artefacts/ghost.md`.\n")
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("artefacts/ghost.md", self.out(r))
+        self.assertIn("Status: rejected", self.read_plan("feat"))
+
+    def test_mistyped_repository_path_outside_artefacts_prefix_is_unaffected(self):
+        # A task names a repository path outside the artefacts/ prefix whose
+        # parent and grandparent are both missing: still a finding, unaffected
+        # by the change-relative artefact resolution.
+        self.make_clean_change("feat", status="draft")
+        self.write_tasks(
+            "feat",
+            "# Tasks\n\n"
+            "- [ ] 1.1 [req: widget] Edit `src/ghost/nested/missing.py`.\n")
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("src/ghost/nested/missing.py", self.out(r))
+        self.assertIn("Status: rejected", self.read_plan("feat"))
+
+
 class StaleBaseCheckTest(SpecGateTestBase):
     def test_stale_base_hash_is_a_finding(self):
         # A master exists; the MODIFIED delta's base hash does not match it.

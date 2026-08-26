@@ -682,6 +682,110 @@ class TaskTraceabilityTest(unittest.TestCase):
         self.assertTrue(has(errors, "no-such-requirement"))
 
 
+class ArtefactReferenceLintTest(unittest.TestCase):
+    """Artefact reference enforcement (shipd-spec-lint
+    artefact-reference-enforcement): every file under a change's
+    ``artefacts/`` directory must be referenced by its change-relative path
+    from plan.md, tasks.md, or a delta spec, or the linter errors — not warns.
+
+    These tests are written test-first and are expected to FAIL until
+    ``check_artefact_references`` lands in ``spec_lint.py`` (task 1.2)."""
+
+    def _delta(self):
+        return ("## ADDED Requirements\n\n"
+                "### Requirement: Do the thing\n"
+                "id: do-the-thing\n\n"
+                "The system SHALL do the thing.\n\n"
+                "#### Scenario: s\n- **WHEN** a\n- **THEN** b\n")
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _write_change(self, change, plan_text="A plan mentioning nothing.\n",
+                       tasks_text="## 1. Work\n\n"
+                                  "- [ ] 1.1 [req: do-the-thing] Do it\n",
+                       artefacts=None):
+        cdir = os.path.join(self.root, ".shipd", "planned", change)
+        os.makedirs(os.path.join(cdir, "specs", "auth"), exist_ok=True)
+        with open(os.path.join(cdir, "specs", "auth", "spec.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(self._delta())
+        with open(os.path.join(cdir, "plan.md"), "w", encoding="utf-8") as fh:
+            fh.write(plan_text)
+        with open(os.path.join(cdir, "tasks.md"), "w", encoding="utf-8") as fh:
+            fh.write(tasks_text)
+        if artefacts:
+            for relpath, content in artefacts.items():
+                path = os.path.join(cdir, "artefacts", relpath)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(content)
+        return cdir
+
+    def _errors(self, change, **kwargs):
+        self._write_change(change, **kwargs)
+        errors = []
+        sl.check_artefact_references(self.root, change, errors)
+        return [str(e) for e in errors]
+
+    def test_unreferenced_artefact_is_an_error(self):
+        # (a) policy.md sits in artefacts/ but is named nowhere in plan.md,
+        # tasks.md, or the delta: the linter errors, naming the
+        # change-relative path.
+        errors = self._errors(
+            "art-unreferenced", artefacts={"policy.md": "Do this.\n"})
+        self.assertTrue(has(errors, "artefacts/policy.md"))
+
+    def test_referenced_artefact_lints_clean(self):
+        # (b) the same change, but plan.md now names the artefact's
+        # change-relative path: no finding.
+        errors = self._errors(
+            "art-referenced",
+            plan_text="A plan referencing `artefacts/policy.md`.\n",
+            artefacts={"policy.md": "Do this.\n"})
+        self.assertEqual(errors, [])
+
+    def test_nested_artefact_referenced_by_full_path_lints_clean(self):
+        # (c) a nested artefact one directory deep is matched by its full
+        # change-relative path.
+        errors = self._errors(
+            "art-nested-referenced",
+            plan_text="See `artefacts/sub/policy.md` for the policy.\n",
+            artefacts={"sub/policy.md": "Do this.\n"})
+        self.assertEqual(errors, [])
+
+    def test_nested_unreferenced_artefact_names_full_path(self):
+        # (c) the unreferenced counterpart: the finding names the nested
+        # file's full change-relative path, not just its basename.
+        errors = self._errors(
+            "art-nested-unreferenced",
+            artefacts={"sub/policy.md": "Do this.\n"})
+        self.assertTrue(has(errors, "artefacts/sub/policy.md"))
+
+    def test_no_artefacts_directory_is_a_no_op(self):
+        # (d) a change with no artefacts directory keeps its current
+        # findings: the check contributes nothing.
+        errors = self._errors("art-none")
+        self.assertEqual(errors, [])
+
+    def test_unreferenced_artefact_gates_lint_change(self):
+        # The check must be wired into lint_change so an otherwise-valid
+        # change with an unreferenced artefact fails to lint.
+        change = "art-gated"
+        self._write_change(
+            change,
+            plan_text=("# %s\nStatus: ready\n\n## Idea\nA summary.\n\n"
+                       "### Motivation\nWhy.\n\n### Details\nThe changes.\n\n"
+                       "### Non-goals\nNot that.\n\n"
+                       "## Implementation\nHow.\n" % change),
+            artefacts={"policy.md": "Do this.\n"})
+        errors = [str(e) for e in sl.lint_change(self.root, change)]
+        self.assertTrue(has(errors, "artefacts/policy.md"))
+
+
 class EpicLintTest(unittest.TestCase):
     """Epic structural validation (shipd-spec-lint epic-structural-validation,
     shipd-spec-format epic-artifact-layout / epic-header-metadata): an epic under

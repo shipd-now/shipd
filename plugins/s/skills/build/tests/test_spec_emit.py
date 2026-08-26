@@ -213,6 +213,38 @@ class ChangeEmitTest(SpecEmitTestBase):
         self.assertTrue(os.path.isfile(
             os.path.join(self.planned_dir("my-change"), "plan.md")))
 
+    def stage_artefact(self, relpath="policy.md", content="Do this.\n"):
+        path = os.path.join(self.stage, "artefacts", relpath)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+
+    def test_referenced_artefact_installs(self):
+        # A staging directory carrying an artefacts/ directory installs
+        # whole-tree — the referenced file lands under the installed change
+        # (shipd-spec-format per-change-artifact-layout).
+        plan = CLEAN_PLAN.replace(
+            "### Non-goals\n\n- Not that.\n\n",
+            "### Non-goals\n\n- Not that.\n\n"
+            "See `artefacts/policy.md` for the policy.\n\n")
+        self.stage_change(plan=plan)
+        self.stage_artefact()
+        r = self.cli("change", "my-change", "--from", self.stage)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.planned_dir("my-change"), "artefacts", "policy.md")))
+
+    def test_unreferenced_artefact_is_refused(self):
+        # The same staging directory with the reference removed: the linter's
+        # artefact-reference-enforcement check refuses the install outright
+        # (shipd-spec-lint artefact-reference-enforcement).
+        self.stage_change()
+        self.stage_artefact()
+        r = self.cli("change", "my-change", "--from", self.stage)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("artefacts/policy.md", r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(self.planned_dir("my-change")))
+
 
 class InitiativeEmitTest(SpecEmitTestBase):
     def _brief_path(self, slug):

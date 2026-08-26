@@ -56,6 +56,8 @@ Author the artifact set inside a throwaway **staging directory** with this shape
   specs/
     <capability>/
       spec.md          # one delta per affected capability
+  artefacts/            # optional — standalone planning outputs (see below)
+    <file>
 ```
 
 One `specs/<capability>/spec.md` per capability the change touches. `<capability>`
@@ -343,6 +345,21 @@ configuration's `build.design_dir`). When a design exists there:
 
 When a change carries no design, name nothing and add no design-fidelity
 scenarios — every other emission convention is unchanged.
+
+### Artefacts — standalone planning outputs (when one exists)
+
+This is also **presence-based**: only follow it when planning drafts a
+standalone output that must be preserved exactly — a policy document, a block
+of verbatim text, anything the lean artifact set would otherwise have to
+paraphrase. Stage it under the staging directory's `artefacts/` subdirectory
+rather than pasting it into `plan.md`, `tasks.md`, or a delta spec, and
+reference it by its change-relative path (`artefacts/<file>`) from every
+artifact that depends on it: `plan.md`'s `## Implementation` where it informs a
+binding decision, `tasks.md` where a task must apply it, or a delta spec where
+a requirement is stated in its terms. Stage nothing the change references
+nowhere — the emit engine refuses an artefact no artifact names. When planning
+produces no such output, stage no `artefacts/` directory and emission is
+unchanged.
 
 ## tasks.md — the implementation checklist
 

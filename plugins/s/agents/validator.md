@@ -33,6 +33,9 @@ Read, up front:
   reference: exercise the real behavior against it and refute or confirm any
   design-fidelity `#### Scenario:` blocks. Where no such directory is named,
   this input is absent and design-fidelity scenarios do not arise.
+- When the change carries an `artefacts/` directory, read the artefacts the
+  artifacts reference and treat their content as binding. Where none is
+  present, this input is absent.
 
 You do **not** receive, and must **not** rely on, the execution sub-agents'
 summaries or the orchestrator's conversation history. The artifacts and the code

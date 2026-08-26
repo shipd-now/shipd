@@ -294,14 +294,19 @@ start from a **clean context**: the spawn message is the change name, the
 coordinator path, and any addenda, and nothing else. Do **not** paste
 conversational history, the planning transcript, or exploratory research into
 the message — the sub-agent obtains all change context by reading the named
-artifact set (`plan.md`, the delta specs, `tasks.md`, `.shipd/constitution.md` when
-present, and the relevant masters), and the rationale for binding decisions
-lives in `plan.md`'s `## Implementation` section where it can find it. When
-`plan.md`'s `## Implementation` names a design scratch directory, that
-directory is part of this named artifact set too: the sub-agent reads it as a
-read-only, out-of-worktree reference and builds to match it verbatim — the
-design travels by that plan-named path, never as spawn-message content, so the
-clean-context contract holds. Do
+artifact set (`plan.md`, the delta specs, `tasks.md`, the change's `artefacts/`
+directory when present, `.shipd/constitution.md` when present, and the
+relevant masters), and the rationale for binding decisions lives in `plan.md`'s
+`## Implementation` section where it can find it. When `plan.md`'s
+`## Implementation` names a design scratch directory, that directory is part
+of this named artifact set too: the sub-agent reads it as a read-only,
+out-of-worktree reference and builds to match it verbatim — the design travels
+by that plan-named path, never as spawn-message content, so the clean-context
+contract holds. When the change carries an `artefacts/` directory, it is part
+of this named artifact set too: the sub-agent reads the artefacts its
+artifacts reference by their change-relative path — the artefact content
+travels by that path, never as spawn-message content, so the clean-context
+contract holds. Do
 **not** restate global baseline rules the sub-agent already inherits or reads
 (project `CLAUDE.md`/`AGENTS.md`, the constitution); the spec on disk is the
 single compiled source of context. When — and only when — a build carries

@@ -22,6 +22,8 @@ over the markdown described here — no language model reads or writes these fil
       specs/
         <capability>/
           spec.md                delta spec for each affected capability
+      artefacts/                 optional: standalone planning outputs
+        <file>                   referenced from plan.md, tasks.md, or a delta
   completed/                     applied changes, retained immutably
     <date>-<change>/             moved here by spec_merge after a merge
       ...                        the change's full artifact set
@@ -41,7 +43,9 @@ over the markdown described here — no language model reads or writes these fil
   engine reads and writes only these files.
 - `.shipd/planned/<change>/` holds a change under construction. Every change
   carries the **lean artifact set** (`plan.md`, `tasks.md`, and a delta
-  `specs/<capability>/spec.md` per affected capability), regardless of size.
+  `specs/<capability>/spec.md` per affected capability), regardless of size,
+  and MAY additionally carry an `artefacts/` directory of standalone planning
+  outputs (see [Artefacts](#artefacts)).
 - `.shipd/completed/<date>-<change>/` retains a change after its delta has
   been merged, so applied changes are auditable and never re-merged. It is a
   sibling of `.shipd/planned/`, which therefore holds only live changes.
@@ -86,6 +90,18 @@ unresolvable task file reference, or a delta targeting a nonexistent capability)
 and the change's status becomes `rejected`; a human enriches the plan and
 re-gates, at which point a passing run removes the section and promotes the plan
 to `ready`. The linter tolerates the section in any status.
+
+### Artefacts
+
+A change MAY carry an optional `artefacts/` directory holding the standalone
+outputs of planning — a policy document, a block of verbatim text, any content
+that must be preserved exactly rather than paraphrased into the lean artifact
+set. Every file inside it MUST be referenced by its change-relative path
+(`artefacts/<file>`) from at least one of `plan.md`, `tasks.md`, or a delta
+spec; the linter errors on any file it is not (`spec_lint.py`'s
+`check_artefact_references`), so an orphaned artefact blocks the install. The
+directory travels with the change through installation and through the merge's
+archive to `.shipd/completed/<date>-<change>/artefacts/`.
 
 ### The questions-and-answers ledger
 

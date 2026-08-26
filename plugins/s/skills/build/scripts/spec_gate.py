@@ -307,6 +307,9 @@ def _check_task_paths(root, change):
         full = os.path.join(root, token)
         if os.path.exists(full):
             continue
+        if token.startswith("artefacts/") and os.path.exists(
+                os.path.join(_planned_dir(root, change), token)):
+            continue  # change-relative artefact reference
         parent = os.path.dirname(token)
         if parent and os.path.isdir(os.path.join(root, parent)):
             continue  # the new-file-in-an-existing-directory case

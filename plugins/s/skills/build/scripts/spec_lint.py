@@ -1284,6 +1284,46 @@ def check_task_traceability(root, change, errors):
 
 
 # ---------------------------------------------------------------------------
+# Artefact reference enforcement
+# ---------------------------------------------------------------------------
+
+
+def check_artefact_references(root, change, errors):
+    """Enforce that every file under a change's ``artefacts/`` directory is
+    referenced by at least one of `plan.md`, `tasks.md`, or a delta spec, by
+    its change-relative POSIX path (shipd-spec-lint
+    ``artefact-reference-enforcement``). Returns immediately when the change
+    has no ``artefacts/`` directory, so a change without one lints exactly as
+    it does without this check."""
+    change_dir = os.path.join(sc.specs_dir(root), "planned", change)
+    artefacts_dir = os.path.join(change_dir, "artefacts")
+    if not os.path.isdir(artefacts_dir):
+        return
+    haystack_parts = []
+    for name in ("plan.md", "tasks.md"):
+        path = os.path.join(change_dir, name)
+        if os.path.isfile(path):
+            haystack_parts.append(_read(path))
+    deltas_dir = os.path.join(change_dir, "specs")
+    if os.path.isdir(deltas_dir):
+        for capability in sorted(os.listdir(deltas_dir)):
+            path = os.path.join(deltas_dir, capability, "spec.md")
+            if os.path.isfile(path):
+                haystack_parts.append(_read(path))
+    haystack = "\n".join(haystack_parts)
+    for dirpath, dirnames, filenames in os.walk(artefacts_dir):
+        dirnames.sort()
+        for filename in sorted(filenames):
+            full = os.path.join(dirpath, filename)
+            rel_posix = os.path.relpath(full, change_dir).replace(
+                os.sep, "/")
+            if rel_posix not in haystack:
+                errors.append(LintError(
+                    "artefact '%s' is referenced by none of plan.md, "
+                    "tasks.md, or a delta spec" % rel_posix, full))
+
+
+# ---------------------------------------------------------------------------
 # Target discovery and gating
 # ---------------------------------------------------------------------------
 
@@ -1328,6 +1368,7 @@ def lint_change(root, change, warnings=None):
         check_initiative_reference(
             root, sc.parse_plan_metadata(_read(plan_path)), errors)
     check_task_traceability(root, change, errors)
+    check_artefact_references(root, change, errors)
     if warnings is not None:
         check_context_economy(root, change, warnings)
     deltas_dir = os.path.join(sc.specs_dir(root), "planned", change, "specs")
