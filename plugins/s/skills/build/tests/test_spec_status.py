@@ -2298,6 +2298,26 @@ class CatTest(SpecStatusTestBase):
             ".shipd", "planned", "my-change", "artefacts", "sub", "notes.md")
         self.assertIn("%s (%d bytes)" % (rel, size), r.stdout)
 
+    def test_cat_change_artefacts_skips_unreadable_entry(self):
+        """A dangling symlink under artefacts/ is skipped, not raised: the
+        mediated read is a listing aid and must never fail on a change that
+        lints clean (spec-io mediated-read-verb)."""
+        cdir = self.make_change(
+            "my-change", status="draft",
+            tasks="# Tasks\n\n- [ ] 1.1 [req: *] Do the thing.\n")
+        self.make_valid_delta("my-change")
+        adir = os.path.join(cdir, "artefacts")
+        os.makedirs(adir)
+        with open(os.path.join(adir, "policy.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("Policy text.\n")
+        os.symlink("/nonexistent/target", os.path.join(adir, "dangling.md"))
+        r = self.cli("cat", "change", "my-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--- artefacts", r.stdout)
+        self.assertIn("policy.md (", r.stdout)
+        self.assertNotIn("dangling.md", r.stdout)
+
     def test_cat_change_without_artefacts_has_no_header(self):
         """A change with no `artefacts/` directory prints no such header."""
         self.make_change(

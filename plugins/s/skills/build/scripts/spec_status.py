@@ -1918,7 +1918,9 @@ def _cat_artefacts_listing(root, cdir):
     (spec-io mediated-read-verb): a ``--- artefacts`` header followed by one
     sorted line per file giving its path relative to ``root`` and its size in
     bytes. A change carrying no such directory, or one holding no files,
-    prints nothing."""
+    prints nothing. An entry whose size cannot be read (a dangling symlink,
+    an unreadable file) is skipped rather than raised: a mediated read is a
+    listing aid and must never fail on a change that lints clean."""
     adir = os.path.join(cdir, "artefacts")
     if not os.path.isdir(adir):
         return
@@ -1928,11 +1930,18 @@ def _cat_artefacts_listing(root, cdir):
             entries.append(os.path.join(dirpath, name))
     if not entries:
         return
-    print("--- artefacts")
+    lines = []
     for path in sorted(entries):
-        rel = os.path.relpath(path, root)
-        size = os.path.getsize(path)
-        print("%s (%d bytes)" % (rel, size))
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            continue
+        lines.append("%s (%d bytes)" % (os.path.relpath(path, root), size))
+    if not lines:
+        return
+    print("--- artefacts")
+    for line in lines:
+        print(line)
 
 
 def cmd_cat(root, kind, slug, personal=False):
