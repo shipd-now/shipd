@@ -939,17 +939,18 @@ def _epic_slugs(root):
 
 def _initiative_context(root, slug):
     """Resolve an epic's ``Initiative:`` slug to ``{"slug", "status"}``: the
-    status is read through the workspace brief when a workspace is discoverable,
-    otherwise ``None`` — a missing workspace degrades to slug-only, never an
+    status is read through the brief at the nearest workspace-chain member
+    holding one (:func:`spec_common.resolve_initiative_brief`, shipd-workspace
+    workspace-chain-facilities), or ``None`` when no chain member holds it or
+    no workspace is discoverable — a miss degrades to slug-only, never an
     error."""
     status = None
     try:
-        ws_root = sc.find_workspace_root(root)
+        brief_path = sc.resolve_initiative_brief(root, slug)
     except sc.ConfigError:
-        ws_root = None
-    if ws_root is not None:
-        status = ss.read_initiative_status(
-            sc.initiative_brief_path(ws_root, slug))
+        brief_path = None
+    if brief_path is not None:
+        status = ss.read_initiative_status(brief_path)
     return {"slug": slug, "status": status}
 
 

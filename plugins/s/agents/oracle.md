@@ -32,8 +32,8 @@ question — even when the workspace or its wiki store is missing.
 
 ## The search ladder (binding order)
 
-Resolve the answer personal-store-first, then the job wiki, then the base wiki,
-then widen to the asking repo. All reads are engine-mediated where a verb exists;
+Resolve the answer personal-store-first, then the workspace chain, then the base
+wiki, then widen to the asking repo. All reads are engine-mediated where a verb exists;
 grep is the sanctioned widening tool over the wiki markdown (the epic binds
 retrieval to **index- and grep-based over markdown** — no embeddings, no search
 service).
@@ -46,9 +46,9 @@ service).
    unlike the job and base rungs.
    - `python3 STATUS_CLI --root <asking-root> wiki-show --personal` — reports the
      personal store's dir and health. **When it reports no store** (no memories
-     captured yet), **skip this rung entirely** and proceed to the job wiki —
-     exactly as an `(absent)` base rung is skipped; a missing personal store is
-     never an error.
+     captured yet), **skip this rung entirely** and proceed to the workspace
+     chain — exactly as an `(absent)` base rung is skipped; a missing personal
+     store is never an error.
    - `python3 STATUS_CLI --root <asking-root> cat wiki index --personal` — the
      personal page catalogue; scan it for pages relevant to the decision.
    - `python3 STATUS_CLI --root <asking-root> cat wiki <slug> --personal` — read
@@ -57,28 +57,49 @@ service).
      beyond the index when it is thin — matching page bodies for the decision's
      terms. Never write through grep or edit any personal-store file.
 
-2. **Job wiki — the asking workspace's own store (second).**
+2. **Workspace chain — the asking workspace and every enclosing one it nests
+   under (second).** The engine's wiki reads already walk the chain for you —
+   `cat wiki index` and `cat wiki queue` aggregate every chain store's file,
+   nearest first; `cat wiki <slug>` resolves to the nearest chain store
+   holding that page. Your job is to read the `chain:` line so you know which
+   stores are in play, and to grep each of them yourself (grep is not
+   chain-mediated).
    - `python3 STATUS_CLI --root <asking-root> wiki-show` — resolves the
-     workspace and reports the store's health (root, page count, coverage, last
-     log). This also tells you whether a store exists, and its `base:` line
-     tells you whether a durable base store is layered beneath it (see below).
-   - `python3 STATUS_CLI --root <asking-root> cat wiki index` — the page
-     catalogue; scan it for pages relevant to the decision.
-   - `python3 STATUS_CLI --root <asking-root> cat wiki <slug>` — read each
-     candidate page named by the index.
-   - Read-only `grep` under `<ws-root>/<content-dir>/wiki/` (the store dir
-     `wiki-show` prints) to widen beyond the index when the index is thin —
-     matching page bodies for the decision's terms. Never write through grep or
-     edit any wiki file.
+     nearest workspace and reports its store's health (root, page count,
+     coverage, last log) plus a `chain:` line naming every enclosing
+     workspace's store that exists, nearest first (or `chain: none` when
+     there is none to inherit — a chain member holding no store is never
+     listed, so there is nothing to skip explicitly), and a `base:` line
+     (see rung 3 below).
+   - `python3 STATUS_CLI --root <asking-root> cat wiki index` — every chain
+     store's page catalogue, nearest first, each behind its own
+     `--- <path>` separator; scan all of it for pages relevant to the
+     decision.
+   - `python3 STATUS_CLI --root <asking-root> cat wiki <slug>` — reads the
+     nearest chain store holding that page and states the provenance on its
+     own separator line, so citing it never requires a comparison: an
+     unannotated `--- <path>` separator means the nearest store answered —
+     cite the page bare, `Cited: [[slug]]`. A separator carrying a trailing
+     `(inherited <ws-root>)` annotation means an enclosing chain store
+     answered — copy that annotation **verbatim** onto the citation:
+     `Cited: [[slug]] (inherited <ws-root>)`. Never derive the marker any
+     other way; the verb already printed it, so copy it.
+   - Read-only `grep`, nearest first: under the nearest store's directory
+     (`wiki-show`'s `wiki:` line), then under each store directory named on
+     its `chain:` line, in order — to widen beyond the index when it is thin.
+     Never write through grep or edit any wiki file in any chain store.
    - **After the pages, read the queue** —
-     `python3 STATUS_CLI --root <asking-root> cat wiki queue`. A `## q-<slug>`
+     `python3 STATUS_CLI --root <asking-root> cat wiki queue`, which
+     aggregates every chain store's queue, nearest first. A `## q-<slug>`
      block whose `- Answer:` line is **not** `pending` is an
      answered-but-undrained entry: a human already settled that decision and
      `/s:teach` has not yet distilled it into a page. Treat such blocks as
      citable sources, cited as `Cited: queue q-<slug>`. Blocks still reading
      `- Answer: pending` are open questions, never evidence. The pages come
      first — a distilled page is the canonical durable position, and the raw
-     answer is only the bridge until teach drains it.
+     answer is only the bridge until teach drains it. **Queue writes (the
+     `INSUFFICIENT` path below) always land in the nearest workspace's store,
+     never an inherited one.**
 
 3. **Base wiki — the durable store layered beneath (third).** `wiki-show`'s
    `base:` line reports it: `base: <path> (present)`, `base: <path> (absent)`,
@@ -104,8 +125,8 @@ service).
    - `project-show <slug>` — a project's declared context and repos.
 
 Take the **first** durable position the ladder yields; do not keep widening once
-the personal store, the job wiki, the base wiki, or a repo surface answers the
-decision.
+the personal store, the workspace chain, the base wiki, or a repo surface
+answers the decision.
 
 ## The verdict contract
 
@@ -142,8 +163,13 @@ asked. Follow it with:
   (`verified/<capability>`, `epic/<slug>`, `research/<slug>`) by name. Every
   `ANSWER` cites at least one source. When a cited page was read from the
   **personal store** (rung 1), mark it so the caller knows which store
-  answered: `Cited: [[slug]] (personal)`; likewise a page read from the **base
-  store** (rung 3) is marked `Cited: [[slug]] (base)`.
+  answered: `Cited: [[slug]] (personal)`. For a rung-2 page, key the marker
+  off what `cat wiki <slug>` already printed on the page's separator line: no
+  annotation means the nearest store answered — cite the page bare; a
+  trailing `(inherited <ws-root>)` annotation means an enclosing chain store
+  answered — copy that annotation verbatim onto the citation: `Cited: [[slug]]
+  (inherited <ws-root>)`. Likewise a page read from the **base store** (rung
+  3) is marked `Cited: [[slug]] (base)`.
 - **At least one `Evidence:` line** quoting a cited source **verbatim** — the
   actual sentence that takes the position, copied, not paraphrased. This is
   what lets the caller check that the source settles the specific decision
@@ -158,17 +184,21 @@ Use a single append-only log with per-entry timestamps; it matches how the
 store already records provenance and keeps readers grep-friendly.
 Cited: [[logging-conventions]]
 Cited: [[naming-conventions]] (base)
+Cited: [[retry-policy]] (inherited /ws/outer)
 Cited: verified/shipd-wiki
 Evidence: [[logging-conventions]] — "Every store event appends one dated line
 to log.md; entries are never rewritten in place."
+Evidence: [[retry-policy]] — "Retries back off exponentially starting at
+200ms, matching the outer workspace's convention."
 Evidence: verified/shipd-wiki — "the engine SHALL append, never rewrite, the
 log's dated entries."
 ```
 
 The markers work the same on the other stores: a personal-store page cites as
-`Cited: [[editor-preference]] (personal)`, and an answered-but-undrained queue
-block cites as `Cited: queue q-answered-queue-retention`, with its `Evidence:`
-line quoting that block's `- Answer:` text verbatim.
+`Cited: [[editor-preference]] (personal)`, an inherited-chain-store page cites
+as `Cited: [[conventions]] (inherited /ws/outer)`, and an answered-but-undrained
+queue block cites as `Cited: queue q-answered-queue-retention`, with its
+`Evidence:` line quoting that block's `- Answer:` text verbatim.
 
 ### `INSUFFICIENT`
 

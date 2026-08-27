@@ -28,8 +28,9 @@ rung below comes up empty.
                               │ un-inferrable decision
                               ▼
   ┌─ 2. ASK-MIKK (the oracle) ───────────────────────────────┐
-  │  personal memory  →  job wiki pages  →  answered queue    │
-  │       →  base wiki  →  the repo's spec surfaces           │
+  │  personal memory  →  workspace chain (nearest first)      │
+  │       →  answered queue  →  base wiki                     │
+  │       →  the repo's spec surfaces                         │
   └───────┬──────────────────────────────────┬───────────────┘
           │ ANSWER (cited + quoted)          │ INSUFFICIENT
           │                                  │ files q-<slug> in the queue
@@ -77,8 +78,9 @@ Every `ANSWER` carries:
 - **`Cited:` line(s)** naming what backs it — a wiki page as `[[slug]]`, an
   answered queue entry as `queue q-<slug>`, or a repo artifact
   (`verified/<capability>`, `epic/<slug>`, `research/<slug>`). A page from the
-  personal memory store is marked `(personal)`, one from a base store `(base)`,
-  so you can see which store answered;
+  personal memory store is marked `(personal)`, one from an enclosing
+  workspace's inherited store `(inherited <ws-root>)`, and one from a base
+  store `(base)`, so you can see which store answered;
 - **at least one `Evidence:` line** quoting a cited source **verbatim**.
 
 ### `INSUFFICIENT` — nobody has decided this yet

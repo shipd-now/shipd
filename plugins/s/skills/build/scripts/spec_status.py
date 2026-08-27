@@ -71,15 +71,18 @@ Verbs (see the spec-status + statusline capabilities for the contract):
   initiative-set-status <status> <slug>
                      write a validated initiative status (open/achieved/
                      dropped) into the brief header
-  workspace-init <path> [--git]
+  workspace-init <path> [--git] [--nested]
                      initialize a workspace at <path> (declaring `workspace`
                      in <path>/.shipd-config.json), printing the created
                      root; refuses when a workspace is already discoverable
                      from the target or the target directory is missing. With
                      --git, git-init the target when it is not already inside a
                      work tree and seed a marked member-repos .gitignore block.
-                     Unlike the other workspace verbs it does not require (or
-                     resolve) an existing workspace
+                     With --nested, permit creating the workspace beneath an
+                     enclosing one and additionally print the enclosing root;
+                     still refuses when the target itself already declares
+                     `workspace`. Unlike the other workspace verbs it does not
+                     require (or resolve) an existing workspace
   workspace-show     print the workspace root, the declared focus project (when
                      set), each declared project (repos annotated present/absent
                      and [url] when a clone URL is declared, context.md
@@ -1762,8 +1765,11 @@ def cmd_config_show(root):
     """Print the resolved layered configuration: each effective top-level key
     with the path of the layer that supplied it (or ``default``), the resolved
     content directory, and the workspace root when discoverable (else a
-    none-note). Does not require a workspace; exits zero on a default-only
-    resolution (spec-status config-show-verb)."""
+    none-note). When the resolved workspace chain carries more than one
+    member, additionally prints a ``chain:`` line listing the whole chain,
+    nearest first (shipd-workspace workspace-chain-facilities). Does not
+    require a workspace; exits zero on a default-only resolution
+    (spec-status config-show-verb)."""
     try:
         config, provenance = sc.resolve_config(root)
         content_dir = sc.specs_dirname(config)
@@ -1774,11 +1780,13 @@ def cmd_config_show(root):
         src = provenance.get(key, "default")
         print("  %s = %s  [%s]" % (key, json.dumps(config[key]), src))
     print("content-dir: %s" % content_dir)
-    ws_root = sc.find_workspace_root(root)
-    if ws_root is None:
+    chain = sc.workspace_chain(root)
+    if not chain:
         print("workspace: none discoverable")
     else:
-        print("workspace: %s" % ws_root)
+        print("workspace: %s" % chain[0])
+        if len(chain) > 1:
+            print("chain: %s" % ", ".join(chain))
     return 0
 
 
@@ -1902,13 +1910,26 @@ def cmd_pipeline_show(root, expand=None, as_json=False):
     return 0
 
 
-def _cat_files(root, paths):
+def _cat_files(root, paths, provenance=None):
     """Print each path in ``paths`` preceded by a ``--- <relpath>`` separator
     line (relpath relative to ``root``), resolving nothing itself — callers pass
-    the engine-resolved locations (spec-io mediated-read-verb)."""
+    the engine-resolved locations (spec-io mediated-read-verb).
+
+    ``provenance``, when given, maps a path to the workspace root of the
+    inherited chain store that supplied it; that path's separator line carries
+    a trailing ``(inherited <ws-root>)`` annotation naming it, so a reader
+    never has to derive provenance by comparing a root-relative separator
+    against an absolute store path (shipd-wiki wiki-status-verbs). A path
+    absent from ``provenance``, or ``provenance`` left ``None``, gets an
+    unannotated separator — this is how the nearest store's own files, and
+    every non-wiki ``cat`` kind, are printed."""
     for path in paths:
         rel = os.path.relpath(path, root)
-        print("--- %s" % rel)
+        ws_root = provenance.get(path) if provenance else None
+        if ws_root:
+            print("--- %s  (inherited %s)" % (rel, ws_root))
+        else:
+            print("--- %s" % rel)
         with open(path, encoding="utf-8") as fh:
             sys.stdout.write(fh.read())
 
@@ -1990,9 +2011,14 @@ def cmd_cat(root, kind, slug, personal=False):
         return 0
     if kind == "initiative":
         ws_root = _resolve_workspace(root)
-        path = sc.initiative_brief_path(ws_root, slug)
-        if not os.path.isfile(path):
-            raise StatusError("initiative '%s' not found (%s)" % (slug, path))
+        # Resolves to the nearest workspace-chain member holding the brief
+        # (shipd-workspace workspace-chain-facilities), not the nearest
+        # workspace root alone.
+        path = sc.resolve_initiative_brief(root, slug)
+        if path is None:
+            expected = sc.initiative_brief_path(ws_root, slug)
+            raise StatusError(
+                "initiative '%s' not found (%s)" % (slug, expected))
         _cat_files(root, [path])
         return 0
     if kind == "research":
@@ -2009,16 +2035,64 @@ def cmd_cat(root, kind, slug, personal=False):
         _cat_files(root, [path])
         return 0
     if kind == "wiki":
-        wiki = _wiki_store(root, personal)
-        # The reserved slugs resolve to the store's top-level files; every other
-        # slug names a `wiki/<slug>.md` page.
-        if slug in ("index", "log", "queue", "schema"):
-            path = os.path.join(wiki, slug + ".md")
+        # Personal is a fixed single store, bypassing the chain entirely. The
+        # workspace store resolves across the chain (shipd-wiki
+        # wiki-store-layout): `index`/`queue` aggregate every chain store's
+        # file nearest first; `log`/`schema` and a page slug resolve to the
+        # nearest chain store that holds one, a member holding no store
+        # skipped silently. `stores` is never empty for the workspace case —
+        # `_resolve_workspace` already raises when no chain exists at all.
+        if personal:
+            stores = [_wiki_store(root, personal)]
+            store_roots = [None]
+            nearest_root = None
         else:
-            path = os.path.join(wiki, "wiki", slug + ".md")
-        if not os.path.isfile(path):
-            raise StatusError("wiki page '%s' not found (%s)" % (slug, path))
-        _cat_files(root, [path])
+            ws_root = _resolve_workspace(root)
+            chain_roots = sc.workspace_chain(root)
+            nearest_root = chain_roots[0] if chain_roots else ws_root
+            existing = [(r, sc.wiki_dir(r)) for r in chain_roots
+                        if os.path.isdir(sc.wiki_dir(r))]
+            if existing:
+                store_roots, stores = (list(t) for t in zip(*existing))
+            else:
+                stores = [sc.wiki_dir(ws_root)]
+                store_roots = [ws_root]
+        # "Nearest" is the chain's own nearest member, not merely the nearest
+        # store that happens to exist on disk — a file resolved from any
+        # other chain member is inherited and gets its root as an annotation,
+        # so a reader copies it verbatim rather than deriving it (shipd-wiki
+        # wiki-status-verbs).
+        provenance = {}
+        if slug in ("index", "queue"):
+            paths = []
+            for s, r in zip(stores, store_roots):
+                p = os.path.join(s, slug + ".md")
+                if os.path.isfile(p):
+                    paths.append(p)
+                    if r != nearest_root:
+                        provenance[p] = r
+        elif slug in ("log", "schema"):
+            path = os.path.join(stores[0], slug + ".md")
+            paths = [path] if os.path.isfile(path) else []
+            if paths and store_roots[0] != nearest_root:
+                provenance[path] = store_roots[0]
+        else:
+            paths = []
+            for s, r in zip(stores, store_roots):
+                path = os.path.join(s, "wiki", slug + ".md")
+                if os.path.isfile(path):
+                    paths = [path]
+                    if r != nearest_root:
+                        provenance[path] = r
+                    break
+        if not paths:
+            near = sc.wiki_dir(nearest_root) if nearest_root else stores[0]
+            if slug in ("index", "log", "queue", "schema"):
+                rep = os.path.join(near, slug + ".md")
+            else:
+                rep = os.path.join(near, "wiki", slug + ".md")
+            raise StatusError("wiki page '%s' not found (%s)" % (slug, rep))
+        _cat_files(root, paths, provenance)
         return 0
     raise StatusError(
         "unknown cat kind '%s' (expected "
@@ -2255,28 +2329,35 @@ def _workspace_show_data(root):
     declared ``focus`` project (``None`` when undeclared), each declared
     ``project`` in slug order with its repo records and ``context`` presence,
     each ``initiative`` in slug order with its status and ``Project:`` scope,
-    and whether this repository falls under the implicit default project. An
-    unloadable registry displays as an empty one — validation lives in the
+    and whether this repository falls under the implicit default project. The
+    registry (projects, focus, repos, context) resolves from the workspace
+    chain's ``registry_root`` — the nearest chain member declaring ``projects``,
+    falling back to the workspace root when none does (shipd-workspace
+    workspace-chain-facilities) — and ``registry`` names that root's own path
+    when it differs from the workspace root, so the provenance is inspectable.
+    An unloadable registry displays as an empty one — validation lives in the
     linter (``--workspace``)."""
     ws_root = _resolve_workspace(root)
+    reg_root = sc.registry_root(root) or ws_root
     try:
-        registry = sc.load_workspace(ws_root)
+        registry = sc.load_workspace(reg_root)
     except sc.ConfigError:
         registry = {}
     focus = registry.get("focus")
-    projects = _load_projects(ws_root)
+    projects = _load_projects(reg_root)
     return {
         "workspace": ws_root,
+        "registry": reg_root if reg_root != ws_root else None,
         "focus": focus if isinstance(focus, str) and focus else None,
         "projects": [
             {"slug": slug,
-             "repos": list(_project_repo_entries(ws_root, projects[slug])),
-             "context": os.path.isfile(_context_path(ws_root, slug))}
+             "repos": list(_project_repo_entries(reg_root, projects[slug])),
+             "context": os.path.isfile(_context_path(reg_root, slug))}
             for slug in sorted(projects)],
         "initiatives": [
             {"slug": slug, "status": status, "project": project}
             for slug, status, project in _iter_initiatives(ws_root)],
-        "implicit_default_project": sc.project_of(ws_root, root) is None,
+        "implicit_default_project": sc.project_of(reg_root, root) is None,
     }
 
 
@@ -2284,6 +2365,8 @@ def _workspace_show_lines(data):
     """The ``workspace-show`` text report, rendered from
     :func:`_workspace_show_data`."""
     lines = ["workspace: %s" % data["workspace"]]
+    if data["registry"]:
+        lines.append("registry: %s" % data["registry"])
     if data["focus"]:
         lines.append("focus: %s" % data["focus"])
     for project in data["projects"]:
@@ -2309,34 +2392,50 @@ def cmd_workspace_show(root, as_json=False):
     return _emit(data, _workspace_show_lines(data), as_json)
 
 
-def cmd_workspace_init(path, git=False):
+def cmd_workspace_init(path, git=False, nested=False):
     """Initialize a workspace at ``path`` through the engine and print the
     created root (spec-status workspace-init-verb). Unlike the other workspace
     verbs, this does NOT resolve a workspace from ``--root`` — it runs precisely
     when none is discoverable. When ``git`` is set, requests the engine's git
     option (git-init when the target is not already inside a work tree, plus the
-    seeded member-repos ``.gitignore`` block). A refusal or error (an existing
-    workspace already discoverable from the target, or a missing target
-    directory) surfaces as a :class:`StatusError`, exiting non-zero."""
+    seeded member-repos ``.gitignore`` block). When ``nested`` is set, requests
+    the engine's nested option, permitting creation beneath an enclosing
+    workspace and additionally printing the enclosing root it nests under. A
+    refusal or error (an existing workspace already discoverable from the
+    target without ``nested``, a target that itself already declares
+    ``workspace``, or a missing target directory) surfaces as a
+    :class:`StatusError`, exiting non-zero."""
     try:
-        created = sc.init_workspace(path, git=git)
+        result = sc.init_workspace(path, git=git, nested=nested)
     except sc.ConfigError as exc:
         raise StatusError(str(exc))
-    print(created)
+    if nested:
+        created, enclosing = result
+        print(created)
+        if enclosing is not None:
+            print(enclosing)
+    else:
+        print(result)
     return 0
 
 
 def cmd_project_show(root, slug):
+    """Print one declared project's repos, context presence, and scoped
+    initiatives (spec-status workspace-status-verbs). The registry resolves
+    from the workspace chain's ``registry_root`` (shipd-workspace
+    workspace-chain-facilities) exactly as ``workspace-show`` does, so a
+    project declared only in an enclosing workspace still resolves here."""
     ws_root = _resolve_workspace(root)
-    projects = _load_projects(ws_root)
+    reg_root = sc.registry_root(root) or ws_root
+    projects = _load_projects(reg_root)
     if slug not in projects:
         declared = ", ".join(sorted(projects)) or "(none)"
         raise StatusError(
             "unknown project '%s' (declared slugs: %s)" % (slug, declared))
     print("project %s:" % slug)
-    for line in _project_repo_lines(ws_root, projects[slug]):
+    for line in _project_repo_lines(reg_root, projects[slug]):
         print("  repo: %s" % line)
-    ctx_path = _context_path(ws_root, slug)
+    ctx_path = _context_path(reg_root, slug)
     if os.path.isfile(ctx_path):
         with open(ctx_path, encoding="utf-8") as fh:
             first = fh.readline().strip()
@@ -2448,6 +2547,25 @@ def _write_text(path, text):
         fh.write(text)
 
 
+def _scaffold_wiki_store(wiki):
+    """Seed the wiki store layout at ``wiki`` (spec-status wiki-status-verbs):
+    ``schema.md`` with the grammar conventions, an empty ``index.md`` and
+    ``queue.md``, a first dated ``log.md`` entry, and empty ``sources/`` and
+    ``wiki/`` directories. Shared by ``wiki-init`` and every write verb that
+    scaffolds the nearest workspace's store on demand (``wiki-queue-add``,
+    ``wiki-queue-answer``) rather than erroring when it does not yet exist."""
+    os.makedirs(os.path.join(wiki, "wiki"))
+    os.makedirs(os.path.join(wiki, "sources"))
+    today = datetime.date.today().isoformat()
+    _write_text(os.path.join(wiki, "schema.md"), WIKI_SCHEMA_SEED)
+    _write_text(os.path.join(wiki, "index.md"), "# Index\n")
+    _write_text(os.path.join(wiki, "queue.md"), "# Queue\n")
+    _write_text(
+        os.path.join(wiki, "log.md"),
+        "# Log\n\n## [%s] wiki-init | initialized the wiki store\n\n"
+        "Seeded the empty store layout.\n" % today)
+
+
 def cmd_wiki_init(root, personal=False):
     """Scaffold the wiki store layout (spec-status wiki-status-verbs). Resolves
     the workspace store by default, or the personal memory store under
@@ -2460,42 +2578,55 @@ def cmd_wiki_init(root, personal=False):
     if os.path.exists(wiki):
         raise StatusError(
             "wiki store already exists at %s; refusing to overwrite" % wiki)
-    os.makedirs(os.path.join(wiki, "wiki"))
-    os.makedirs(os.path.join(wiki, "sources"))
-    today = datetime.date.today().isoformat()
-    _write_text(os.path.join(wiki, "schema.md"), WIKI_SCHEMA_SEED)
-    _write_text(os.path.join(wiki, "index.md"), "# Index\n")
-    _write_text(os.path.join(wiki, "queue.md"), "# Queue\n")
-    _write_text(
-        os.path.join(wiki, "log.md"),
-        "# Log\n\n## [%s] wiki-init | initialized the wiki store\n\n"
-        "Seeded the empty store layout.\n" % today)
+    _scaffold_wiki_store(wiki)
     print(wiki)
     return 0
 
 
 def cmd_wiki_show(root, personal=False):
     """Print the wiki store's health (spec-status wiki-status-verbs): the store
-    root, a ``base:`` line reporting the resolved ``wiki_base`` store, the page
-    count, index-coverage health, the pending-question count, and the last log
-    entry. Resolves the workspace store by default, or the personal memory store
-    under ``personal``, and errors when no store exists. A personal store
-    participates in no base layering, so its ``base:`` line is always ``none``."""
+    root, a ``chain:`` line naming the inherited chain stores that exist
+    (nearest first, or ``chain: none``), a ``base:`` line reporting the
+    resolved ``wiki_base`` store, the page count, index-coverage health, the
+    pending-question count, and the last log entry. Resolves the workspace
+    store by default, or the personal memory store under ``personal``. Under
+    ``personal`` the store participates in no chain or base layering, so
+    ``chain:`` and ``base:`` are always ``none``, and it errors when that
+    store does not exist. For the workspace store, the nearest workspace's
+    store may be absent while an enclosing chain member's is not: in that case
+    the nearest store is reported absent rather than erroring, and the verb
+    errors only when no chain member holds a store at all."""
     wiki = _wiki_store(root, personal)
+    chain_stores = [] if personal else sc.resolve_wiki_stores(root)
     if not os.path.isdir(wiki):
-        raise StatusError("no wiki store at %s (run `wiki-init`)" % wiki)
-    print("wiki: %s" % wiki)
+        if personal or not chain_stores:
+            raise StatusError("no wiki store at %s (run `wiki-init`)" % wiki)
+        print("wiki: %s (absent)" % wiki)
+    else:
+        print("wiki: %s" % wiki)
+
+    # The chain's remaining (inherited) stores, nearest first — every chain
+    # store that is not this store itself (shipd-wiki wiki-store-layout). A
+    # personal store participates in no chain, so it always reports
+    # `chain: none`.
+    if personal:
+        print("chain: none")
+    else:
+        inherited = [s for s in chain_stores
+                     if os.path.realpath(s) != os.path.realpath(wiki)]
+        print("chain: %s" % (", ".join(inherited) if inherited else "none"))
 
     # The layered `wiki_base` store, if declared (shipd-config wiki-base-key). A
-    # malformed value surfaces as a ConfigError → the verb's error exit. A base
-    # resolving to this store's own directory is treated as no base, so running
-    # inside the base workspace itself never double-layers. The personal store
-    # participates in no base layering, so it always reports `base: none`.
+    # malformed value surfaces as a ConfigError → the verb's error exit.
+    # `wiki_base_dir` itself treats a base resolving to any workspace-chain
+    # member's store directory as undeclared, so running inside the base
+    # workspace itself (or an enclosing one) never double-layers. The personal
+    # store participates in no base layering, so it always reports `base: none`.
     if personal:
         print("base: none")
     else:
         base = sc.wiki_base_dir(_resolve_workspace(root))
-        if base is None or os.path.realpath(base) == os.path.realpath(wiki):
+        if base is None:
             print("base: none")
         elif os.path.isdir(base):
             print("base: %s (present)" % base)
@@ -2567,19 +2698,23 @@ def _validate_queue_text(text):
 
 def cmd_wiki_queue_add(root, slug, question, options, recommendation, origin):
     """Append a pending-question block to the wiki queue (spec-status
-    wiki-status-verbs, shipd-wiki wiki-question-queue). Builds a ``## q-<slug>``
-    block carrying the given ``--question``/``--options``/``--recommendation``,
-    an ``Asked: <today> [origin]`` line, and ``Answer: pending``; appends it to
+    wiki-status-verbs, shipd-wiki wiki-question-queue, wiki-store-layout).
+    Builds a ``## q-<slug>`` block carrying the given
+    ``--question``/``--options``/``--recommendation``, an
+    ``Asked: <today> [origin]`` line, and ``Answer: pending``; appends it to
     ``queue.md`` and re-validates the resulting queue with the spec_common
     parser. A duplicate slug or an invalid result restores the prior
-    ``queue.md`` and exits non-zero."""
+    ``queue.md`` and exits non-zero. Every write targets the *nearest*
+    workspace's store alone — never an inherited chain member's — scaffolding
+    that store's layout on demand when it does not yet exist, rather than
+    erroring."""
     if not sc.KEBAB_RE.match(slug):
         raise StatusError("queue slug '%s' is not a kebab-case slug" % slug)
     ws_root = _resolve_workspace(root)
     wiki = sc.wiki_dir(ws_root)
     queue_path = os.path.join(wiki, "queue.md")
     if not os.path.isfile(queue_path):
-        raise StatusError("no wiki store at %s (run `wiki-init`)" % wiki)
+        _scaffold_wiki_store(wiki)
     with open(queue_path, encoding="utf-8") as fh:
         before = fh.read()
 
@@ -2619,13 +2754,14 @@ def cmd_wiki_queue_add(root, slug, question, options, recommendation, origin):
 
 def cmd_wiki_queue_answer(root, slug, answer):
     """Write a user's answer into a still-pending queue block (shipd-wiki
-    wiki-queue-answer-verb). Resolves the workspace store exactly as
-    ``wiki-queue-add`` does, accepts the bare slug (prefixing ``q-`` itself),
-    and replaces the ``## q-<slug>`` block's ``- Answer: pending`` line with
-    ``- Answer: <answer>``, printing the block id. A missing store, a missing
-    block, or a block whose answer is no longer ``pending`` writes nothing and
-    exits non-zero — an answered block belongs to the `/s:teach` drain and is
-    never overwritten."""
+    wiki-queue-answer-verb, wiki-store-layout). Resolves the workspace store
+    exactly as ``wiki-queue-add`` does — scaffolding the nearest workspace's
+    store on demand when it does not yet exist, rather than erroring — accepts
+    the bare slug (prefixing ``q-`` itself), and replaces the ``## q-<slug>``
+    block's ``- Answer: pending`` line with ``- Answer: <answer>``, printing
+    the block id. A missing block, or a block whose answer is no longer
+    ``pending``, writes nothing and exits non-zero — an answered block belongs
+    to the `/s:teach` drain and is never overwritten."""
     if not sc.KEBAB_RE.match(slug):
         raise StatusError("queue slug '%s' is not a kebab-case slug" % slug)
     answer = answer.strip()
@@ -2635,7 +2771,7 @@ def cmd_wiki_queue_answer(root, slug, answer):
     wiki = sc.wiki_dir(ws_root)
     queue_path = os.path.join(wiki, "queue.md")
     if not os.path.isfile(queue_path):
-        raise StatusError("no wiki store at %s (run `wiki-init`)" % wiki)
+        _scaffold_wiki_store(wiki)
     with open(queue_path, encoding="utf-8") as fh:
         before = fh.read()
 
@@ -2928,6 +3064,9 @@ def main(argv=None):
         "--git", action="store_true",
         help="git-init the target when needed and seed a marked member-repos "
              ".gitignore block")
+    p_ws_init.add_argument(
+        "--nested", action="store_true",
+        help="permit creating the workspace beneath an enclosing one")
 
     p_ws_show = sub.add_parser(
         "workspace-show",
@@ -3041,7 +3180,7 @@ def main(argv=None):
         if args.verb == "initiative-set-status":
             return cmd_initiative_set_status(root, args.status, args.slug)
         if args.verb == "workspace-init":
-            return cmd_workspace_init(args.path, args.git)
+            return cmd_workspace_init(args.path, args.git, args.nested)
         if args.verb == "workspace-show":
             return cmd_workspace_show(root, as_json=args.json)
         if args.verb == "project-show":

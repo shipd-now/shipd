@@ -248,14 +248,15 @@ an error naming the key.
 id: wiki-base-key
 
 The configuration MAY declare `wiki_base`: a non-empty string path (with `~`
-expansion) naming the durable base wiki store directory layered beneath a
-workspace's own wiki store, resolved through the standard layered per-key
+expansion) naming the durable base wiki store directory layered beneath the
+workspace chain's own stores, resolved through the standard layered per-key
 merge. The expanded value SHALL be an absolute path; if the declared value is
 not a non-empty string or does not expand to an absolute path, then the
 consuming verb SHALL exit non-zero with an error naming `wiki_base`. When the
 key is undeclared, there SHALL be no base layer. When the resolved base equals
-the consuming workspace's own store directory, consumers SHALL treat the base
-as undeclared.
+the store directory of any member of the consuming workspace chain, consumers
+SHALL treat the base as undeclared, so a base that is also an enclosing
+workspace is searched once rather than twice.
 
 #### Scenario: Declared key resolves expanded
 - **GIVEN** a config layer declaring `wiki_base: "~/projects/.shipd/wiki"`
@@ -274,6 +275,13 @@ as undeclared.
 #### Scenario: Self-referential base is no base
 - **GIVEN** `wiki_base` resolving to the workspace's own store directory
 - **WHEN** a consumer resolves the base layer
+- **THEN** it behaves as though the key were undeclared
+
+#### Scenario: A base already in the chain is no base
+- **GIVEN** nested workspaces where `wiki_base` resolves to the outer
+  workspace's store directory
+- **WHEN** a consumer in a repo under the inner workspace resolves the base
+  layer
 - **THEN** it behaves as though the key were undeclared
 
 ### Requirement: Personal memory store key
