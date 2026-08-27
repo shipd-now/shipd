@@ -268,6 +268,38 @@ class InitiativeEmitTest(SpecEmitTestBase):
         self.assertFalse(os.path.exists(
             os.path.join(self.root, ".shipd", "initiatives", "my-goal")))
 
+    # -- Nested workspace (shipd-workspace workspace-chain-facilities) --
+
+    def cli_at(self, cwd, *args):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        return subprocess.run(
+            ["python3", SCRIPT, "--root", cwd, *args],
+            capture_output=True, text=True, env=env)
+
+    def test_installs_into_nearest_workspace_never_an_enclosing_one(self):
+        # self.root doubles as an outer, enclosing workspace; `inner` nests
+        # beneath it and holds no initiatives of its own yet.
+        self.declare_workspace()
+        inner = os.path.join(self.root, "nested")
+        os.makedirs(inner, exist_ok=True)
+        with open(os.path.join(inner, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"workspace": {}}, fh)
+        repo = os.path.join(inner, "repo")
+        os.makedirs(repo, exist_ok=True)
+
+        src = self.stage_file(CLEAN_BRIEF)
+        r = self.cli_at(repo, "initiative", "my-goal", "--from", src)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+        inner_brief = os.path.join(
+            inner, ".shipd", "initiatives", "my-goal", "brief.md")
+        outer_brief = os.path.join(
+            self.root, ".shipd", "initiatives", "my-goal", "brief.md")
+        self.assertTrue(os.path.isfile(inner_brief))
+        self.assertFalse(os.path.exists(outer_brief))
+
 
 class EpicEmitTest(SpecEmitTestBase):
     def _epic_path(self, slug):
@@ -475,6 +507,68 @@ class WikiEmitTest(SpecEmitTestBase):
         r = self.cli("wiki", "--from", self.stage)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("no workspace", r.stderr.lower())
+
+    # -- Nested workspace (shipd-workspace workspace-chain-facilities) --
+
+    def cli_at(self, cwd, *args):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        return subprocess.run(
+            ["python3", SCRIPT, "--root", cwd, *args],
+            capture_output=True, text=True, env=env)
+
+    def _seed_wiki_at(self, wiki_dir):
+        """A clean seeded store at an arbitrary ``wiki_dir``: one page
+        cataloged by a matching index — mirrors :meth:`seed_store`, which is
+        fixed to ``self.wiki()``."""
+        os.makedirs(os.path.join(wiki_dir, "sources"), exist_ok=True)
+        os.makedirs(os.path.join(wiki_dir, "wiki"), exist_ok=True)
+
+        def w(rel, text):
+            path = os.path.join(wiki_dir, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+
+        w("schema.md", "# Wiki schema\n\nConventions.\n")
+        w("index.md", "# Index\n\n- [[welcome]] — The welcome page.\n")
+        w("log.md",
+          "# Log\n\n## [2026-07-30] wiki-init | seeded the store\n\n"
+          "Init.\n")
+        w("queue.md", "# Queue\n")
+        w("wiki/welcome.md", "# Welcome\n\nHello.\n")
+
+    def test_wiki_installs_into_nearest_workspace_never_an_enclosing_one(self):
+        # self.root doubles as an outer, enclosing workspace, seeded with its
+        # own store; `inner` nests beneath it with its own, separately seeded
+        # store.
+        self.declare_workspace()
+        self.seed_store()
+        outer_before = self._snapshot()
+
+        inner = os.path.join(self.root, "nested")
+        os.makedirs(inner, exist_ok=True)
+        with open(os.path.join(inner, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"workspace": {}}, fh)
+        inner_wiki = os.path.join(inner, ".shipd", "wiki")
+        self._seed_wiki_at(inner_wiki)
+        repo = os.path.join(inner, "repo")
+        os.makedirs(repo, exist_ok=True)
+
+        self.stage_wiki({
+            "wiki/intro.md": "# Intro\n\nThe intro page.\n",
+            "index.md": ("# Index\n\n- [[welcome]] — The welcome page.\n"
+                         "- [[intro]] — Introduction.\n"),
+        })
+        r = self.cli_at(repo, "wiki", "--from", self.stage)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+        self.assertTrue(os.path.isfile(
+            os.path.join(inner_wiki, "wiki", "intro.md")))
+        self.assertFalse(os.path.exists(
+            os.path.join(self.wiki(), "wiki", "intro.md")))
+        self.assertEqual(self._snapshot(), outer_before)  # outer untouched
 
     # -- Auto-commit (shipd-wiki wiki-autocommit) --
 

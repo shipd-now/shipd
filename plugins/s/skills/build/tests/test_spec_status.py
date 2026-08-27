@@ -1826,6 +1826,61 @@ class WorkspaceShowTest(SpecStatusTestBase):
             self.assertIn("no workspace", r.stderr.lower())
 
 
+class WorkspaceShowChainTest(SpecStatusTestBase):
+    """``workspace-show``'s registry provenance when the project registry
+    falls through the workspace chain (spec-status workspace-status-verbs,
+    shipd-workspace workspace-chain-facilities). ``self.root`` is the outer
+    workspace; ``self.inner`` nests beneath it and ``self.repo`` (under
+    ``self.inner``) is where the verb runs from."""
+
+    def setUp(self):
+        super().setUp()
+        self.inner = os.path.join(self.root, "nested")
+        os.makedirs(self.inner, exist_ok=True)
+        self.repo = os.path.join(self.inner, "repo")
+        os.makedirs(self.repo, exist_ok=True)
+
+    def cli_at(self, cwd, *args):
+        return subprocess.run(
+            ["python3", SCRIPT, "--root", cwd, *args],
+            capture_output=True, text=True)
+
+    def test_nested_workspace_with_no_projects_inherits_the_outer_registry(self):
+        self.declare_workspace({"projects": {
+            "alpha": {"repos": ["present-repo"]}}})  # outer, at self.root
+        os.makedirs(os.path.join(self.root, "present-repo"), exist_ok=True)
+        self.declare_workspace(root=self.inner)  # inner declares no projects
+
+        r = self.cli_at(self.repo, "workspace-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("alpha", r.stdout)
+        self.assertIn("present-repo", r.stdout)
+        # Provenance names the outer root exactly (full-line match, since the
+        # outer root is a path *prefix* of the inner one — a plain substring
+        # check would pass even without real provenance).
+        lines = r.stdout.splitlines()
+        self.assertIn("registry: %s" % self.root, lines)
+
+    def test_nested_workspace_with_own_projects_shows_only_its_own(self):
+        self.declare_workspace({"projects": {
+            "alpha": {"repos": ["outer-repo"]}}})  # outer, at self.root
+        os.makedirs(os.path.join(self.root, "outer-repo"), exist_ok=True)
+        os.makedirs(os.path.join(self.inner, "inner-repo"), exist_ok=True)
+        self.declare_workspace(
+            {"projects": {"beta": {"repos": ["inner-repo"]}}},
+            root=self.inner)  # inner declares its own projects
+
+        r = self.cli_at(self.repo, "workspace-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("beta", r.stdout)
+        self.assertIn("inner-repo", r.stdout)
+        self.assertNotIn("alpha", r.stdout)
+        self.assertNotIn("outer-repo", r.stdout)
+        # No provenance line: the effective registry is the workspace's own.
+        lines = r.stdout.splitlines()
+        self.assertFalse(any(line.startswith("registry: ") for line in lines))
+
+
 class WorkspaceInitTest(SpecStatusTestBase):
     """The ``workspace-init <path>`` verb (spec-status workspace-init-verb).
 
@@ -1907,6 +1962,32 @@ class WorkspaceInitTest(SpecStatusTestBase):
         self.assertFalse(os.path.isdir(os.path.join(target, ".git")))
         self.assertFalse(os.path.exists(os.path.join(target, ".gitignore")))
 
+    # -- nested option -------------------------------------------------------
+
+    def test_nested_flag_creates_under_an_enclosing_workspace(self):
+        # A workspace declared at self.root is discoverable from the target.
+        self.declare_workspace()
+        target = os.path.join(self.root, "nested")
+        os.makedirs(target)
+        r = self.cli("workspace-init", target, "--nested")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(target, r.stdout)
+        self.assertIn(self.root, r.stdout)
+        marker = self.marker_path(target)
+        self.assertTrue(os.path.isfile(marker))
+        with open(marker, encoding="utf-8") as fh:
+            data = json.load(fh)
+        self.assertEqual(data["workspace"], {})
+
+    def test_bare_verb_still_refuses_under_an_enclosing_workspace(self):
+        self.declare_workspace()
+        target = os.path.join(self.root, "nested")
+        os.makedirs(target)
+        r = self.cli("workspace-init", target)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn(self.root, r.stderr)
+        self.assertFalse(os.path.exists(self.marker_path(target)))
+
 
 class ConfigShowTest(SpecStatusTestBase):
     """`config-show` prints the resolved layered configuration: per-key
@@ -1963,6 +2044,33 @@ class ConfigShowTest(SpecStatusTestBase):
         r = self.cli("config-show")
         self.assertEqual(r.returncode, 0)
         self.assertIn("none", r.stdout.lower())
+
+    # -- nested chain --------------------------------------------------------
+
+    def cli_at(self, cwd, *args):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        return subprocess.run(
+            ["python3", SCRIPT, "--root", cwd, *args],
+            capture_output=True, text=True, env=env)
+
+    def test_nested_chain_reports_nearest_root_and_chain_line(self):
+        self._write_config(self.root, {"workspace": {}})
+        inner = os.path.join(self.root, "nested")
+        self._write_config(inner, {"workspace": {}})
+        repo = os.path.join(inner, "repo")
+        os.makedirs(repo, exist_ok=True)
+        r = self.cli_at(repo, "config-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertIn("workspace: %s" % inner, lines)
+        self.assertIn("chain: %s, %s" % (inner, self.root), lines)
+
+    def test_single_member_chain_prints_no_chain_line(self):
+        self._write_config(self.root, {"workspace": {}})
+        r = self.cli("config-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("chain:", r.stdout)
 
 
 class PipelineShowTest(SpecStatusTestBase):
@@ -2586,6 +2694,236 @@ class WikiVerbTest(SpecStatusTestBase):
         self.assertIn("nonexistent", r.stderr)
 
 
+class WikiChainTest(SpecStatusTestBase):
+    """Chain-aware ``cat wiki`` (spec-status wiki-status-verbs, shipd-wiki
+    wiki-store-layout): reads resolve across the workspace chain, nearest
+    first. ``self.root`` is the outer workspace; ``self.inner`` nests beneath
+    it and ``self.repo`` (under ``self.inner``) is where the verb runs from."""
+
+    def setUp(self):
+        super().setUp()
+        self.declare_workspace()  # outer workspace at self.root
+        self.assertEqual(self.cli("wiki-init").returncode, 0)
+        self.inner = os.path.join(self.root, "nested")
+        os.makedirs(self.inner, exist_ok=True)
+        self.declare_workspace(root=self.inner)  # nested workspace
+        self.repo = os.path.join(self.inner, "repo")
+        os.makedirs(self.repo, exist_ok=True)
+
+    def cli_at(self, cwd, *args):
+        return subprocess.run(
+            ["python3", SCRIPT, "--root", cwd, *args],
+            capture_output=True, text=True)
+
+    def wiki_of(self, ws_root):
+        return os.path.join(ws_root, ".shipd", "wiki")
+
+    def write_page(self, ws_root, slug, text):
+        pages = os.path.join(self.wiki_of(ws_root), "wiki")
+        os.makedirs(pages, exist_ok=True)
+        with open(os.path.join(pages, slug + ".md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(text)
+
+    def write_wiki_file(self, ws_root, name, text):
+        with open(os.path.join(self.wiki_of(ws_root), name), "w",
+                  encoding="utf-8") as fh:
+            fh.write(text)
+
+    def init_inner_store(self):
+        r = self.cli_at(self.inner, "wiki-init")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_page_held_only_by_outer_store_prints_from_there(self):
+        self.write_page(self.root, "conventions", "# Conventions\n\nOuter.\n")
+        r = self.cli_at(self.repo, "cat", "wiki", "conventions")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Outer.", r.stdout)
+        sep = os.path.relpath(
+            os.path.join(self.wiki_of(self.root), "wiki", "conventions.md"),
+            self.repo)
+        self.assertIn("--- %s" % sep, r.stdout)
+
+    def test_page_held_by_both_prints_the_inner_one(self):
+        self.init_inner_store()
+        self.write_page(self.root, "conventions", "# Conventions\n\nOuter.\n")
+        self.write_page(self.inner, "conventions", "# Conventions\n\nInner.\n")
+        r = self.cli_at(self.repo, "cat", "wiki", "conventions")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Inner.", r.stdout)
+        self.assertNotIn("Outer.", r.stdout)
+        sep = os.path.relpath(
+            os.path.join(self.wiki_of(self.inner), "wiki", "conventions.md"),
+            self.repo)
+        self.assertIn("--- %s" % sep, r.stdout)
+
+    def test_cat_wiki_index_aggregates_every_chain_store_nearest_first(self):
+        self.init_inner_store()
+        self.write_wiki_file(
+            self.root, "index.md", "# Index\n\n- [[a]] — Outer page.\n")
+        self.write_wiki_file(
+            self.inner, "index.md", "# Index\n\n- [[b]] — Inner page.\n")
+        r = self.cli_at(self.repo, "cat", "wiki", "index")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        inner_sep = os.path.relpath(
+            os.path.join(self.wiki_of(self.inner), "index.md"), self.repo)
+        outer_sep = os.path.relpath(
+            os.path.join(self.wiki_of(self.root), "index.md"), self.repo)
+        inner_pos = r.stdout.find("--- %s" % inner_sep)
+        outer_pos = r.stdout.find("--- %s" % outer_sep)
+        self.assertNotEqual(inner_pos, -1)
+        self.assertNotEqual(outer_pos, -1)
+        self.assertLess(inner_pos, outer_pos)
+        self.assertIn("Outer page.", r.stdout)
+        self.assertIn("Inner page.", r.stdout)
+
+    def test_cat_wiki_queue_aggregates_every_chain_store_nearest_first(self):
+        self.init_inner_store()
+        self.write_wiki_file(self.root, "queue.md", "# Queue\n\nOuter queue.\n")
+        self.write_wiki_file(self.inner, "queue.md", "# Queue\n\nInner queue.\n")
+        r = self.cli_at(self.repo, "cat", "wiki", "queue")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        inner_sep = os.path.relpath(
+            os.path.join(self.wiki_of(self.inner), "queue.md"), self.repo)
+        outer_sep = os.path.relpath(
+            os.path.join(self.wiki_of(self.root), "queue.md"), self.repo)
+        inner_pos = r.stdout.find("--- %s" % inner_sep)
+        outer_pos = r.stdout.find("--- %s" % outer_sep)
+        self.assertNotEqual(inner_pos, -1)
+        self.assertNotEqual(outer_pos, -1)
+        self.assertLess(inner_pos, outer_pos)
+        self.assertIn("Outer queue.", r.stdout)
+        self.assertIn("Inner queue.", r.stdout)
+
+    def test_page_held_only_by_outer_store_annotates_inherited_provenance(self):
+        self.write_page(self.root, "conventions", "# Conventions\n\nOuter.\n")
+        r = self.cli_at(self.repo, "cat", "wiki", "conventions")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        sep = os.path.relpath(
+            os.path.join(self.wiki_of(self.root), "wiki", "conventions.md"),
+            self.repo)
+        self.assertIn(
+            "--- %s  (inherited %s)" % (sep, self.root), r.stdout)
+
+    def test_page_held_by_nearest_store_has_no_annotation(self):
+        self.init_inner_store()
+        self.write_page(self.inner, "conventions", "# Conventions\n\nInner.\n")
+        r = self.cli_at(self.repo, "cat", "wiki", "conventions")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        sep = os.path.relpath(
+            os.path.join(self.wiki_of(self.inner), "wiki", "conventions.md"),
+            self.repo)
+        self.assertIn("--- %s\n" % sep, r.stdout)
+        self.assertNotIn("inherited", r.stdout)
+
+    def test_cat_wiki_index_annotates_only_inherited_store(self):
+        self.init_inner_store()
+        self.write_wiki_file(
+            self.root, "index.md", "# Index\n\n- [[a]] — Outer page.\n")
+        self.write_wiki_file(
+            self.inner, "index.md", "# Index\n\n- [[b]] — Inner page.\n")
+        r = self.cli_at(self.repo, "cat", "wiki", "index")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        inner_sep = os.path.relpath(
+            os.path.join(self.wiki_of(self.inner), "index.md"), self.repo)
+        outer_sep = os.path.relpath(
+            os.path.join(self.wiki_of(self.root), "index.md"), self.repo)
+        self.assertIn("--- %s\n" % inner_sep, r.stdout)
+        self.assertIn(
+            "--- %s  (inherited %s)" % (outer_sep, self.root), r.stdout)
+
+    def test_cat_wiki_log_reads_nearest_store_only(self):
+        self.init_inner_store()
+        self.write_wiki_file(self.root, "log.md", "# Log\n\nOuter log.\n")
+        self.write_wiki_file(self.inner, "log.md", "# Log\n\nInner log.\n")
+        r = self.cli_at(self.repo, "cat", "wiki", "log")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Inner log.", r.stdout)
+        self.assertNotIn("Outer log.", r.stdout)
+
+    def test_cat_wiki_schema_reads_nearest_store_only(self):
+        self.init_inner_store()
+        self.write_wiki_file(self.root, "schema.md", "# Schema\n\nOuter.\n")
+        self.write_wiki_file(self.inner, "schema.md", "# Schema\n\nInner.\n")
+        r = self.cli_at(self.repo, "cat", "wiki", "schema")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Inner.", r.stdout)
+        self.assertNotIn("Outer.", r.stdout)
+
+
+class WikiShowChainTest(SpecStatusTestBase):
+    """``wiki-show``'s ``chain:`` line and absent-nearest-store handling
+    (spec-status wiki-status-verbs, shipd-config wiki-base-key). ``self.root``
+    is the outer workspace; ``self.inner`` nests beneath it and ``self.repo``
+    (under ``self.inner``) is where the verb runs from. Unlike
+    ``WikiChainTest``, no store is scaffolded in ``setUp`` — each test seeds
+    exactly what it needs."""
+
+    def setUp(self):
+        super().setUp()
+        self.declare_workspace()  # outer workspace at self.root
+        self.inner = os.path.join(self.root, "nested")
+        os.makedirs(self.inner, exist_ok=True)
+        self.declare_workspace(root=self.inner)  # nested workspace
+        self.repo = os.path.join(self.inner, "repo")
+        os.makedirs(self.repo, exist_ok=True)
+
+    def cli_at(self, cwd, *args):
+        return subprocess.run(
+            ["python3", SCRIPT, "--root", cwd, *args],
+            capture_output=True, text=True)
+
+    def wiki_of(self, ws_root):
+        return os.path.join(ws_root, ".shipd", "wiki")
+
+    def test_chain_line_names_inherited_store_when_one_exists(self):
+        self.assertEqual(self.cli_at(self.root, "wiki-init").returncode, 0)
+        self.assertEqual(self.cli_at(self.inner, "wiki-init").returncode, 0)
+        r = self.cli_at(self.repo, "wiki-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("chain: %s" % self.wiki_of(self.root), r.stdout)
+
+    def test_chain_line_is_none_with_no_inherited_member(self):
+        # A single-member chain: only the nearest (inner) workspace has a
+        # store; there is no enclosing store to inherit.
+        self.assertEqual(self.cli_at(self.inner, "wiki-init").returncode, 0)
+        r = self.cli_at(self.repo, "wiki-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("chain: none", r.stdout)
+
+    def test_chain_line_is_none_under_personal(self):
+        r = self.cli_at(self.repo, "wiki-init", "--personal")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.cli_at(self.repo, "wiki-show", "--personal")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("chain: none", r.stdout)
+
+    def test_base_none_when_wiki_base_points_at_a_chain_store(self):
+        self.assertEqual(self.cli_at(self.root, "wiki-init").returncode, 0)
+        with open(os.path.join(self.inner, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump(
+                {"workspace": {}, "wiki_base": self.wiki_of(self.root)}, fh)
+        self.assertEqual(self.cli_at(self.inner, "wiki-init").returncode, 0)
+        r = self.cli_at(self.repo, "wiki-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("base: none", r.stdout)
+
+    def test_absent_nearest_store_reports_absent_and_still_exits_zero(self):
+        # Only the outer workspace holds a store; the inner (nearest) does
+        # not.
+        self.assertEqual(self.cli_at(self.root, "wiki-init").returncode, 0)
+        r = self.cli_at(self.repo, "wiki-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("absent", r.stdout.lower())
+        self.assertIn(self.wiki_of(self.inner), r.stdout)
+        self.assertIn("chain: %s" % self.wiki_of(self.root), r.stdout)
+
+    def test_exits_non_zero_only_when_no_chain_member_holds_a_store(self):
+        r = self.cli_at(self.repo, "wiki-show")
+        self.assertNotEqual(r.returncode, 0)
+
+
 class WikiQueueAddTest(SpecStatusTestBase):
     """The ``wiki-queue-add <q-slug>`` verb (spec-status wiki-status-verbs,
     shipd-wiki wiki-question-queue). ``self.root`` doubles as the workspace root;
@@ -2714,6 +3052,52 @@ class WikiQueueAddTest(SpecStatusTestBase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("## q-stale-cache", self.queue_text())
         self.assertFalse(os.path.exists(os.path.join(self.root, ".git")))
+
+
+class WikiQueueAddChainTest(SpecStatusTestBase):
+    """``wiki-queue-add`` scaffolds the nearest workspace's store rather than
+    erroring, even when only an enclosing chain member holds one (shipd-wiki
+    wiki-store-layout). ``self.root`` is the outer workspace (holding a wiki
+    store); ``self.inner`` nests beneath it with no store of its own."""
+
+    def setUp(self):
+        super().setUp()
+        self.declare_workspace()  # outer workspace at self.root
+        self.assertEqual(self.cli("wiki-init").returncode, 0)
+        self.inner = os.path.join(self.root, "nested")
+        os.makedirs(self.inner, exist_ok=True)
+        self.declare_workspace(root=self.inner)  # nested workspace, no store
+
+    def cli_at(self, cwd, *args):
+        return subprocess.run(
+            ["python3", SCRIPT, "--root", cwd, *args],
+            capture_output=True, text=True)
+
+    def wiki_of(self, ws_root):
+        return os.path.join(ws_root, ".shipd", "wiki")
+
+    def test_scaffolds_the_nearest_store_and_leaves_the_outer_untouched(self):
+        outer_queue = os.path.join(self.wiki_of(self.root), "queue.md")
+        with open(outer_queue, encoding="utf-8") as fh:
+            outer_before = fh.read()
+        self.assertFalse(os.path.isdir(self.wiki_of(self.inner)))
+
+        r = self.cli_at(self.inner, "wiki-queue-add", "stale-cache",
+                         "--question", "Is the cache stale?",
+                         "--options", "yes | no",
+                         "--recommendation", "yes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+        inner_queue = os.path.join(self.wiki_of(self.inner), "queue.md")
+        self.assertTrue(os.path.isfile(inner_queue))
+        with open(inner_queue, encoding="utf-8") as fh:
+            inner_after = fh.read()
+        self.assertIn("## q-stale-cache", inner_after)
+        self.assertIn("Is the cache stale?", inner_after)
+
+        with open(outer_queue, encoding="utf-8") as fh:
+            outer_after = fh.read()
+        self.assertEqual(outer_after, outer_before)  # byte-identical
 
 
 class WikiQueueAnswerTest(SpecStatusTestBase):

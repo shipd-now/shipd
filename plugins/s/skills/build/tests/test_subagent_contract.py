@@ -19,6 +19,8 @@ CONTRACT = os.path.normpath(
     os.path.join(HERE, "..", "..", "..", "agents", "sub-agent.md"))
 VALIDATOR_CONTRACT = os.path.normpath(
     os.path.join(HERE, "..", "..", "..", "agents", "validator.md"))
+ORACLE_CONTRACT = os.path.normpath(
+    os.path.join(HERE, "..", "..", "..", "agents", "oracle.md"))
 
 
 class WorkspaceGateContractTest(unittest.TestCase):
@@ -114,6 +116,66 @@ class ValidatorDesignReferenceContractTest(unittest.TestCase):
         section = self.inputs_section()
         self.assertIn("read-only", section)
         self.assertIn("design-fidelity", section)
+
+
+class OracleChainRungContractTest(unittest.TestCase):
+    """The oracle's search ladder carries a workspace-chain rung between the
+    personal and base rungs (shipd-ask oracle-agent-contract,
+    oracle-cited-answers): it reads `wiki-show`'s `chain:` line, searches each
+    listed store nearest first with the same engine reads and read-only grep,
+    skips a chain member holding no store, and the base rung still follows it.
+    Also pins the `Cited: [[slug]] (inherited <ws-root>)` citation marker."""
+
+    def setUp(self):
+        with open(ORACLE_CONTRACT, encoding="utf-8") as fh:
+            self.text = fh.read()
+        self.lower = self.text.lower()
+
+    def ladder_section(self):
+        """The '## The search ladder' section body: from its heading up to
+        the next top-level `## ` heading (or end of file)."""
+        m = re.search(
+            r"^## The search ladder\b.*$", self.text, re.MULTILINE)
+        self.assertIsNotNone(
+            m, "contract is missing a '## The search ladder' section heading")
+        start = m.start()
+        nxt = re.search(r"^## ", self.text[m.end():], re.MULTILINE)
+        end = m.end() + nxt.start() if nxt else len(self.text)
+        return self.text[start:end]
+
+    def test_ladder_reads_the_chain_line(self):
+        section = self.ladder_section().lower()
+        self.assertIn("chain:", section)
+
+    def test_ladder_searches_chain_stores_nearest_first(self):
+        section = self.ladder_section().lower()
+        self.assertIn("nearest first", section)
+
+    def test_ladder_skips_a_chain_member_with_no_store(self):
+        section = self.ladder_section().lower()
+        self.assertIn("no store", section)
+
+    def test_base_rung_still_follows_the_chain_rung(self):
+        section = self.ladder_section().lower()
+        chain_pos = section.find("chain:")
+        base_pos = section.find("base wiki")
+        self.assertGreater(chain_pos, -1)
+        self.assertGreater(base_pos, -1)
+        self.assertLess(chain_pos, base_pos)
+
+    def test_documents_the_inherited_citation_marker(self):
+        self.assertIn("Cited: [[slug]] (inherited <ws-root>)", self.text)
+
+    def test_ladder_requires_copying_the_separators_provenance_annotation(self):
+        """The inherited marker must be copied verbatim from what the engine
+        already printed on the page's separator line — not derived by the
+        agent comparing paths itself. The ladder section must instruct
+        copying the `(inherited <ws-root>)` annotation verbatim onto the
+        citation."""
+        section = self.ladder_section().lower()
+        self.assertIn("verbatim", section)
+        self.assertIn("separator line", section)
+        self.assertIn("(inherited <ws-root>)", section)
 
 
 if __name__ == "__main__":

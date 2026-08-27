@@ -647,28 +647,82 @@ def resolve_pr_mode(root):
 # workspace-registry-loading)
 # ---------------------------------------------------------------------------
 
-def find_workspace_root(start):
-    """Locate the workspace root by upward search from ``start`` on the
-    ``.shipd-config.json`` ``workspace``-key convention (shipd-workspace
+def workspace_chain(start):
+    """Locate every enclosing workspace root by upward search from ``start``
+    on the ``.shipd-config.json`` ``workspace``-key convention (shipd-workspace
     workspace-root-discovery).
 
     Walk from ``os.path.abspath(start)`` parent-by-parent to the filesystem
-    root, returning the first directory whose own ``.shipd-config.json`` declares a
-    ``workspace`` key — ``start`` itself included, so the nearest ancestor wins.
-    Returns ``None`` when no ancestor declares one. Makes no git assumptions and
-    consults no ``.shipd/`` marker. A malformed config file in the chain
-    raises :class:`ConfigError` naming it."""
+    root, collecting every directory whose own ``.shipd-config.json`` declares
+    a ``workspace`` key — ``start`` itself included — ordered nearest first.
+    Returns an empty list when no ancestor declares one. Makes no git
+    assumptions and consults no ``.shipd/`` marker. A malformed config file in
+    the chain raises :class:`ConfigError` naming it."""
+    chain = []
     cur = os.path.abspath(start)
     while True:
         path = os.path.join(cur, CONFIG_FILENAME)
         if os.path.isfile(path):
             data = _load_config_file(path)
             if "workspace" in data:
-                return cur
+                chain.append(cur)
         parent = os.path.dirname(cur)
         if parent == cur:
-            return None
+            return chain
         cur = parent
+
+
+def find_workspace_root(start):
+    """Locate the workspace root: the workspace chain's nearest member
+    (shipd-workspace workspace-root-discovery), or ``None`` when the chain is
+    empty. See :func:`workspace_chain`."""
+    chain = workspace_chain(start)
+    return chain[0] if chain else None
+
+
+def resolve_wiki_stores(start):
+    """Return every existing wiki store directory across the workspace chain
+    resolved from ``start``, nearest first (shipd-workspace
+    workspace-chain-facilities).
+
+    A chain member holding no store directory on disk is skipped silently.
+    Returns an empty list when the chain is empty or no member holds a
+    store."""
+    return [d for d in (wiki_dir(root) for root in workspace_chain(start))
+            if os.path.isdir(d)]
+
+
+def resolve_initiative_brief(start, slug):
+    """Return the on-disk path of an initiative brief named ``slug`` at the
+    nearest workspace-chain member holding it, resolved from ``start``
+    (shipd-workspace workspace-chain-facilities).
+
+    Returns ``None`` when no chain member holds the brief, including when the
+    chain is empty."""
+    for root in workspace_chain(start):
+        path = initiative_brief_path(root, slug)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def registry_root(start):
+    """Return the workspace-chain member whose project registry is effective,
+    resolved from ``start`` (shipd-workspace workspace-chain-facilities).
+
+    The nearest chain member whose ``workspace`` object declares a ``projects``
+    key wins outright; when no member declares one, the chain's nearest member
+    (``find_workspace_root``'s result) is the fallback. Returns ``None`` when
+    the chain is empty. A registry is never merged across chain members —
+    whichever root this returns, its own registry (via
+    :func:`load_workspace`) is the whole answer."""
+    chain = workspace_chain(start)
+    if not chain:
+        return None
+    for root in chain:
+        if "projects" in load_workspace(root):
+            return root
+    return chain[0]
 
 
 # The marked member-repos block seeded into a git-initialized workspace's
@@ -756,9 +810,9 @@ def _ensure_members_gitignore_block(target):
         fh.write(new_body)
 
 
-def init_workspace(path, git=False):
-    """Initialize a workspace at ``path``, returning its absolute root
-    (shipd-workspace workspace-initialization).
+def init_workspace(path, git=False, nested=False):
+    """Initialize a workspace at ``path`` (shipd-workspace
+    workspace-initialization).
 
     Declares ``"workspace": {}`` in ``<path>/.shipd-config.json`` — creating the
     file when absent, otherwise preserving its other keys. Refuses when a
@@ -768,6 +822,15 @@ def init_workspace(path, git=False):
     re-roots every directory beneath it. Errors when ``path`` is not an existing
     directory rather than creating it.
 
+    When ``nested`` is true, that refusal is skipped for an *enclosing*
+    workspace — creation proceeds beneath it — but still applies when ``path``
+    itself already declares ``workspace`` (a target is never re-declared).
+    Returns a ``(created_root, enclosing_root)`` tuple in this mode,
+    ``enclosing_root`` being the discoverable ancestor root nested beneath (or
+    ``None`` when none was discoverable). When ``nested`` is false (the
+    default), the return value is the created root alone, unchanged from
+    before.
+
     When ``git`` is true, additionally run ``git init`` at the target when it is
     not already inside a git work tree, then ensure the target's ``.gitignore``
     carries the marked member-repos block (appending an empty marked block only
@@ -775,10 +838,14 @@ def init_workspace(path, git=False):
     Stdlib only."""
     target = os.path.abspath(path)
     existing = find_workspace_root(target)
-    if existing is not None:
+    self_declares = (
+        existing is not None
+        and os.path.realpath(existing) == os.path.realpath(target))
+    if existing is not None and (not nested or self_declares):
         raise ConfigError(
             "a workspace is already discoverable at %s; refusing to nest a "
             "new one (deliberate nesting is a hand edit)" % existing)
+    enclosing = existing if nested else None
     if not os.path.isdir(target):
         raise ConfigError(
             "target directory does not exist: %s" % target)
@@ -793,6 +860,8 @@ def init_workspace(path, git=False):
             subprocess.run(["git", "init", target],
                            capture_output=True, text=True)
         _ensure_members_gitignore_block(target)
+    if nested:
+        return target, enclosing
     return target
 
 
@@ -913,7 +982,11 @@ def wiki_base_dir(ws_root):
     The value MUST be a non-empty string; ``~`` is expanded and the expanded
     value MUST be absolute. A value that is not a non-empty string, or does not
     expand to an absolute path, raises :class:`ConfigError` naming ``wiki_base``
-    so the consuming verb can exit non-zero."""
+    so the consuming verb can exit non-zero. When the expanded value equals the
+    store directory of any member of ``ws_root``'s workspace chain — the
+    consuming workspace's own store included — the base is treated as
+    undeclared (``None``), so a base that is also an enclosing workspace is
+    searched once, not twice."""
     config, _prov = resolve_config(ws_root)
     raw = config.get("wiki_base")
     if raw is None:
@@ -925,6 +998,10 @@ def wiki_base_dir(ws_root):
     if not os.path.isabs(expanded):
         raise ConfigError(
             "config `wiki_base` must expand to an absolute path, got %r" % (raw,))
+    resolved = os.path.realpath(expanded)
+    for member in workspace_chain(ws_root):
+        if os.path.realpath(wiki_dir(member)) == resolved:
+            return None
     return expanded
 
 

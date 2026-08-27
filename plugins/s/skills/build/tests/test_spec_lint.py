@@ -2125,6 +2125,55 @@ class InitiativeReferenceLintTest(unittest.TestCase):
         finally:
             shutil.rmtree(bare, ignore_errors=True)
 
+    def _nested_repo(self):
+        """A nested workspace (``<self.ws>/nested``) with a repo beneath it,
+        declared beside ``self.ws`` and holding no brief of its own."""
+        inner = os.path.join(self.ws, "nested")
+        os.makedirs(inner, exist_ok=True)
+        declare_workspace(inner)
+        repo = os.path.join(inner, "repo")
+        os.makedirs(repo, exist_ok=True)
+        return repo
+
+    def test_inherited_brief_from_enclosing_workspace_resolves_clean(self):
+        # Only self.ws (the enclosing workspace) holds the brief.
+        self._write_brief("mvp-readiness")
+        repo = self._nested_repo()
+        self.assertEqual(
+            self._ref_errors([("Initiative", "mvp-readiness")], root=repo), [])
+
+    def test_still_errors_when_no_chain_member_holds_the_brief(self):
+        repo = self._nested_repo()
+        errors = self._ref_errors(
+            [("Initiative", "mvp-readiness")], root=repo)
+        self.assertTrue(has(errors, "mvp-readiness"))
+        self.assertTrue(has(errors, "brief.md"))
+
+    def _write_epic_at(self, root, slug, text):
+        edir = os.path.join(root, ".shipd", "epics", slug)
+        os.makedirs(edir, exist_ok=True)
+        with open(os.path.join(edir, "epic.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def test_epic_under_nested_workspace_resolves_via_inherited_brief(self):
+        # Only self.ws (the enclosing workspace) holds the brief.
+        self._write_brief("mvp-readiness")
+        repo = self._nested_repo()
+        self._write_epic_at(repo, "reporting-overhaul", self.EPIC)
+        errors = [str(e) for e in
+                  self._collect(lambda errs:
+                                sl.lint_epic(repo, "reporting-overhaul", errs))]
+        self.assertFalse(has(errors, "brief.md"))
+
+    def test_epic_under_nested_workspace_errors_with_no_brief_anywhere(self):
+        repo = self._nested_repo()
+        self._write_epic_at(repo, "reporting-overhaul", self.EPIC)
+        errors = [str(e) for e in
+                  self._collect(lambda errs:
+                                sl.lint_epic(repo, "reporting-overhaul", errs))]
+        self.assertTrue(has(errors, "mvp-readiness"))
+        self.assertTrue(has(errors, "brief.md"))
+
     def test_epic_reference_errors_when_brief_missing(self):
         self._write_epic("reporting-overhaul", self.EPIC)
         errors = [str(e) for e in

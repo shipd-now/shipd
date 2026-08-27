@@ -36,8 +36,11 @@ cheap) and where your durable base wiki is. In `~/.shipd-config.json`:
 - `clone_sources` — directories whose immediate children are probed for a
   clone with a matching origin URL. Undeclared = no probing, everything
   full-clones.
-- `wiki_base` — the base wiki the oracle falls back to after the job wiki,
-  and the promote-to-base target for `/s:teach`. Optional but recommended.
+- `wiki_base` — the base wiki the oracle falls back to after the workspace
+  chain, and the promote-to-base target for `/s:teach`. Optional but
+  recommended for a durable base that sits **outside** the chain — see
+  [§6 Nesting job workspaces](#6-nesting-job-workspaces) for a base reached by
+  nesting instead.
 
 ## 2. Create a job workspace
 
@@ -131,11 +134,60 @@ per-machine decision, so the same workspace repo works on every machine.
   `--json` emits machine-readable records.
 - `/s:workspace sync` — execute the plan again after editing the manifest
   (e.g. a new member repo was added to the job).
-- `/s:ask` — the oracle answers from the **job wiki first, then
-  `wiki_base`**, then the repo's spec surfaces; unanswerable questions queue
-  in the job wiki for you.
+- `/s:ask` — the oracle answers from the **job wiki, then any enclosing
+  workspace's wiki (nearest first), then `wiki_base`**, then the repo's spec
+  surfaces; unanswerable questions queue in the job's own wiki for you.
 - `/s:teach` — distill decisions into the job wiki; promote answers that are
   job-independent to the base wiki so every future job inherits them.
 - Per-change work inside a member repo is unchanged: each member still uses
   its own `.worktrees/<change>` flow. The workspace-level worktree/clone cost
   is paid **once per job, not per task**.
+
+## 6. Nesting job workspaces
+
+A job workspace can nest inside a base workspace instead of standing alone —
+file it directly beneath the base root and every enclosing workspace's
+knowledge is inherited automatically, no `wiki_base` needed for that base:
+
+```sh
+mkdir -p ~/projects/jobs/documents-linking
+python3 <plugin>/skills/build/scripts/spec_status.py workspace-init \
+  ~/projects/jobs/documents-linking --nested --git
+```
+
+`--nested` is required: the bare verb refuses to create a workspace under an
+already-discoverable one, so nesting is always a deliberate choice, never an
+accident. It still refuses when the target itself already declares
+`workspace`.
+
+**What inherits across the chain** (nearest-first — a nearer answer always
+shadows a farther one):
+
+- **Wiki reads** — a page slug resolves to the nearest chain store holding
+  it; `index.md` and `queue.md` aggregate every chain store's file so a
+  catalogue never hides an inherited page or question.
+- **Initiative briefs** — `cat initiative`, the linter's `Initiative:` check,
+  and the dashboard's initiative status all resolve to the nearest chain
+  member holding the brief.
+- **The project registry** — `projects` (and its `focus`) falls through to
+  the nearest chain member that declares one; a registry is never merged
+  across levels, so a nested job that declares its own `projects` shadows the
+  base's outright. `workspace-show` names the registry's provenance whenever
+  it comes from an enclosing member.
+
+**What stays nearest-only:**
+
+- **Every write** — wiki store scaffolding, `/s:teach`, queued oracle
+  questions, and initiative emission all land in the nested job's own store,
+  never an enclosing one. `workspace-show`, `wiki-show`, and `config-show`
+  print the resolved chain, so the write target is always inspectable before
+  you rely on it.
+- **Sync / member materialization** — `workspace-sync` reads only the nested
+  job's own manifest, so it never tries to materialize the base workspace's
+  members.
+
+`wiki_base` (§1) is still worth declaring for a durable base that sits
+**outside** the chain — a shared org-wide wiki no job is filed beneath. A base
+already reachable by nesting is redundant: `wiki_base` resolving to any chain
+store's directory is treated as undeclared, so it is searched once, not
+twice.

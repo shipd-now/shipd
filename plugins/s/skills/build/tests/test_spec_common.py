@@ -430,6 +430,180 @@ class WorkspaceDiscoveryTest(unittest.TestCase):
             self.assertIn(sc.CONFIG_FILENAME, str(cm.exception))
 
 
+class WorkspaceChainTest(unittest.TestCase):
+    """workspace_chain on the ``.shipd-config.json`` ``workspace``-key
+    convention (shipd-workspace workspace-root-discovery). ``$HOME`` is
+    overridden so the real home config never masquerades as an ancestor
+    workspace."""
+
+    def test_two_nested_declaring_directories_yield_both_nearest_first(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            outer = os.path.realpath(tmp)
+            _write_ws_config(outer, {})
+            inner = os.path.join(outer, "nested")
+            _write_ws_config(inner, {})
+            start = os.path.join(inner, "repo")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.workspace_chain(start), [inner, outer])
+
+    def test_single_declaring_ancestor_yields_one(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            _write_ws_config(ws, {})
+            start = os.path.join(ws, "repo")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.workspace_chain(start), [ws])
+
+    def test_no_declaring_ancestor_yields_empty_list(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            start = os.path.join(os.path.realpath(tmp), "a", "b")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.workspace_chain(start), [])
+
+    def test_find_workspace_root_is_the_chains_first_member(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            outer = os.path.realpath(tmp)
+            _write_ws_config(outer, {})
+            inner = os.path.join(outer, "nested")
+            _write_ws_config(inner, {})
+            start = os.path.join(inner, "repo")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                chain = sc.workspace_chain(start)
+                self.assertEqual(sc.find_workspace_root(start), chain[0])
+
+    def test_find_workspace_root_is_none_on_empty_chain(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            start = os.path.join(os.path.realpath(tmp), "a", "b")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.workspace_chain(start), [])
+                self.assertIsNone(sc.find_workspace_root(start))
+
+
+class WorkspaceChainFacilitiesTest(unittest.TestCase):
+    """resolve_wiki_stores, resolve_initiative_brief, and registry_root, each
+    built on workspace_chain (shipd-workspace workspace-chain-facilities).
+    ``$HOME`` is overridden so the real home config never masquerades as an
+    ancestor workspace."""
+
+    def test_resolve_wiki_stores_lists_existing_chain_stores_nearest_first(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            outer = os.path.realpath(tmp)
+            _write_ws_config(outer, {})
+            os.makedirs(sc.wiki_dir(outer), exist_ok=True)
+            inner = os.path.join(outer, "nested")
+            _write_ws_config(inner, {})
+            os.makedirs(sc.wiki_dir(inner), exist_ok=True)
+            start = os.path.join(inner, "repo")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.resolve_wiki_stores(start),
+                    [sc.wiki_dir(inner), sc.wiki_dir(outer)])
+
+    def test_resolve_wiki_stores_skips_members_with_no_store(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            outer = os.path.realpath(tmp)
+            _write_ws_config(outer, {})
+            os.makedirs(sc.wiki_dir(outer), exist_ok=True)
+            inner = os.path.join(outer, "nested")
+            _write_ws_config(inner, {})
+            # inner declares no wiki store on disk.
+            start = os.path.join(inner, "repo")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.resolve_wiki_stores(start), [sc.wiki_dir(outer)])
+
+    def test_resolve_wiki_stores_empty_chain_yields_empty_list(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            start = os.path.join(os.path.realpath(tmp), "a", "b")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.resolve_wiki_stores(start), [])
+
+    def test_resolve_initiative_brief_finds_nearest_member_holding_it(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            outer = os.path.realpath(tmp)
+            _write_ws_config(outer, {})
+            brief = sc.initiative_brief_path(outer, "mvp-readiness")
+            os.makedirs(os.path.dirname(brief), exist_ok=True)
+            with open(brief, "w", encoding="utf-8") as fh:
+                fh.write("# mvp-readiness\n")
+            inner = os.path.join(outer, "nested")
+            _write_ws_config(inner, {})
+            start = os.path.join(inner, "repo")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.resolve_initiative_brief(start, "mvp-readiness"), brief)
+
+    def test_resolve_initiative_brief_none_when_no_member_holds_it(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            _write_ws_config(ws, {})
+            start = os.path.join(ws, "repo")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertIsNone(
+                    sc.resolve_initiative_brief(start, "mvp-readiness"))
+
+    def test_resolve_initiative_brief_empty_chain_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            start = os.path.join(os.path.realpath(tmp), "a", "b")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertIsNone(
+                    sc.resolve_initiative_brief(start, "mvp-readiness"))
+
+    def test_registry_root_is_nearest_member_declaring_projects(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            outer = os.path.realpath(tmp)
+            _write_ws_config(outer, {"projects": {"alpha": {}}})
+            inner = os.path.join(outer, "nested")
+            _write_ws_config(inner, {})
+            start = os.path.join(inner, "repo")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.registry_root(start), outer)
+
+    def test_registry_root_falls_back_to_chains_first_member(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            outer = os.path.realpath(tmp)
+            _write_ws_config(outer, {})
+            inner = os.path.join(outer, "nested")
+            _write_ws_config(inner, {})
+            start = os.path.join(inner, "repo")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.registry_root(start), inner)
+
+    def test_registry_root_none_on_empty_chain(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            start = os.path.join(os.path.realpath(tmp), "a", "b")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertIsNone(sc.registry_root(start))
+
+
 class InitWorkspaceTest(unittest.TestCase):
     """init_workspace on the config-file convention (shipd-workspace
     workspace-initialization)."""
@@ -490,6 +664,44 @@ class InitWorkspaceTest(unittest.TestCase):
                 with self.assertRaises(sc.ConfigError):
                     sc.init_workspace(missing)
             self.assertFalse(os.path.exists(missing))
+
+    def test_nested_declares_workspace_beneath_an_enclosing_one(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            outer = _write_ws_config(os.path.realpath(tmp), {})
+            inner = os.path.join(outer, "nested")
+            os.makedirs(inner, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                created, enclosing = sc.init_workspace(inner, nested=True)
+            self.assertEqual(created, inner)
+            self.assertEqual(enclosing, outer)
+            cfg = os.path.join(inner, sc.CONFIG_FILENAME)
+            self.assertTrue(os.path.isfile(cfg))
+            with open(cfg, encoding="utf-8") as fh:
+                data = json.load(fh)
+            self.assertEqual(data["workspace"], {})
+
+    def test_nested_still_refuses_a_self_declaring_target(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = _write_ws_config(os.path.realpath(tmp), {})
+            with home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.init_workspace(ws, nested=True)
+            self.assertIn(ws, str(cm.exception))
+
+    def test_bare_call_still_refuses_under_an_enclosing_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = _write_ws_config(os.path.realpath(tmp), {})
+            nested = os.path.join(ws, "sub")
+            os.makedirs(nested, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.init_workspace(nested, nested=False)
+            self.assertIn(ws, str(cm.exception))
+            self.assertFalse(
+                os.path.exists(os.path.join(nested, sc.CONFIG_FILENAME)))
 
 
 class ValidateWorkspaceTest(unittest.TestCase):
@@ -1179,6 +1391,26 @@ class WikiBaseDirTest(unittest.TestCase):
                 with self.assertRaises(sc.ConfigError) as cm:
                     sc.wiki_base_dir(root)
             self.assertIn("wiki_base", str(cm.exception))
+
+    def test_self_referential_base_is_none(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            with home_set_to(os.path.realpath(home)):
+                _write_ws_config(
+                    root, {}, extra={"wiki_base": sc.wiki_dir(root)})
+                self.assertIsNone(sc.wiki_base_dir(root))
+
+    def test_base_equal_to_enclosing_chain_members_store_is_none(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            outer = os.path.realpath(tmp)
+            _write_ws_config(outer, {})
+            inner = os.path.join(outer, "nested")
+            with home_set_to(os.path.realpath(home)):
+                _write_ws_config(
+                    inner, {}, extra={"wiki_base": sc.wiki_dir(outer)})
+                self.assertIsNone(sc.wiki_base_dir(inner))
 
 
 class WikiGrammarHelpersTest(unittest.TestCase):

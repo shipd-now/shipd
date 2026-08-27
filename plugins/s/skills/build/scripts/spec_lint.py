@@ -715,12 +715,14 @@ def check_initiative_reference(root, metadata, errors):
     """Resolve an ``Initiative:`` reference carried in ``metadata`` (the ordered
     ``(key, value)`` pairs parsed from a change plan or an epic header). When a
     workspace root is discoverable from ``root``, an ``Initiative: <slug>`` line
-    SHALL resolve to an existing ``<ws>/<content-dir>/initiatives/<slug>/brief.md`` — a missing
-    brief is an error naming both the workspace root and the expected path (so
-    the stray-marker cause is visible). When no workspace is discoverable (a bare
-    CI checkout), the check is skipped silently, so repo lint never depends on
-    files outside the repository. A metadata block with no ``Initiative:`` line
-    is a no-op."""
+    SHALL resolve to an existing brief in the nearest workspace-chain member
+    holding one (:func:`spec_common.resolve_initiative_brief`,
+    shipd-workspace workspace-chain-facilities) — a missing brief in every
+    chain member is an error naming both the nearest workspace root and the
+    expected path there (so the stray-marker cause is visible). When no
+    workspace is discoverable (a bare CI checkout), the check is skipped
+    silently, so repo lint never depends on files outside the repository. A
+    metadata block with no ``Initiative:`` line is a no-op."""
     slug = None
     for key, value in metadata:
         if key == "Initiative":
@@ -731,11 +733,12 @@ def check_initiative_reference(root, metadata, errors):
     ws_root = sc.find_workspace_root(root)
     if ws_root is None:
         return
-    brief_path = sc.initiative_brief_path(ws_root, slug)
-    if not os.path.isfile(brief_path):
+    brief_path = sc.resolve_initiative_brief(root, slug)
+    if brief_path is None:
+        expected = sc.initiative_brief_path(ws_root, slug)
         errors.append(LintError(
             "`Initiative: %s` does not resolve to a brief (%s not found; "
-            "workspace root %s)" % (slug, brief_path, ws_root), brief_path))
+            "workspace root %s)" % (slug, expected, ws_root), expected))
 
 
 def _check_brief_project(ws_root, project_value, path, errors):
