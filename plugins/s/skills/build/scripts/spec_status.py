@@ -2074,6 +2074,8 @@ def cmd_cat(root, kind, slug, personal=False):
         elif slug in ("log", "schema"):
             path = os.path.join(stores[0], slug + ".md")
             paths = [path] if os.path.isfile(path) else []
+            if paths and store_roots[0] != nearest_root:
+                provenance[path] = store_roots[0]
         else:
             paths = []
             for s, r in zip(stores, store_roots):
@@ -2084,10 +2086,11 @@ def cmd_cat(root, kind, slug, personal=False):
                         provenance[path] = r
                     break
         if not paths:
+            near = sc.wiki_dir(nearest_root) if nearest_root else stores[0]
             if slug in ("index", "log", "queue", "schema"):
-                rep = os.path.join(stores[0], slug + ".md")
+                rep = os.path.join(near, slug + ".md")
             else:
-                rep = os.path.join(stores[0], "wiki", slug + ".md")
+                rep = os.path.join(near, "wiki", slug + ".md")
             raise StatusError("wiki page '%s' not found (%s)" % (slug, rep))
         _cat_files(root, paths, provenance)
         return 0

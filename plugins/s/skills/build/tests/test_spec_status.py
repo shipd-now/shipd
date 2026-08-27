@@ -2850,6 +2850,39 @@ class WikiChainTest(SpecStatusTestBase):
         self.assertIn("Inner.", r.stdout)
         self.assertNotIn("Outer.", r.stdout)
 
+    def test_cat_wiki_log_held_only_by_outer_store_annotates_inherited(self):
+        # self.inner's own store is never initialized, so `log` resolves to
+        # the outer store — an inherited read, which must carry the
+        # provenance annotation like the page and index/queue branches do.
+        self.write_wiki_file(self.root, "log.md", "# Log\n\nOuter log.\n")
+        r = self.cli_at(self.repo, "cat", "wiki", "log")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        sep = os.path.relpath(
+            os.path.join(self.wiki_of(self.root), "log.md"), self.repo)
+        self.assertIn(
+            "--- %s  (inherited %s)" % (sep, self.root), r.stdout)
+
+    def test_cat_wiki_log_held_by_nearest_store_has_no_annotation(self):
+        self.init_inner_store()
+        self.write_wiki_file(self.inner, "log.md", "# Log\n\nInner log.\n")
+        r = self.cli_at(self.repo, "cat", "wiki", "log")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        sep = os.path.relpath(
+            os.path.join(self.wiki_of(self.inner), "log.md"), self.repo)
+        self.assertIn("--- %s\n" % sep, r.stdout)
+        self.assertNotIn("inherited", r.stdout)
+
+    def test_cat_wiki_missing_page_reports_nearest_store_not_outer(self):
+        # self.inner's own store is never initialized, so the nearest
+        # workspace's store (self.inner) is where a missing page should be
+        # reported — not the outer store that happens to exist on disk.
+        r = self.cli_at(self.repo, "cat", "wiki", "nope")
+        self.assertNotEqual(r.returncode, 0)
+        expected = os.path.join(self.wiki_of(self.inner), "wiki", "nope.md")
+        self.assertIn(expected, r.stderr)
+        outer = os.path.join(self.wiki_of(self.root), "wiki", "nope.md")
+        self.assertNotIn(outer, r.stderr)
+
 
 class WikiShowChainTest(SpecStatusTestBase):
     """``wiki-show``'s ``chain:`` line and absent-nearest-store handling
