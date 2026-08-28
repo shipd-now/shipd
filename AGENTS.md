@@ -102,7 +102,8 @@ Specs live in `.shipd/` (master library in `verified/`, in-flight changes in
 `planned/`, applied changes in `completed/`) — the content directory is
 configurable via `.shipd-config.json` (the `dir` key, default `.shipd`), resolved
 by layered upward search. The engine is the plugin's own scripts under
-`plugins/s/skills/build/scripts/`. Use `/s:plan` to
+`plugins/s/skills/build/scripts/`. Use `/s:duck` to talk an idea through with
+the adversarial rubber-duck critic before planning it, `/s:plan` to
 spec work, `/s:build` to execute it, `/s:fix` to debug a reported problem
 against the spec library and fix it, `/s:review` for a semantic review of
 local changes before pushing, `/s:gate` to set up that review as a
