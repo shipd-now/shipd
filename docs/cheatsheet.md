@@ -22,6 +22,7 @@ below:
 | `/s:autopilot <epic> [detached]` | Drive an approved epic's unplanned members to shipped PRs unattended. | `/s:autopilot export-cli` |
 | `/s:build [change]` | Plan, delegate to execution sub-agents, verify, and ship a change end to end. | `/s:build export-json-flag` |
 | `/s:doctor` | Diagnose a shipd environment and run only the remedies you consent to. | `/s:doctor` |
+| `/s:duck` | Talk an idea through with an adversarial, read-only rubber-duck critic before planning it. | `/s:duck Should the queue be per-tenant?` |
 | `/s:epic` | Decompose a feature into an epic of member changes with shared decisions. | `/s:epic Add multi-tenant billing` |
 | `/s:fix` | Debug a reported problem against the spec library, then fix the drifted code. | `/s:fix The export command crashes on empty input` |
 | `/s:forget` | Remove a captured preference from the personal memory store. | `/s:forget my vim preference` |
