@@ -35,7 +35,7 @@ class FakeGh:
                  pr_url="https://github.com/o/r/pull/7",
                  default_branch="main", contexts=("ci",),
                  conversation_resolution=False, strict=True,
-                 protection_get_error=None,
+                 protection_get_error=None, also_checks=False,
                  files=None, existing_comments=None, review_fail_times=0,
                  viewer="gate-bot", review_threads=None, commits=None):
         self.head_sha = head_sha
@@ -46,6 +46,12 @@ class FakeGh:
         self.contexts = tuple(contexts)
         self.conversation_resolution = conversation_resolution
         self.strict = strict
+        # GitHub's real GET response carries both the legacy ``contexts`` list
+        # and the ``checks`` list it derives from a write, alongside each
+        # other — never only one. ``also_checks`` reproduces that shape so a
+        # test can pin that the reader (which takes ``contexts``) still works
+        # once the writer stops sending it.
+        self.also_checks = also_checks
         # When set, a ``(rc, stdout, stderr)`` triple the protection GET answers
         # with instead of a protection object — how an unprotected branch (404)
         # or a denied read (403) looks at this seam. A successful PUT clears it:
@@ -172,9 +178,12 @@ class FakeGh:
                     return self.protection_get_error
                 # A nested GET-shaped protection object, including a field the
                 # verb must preserve untouched across the write.
+                rsc = {"strict": self.strict, "contexts": list(self.contexts)}
+                if self.also_checks:
+                    rsc["checks"] = [{"context": c, "app_id": None}
+                                     for c in self.contexts]
                 return 0, json.dumps({
-                    "required_status_checks": {
-                        "strict": self.strict, "contexts": list(self.contexts)},
+                    "required_status_checks": rsc,
                     "required_conversation_resolution": {
                         "enabled": self.conversation_resolution},
                     "enforce_admins": {"enabled": True},
@@ -183,7 +192,7 @@ class FakeGh:
                 payload = json.loads(input)
                 self.protect_put = payload
                 rsc = payload.get("required_status_checks") or {}
-                self.contexts = tuple(rsc.get("contexts") or [])
+                self.contexts = tuple(c["context"] for c in rsc.get("checks") or [])
                 self.strict = bool(rsc.get("strict", self.strict))
                 self.conversation_resolution = bool(
                     payload.get("required_conversation_resolution"))
@@ -659,6 +668,49 @@ class PostDispositionTest(unittest.TestCase):
         self.assertIn("Model: tier-two-below", gh.summary_body())
 
 
+class ProtectionPutBodyTest(unittest.TestCase):
+    """`_protection_put_body` writes `checks`, not the legacy `contexts` field,
+    so a status posted by any source — including a human, not only the app
+    pinned to a `contexts` entry — can satisfy the required check."""
+
+    def test_the_write_carries_checks_with_a_null_app_id_and_no_contexts(self):
+        current = {"required_status_checks": {"strict": True,
+                                               "contexts": ["ci"]}}
+        body = review_gate._protection_put_body(
+            current, ["ci", "semantic-review"], True)
+        rsc = body["required_status_checks"]
+        self.assertNotIn("contexts", rsc)
+        checks = {c["context"]: c["app_id"] for c in rsc["checks"]}
+        self.assertEqual(checks, {"ci": None, "semantic-review": None})
+
+    def test_strict_and_other_fields_are_still_preserved(self):
+        current = {"required_status_checks": {"strict": True,
+                                               "contexts": ["ci", "lint"]},
+                  "enforce_admins": {"enabled": True},
+                  "required_linear_history": {"enabled": True}}
+        body = review_gate._protection_put_body(
+            current, ["ci", "lint", "semantic-review"], True)
+        rsc = body["required_status_checks"]
+        self.assertTrue(rsc["strict"])
+        self.assertEqual({c["context"] for c in rsc["checks"]},
+                         {"ci", "lint", "semantic-review"})
+        self.assertTrue(body["required_conversation_resolution"])
+        self.assertEqual(body["enforce_admins"], True)
+        self.assertEqual(body["required_linear_history"], True)
+
+    def test_the_unprotected_branch_creation_path_also_writes_checks(self):
+        # `current` is `{}` — an empty protection object — exactly what
+        # `protect` builds from when the GET 404s.
+        body = review_gate._protection_put_body(
+            {}, ["semantic-review"], True, strict_default=False)
+        rsc = body["required_status_checks"]
+        self.assertNotIn("contexts", rsc)
+        self.assertEqual(rsc["checks"], [{"context": "semantic-review",
+                                          "app_id": None}])
+        self.assertFalse(rsc["strict"])
+        self.assertTrue(body["required_conversation_resolution"])
+
+
 class ProtectTest(unittest.TestCase):
     def test_adds_context_and_conversation_resolution(self):
         gh = FakeGh(contexts=("ci",), conversation_resolution=False)
@@ -700,7 +752,7 @@ class ProtectTest(unittest.TestCase):
         gh = FakeGh(contexts=("ci", "lint"), strict=True)
         review_gate.protect(gh)
         put = gh.protect_put
-        self.assertEqual(set(put["required_status_checks"]["contexts"]),
+        self.assertEqual({c["context"] for c in put["required_status_checks"]["checks"]},
                          {"ci", "lint", "semantic-review"})
         self.assertTrue(put["required_status_checks"]["strict"])
         self.assertTrue(put["required_conversation_resolution"])
@@ -716,6 +768,19 @@ class ProtectTest(unittest.TestCase):
         text = "\n".join(lines)
         self.assertIn("semantic-review", text)
         self.assertIn("conversation resolution", text)
+
+    def test_a_get_carrying_both_contexts_and_checks_is_still_idempotent(self):
+        # The real GitHub GET response carries `contexts` *and* `checks`
+        # alongside each other, not one or the other — confirmed against a
+        # live protected branch. The reader (`protect`, at the `contexts` it
+        # takes off the GET) is unchanged by this feature and must still see
+        # `semantic-review` already required, so this pins that a later
+        # reader change cannot silently break idempotence.
+        gh = FakeGh(contexts=("ci", "semantic-review"),
+                    conversation_resolution=True, also_checks=True)
+        result = review_gate.protect(gh)
+        self.assertFalse(result["changed"])
+        self.assertIsNone(gh.protect_put)
 
 
 # How the two protection-read failures look at the ``gh`` seam: an unprotected
@@ -734,7 +799,9 @@ class ProtectUnprotectedBranchTest(unittest.TestCase):
         self.assertTrue(result["conversation_resolution"])
         put = gh.protect_put
         self.assertEqual(put["required_status_checks"],
-                         {"strict": False, "contexts": ["semantic-review"]})
+                         {"strict": False,
+                          "checks": [{"context": "semantic-review",
+                                     "app_id": None}]})
         self.assertTrue(put["required_conversation_resolution"])
         # Every other protection field is null (or a bare false), never carried
         # over from a protection object that does not exist.

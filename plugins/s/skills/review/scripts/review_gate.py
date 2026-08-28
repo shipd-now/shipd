@@ -600,12 +600,15 @@ def _protection_put_body(current, contexts, conversation, strict_default=True):
     flatter shape). The four keys PUT requires are always present (nullable).
     ``strict_default`` is the ``strict`` used when ``current`` names none — the
     creation case, where false keeps auto-merged PRs off the update-branch
-    treadmill."""
+    treadmill. The required checks are written as ``checks``, one entry per
+    context with an explicit ``app_id`` of null, rather than the legacy
+    ``contexts`` field: a null ``app_id`` states that any source may report the
+    check, which is what lets a status posted by a person satisfy it."""
     rsc = current.get("required_status_checks") or {}
     body = {
         "required_status_checks": {
             "strict": bool(rsc.get("strict", strict_default)),
-            "contexts": list(contexts),
+            "checks": [{"context": c, "app_id": None} for c in contexts],
         },
         "enforce_admins": _enabled(current.get("enforce_admins")),
         "required_pull_request_reviews": _pr_reviews_put(

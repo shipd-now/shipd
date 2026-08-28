@@ -72,12 +72,18 @@
 #
 # Timeout semantics: a CLI run that exits nonzero or exceeds its bound, and a
 # poll that finds no review of its head within its window, both leave the status
-# `pending` and exit. Nothing was judged, so no verdict is invented; the session
-# review flow (`review_gate.py post`) sets the same context by hand where a run
-# cannot. The status is posted before any provisioning, so a failure anywhere
-# later still leaves the required check reading `pending` rather than unreported.
-# The concurrency group below caps the cost at one live run per pull request,
-# and a new push cancels the run it supersedes.
+# `pending` and **fail the job**. Nothing was judged, so no verdict is invented;
+# the session review flow (`review_gate.py post`) sets the same context by hand
+# where a run cannot. Exiting zero on those paths was wrong: it reported a
+# passing run over a review that never happened and left the pull request
+# blocked on a status that would never arrive, with nothing in the run's own
+# result saying why. The job's exit code is what tells a human the reviewer
+# broke rather than merely ran slow — a moved head is the one poll outcome that
+# still exits zero, because that run is not stalled, it handed the gate to the
+# newer push's own run. The status is posted before any provisioning, so a
+# failure anywhere later still leaves the required check reading `pending`
+# rather than unreported. The concurrency group below caps the cost at one live
+# run per pull request, and a new push cancels the run it supersedes.
 #
 # Secrets, and the trust boundary they draw: the only secret this workflow
 # reads is the optional COPILOT_GITHUB_TOKEN, and its value reaches nothing but
@@ -446,8 +452,11 @@ jobs:
             # says whether there is anything to classify.
             if [[ ! -f "$body_file" ]]; then
               echo "The Copilot CLI review of $HEAD_SHA captured no output;" \
-                "semantic-review stays pending."
-              exit 0
+                "semantic-review stays pending. Nothing was judged, so no" \
+                "verdict is invented — see the reviewer step's own log for" \
+                "the cause; an exhausted Copilot quota reports there as" \
+                "\"exceeded your monthly quota\"." >&2
+              exit 1
             fi
             body="$(<"$body_file")"
             comment_file="$body_file"
@@ -466,6 +475,9 @@ jobs:
               current_head="$("$gh_bin" api --jq '.head.sha' \
                 "repos/$REPO/pulls/$PR_NUMBER")"
               if [[ "$current_head" != "$HEAD_SHA" ]]; then
+                # Stays zero: this run is not stalled, it handed the gate to
+                # the newer push's own run, and failing it would paint a red
+                # X on every superseded push.
                 echo "The pull request has moved on to $current_head;" \
                   "that push's own run owns the gate."
                 exit 0
@@ -485,8 +497,8 @@ jobs:
               fi
               if (( SECONDS >= deadline )); then
                 echo "No Copilot review of $HEAD_SHA within" \
-                  "${poll_timeout}s; semantic-review stays pending."
-                exit 0
+                  "${poll_timeout}s; semantic-review stays pending." >&2
+                exit 1
               fi
               sleep "$poll_interval"
             done
@@ -778,6 +790,15 @@ jobs:
           comments, unverified = [], []
           for finding in findings:
               if not isinstance(finding, dict):
+                  continue
+              # An inline comment opens a review thread, and a repository
+              # requiring conversation resolution would otherwise let a `low`
+              # finding block a merge the rubric says it never blocks — so
+              # only `high` and `medium` findings are even offered to
+              # `placed()`; a `low` one joins the unanchorable findings and
+              # renders through the prose block below instead.
+              if severity(finding) not in ("high", "medium"):
+                  unverified.append(finding)
                   continue
               place = placed(finding, diff)
               if place is None:
