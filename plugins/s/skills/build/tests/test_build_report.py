@@ -731,6 +731,7 @@ class LogEntryCLITest(unittest.TestCase):
     def test_schema_option_rejected(self):
         proc = self._run("--schema", "spec-driven")
         self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("unrecognized arguments: --schema", proc.stderr)
 
 
 class AggregateToolsTest(unittest.TestCase):
