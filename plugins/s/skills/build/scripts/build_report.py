@@ -15,7 +15,7 @@ Usage:
   build_report.py --since <ISO> [--project-dir <path>] [--session <id>]
                   [--transcript <path>] [--json] [--summary-only]
                   [--table] [--tool-table]
-  build_report.py --since <ISO> --change <name> --schema <s> --tasks-done <d>
+  build_report.py --since <ISO> --change <name> --tasks-done <d>
                   --tasks-total <t> --status <st> --commit <hash> --log
 
 Never fails a build: on any transcript/telemetry problem it prints a
@@ -947,7 +947,6 @@ def main():
     # --log mode metadata
     parser.add_argument("--log", action="store_true", help="write a persistent build log entry")
     parser.add_argument("--change", help="change name (for --log)")
-    parser.add_argument("--schema", help="schema/version label (for --log)")
     parser.add_argument("--tasks-done", type=int, help="tasks completed (for --log)")
     parser.add_argument("--tasks-total", type=int, help="tasks total (for --log)")
     parser.add_argument("--status", help="build status (for --log)")
@@ -1066,7 +1065,6 @@ def main():
                 entry = {
                     "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "change": args.change,
-                    "schema": args.schema,
                     "tasks": {"done": args.tasks_done, "total": args.tasks_total},
                     "status": args.status,
                     "commit": args.commit,

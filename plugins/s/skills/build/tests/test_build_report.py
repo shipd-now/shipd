@@ -694,6 +694,46 @@ class BuildConfigTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.home, ".automikk")))
 
 
+class LogEntryCLITest(unittest.TestCase):
+    """Driving build_report.py's ``--log`` mode through the CLI (subprocess),
+    following BuildConfigTest's convention of isolating ``$HOME`` so the
+    entry lands under a temporary log directory rather than the real home
+    (build-reporting persistent-build-log: no schema/workflow label)."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="br-home-")
+        self.proj = tempfile.mkdtemp(prefix="br-proj-")
+        self.env = dict(os.environ)
+        self.env["HOME"] = self.home
+        self.env.pop("CLAUDE_CONFIG_DIR", None)
+
+    def tearDown(self):
+        shutil.rmtree(self.home, ignore_errors=True)
+        shutil.rmtree(self.proj, ignore_errors=True)
+
+    def _run(self, *extra_args):
+        return subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS, "build_report.py"),
+             "--project-dir", self.proj, "--change", "my-change",
+             "--tasks-done", "1", "--tasks-total", "1", "--status", "verified",
+             "--commit", "abc123", "--log", *extra_args],
+            capture_output=True, text=True, env=self.env)
+
+    def test_appended_entry_has_no_schema_key(self):
+        proc = self._run()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        jsonl_path = os.path.join(self.home, ".shipd", "builds", "builds.jsonl")
+        with open(jsonl_path, encoding="utf-8") as f:
+            lines = f.read().strip().splitlines()
+        entry = json.loads(lines[-1])
+        self.assertNotIn("schema", entry)
+
+    def test_schema_option_rejected(self):
+        proc = self._run("--schema", "spec-driven")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("unrecognized arguments: --schema", proc.stderr)
+
+
 class AggregateToolsTest(unittest.TestCase):
     """aggregate_tools()/render_tool_table(): the per-tool breakdown counts each
     assistant response once at its final usage snapshot (keyed by message id,
