@@ -664,13 +664,13 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
    ```
    `WARNINGS` is one `⚠ spec: <id> — <kind>` line per merge warning, and is
    **empty on a clean merge** — when empty, omit the block from the report.
-2. Log the build. The `schema` label names the workflow (`spec-driven`); task
-   counts come from `claim_task.sh status`. Pass `WARN_JSON` on stdin so the
-   merge warnings are persisted in the log entry too:
+2. Log the build. Task counts come from `claim_task.sh status`. Pass
+   `WARN_JSON` on stdin so the merge warnings are persisted in the log entry
+   too:
    ```
    printf '%s' "$WARN_JSON" | python3 \
      "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/build_report.py" \
-     --since "$BUILD_START" --change <change-name> --schema <schema> \
+     --since "$BUILD_START" --change <change-name> \
      --tasks-done <done> --tasks-total <total> --status <status> \
      --commit "$COMMIT_HASH" --merge-warnings - --log
    ```
@@ -683,7 +683,7 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
    capability for the fixed structure):
    ```
    Build complete. {summary}
-   Change: {change} (schema: {schema}) — {done}/{total} tasks, Status: {status}
+   Change: {change} — {done}/{total} tasks, Status: {status}
    PR: {pr_url}
    {warnings}
    {table}

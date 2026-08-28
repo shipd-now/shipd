@@ -7,8 +7,10 @@ Every `/s:build` run SHALL end with a report in this fixed structure and order:
 
 1. A token summary line beginning `Build complete. Tokens:` followed by the
    non-cached-first token summary.
-2. A change-set header line: `Change: <name> (schema: <schema>) — <done>/<total>
-   tasks, Status: <status>`.
+2. A change-set header line: `Change: <name> — <done>/<total> tasks,
+   Status: <status>`. The line SHALL NOT carry a schema or workflow label: the
+   only value ever written was a constant, so it distinguished nothing while
+   reading as though it did.
 3. A **spec-merge warnings** line: when the merge engine reported any warnings
    (stale base-hash overwrite, id collision, missing target), one line per
    warning prefixed `⚠ spec:` naming the requirement `id` and the warning kind.
@@ -33,6 +35,11 @@ report SHALL omit its token blocks — item 1's token summary (the first line
 reads `Build complete.` followed by the summary sentence), the per-model
 table, and the total-runtime line — and SHALL keep every other item in
 order; the persistent build log remains best-effort and unaffected.
+
+#### Scenario: The change header carries no schema label
+- **WHEN** the change-set header line is rendered
+- **THEN** it names the change, the task counts, and the status, and carries no
+  parenthesised schema or workflow label
 
 #### Scenario: Report shape
 - **WHEN** a build finishes
@@ -80,9 +87,12 @@ id: persistent-build-log
 
 Each completed build SHALL be recorded under the resolved build log
 directory — default `~/.shipd/builds/` — as a structured entry capturing at
-least: timestamp, change name, schema, task counts, status, commit hash, the
+least: timestamp, change name, task counts, status, commit hash, the
 per-model token breakdown (non-cached and cached), the per-model time
-breakdown, and the total build runtime. The directory SHALL be created on
+breakdown, and the total build runtime. The entry SHALL NOT carry a schema or
+workflow label, and the reporter SHALL NOT accept an option for one. Entries
+written before that field was retired keep it; nothing reads it, so the log is
+heterogeneous by design rather than migrated. The directory SHALL be created on
 demand. Logging failures SHALL NOT fail the build. No path under
 `~/.shipd/` SHALL be read or written.
 
@@ -91,6 +101,16 @@ demand. Logging failures SHALL NOT fail the build. No path under
 - **THEN** a structured record for it exists under `~/.shipd/builds/`
   containing the change name, commit hash, status, per-model token and time
   breakdowns, and total runtime
+
+#### Scenario: The appended entry carries no schema key
+- **WHEN** a build appends its log entry
+- **THEN** that entry has no `schema` key at all — not the key with a null
+  value
+
+#### Scenario: The reporter rejects a schema option
+- **WHEN** the reporter is invoked with a `--schema` option
+- **THEN** it exits non-zero reporting the option as unrecognized, rather than
+  accepting and ignoring it
 
 #### Scenario: The log directory is created on demand
 - **WHEN** `~/.shipd/builds/` does not yet exist at build time

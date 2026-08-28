@@ -30,7 +30,7 @@ work* is not a warning to note and move past — it is supersession, which the
 
 ```
 Build complete. {summary}
-Change: {change} (schema: {schema}) — {done}/{total} tasks, Status: {status}
+Change: {change} — {done}/{total} tasks, Status: {status}
 PR: {pr_url}
 {warnings}
 {table}
