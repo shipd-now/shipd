@@ -1759,10 +1759,10 @@ class GatePollTest(GateScriptCase):
         self.assertEqual(self.calls("reviews-calls"), 3,
                          "the poll did not run one reviews read per cycle")
 
-    def test_a_timed_out_poll_leaves_pending(self):
+    def test_a_timed_out_poll_fails_loudly(self):
         # No review of this head ever arrives: the pending status stands and
         # no verdict is invented. The session flow is the manual out.
-        posts = self.gate(ids="", timeout="0")
+        posts = self.gate(ids="", timeout="0", expect_failure=True)
         self.assertStates(posts, ["pending"])
         self.assertGreaterEqual(self.calls("reviews-calls"), 1,
                                 "the poll never looked for a review at all")
@@ -1935,16 +1935,17 @@ class GateCliReviewerTest(GateScriptCase):
         posts = self.cli_gate(cli_out="Blocking.\n\n" + FIX_MARKER + "\n")
         self.assertStates(posts, ["pending", "failure"])
 
-    def test_a_nonzero_cli_run_leaves_pending(self):
-        posts = self.cli_gate(cli_out="partial output\n", cli_code=1)
+    def test_a_nonzero_cli_run_fails_loudly(self):
+        posts = self.cli_gate(cli_out="partial output\n", cli_code=1,
+                              expect_failure=True)
         self.assertNotEqual(self.cli_args(), [],
                             "the CLI was never invoked at all")
         self.assertStates(posts, ["pending"])
         self.assertEqual(self.reviews(), [],
                          "a failed review was published anyway")
 
-    def test_a_timed_out_cli_run_leaves_pending(self):
-        posts = self.cli_gate(cli_timed_out=True)
+    def test_a_timed_out_cli_run_fails_loudly(self):
+        posts = self.cli_gate(cli_timed_out=True, expect_failure=True)
         self.assertEqual(self.recorded("timeout"), ["5"],
                          "the CLI was not run under the bound at all")
         self.assertStates(posts, ["pending"])
@@ -2022,6 +2023,36 @@ class GateReviewPostTest(GateScriptCase):
         self.assertEqual((comment["start_side"], comment["side"]),
                          ("RIGHT", "RIGHT"))
         self.assertIn("The backoff never resets.", comment["body"])
+
+    def test_a_high_finding_is_anchored(self):
+        finding = dict(self.ANCHORED, severity="high",
+                       detail="High severity finding.")
+        self.cli_gate(findings=[finding])
+        comments = self.review()["comments"]
+        self.assertEqual(len(comments), 1)
+        self.assertIn("High severity finding.", comments[0]["body"])
+
+    def test_a_medium_finding_is_anchored(self):
+        finding = dict(self.ANCHORED, severity="medium",
+                       detail="Medium severity finding.")
+        self.cli_gate(findings=[finding])
+        comments = self.review()["comments"]
+        self.assertEqual(len(comments), 1)
+        self.assertIn("Medium severity finding.", comments[0]["body"])
+
+    def test_a_low_finding_is_never_anchored(self):
+        # Same path and range as the high/medium cases above — only the
+        # severity differs — so this is the anchor loop's own severity gate
+        # under test, not `placed()`'s verification against the diff.
+        finding = dict(self.ANCHORED, severity="low",
+                       detail="Low severity finding.")
+        self.cli_gate(findings=[finding])
+        review = self.review()
+        self.assertEqual(review.get("comments", []), [],
+                         "a low-severity finding was anchored despite the "
+                         "rubric never blocking on it")
+        self.assertIn("### Findings not anchored to the diff", review["body"])
+        self.assertIn("Low severity finding.", review["body"])
 
     def test_a_single_line_finding_keeps_the_single_line_anchor(self):
         finding = dict(self.ANCHORED, start_line=11, end_line=11)
