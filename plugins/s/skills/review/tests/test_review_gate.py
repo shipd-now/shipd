@@ -36,6 +36,7 @@ class FakeGh:
                  default_branch="main", contexts=("ci",),
                  conversation_resolution=False, strict=True,
                  protection_get_error=None, also_checks=False,
+                 checks_only=False,
                  files=None, existing_comments=None, review_fail_times=0,
                  viewer="gate-bot", review_threads=None, commits=None):
         self.head_sha = head_sha
@@ -52,6 +53,11 @@ class FakeGh:
         # test can pin that the reader (which takes ``contexts``) still works
         # once the writer stops sending it.
         self.also_checks = also_checks
+        # When set, the protection GET carries only the ``checks`` field —
+        # no legacy ``contexts`` at all — reproducing GitHub's announced
+        # deprecation of ``contexts`` so a test can pin that the reader
+        # falls forward onto ``checks`` rather than reading back as empty.
+        self.checks_only = checks_only
         # When set, a ``(rc, stdout, stderr)`` triple the protection GET answers
         # with instead of a protection object — how an unprotected branch (404)
         # or a denied read (403) looks at this seam. A successful PUT clears it:
@@ -178,10 +184,15 @@ class FakeGh:
                     return self.protection_get_error
                 # A nested GET-shaped protection object, including a field the
                 # verb must preserve untouched across the write.
-                rsc = {"strict": self.strict, "contexts": list(self.contexts)}
-                if self.also_checks:
-                    rsc["checks"] = [{"context": c, "app_id": None}
-                                     for c in self.contexts]
+                if self.checks_only:
+                    rsc = {"strict": self.strict,
+                           "checks": [{"context": c, "app_id": None}
+                                      for c in self.contexts]}
+                else:
+                    rsc = {"strict": self.strict, "contexts": list(self.contexts)}
+                    if self.also_checks:
+                        rsc["checks"] = [{"context": c, "app_id": None}
+                                         for c in self.contexts]
                 return 0, json.dumps({
                     "required_status_checks": rsc,
                     "required_conversation_resolution": {
@@ -781,6 +792,26 @@ class ProtectTest(unittest.TestCase):
         result = review_gate.protect(gh)
         self.assertFalse(result["changed"])
         self.assertIsNone(gh.protect_put)
+
+    def test_a_get_carrying_only_checks_is_idempotent(self):
+        # GitHub has announced deprecation of the legacy `contexts` field. A
+        # GET that carries only `checks` must still be read as
+        # `semantic-review` already required, or the reader would believe no
+        # check is present and drop every other required check on the write.
+        gh = FakeGh(contexts=("ci", "semantic-review"),
+                    conversation_resolution=True, checks_only=True)
+        result = review_gate.protect(gh)
+        self.assertFalse(result["changed"])
+        self.assertIsNone(gh.protect_put)
+
+    def test_a_get_carrying_only_checks_unions_in_and_keeps_other_checks(self):
+        gh = FakeGh(contexts=("ci",), conversation_resolution=False,
+                    checks_only=True)
+        result = review_gate.protect(gh)
+        self.assertTrue(result["changed"])
+        put = gh.protect_put
+        self.assertEqual({c["context"] for c in put["required_status_checks"]["checks"]},
+                         {"ci", "semantic-review"})
 
 
 # How the two protection-read failures look at the ``gh`` seam: an unprotected

@@ -645,7 +645,15 @@ def protect(gh, remove=False, out=_noop):
     else:
         current = json.loads(body or "{}")
     rsc = current.get("required_status_checks") or {}
-    contexts = list(rsc.get("contexts") or [])
+    checks = rsc.get("checks")
+    if checks is not None:
+        # GitHub's GET has announced deprecation of the legacy ``contexts``
+        # field in favor of ``checks`` (the shape the PUT above now writes).
+        # Prefer it when present so a GET that stops sending ``contexts``
+        # doesn't read back as "no checks required".
+        contexts = [c.get("context") for c in checks if c.get("context")]
+    else:
+        contexts = list(rsc.get("contexts") or [])
     present = CONTEXT in contexts
     conv_now = _enabled(current.get("required_conversation_resolution"))
     want_conv = not remove
