@@ -20,35 +20,19 @@ The oracle sits in the middle of a three-rung ladder: **read → oracle →
 human**. Each rung is cheaper than the one above it, so you only climb when the
 rung below comes up empty.
 
-```
-  ┌─ 1. READ ────────────────────────────────────────────────┐
-  │  the codebase, the specs, the change's own artifacts      │
-  │  Anything discoverable by reading is never asked.         │
-  └───────────────────────────┬──────────────────────────────┘
-                              │ un-inferrable decision
-                              ▼
-  ┌─ 2. ORACLE ──────────────────────────────────────────────┐
-  │  personal memory  →  workspace chain (nearest first)      │
-  │       →  answered queue  →  base wiki                     │
-  │       →  the repo's spec surfaces                         │
-  └───────┬──────────────────────────────────┬───────────────┘
-          │ ANSWER (cited + quoted)          │ INSUFFICIENT
-          │                                  │ files q-<slug> in the queue
-          ▼                                  ▼
-     relayed to the caller       ┌─ 3. HUMAN ───────────────────┐
-     — nobody is interrupted     │  /s:ask asks you in a dialog │
-                                 │  /s:plan asks in its round   │
-                                 │  autopilot parks instead     │
-                                 └──────────────┬───────────────┘
-                                                │ your answer, distilled
-                                                ▼
-                                 ┌──────────────────────────────┐
-                                 │  wiki-queue-answer q-<slug>  │
-                                 │  writes it back to the queue │
-                                 └──────────────┬───────────────┘
-                                                │
-                     the next spawn reads it ───┘
-                     and answers from rung 2 — you are asked once
+```mermaid
+flowchart TD
+    read["1. READ<br/>the codebase, the specs, the change's own artifacts<br/>anything discoverable by reading is never asked"]
+    oracle["2. ORACLE<br/>personal memory → workspace chain (nearest first)<br/>→ answered queue → base wiki<br/>→ the repo's spec surfaces"]
+    human["3. HUMAN<br/>/s:ask asks you in a dialog<br/>/s:plan asks in its round<br/>autopilot parks instead"]
+    caller["relayed to the caller<br/>— nobody is interrupted"]
+    capture["wiki-queue-answer q-&lt;slug&gt;<br/>writes it back to the queue"]
+
+    read -- "un-inferrable decision" --> oracle
+    oracle -- "ANSWER (cited + quoted)" --> caller
+    oracle -- "INSUFFICIENT<br/>files q-&lt;slug&gt; in the queue" --> human
+    human -- "your answer, distilled" --> capture
+    capture -. "the next spawn reads it and answers from rung 2<br/>— you are asked once" .-> oracle
 ```
 
 That last arrow is the point: **an answer you give once is captured**, so the

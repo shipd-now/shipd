@@ -1,0 +1,12 @@
+flowchart TD
+    read["1. READ<br/>the codebase, the specs, the change's own artifacts<br/>anything discoverable by reading is never asked"]
+    oracle["2. ORACLE<br/>personal memory → workspace chain (nearest first)<br/>→ answered queue → base wiki<br/>→ the repo's spec surfaces"]
+    human["3. HUMAN<br/>/s:ask asks you in a dialog<br/>/s:plan asks in its round<br/>autopilot parks instead"]
+    caller["relayed to the caller<br/>— nobody is interrupted"]
+    capture["wiki-queue-answer q-&lt;slug&gt;<br/>writes it back to the queue"]
+
+    read -- "un-inferrable decision" --> oracle
+    oracle -- "ANSWER (cited + quoted)" --> caller
+    oracle -- "INSUFFICIENT<br/>files q-&lt;slug&gt; in the queue" --> human
+    human -- "your answer, distilled" --> capture
+    capture -. "the next spawn reads it and answers from rung 2<br/>— you are asked once" .-> oracle
