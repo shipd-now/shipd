@@ -8,7 +8,7 @@ a versioned plugin cache snapshot alike. Delegation is process replacement
 (:func:`os.execv`), so the delegate's stdout, stderr, interactivity, and exit
 code are this binary's own — nothing is reimplemented or reformatted here.
 
-Only read/inspect verbs are exposed, with five deliberate exceptions, each
+Only read/inspect verbs are exposed, with six deliberate exceptions, each
 writing user-domain files and never a spec artifact, and each only under an
 explicit word: ``statusline install`` writes the statusline registration into
 the user's own Claude Code settings file, ``copilot add`` / ``copilot remove``
@@ -16,8 +16,10 @@ maintain the shipd Copilot code-review skill's four files inside a target
 repository, ``vendor add`` / ``vendor remove`` maintain a vendored per-repo
 shipd install there, ``harness add`` / ``harness remove`` maintain the
 generated ``/s:`` command files inside a repository or the user's own harness
-directories, and ``install`` asks which harnesses the user works in and
-installs the chosen ones' commands into their home directory. The mutating
+directories, ``install`` asks which harnesses the user works in and
+installs the chosen ones' commands into their home directory, and ``init``
+creates the content directory's empty layout directories — never a spec
+artifact, and never modifying anything already there. The mutating
 verbs over the spec library (``set-status``,
 ``merge``, ``emit``, ``autopilot``, ``worktree remove``) stay behind their
 guarded scripts and skills.
@@ -73,6 +75,7 @@ iu = None
 # arguments from the command line are appended verbatim, so ``--root``, slugs,
 # and flags keep working exactly as they do against the script itself.
 VERB_TABLE = {
+    "init": ("spec_status.py", ["init"]),
     "status": ("spec_status.py", ["show"]),
     "locate": ("spec_status.py", ["locate"]),
     "related": ("spec_status.py", ["related"]),
@@ -100,6 +103,7 @@ Read/inspect verbs over the shipd spec engine. Trailing arguments are passed
 through to the engine verbatim.
 
 verbs:
+  init [--root DIR]          create the content directory layout (safe to re-run)
   list [--root DIR] [--all]  in-flight changes across the root and its worktrees
   status [change]            a change's status and progress
   locate [change]            where an installed change lives
