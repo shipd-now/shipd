@@ -71,6 +71,11 @@ report that the repo has no resolved content-directory layout, then ask one
 AskUserQuestion — scaffold the minimal layout (`verified/`, `planned/`,
 `completed/` under the resolved content directory, default `.shipd/`) and continue
 (recommended), or stop here. Never proceed as though the layout existed.
+When the user accepts the scaffold, create it by running the engine verb —
+`python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" init`, the
+same function behind `shipd init` — never by making the directories by hand; it
+reports one `created`/`exists` line per directory and the summary
+`all shipd directories are ready`, and is safe to re-run.
 
 **Where to run:** planning for a change that will be built runs inside that
 change's worktree — create it first with
@@ -381,7 +386,8 @@ With the go-ahead question gone, the flow proceeds by default; only these
 conditions still end a turn and wait for the user:
 
 - **Missing content-directory layout** — the repo has no resolved
-  `verified/`/`planned/`/`completed/` layout (see "Requirements" above).
+  `verified/`/`planned/`/`completed/` layout; ask scaffold-or-stop, and on
+  accept scaffold it with `spec_status.py init` (see "Requirements" above).
 - **An unresolvable pipeline** — `pipeline-show` exits non-zero at the start of
   the flow (a declaration that fails validation, or a missing pydantic); the
   skill reports the engine's error text and stops before investigating.

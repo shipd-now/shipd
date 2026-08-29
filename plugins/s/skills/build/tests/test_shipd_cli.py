@@ -39,9 +39,9 @@ BIN = os.path.join(PLUGIN_ROOT, "bin", "shipd")
 MANIFEST = os.path.join(PLUGIN_ROOT, ".claude-plugin", "plugin.json")
 
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
-VERBS = ("list", "status", "locate", "related", "epic", "workspace", "board",
-         "metrics", "lint", "doctor", "statusline", "copilot", "vendor",
-         "harness", "install")
+VERBS = ("init", "list", "status", "locate", "related", "epic", "workspace",
+         "board", "metrics", "lint", "doctor", "statusline", "copilot",
+         "vendor", "harness", "install")
 
 
 def _load_binary():
@@ -261,6 +261,33 @@ class DispatchTest(ShipdCliTestBase):
         self.assertEqual(r.stdout, direct.stdout)
         self.assertIn("kind: planned", r.stdout)
         self.assertIn("slug: dark-mode", r.stdout)
+
+    def test_init_is_a_curated_verb_mapped_to_the_status_script(self):
+        """The `init` row delegates to ``spec_status.py init``
+        (shipd-cli cli-dispatch)."""
+        self.assertEqual(shipd.VERB_TABLE.get("init"),
+                         ("spec_status.py", ["init"]))
+
+    def test_the_banner_lists_init_as_a_verb(self):
+        # Discriminating on the verb *row*, not a bare substring: `init` also
+        # occurs inside `in-flight` and `initiatives` in the banner's prose.
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        rows = [line.strip() for line in r.stdout.splitlines()
+                if line.strip().startswith("init ")]
+        self.assertEqual(len(rows), 1, r.stdout)
+        self.assertIn("--root", rows[0])
+
+    def test_init_creates_the_layout_and_reports_ready(self):
+        target = tempfile.mkdtemp(prefix="shipd-cli-init-")
+        self.addCleanup(shutil.rmtree, target, True)
+        r = self.cli("init", "--root", target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for name in ("verified", "planned", "completed"):
+            self.assertTrue(
+                os.path.isdir(os.path.join(target, ".shipd", name)), name)
+        self.assertEqual(r.stdout.splitlines()[-1],
+                         "all shipd directories are ready")
 
     def test_retired_tui_verb_is_a_usage_error(self):
         r = self.cli("tui")

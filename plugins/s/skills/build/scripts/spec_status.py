@@ -11,6 +11,13 @@ repo-local ``.shipd/state.json`` (git-ignored), and derives the status from
 
 Verbs (see the spec-status + statusline capabilities for the contract):
 
+  init               create the content directory's verified/, planned/, and
+                     completed/ directories (parents included), printing one
+                     `created`/`exists` line per directory and the summary
+                     `all shipd directories are ready`. Never modifies or
+                     removes anything that already exists, so it is safe to
+                     re-run; refuses without creating anything when the content
+                     directory or a target exists as a non-directory
   use <change>       record the spec being worked on in .shipd/state.json (the content dir)
   current            print the selected change name (nothing if none)
   show [change]      print "<change>: <status> (<done>/<total> tasks)"; with no
@@ -412,6 +419,39 @@ def derive_status(counts):
 # ---------------------------------------------------------------------------
 # Verbs
 # ---------------------------------------------------------------------------
+
+# The content directory's layout: the master library, the in-flight changes,
+# and the applied archives. Everything else under the content directory is
+# created lazily by the emit and merge engines, so ``init`` makes these three
+# and nothing else.
+LAYOUT_DIRS = ("verified", "planned", "completed")
+
+
+def cmd_init(root):
+    """Create ``root``'s content-directory layout and report its readiness
+    (spec-status layout-init-verb).
+
+    The content directory resolves through the layered configuration, so a
+    declared ``dir`` key is honored. Check-then-create: every target is probed
+    before the first directory is made, so a non-directory anywhere on the
+    layout's paths refuses the whole run rather than leaving it half-created.
+    Creation is ``exist_ok``, so an existing directory — and everything already
+    inside it — is left exactly as it was, and a re-run is a no-op that still
+    exits ``0``."""
+    specs = sc.specs_dir(root)
+    targets = [os.path.join(specs, name) for name in LAYOUT_DIRS]
+    for path in [specs] + targets:
+        if os.path.exists(path) and not os.path.isdir(path):
+            raise StatusError(
+                "%s exists but is not a directory — move it aside and re-run"
+                % path)
+    for path in targets:
+        existed = os.path.isdir(path)
+        os.makedirs(path, exist_ok=True)
+        print("%s %s%s" % ("exists" if existed else "created",
+                           os.path.relpath(path, root), os.sep))
+    print("all shipd directories are ready")
+    return 0
 
 
 def cmd_use(root, change):
@@ -2938,6 +2978,17 @@ def main(argv=None):
                         help="repo root containing the .shipd/ content directory (default: cwd)")
     sub = parser.add_subparsers(dest="verb")
 
+    p_init = sub.add_parser(
+        "init",
+        help="create the content directory layout (safe to re-run)")
+    # Repeated on the subparser so `init --root DIR` — the form the `shipd
+    # init` delegation produces — resolves the same way `--root DIR init`
+    # does. SUPPRESS keeps the shared top-level default: without the flag here
+    # the namespace value the top-level option already resolved stands.
+    p_init.add_argument(
+        "--root", default=argparse.SUPPRESS,
+        help="repo root to initialize (default: the shared --root)")
+
     p_use = sub.add_parser("use", help="record the spec being worked on")
     p_use.add_argument("change")
 
@@ -3138,6 +3189,8 @@ def main(argv=None):
         return 2
 
     try:
+        if args.verb == "init":
+            return cmd_init(root)
         if args.verb == "use":
             return cmd_use(root, args.change)
         if args.verb == "current":

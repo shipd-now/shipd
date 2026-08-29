@@ -1881,6 +1881,115 @@ class WorkspaceShowChainTest(SpecStatusTestBase):
         self.assertFalse(any(line.startswith("registry: ") for line in lines))
 
 
+class TestInitVerb(SpecStatusTestBase):
+    """The ``init`` verb (spec-status layout-init-verb): create the content
+    directory's ``verified/``/``planned/``/``completed/`` layout safely, report
+    one ``created``/``exists`` line per directory plus the ready summary, and
+    never touch anything that already exists."""
+
+    SUMMARY = "all shipd directories are ready"
+
+    def init(self, *args):
+        """Drive the verb with ``--root`` *after* the verb, the form the
+        ``shipd init`` binary delegation produces."""
+        return subprocess.run(
+            ["python3", SCRIPT, "init", "--root", self.root, *args],
+            capture_output=True, text=True)
+
+    def layout(self, content=".shipd"):
+        return [os.path.join(self.root, content, name)
+                for name in ("verified", "planned", "completed")]
+
+    def test_fresh_root_gets_the_full_layout(self):
+        r = self.init()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for path in self.layout():
+            self.assertTrue(os.path.isdir(path), path)
+        lines = r.stdout.splitlines()
+        self.assertEqual(
+            sorted(lines[:3]),
+            sorted(["created %s" % os.path.join(".shipd", name) + os.sep
+                    for name in ("verified", "planned", "completed")]))
+        self.assertEqual(lines[-1], self.SUMMARY)
+
+    def test_existing_content_is_never_clobbered(self):
+        spec = os.path.join(self.root, ".shipd", "verified", "example",
+                            "spec.md")
+        os.makedirs(os.path.dirname(spec))
+        with open(spec, "w", encoding="utf-8") as fh:
+            fh.write("## Requirements\n")
+        r = self.init()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(spec, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "## Requirements\n")
+        lines = r.stdout.splitlines()
+        self.assertIn("exists %s" % os.path.join(".shipd", "verified") + os.sep,
+                      lines)
+        self.assertIn(
+            "created %s" % os.path.join(".shipd", "planned") + os.sep, lines)
+        self.assertIn(
+            "created %s" % os.path.join(".shipd", "completed") + os.sep, lines)
+        self.assertEqual(lines[-1], self.SUMMARY)
+
+    def test_second_run_is_idempotent(self):
+        self.assertEqual(self.init().returncode, 0)
+        r = self.init()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        for name in ("verified", "planned", "completed"):
+            self.assertIn(
+                "exists %s" % os.path.join(".shipd", name) + os.sep, lines)
+        self.assertNotIn("created", r.stdout)
+        self.assertEqual(lines[-1], self.SUMMARY)
+
+    def test_file_at_the_content_directory_refuses(self):
+        blocker = os.path.join(self.root, ".shipd")
+        with open(blocker, "w", encoding="utf-8") as fh:
+            fh.write("not a directory\n")
+        r = self.init()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("Error:", r.stderr)
+        self.assertIn(blocker, r.stderr)
+        self.assertTrue(os.path.isfile(blocker))
+
+    def test_file_at_a_target_refuses_and_creates_nothing(self):
+        os.makedirs(os.path.join(self.root, ".shipd"))
+        blocker = os.path.join(self.root, ".shipd", "planned")
+        with open(blocker, "w", encoding="utf-8") as fh:
+            fh.write("not a directory\n")
+        r = self.init()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("Error:", r.stderr)
+        self.assertIn(blocker, r.stderr)
+        # Nothing is created: the check precedes every makedirs call.
+        self.assertFalse(
+            os.path.exists(os.path.join(self.root, ".shipd", "verified")))
+        self.assertFalse(
+            os.path.exists(os.path.join(self.root, ".shipd", "completed")))
+        self.assertTrue(os.path.isfile(blocker))
+
+    def test_configured_content_directory_is_honored(self):
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"dir": "specs"}, fh)
+        r = self.init()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for path in self.layout("specs"):
+            self.assertTrue(os.path.isdir(path), path)
+        self.assertFalse(
+            os.path.isdir(os.path.join(self.root, ".shipd", "verified")))
+        self.assertIn("created %s" % os.path.join("specs", "verified") + os.sep,
+                      r.stdout.splitlines())
+
+    def test_root_before_the_verb_still_resolves(self):
+        # The shared `--root` default: the pre-verb form the rest of the suite
+        # drives every verb with keeps working.
+        r = self.cli("init")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for path in self.layout():
+            self.assertTrue(os.path.isdir(path), path)
+
+
 class WorkspaceInitTest(SpecStatusTestBase):
     """The ``workspace-init <path>`` verb (spec-status workspace-init-verb).
 
