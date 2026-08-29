@@ -160,7 +160,7 @@ the user's behalf. The user decides when to leave.
 | A feature spanning several independent changes | `/s:epic <feature>` |
 | One buildable change, scoped and understood | `/s:plan <the change>` |
 | Something that is already behaving wrongly today | `/s:fix <the problem>` |
-| A decision that wants mikk's standing opinion first | `/s:ask <the decision>` |
+| A decision that wants the user's standing opinion first | `/s:ask <the decision>` |
 
 Steer, do not stall: once the exit is clear, say so rather than manufacturing
 another round of critique. And when the idea is *not* ready — the blocking

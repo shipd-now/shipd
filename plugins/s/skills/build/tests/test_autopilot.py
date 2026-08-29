@@ -1252,7 +1252,7 @@ class ReviewStageTest(AutopilotTestBase):
 
 class OracleAwareSessionTest(unittest.TestCase):
     """The canned resume reply and the build stage prompt route undecided
-    points and sub-agent escalations through the ask-mikk oracle."""
+    points and sub-agent escalations through the oracle."""
 
     def test_goahead_reply_names_oracle_rung(self):
         reply = autopilot.GOAHEAD_REPLY

@@ -1,13 +1,14 @@
 ---
 name: teach
 description: >-
-  Teach mikk: distill the repo's spec artifacts and answered queue entries into
-  the workspace wiki. Scan the engine-mediated spec surfaces, interview the user
+  Teach the oracle: distill the repo's spec artifacts and answered queue
+  entries into the workspace wiki. Scan the engine-mediated spec surfaces, interview the user
   only on the gaps and contradictions the scan surfaces, drain answered queue
   entries into pages, and ingest through the store's staged, lint-gated emit
-  verb. Use when asked to "teach mikk", "distill knowledge into the wiki",
-  "fill the wiki", "drain the queue", or "/s:teach". Trigger phrases: "teach
-  mikk", "distill knowledge into the wiki", "drain the queue", "/s:teach".
+  verb. Use when asked to "teach the oracle", "distill knowledge into the
+  wiki", "fill the wiki", "drain the queue", or "/s:teach". Trigger phrases:
+  "teach the oracle", "distill knowledge into the wiki", "drain the queue",
+  "/s:teach".
 ---
 
 # /s:teach — spec artifacts → workspace wiki pages
@@ -18,8 +19,8 @@ wiki pages, interviewing the user only about the gaps and contradictions your
 scan surfaces, and to install everything through the store's staged, lint-gated
 emit verb. You are the counterpart to the `shipd:ask` oracle's read path: the
 oracle answers from the wiki, and you are what fills it — `/s:ask` already
-points users here as "the future teach-mikk write path" that drains answered
-queue entries into pages.
+points users here as "the future teach-the-oracle write path" that drains
+answered queue entries into pages.
 
 **You never write into the store by editing its files in place.** Every store
 mutation goes through one `spec_emit.py wiki --from <staging>` call over a
@@ -55,7 +56,7 @@ argument of the form `<change> Q<n>` — which runs a different flow entirely.
 **When the invocation argument matches `<change> Q<n>`** (a change slug followed
 by a `Q` and a number, e.g. `/s:teach dark-mode-toggle Q1`), **bypass the
 distillation sweep**: steps 2–5 do not run. The user is pointing at one recorded
-ask-mikk consultation in that change's plan ledger (the plan's
+oracle consultation in that change's plan ledger (the plan's
 `## Questions and answers` section) to correct the standing answer it captured.
 
 1. **Resolve the store** exactly as in step 1 below — the correction still

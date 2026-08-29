@@ -1,18 +1,18 @@
 ---
 name: ask
 description: >-
-  Query the ask-mikk oracle before interrupting a human: shape a request into
+  Query the oracle before interrupting a human: shape a request into
   one compact decision, consult the workspace wiki and the repo's spec surfaces
   through the `s:oracle` agent, and relay its verdict — a cited recommendation,
-  or a question queued for a person to answer later. Use when asked to "ask
-  mikk", consult the oracle, or get mikk's standing opinion on a decision before
-  escalating to the user. Trigger phrases: "ask mikk", "ask the oracle",
-  "consult mikk", "/s:ask".
+  or a question queued for a person to answer later. Use when asked to "ask the
+  oracle", consult the oracle, or get the user's standing opinion on a decision
+  before escalating to the user. Trigger phrases: "ask the oracle",
+  "consult the oracle", "/s:ask".
 ---
 
-# /s:ask — Question → the ask-mikk oracle's verdict
+# /s:ask — Question → the oracle's verdict
 
-You are the **human entry to the ask-mikk oracle**. Your job is to turn the
+You are the **human entry to the oracle**. Your job is to turn the
 user's request into one **compact question**, hand it to the `s:oracle` agent,
 and relay the oracle's verdict — a cited recommendation, or a question queued for
 a person. You do **not** answer from your own model knowledge and you do **not**
@@ -20,9 +20,9 @@ plan or build anything from the answer: the oracle consults durable knowledge
 (the workspace wiki and the asking repo's spec surfaces), and you relay what it
 returns.
 
-**The oracle is the middle rung of the epic's read → ask-mikk → human ladder.**
-A caller at an un-inferrable decision consults mikk's standing opinion before
-interrupting a person; when mikk has no opinion yet, the question queues and
+**The oracle is the middle rung of the epic's read → oracle → human ladder.**
+A caller at an un-inferrable decision consults the user's standing opinion before
+interrupting a person; when the user has no opinion yet, the question queues and
 this skill — the interactive rung — puts it to the user and captures their
 answer back into the queue, so the next spawn can cite it.
 
@@ -83,7 +83,7 @@ Branch on the oracle's first line:
 a position on the specific decision, quoted verbatim. So if the first line is
 `ANSWER` but the body carries **no `Cited:` line or no `Evidence:` line**,
 treat the verdict as `INSUFFICIENT` and take that branch instead — an uncited
-or unquoted answer is an ungrounded opinion, not mikk's standing position. Say
+or unquoted answer is an ungrounded opinion, not the user's standing position. Say
 plainly that you demoted it. (If the demoted verdict names no `q-<slug>`, there
 is nothing to capture against; ask the user and relay the answer for the
 session only, exactly as under `Queued: none`.)

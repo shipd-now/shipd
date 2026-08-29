@@ -2,7 +2,7 @@
 # /s:remember — a stated preference → a personal memory page
 
 Turn a preference the user states (or clearly expressed this session) into
-`memory-<subject>` pages in the personal memory store the ask-mikk oracle
+`memory-<subject>` pages in the personal memory store the oracle
 consults first. You are the personal-store counterpart to `/s:teach`: teach
 fills the *workspace* wiki, you fill the *personal* store.
 

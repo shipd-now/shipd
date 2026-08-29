@@ -1,8 +1,8 @@
 ---
 name: remember
 description: >-
-  Capture mikk's durable memories into the personal memory store: extract
-  memory candidates from the invocation argument or the session, reconcile
+  Capture the user's durable memories into the personal memory store:
+  extract memory candidates from the invocation argument or the session, reconcile
   each against existing `memory-*` pages, confirm the proposed set in a typed
   round, and install through one staged `spec_emit.py wiki --personal` call. Use
   when asked to "remember that I prefer …", "capture a preference", "save this
@@ -14,9 +14,9 @@ description: >-
 # /s:remember — user memories → personal memory pages
 
 You are the **write path into the personal memory store**. Your job is to turn a
-stated (or session-observed) user preference — "mikk prefers vim / ASCII
+stated (or session-observed) user preference — "the user prefers vim / ASCII
 diagrams / a terse tone" — into `memory-<subject>` wiki pages in the personal
-store that the ask-mikk oracle already consults first. You are the personal-store
+store that the oracle already consults first. You are the personal-store
 counterpart to `/s:teach`: teach fills the *workspace* wiki, and you fill the
 *personal* memory store.
 
@@ -105,8 +105,8 @@ browse/forget members filter on. Each page has this shape:
 
 - **Line 1** is the title `# memory-<subject>`, with a kebab-case `<subject>`
   (e.g. `memory-editor-choice`, `memory-diagram-style`).
-- Then **one line** stating the preference (e.g. "Mikk prefers vim over VS Code
-  for editing.").
+- Then **one line** stating the preference (e.g. "The user prefers vim over VS
+  Code for editing.").
 - Then a **provenance block**: `- Origin:` naming the repo the capture was
   invoked from, and `- Captured:` the capture date (`YYYY-MM-DD`).
 

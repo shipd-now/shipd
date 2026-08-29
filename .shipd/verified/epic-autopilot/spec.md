@@ -315,7 +315,7 @@ fresh-attempt budget (`autopilot.attempts`, default three), each session
 using the gate entry's declared model, timeout, and max-resumes. The
 session's prompt SHALL direct running `/s:plan <member>` — which locates the
 rejected change and enters enrichment mode — resolving repository-answerable
-findings by editing the artifacts, consulting the ask-mikk oracle (agent
+findings by editing the artifacts, consulting the oracle (agent
 `s:oracle`, one compact question carrying the decision, options, and
 recommendation per gap) for decisions the repository cannot answer instead
 of any human, and exiting through the re-gate; each session SHALL be graded
@@ -355,7 +355,7 @@ id: oracle-aware-driven-sessions
 
 The canned resume reply the autopilot sends to every driven session SHALL
 direct the session to shape any undecided point into a compact question
-(decision, options, recommendation), consult the ask-mikk oracle by spawning
+(decision, options, recommendation), consult the oracle by spawning
 agent `s:oracle`, adopt an `ANSWER` verdict, and fall back to its own
 recommendation on `INSUFFICIENT` or an unavailable oracle — never waiting
 for a human. The build stage prompt SHALL direct the coordinator to route

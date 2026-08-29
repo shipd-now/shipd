@@ -113,7 +113,7 @@ repository's managed files to the running plugin version),
 `/s:epic` to decompose features, `/s:research` to produce a cited research
 report an epic can link, `/s:workspace` to set up and inspect the
 workspace, `/s:initiative` to run workspace initiatives, `/s:ask` to
-query the ask-mikk oracle before interrupting the user, `/s:teach` to
+query the oracle before interrupting the user, `/s:teach` to
 distill spec artifacts and answered queue entries into the workspace wiki,
 `/s:remember` to capture the user's durable preferences into the personal
 memory store, `/s:memory` to list the captured memories, `/s:forget` to

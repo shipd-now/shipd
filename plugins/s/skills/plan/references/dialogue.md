@@ -33,7 +33,7 @@ Before putting anything to the user, split it:
   shapes the tasks. Only these belong in the loop.
 
 Then, before any round opens, **route every surviving decision through the
-ask-mikk rung** (see `SKILL.md`'s "The ask-mikk rung" section): consult the
+oracle rung** (see `SKILL.md`'s "The oracle rung" section): consult the
 oracle on each decision, fold in the ones it answers `ANSWER`, and carry only
 the `INSUFFICIENT` decisions into the agenda's grouped rounds below.
 Oracle-settled decisions are reported as

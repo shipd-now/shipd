@@ -22,15 +22,15 @@ import tui_bootstrap as tb  # noqa: E402
 
 class VenvDirTest(unittest.TestCase):
     def test_honors_xdg_cache_home(self):
-        environ = {"XDG_CACHE_HOME": "/xdg/cache", "HOME": "/home/mikk"}
+        environ = {"XDG_CACHE_HOME": "/xdg/cache", "HOME": "/home/user"}
         self.assertEqual(tb.venv_dir(environ),
                          os.path.join("/xdg/cache", "shipd", "tui-venv"))
 
     def test_falls_back_to_home_cache(self):
-        environ = {"HOME": "/home/mikk"}
+        environ = {"HOME": "/home/user"}
         self.assertEqual(
             tb.venv_dir(environ),
-            os.path.join("/home/mikk", ".cache", "shipd", "tui-venv"))
+            os.path.join("/home/user", ".cache", "shipd", "tui-venv"))
 
 
 class FindRequirementsTest(unittest.TestCase):

@@ -1,5 +1,5 @@
-<!-- description: Consult the ask-mikk oracle before interrupting a person — one compact question answered from durable knowledge, or queued for a human. -->
-# /s:ask — one compact question → mikk's standing verdict
+<!-- description: Consult the oracle before interrupting a person — one compact question answered from durable knowledge, or queued for a human. -->
+# /s:ask — one compact question → the user's standing verdict
 
 Turn the user's request into one compact question, answer it from durable
 knowledge — the workspace wiki and this repo's spec surfaces — and relay the

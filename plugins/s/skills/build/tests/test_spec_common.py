@@ -1452,7 +1452,7 @@ class WikiGrammarHelpersTest(unittest.TestCase):
             "# Queue\n"
             "\n"
             "## q-stale-cache\n"
-            "- Asked: 2026-07-30 teach-mikk\n"
+            "- Asked: 2026-07-30 teach-session\n"
             "- Question: Is the cache stale?\n"
             "- Options: yes | no\n"
             "- Recommendation: yes\n"

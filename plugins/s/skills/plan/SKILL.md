@@ -158,8 +158,8 @@ change directory (`<root>/<dir>`), never re-emitting through staging.
 
 3. **Put only the true gaps to the user.** A finding the repository genuinely
    cannot answer — an undecided product choice encoded as a placeholder — is the
-   only thing you ask about. First route each true gap through the ask-mikk rung
-   (see "The ask-mikk rung" below); only the `INSUFFICIENT` gaps reach the typed
+   only thing you ask about. First route each true gap through the oracle rung
+   (see "The oracle rung" below); only the `INSUFFICIENT` gaps reach the typed
    round. Batch those under the **fast-path question contract** (a visible
    context brief first, then a plain-text numbered typed round), and fold the
    answers back into the artifacts. **Do not ask about anything discoverable
@@ -308,7 +308,7 @@ answered by reading is a failure of this skill.
    the turn in exactly **one of two ways**, never both:
    - **With open questions** — when investigation leaves one or more
      genuinely open task-shaping questions, name them under an **OPEN
-     QUESTIONS** header, then consult the ask-mikk rung (see "The ask-mikk
+     QUESTIONS** header, then consult the oracle rung (see "The oracle
      rung" below) on each of them in this same turn, and end the turn on a
      single plain-text numbered typed round for the `INSUFFICIENT`
      remainder (per the fast-path question contract below) — brief, then
@@ -351,7 +351,7 @@ answered by reading is a failure of this skill.
    that genuinely surfaced a *new* un-inferrable decision continues into
    this step. Otherwise (step 2 ended without open questions, or a new
    decision surfaced), if genuinely un-inferrable decisions are left, first
-   consult the ask-mikk rung (see "The ask-mikk rung" below) and batch only
+   consult the oracle rung (see "The oracle rung" below) and batch only
    the `INSUFFICIENT` remainder into a single typed question round (see the
    question contract below). If investigation already satisfied the
    readiness bar, ask nothing and go straight to step 6.
@@ -447,11 +447,11 @@ confirmation before step 5 continues.
 The moment the readiness checklist is satisfied, stop investigating and emit —
 do not open new threads of exploration.
 
-## The personal-memory consultation — read mikk's captured preferences
+## The personal-memory consultation — read the user's captured preferences
 
-The personal memory store is part of the **read rung** of the read → ask-mikk →
-human ladder, and it **precedes** the ask-mikk oracle: during investigation,
-before any user question round would open, read mikk's captured preferences
+The personal memory store is part of the **read rung** of the read → oracle →
+human ladder, and it **precedes** the oracle: during investigation,
+before any user question round would open, read the user's captured preferences
 directly and apply any that bear on the change. This is a **direct store read
 that spawns no `s:oracle` agent**; the read still precedes the oracle rung
 consulted in that same turn.
@@ -481,7 +481,7 @@ consulted in that same turn.
   matching `/s:memory`.
 - **Apply every relevant memory.** A relevant memory may shape not only plan
   decisions but the plan's **output and expression** — diagram style, tone —
-  which the ask-mikk rung structurally cannot carry. Apply it to whichever it
+  which the oracle rung structurally cannot carry. Apply it to whichever it
   bears on.
 - **Report every applied memory.** Report each memory you apply in user-visible
   text — the findings digest or status text — with its **source slug**, so the
@@ -494,10 +494,10 @@ consulted in that same turn.
   change, skip the consultation with no error and let planning proceed
   unchanged. The consultation **never blocks planning**.
 
-## The ask-mikk rung — consult the oracle before the user
+## The oracle rung — consult the oracle before the user
 
-The oracle is the **middle rung** of the read → ask-mikk → human ladder: an
-un-inferrable decision consults mikk's standing opinion (the workspace wiki and
+The oracle is the **middle rung** of the read → oracle → human ladder: an
+un-inferrable decision consults the user's standing opinion (the workspace wiki and
 the repo's spec surfaces) before it interrupts a person. When
 genuinely un-inferrable task-shaping decisions remain **and a user question
 round would otherwise open** — the findings digest's **OPEN QUESTIONS** ending
@@ -528,7 +528,7 @@ enrichment's true-gap round — consult the oracle on each remaining decision
   `ANSWER` whose body carries **no `Cited:` line or no `Evidence:` line** is
   contract-malformed: treat that decision as `INSUFFICIENT` and put it to the
   user like any other. An uncited or unquoted answer is an ungrounded opinion,
-  not mikk's standing position, and demoting it costs only one question.
+  not the user's standing position, and demoting it costs only one question.
 - **Number every consultation `Q<n>`.** Assign each consultation of the session
   a sequential reference — `Q1`, `Q2`, … in consultation order, across every
   rung invocation of the session, not restarting per round. That reference is
@@ -588,8 +588,8 @@ reference's grouped-round protocol governs instead — independent decisions
 grouped into one round, dependent chains asked one at a time — and the batching
 rules below do not apply there. See `dialogue.md` for the authority.
 
-**The ask-mikk rung precedes this round.** Before opening the round, consult the
-oracle on the remaining decisions (see "The ask-mikk rung" above); only the
+**The oracle rung precedes this round.** Before opening the round, consult the
+oracle on the remaining decisions (see "The oracle rung" above); only the
 `INSUFFICIENT` decisions are asked here, and oracle-settled decisions are
 reported in this round's context brief.
 

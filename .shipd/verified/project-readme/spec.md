@@ -1,7 +1,7 @@
 # project-readme
 
 ### Requirement: README displays the shipd banner
-id: readme-displays-the-auto-mikk-banner
+id: readme-displays-the-shipd-banner
 
 The `README.md` at the repository root SHALL open with an ASCII-art header
 that renders the project name **shipd**. The banner SHALL be enclosed in a
