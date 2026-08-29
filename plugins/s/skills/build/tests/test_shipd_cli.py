@@ -283,7 +283,7 @@ class DispatchTest(ShipdCliTestBase):
         self.addCleanup(shutil.rmtree, target, True)
         r = self.cli("init", "--root", target)
         self.assertEqual(r.returncode, 0, r.stderr)
-        for name in ("verified", "planned", "completed"):
+        for name in ("verified", "planned", "completed", "research"):
             self.assertTrue(
                 os.path.isdir(os.path.join(target, ".shipd", name)), name)
         self.assertEqual(r.stdout.splitlines()[-1],

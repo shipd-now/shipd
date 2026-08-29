@@ -11,11 +11,11 @@ repo-local ``.shipd/state.json`` (git-ignored), and derives the status from
 
 Verbs (see the spec-status + statusline capabilities for the contract):
 
-  init               create the content directory's verified/, planned/, and
-                     completed/ directories (parents included), printing one
-                     `created`/`exists` line per directory and the summary
-                     `all shipd directories are ready`. Never modifies or
-                     removes anything that already exists, so it is safe to
+  init               create the content directory's verified/, planned/,
+                     completed/, and research/ directories (parents included),
+                     printing one `created`/`exists` line per directory and the
+                     summary `all shipd directories are ready`. Never modifies
+                     or removes anything that already exists, so it is safe to
                      re-run; refuses without creating anything when the content
                      directory or a target exists as a non-directory
   use <change>       record the spec being worked on in .shipd/state.json (the content dir)
@@ -421,14 +421,15 @@ def derive_status(counts):
 # ---------------------------------------------------------------------------
 
 # The content directory's layout: the master library, the in-flight changes,
-# and the applied archives. Everything else under the content directory is
-# created lazily by the emit and merge engines, so ``init`` makes these three
-# and nothing else.
-LAYOUT_DIRS = ("verified", "planned", "completed")
+# the applied archives, and the research reports' home. Everything else under
+# the content directory is created lazily by the emit and merge engines, so
+# ``init`` makes these four and nothing else.
+LAYOUT_DIRS = ("verified", "planned", "completed", "research")
 
 
 def cmd_init(root):
-    """Create ``root``'s content-directory layout and report its readiness
+    """Create ``root``'s content-directory layout — ``verified/``,
+    ``planned/``, ``completed/``, and ``research/`` — and report its readiness
     (spec-status layout-init-verb).
 
     The content directory resolves through the layered configuration, so a
