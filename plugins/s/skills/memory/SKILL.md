@@ -14,7 +14,7 @@ description: >-
 
 You are the **read path over the personal memory store**. Your job is to show
 the user the `memory-<subject>` pages `/s:remember` has captured — the
-durable preferences the ask-mikk oracle already consults first. You are the
+durable preferences the oracle already consults first. You are the
 read-only counterpart to `/s:remember`: remember *writes* the personal
 store, and you *list* it.
 

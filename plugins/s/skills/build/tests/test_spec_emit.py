@@ -84,7 +84,7 @@ CLEAN_VIDEO_BRIEF = (
     "\n"
     "## Speakers\n"
     "\n"
-    "- Mikk — product lead\n"
+    "- Ada — product lead\n"
     "\n"
     "## Intents\n"
     "\n"
@@ -94,7 +94,7 @@ CLEAN_VIDEO_BRIEF = (
     "\n"
     "## Sources\n"
     "\n"
-    "1. [00:14:22.4] Mikk: parked members need a visible signal.\n"
+    "1. [00:14:22.4] Ada: parked members need a visible signal.\n"
 )
 
 

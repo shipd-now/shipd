@@ -185,7 +185,7 @@ to `light` on an unknown value.
 
 ### `## Questions and answers` — the oracle ledger
 
-When one or more ask-mikk oracle consultations ran while planning the change,
+When one or more oracle consultations ran while planning the change,
 `plan.md` carries an optional `## Questions and answers` section after the two
 required ones. It is the durable record of those consultations: one entry per
 consultation, in consultation order, so each settled decision keeps a stable
@@ -331,7 +331,7 @@ configuration's `build.design_dir`). When a design exists there:
 - Name it by **absolute path** in `plan.md`'s `## Implementation` section, as
   one of the binding decisions, e.g.:
   ```markdown
-  - Design reference: `/home/mikk/.shipd/designs/dark-mode-toggle/` — read
+  - Design reference: `/home/user/.shipd/designs/dark-mode-toggle/` — read
     verbatim by the execution sub-agent and the validator as a read-only,
     out-of-worktree reference; match it, never edit it.
   ```

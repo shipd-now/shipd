@@ -2498,9 +2498,9 @@ class CatTest(SpecStatusTestBase):
                   encoding="utf-8") as fh:
             fh.write(
                 "# Board walkthrough\nVideo: board-walkthrough.mp4\n\n"
-                "## Speakers\n\n- Mikk — product lead\n\n"
+                "## Speakers\n\n- Ada — product lead\n\n"
                 "## Intents\n\n### Explain the signal\n\nClear [1].\n\n"
-                "## Sources\n\n1. [00:14:22.4] Mikk: clear.\n")
+                "## Sources\n\n1. [00:14:22.4] Ada: clear.\n")
         r = self.cli("cat", "video", "board-walkthrough")
         self.assertEqual(r.returncode, 0, r.stderr)
         sep = "--- " + os.path.join(
@@ -2602,7 +2602,7 @@ class WikiVerbTest(SpecStatusTestBase):
         self.write_wiki_file(
             "queue.md",
             "# Queue\n\n## q-stale-cache\n"
-            "- Asked: 2026-07-30 teach-mikk\n"
+            "- Asked: 2026-07-30 teach-session\n"
             "- Question: Is it stale?\n"
             "- Options: yes | no\n"
             "- Recommendation: yes\n"
@@ -2974,14 +2974,14 @@ class WikiQueueAddTest(SpecStatusTestBase):
                      "--question", "Is the cache stale?",
                      "--options", "yes | no",
                      "--recommendation", "yes",
-                     "--origin", "teach-mikk")
+                     "--origin", "teach-session")
         self.assertEqual(r.returncode, 0, r.stderr)
         queue = self.queue_text()
         self.assertIn("## q-stale-cache", queue)
         self.assertIn("Is the cache stale?", queue)
         self.assertIn("yes | no", queue)
         self.assertIn("Recommendation: yes", queue)
-        self.assertIn("teach-mikk", queue)
+        self.assertIn("teach-session", queue)
         self.assertIn("Answer: pending", queue)
         self.assertIn("Asked: %s" % datetime.date.today().isoformat(), queue)
 

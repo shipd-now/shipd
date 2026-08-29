@@ -37,13 +37,13 @@ A plan is ready to emit only when **all four** of these hold:
 - **All four met → emit.** Stop investigating, stop asking, and proceed to
   emission (`emission.md`). Do not open new threads of exploration once the bar
   is cleared.
-- **Any item unmet → investigate, then ask-mikk, then ask the user.** The three
+- **Any item unmet → investigate, then the oracle, then ask the user.** The three
   rungs in order: **prefer investigation** — read the repo for anything
   discoverable, and as part of that read rung **consult the personal memory
   store** (per `SKILL.md`'s "The personal-memory consultation" section) and apply
-  any relevant captured preference; this read precedes the ask-mikk oracle rung.
-  When a gap is genuinely un-inferrable, put it to the **ask-mikk oracle** next
-  (per `SKILL.md`'s "The ask-mikk rung" section), which consults mikk's standing
+  any relevant captured preference; this read precedes the oracle rung.
+  When a gap is genuinely un-inferrable, put it to the **oracle** next
+  (per `SKILL.md`'s "The oracle rung" section), which consults the user's standing
   answer before any person is interrupted. Only what the oracle returns
   `INSUFFICIENT` goes to the **user** — batched, per the question contract in
   `SKILL.md`. Never emit a speculative spec to paper over an unmet item.

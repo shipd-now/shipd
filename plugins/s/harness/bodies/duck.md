@@ -46,7 +46,7 @@ nothing; the same assumption caught after the code is written costs a change.
    command picks the idea up and give it exactly — un-cited external unknowns →
    `/s:research`; a feature spanning several independent changes → `/s:epic`; a
    single scoped, buildable change → `/s:plan`; something already behaving
-   wrongly today → `/s:fix`; a decision wanting mikk's standing opinion →
+   wrongly today → `/s:fix`; a decision wanting the user's standing opinion →
    `/s:ask`. You name it, the user runs it. When the idea is not ready, say
    that instead and name what must be settled first.
 5. **On a wrap-up cue, debrief in the reply.** "Wrap up", "let's stop there",

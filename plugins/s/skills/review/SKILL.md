@@ -1,11 +1,12 @@
 ---
 name: review
 description: >-
-  Run a CodeRabbit-style, AST-aware semantic review of local changes against a
-  base ref before they are pushed: map changed files into cohorts, reason over
-  a syntax-aware structural diff (never raw file dumps), chase changed
-  signatures to their call sites, and report findings by cohort with a
-  high/medium/low severity rubric and a ship-it/fix-required verdict. When a
+  Run an AST-aware semantic review of local changes, in the style of popular
+  code-review tools, against a base ref before they are pushed: map changed
+  files into cohorts, reason over a syntax-aware structural diff (never raw
+  file dumps), chase changed signatures to their call sites, and report
+  findings by cohort with a high/medium/low severity rubric and a
+  ship-it/fix-required verdict. When a
   planned shipd change is in scope, verify the diff against its delta scenarios.
   Read-only; a `--json` mode feeds the future PR gate. Use when asked to
   "review my changes", run a "semantic review", review a diff/branch/PR before
@@ -15,9 +16,9 @@ description: >-
 
 # /s:review — Semantic review engine
 
-You are running a CodeRabbit-style review of the user's **local, unpushed
-changes** against a base ref — *before* they open a PR, so problems are caught
-while they are cheap to fix.
+You are running a review in the style of popular code-review tools over the
+user's **local, unpushed changes** against a base ref — *before* they open a
+PR, so problems are caught while they are cheap to fix.
 
 `semdiff` does the mechanical work and emits compact JSON. **You** supply the
 judgement. Never read whole files into context when the structural diff and

@@ -18,7 +18,7 @@ below:
 
 | Command | What it does | Example |
 |---|---|---|
-| `/s:ask` | Ask the ask-mikk oracle before interrupting a human — a cited recommendation, or a queued question. | `/s:ask Should the new endpoint require auth?` |
+| `/s:ask` | Ask the oracle before interrupting a human — a cited recommendation, or a queued question. | `/s:ask Should the new endpoint require auth?` |
 | `/s:autopilot <epic> [detached]` | Drive an approved epic's unplanned members to shipped PRs unattended. | `/s:autopilot export-cli` |
 | `/s:build [change]` | Plan, delegate to execution sub-agents, verify, and ship a change end to end. | `/s:build export-json-flag` |
 | `/s:doctor` | Diagnose a shipd environment and run only the remedies you consent to. | `/s:doctor` |

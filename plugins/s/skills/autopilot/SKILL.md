@@ -239,7 +239,7 @@ Run /s:build for the change `<member>`: implement every task, then merge
 and archive it and open its auto-merging PR.
 
 If a sub-agent escalates a QUESTION: that the spec artifacts and code cannot
-answer, consult the ask-mikk oracle (spawn agent `s:oracle` with a compact
+answer, consult the oracle (spawn agent `s:oracle` with a compact
 question) before answering on your own authority; on INSUFFICIENT, answer
 with your own recommendation — never leave the sub-agent blocked.
 ```

@@ -1444,7 +1444,7 @@ class VideoBriefLintTest(unittest.TestCase):
         "\n"
         "## Speakers\n"
         "\n"
-        "- Mikk — product lead\n"
+        "- Ada — product lead\n"
         "\n"
         "## Intents\n"
         "\n"
@@ -1454,7 +1454,7 @@ class VideoBriefLintTest(unittest.TestCase):
         "\n"
         "## Sources\n"
         "\n"
-        "1. [00:14:22.4] Mikk: parked members need a visible signal.\n"
+        "1. [00:14:22.4] Ada: parked members need a visible signal.\n"
     )
 
     def setUp(self):
@@ -1485,7 +1485,7 @@ class VideoBriefLintTest(unittest.TestCase):
             "\n"
             "## Speakers\n"
             "\n"
-            "- Mikk — product lead\n"
+            "- Ada — product lead\n"
             "\n"
             "## Intents\n"
             "\n"
@@ -1495,7 +1495,7 @@ class VideoBriefLintTest(unittest.TestCase):
             "\n"
             "## Sources\n"
             "\n"
-            "1. [00:14:22.4] Mikk: parked members need a visible signal.\n"
+            "1. [00:14:22.4] Ada: parked members need a visible signal.\n"
         )
         self._write_brief("board-walkthrough", text)
         errors = self._errors("board-walkthrough")
@@ -1508,7 +1508,7 @@ class VideoBriefLintTest(unittest.TestCase):
             "\n"
             "## Speakers\n"
             "\n"
-            "- Mikk — product lead\n"
+            "- Ada — product lead\n"
             "\n"
             "## Intents\n"
             "\n"
@@ -1522,7 +1522,7 @@ class VideoBriefLintTest(unittest.TestCase):
             "\n"
             "## Sources\n"
             "\n"
-            "1. [00:14:22.4] Mikk: parked members need a visible signal.\n"
+            "1. [00:14:22.4] Ada: parked members need a visible signal.\n"
         )
         self._write_brief("board-walkthrough", text)
         errors = self._errors("board-walkthrough")
@@ -1535,7 +1535,7 @@ class VideoBriefLintTest(unittest.TestCase):
             "\n"
             "## Speakers\n"
             "\n"
-            "- Mikk — product lead\n"
+            "- Ada — product lead\n"
             "\n"
             "## Intents\n"
             "\n"
@@ -1545,12 +1545,12 @@ class VideoBriefLintTest(unittest.TestCase):
             "\n"
             "## Sources\n"
             "\n"
-            "1. Mikk: parked members need a visible signal.\n"
+            "1. Ada: parked members need a visible signal.\n"
         )
         self._write_brief("board-walkthrough", text)
         errors = self._errors("board-walkthrough")
         self.assertTrue(
-            has(errors, "Mikk: parked members need a visible signal"),
+            has(errors, "Ada: parked members need a visible signal"),
             errors)
 
     def test_unresolved_marker_errors_naming_it(self):
@@ -1560,7 +1560,7 @@ class VideoBriefLintTest(unittest.TestCase):
             "\n"
             "## Speakers\n"
             "\n"
-            "- Mikk — product lead\n"
+            "- Ada — product lead\n"
             "\n"
             "## Intents\n"
             "\n"
@@ -1570,9 +1570,9 @@ class VideoBriefLintTest(unittest.TestCase):
             "\n"
             "## Sources\n"
             "\n"
-            "1. [00:14:22.4] Mikk: one.\n"
-            "2. [00:15:01.0] Mikk: two.\n"
-            "3. [00:15:40.2] Mikk: three.\n"
+            "1. [00:14:22.4] Ada: one.\n"
+            "2. [00:15:01.0] Ada: two.\n"
+            "3. [00:15:40.2] Ada: three.\n"
         )
         self._write_brief("board-walkthrough", text)
         errors = self._errors("board-walkthrough")
@@ -1587,7 +1587,7 @@ class VideoBriefLintTest(unittest.TestCase):
             "\n"
             "## Speakers\n"
             "\n"
-            "- Mikk — product lead\n"
+            "- Ada — product lead\n"
             "\n"
             "## Intents\n"
             "\n"
@@ -1601,7 +1601,7 @@ class VideoBriefLintTest(unittest.TestCase):
             "\n"
             "## Sources\n"
             "\n"
-            "1. [00:14:22.4] Mikk: parked members need a visible signal.\n"
+            "1. [00:14:22.4] Ada: parked members need a visible signal.\n"
         )
         self._write_brief("board-walkthrough", text)
         self.assertEqual(self._errors("board-walkthrough"), [])
@@ -2343,7 +2343,7 @@ class WikiLintModeTest(unittest.TestCase):
         self._write(
             "queue.md",
             "# Queue\n\n## q-stale-cache\n"
-            "- Asked: 2026-07-30 teach-mikk\n"
+            "- Asked: 2026-07-30 teach-session\n"
             "- Question: Is it stale?\n"
             "- Options: yes | no\n"
             "- Answer: pending\n")  # no Recommendation line

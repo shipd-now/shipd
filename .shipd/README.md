@@ -106,7 +106,7 @@ archive to `.shipd/completed/<date>-<change>/artefacts/`.
 ### The questions-and-answers ledger
 
 An optional **`## Questions and answers` section** MAY follow the required
-sections. It is the durable record of the ask-mikk oracle consultations that ran
+sections. It is the durable record of the oracle consultations that ran
 while planning the change: one entry per consultation, in consultation order,
 so a settled decision keeps a stable `Q<n>` reference long after the session
 ends. A planning session with no consultation emits no section.

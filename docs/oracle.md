@@ -1,10 +1,10 @@
-# The ask-mikk oracle
+# The oracle
 
 Some decisions can't be read out of the codebase. Which retention window? Which
 naming convention? Which of two equally defensible layouts does this team
 actually use? Historically the only way to settle one was to interrupt a human.
 
-The **ask-mikk oracle** is the rung in between. It is a non-interactive
+The **oracle** is the rung in between. It is a non-interactive
 sub-agent (`s:oracle`) that takes **one compact decision** — the decision, its
 options, and your recommended default — searches the durable knowledge the
 workspace already holds, and returns one of exactly two verdicts: a **cited
@@ -16,7 +16,7 @@ verdict.
 
 ## The ladder
 
-The oracle sits in the middle of a three-rung ladder: **read → ask-mikk →
+The oracle sits in the middle of a three-rung ladder: **read → oracle →
 human**. Each rung is cheaper than the one above it, so you only climb when the
 rung below comes up empty.
 
@@ -27,7 +27,7 @@ rung below comes up empty.
   └───────────────────────────┬──────────────────────────────┘
                               │ un-inferrable decision
                               ▼
-  ┌─ 2. ASK-MIKK (the oracle) ───────────────────────────────┐
+  ┌─ 2. ORACLE ──────────────────────────────────────────────┐
   │  personal memory  →  workspace chain (nearest first)      │
   │       →  answered queue  →  base wiki                     │
   │       →  the repo's spec surfaces                         │

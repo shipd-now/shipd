@@ -228,8 +228,8 @@ state this contract.
 id: oracle-user-docs
 
 The repository SHALL provide `docs/oracle.md`, a user-facing guide to the
-ask-mikk oracle that includes a diagram of the read → ask-mikk → human ladder
-with the answer-capture loop, the two verdicts each shown with an example
+oracle that includes a diagram of the read → oracle → human ladder with the
+answer-capture loop, the two verdicts each shown with an example
 (`ANSWER` with `Cited:` and `Evidence:` lines; `INSUFFICIENT` with its queued
 question), the definitive-evidence answering bar, and the correction path via
 `/s:teach`.
