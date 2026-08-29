@@ -4428,7 +4428,21 @@ class LiveRefreshTest(unittest.IsolatedAsyncioTestCase):
             unplanned = app.query_one("#lane-unplanned", dashboard.Lane)
             self.assertTrue(list(unplanned.query(dashboard.TaskCard)))
 
-            await pilot.pause(0.2)  # let the interval timer fire at least once
+            # Poll for the repainted lanes rather than sleeping one fixed
+            # span: the assertion needs the real interval timer to fire *and*
+            # its async remount to land, and a single wall-clock window is
+            # exactly the assumption a loaded CI runner breaks. The loop keeps
+            # the timer in the loop (this test's whole point) while bounding
+            # the wait by an outcome instead of a duration — it returns as
+            # soon as the repaint is visible, and the ceiling is generous
+            # enough that only a genuinely broken timer reaches it.
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                await pilot.pause(0.05)
+                if (list(app.query_one("#lane-ready", dashboard.Lane)
+                         .query(dashboard.TaskCard))
+                        and not list(unplanned.query(dashboard.TaskCard))):
+                    break
 
             ready = app.query_one("#lane-ready", dashboard.Lane)
             self.assertTrue(list(ready.query(dashboard.TaskCard)))
