@@ -16,9 +16,14 @@ the spawn message. When `plan.md`'s `## Implementation` names a design scratch
 directory for the change, that directory is part of the named artifact set: the
 sub-agent SHALL read it as a read-only reference and build to match it
 verbatim, and the design SHALL travel by that plan-named path rather than as
-prose in the spawn message, so the handoff stays clean-context. The role
-contract lives in the `s:sub-agent` agent definition, so the spawn message SHALL
-carry only the change name, the coordinator script path, and any Orchestrator
+prose in the spawn message, so the handoff stays clean-context. When
+`plan.md`'s `## Implementation` names an installed research report by its
+content-directory `research/` path, that report is likewise part of the named
+artifact set: the sub-agent SHALL read it as a read-only reference, and the
+report SHALL travel by that plan-named path rather than as prose in the spawn
+message. The role contract
+lives in the `s:sub-agent` agent definition, so the spawn message SHALL carry
+only the change name, the coordinator script path, and any Orchestrator
 addenda. The handoff SHALL NOT restate global baseline rules that the sub-agent
 already inherits or reads (project instructions, the constitution); the spec on
 disk remains the single compiled source of context.
@@ -45,6 +50,12 @@ disk remains the single compiled source of context.
 - **WHEN** a change carries an `artefacts/` directory a task references
 - **THEN** the sub-agent discovers it by reading the artifacts and then the
   named path, and the spawn message carries no artefact content of its own
+
+#### Scenario: Research report rides the plan, not the prompt
+- **WHEN** `plan.md`'s `## Implementation` names an installed research report
+  by its content-directory `research/` path
+- **THEN** the sub-agent discovers it by reading `plan.md` and then the named
+  path, and the spawn message carries no report content of its own
 
 ### Requirement: Orchestrator addenda slot
 id: orchestrator-addenda-slot

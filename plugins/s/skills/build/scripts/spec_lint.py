@@ -882,11 +882,15 @@ def _citation_markers_outside_code(text):
 def lint_research(root, slug, errors):
     """Validate the research report at ``<content-dir>/research/<slug>/
     report.md`` (shipd-spec-lint research-report-validation, shipd-spec-format
-    research-report-format): a non-empty ``# <title>`` on line 1, a
-    ``## Sources`` section holding at least one numbered entry (``N. …``), at
-    least one inline ``[n]`` citation marker, and every marker (outside fenced
-    code blocks, ignoring ``[n](`` markdown links) resolving to a listed source
-    number. Every finding names the report file. These checks run only when the
+    research-report-format): a non-empty ``# <title>`` on line 1 is always
+    required. The citation skeleton — a ``## Sources`` section holding at least
+    one numbered entry (``N. …``), at least one inline ``[n]`` citation marker,
+    and every marker (outside fenced code blocks, ignoring ``[n](`` markdown
+    links) resolving to a listed source number — is enforced only when the
+    report carries a citation signal: a ``## Sources`` section, or at least one
+    such marker. A titled report carrying neither signal produces no findings,
+    so a supplied document installs without declaring a provenance it does not
+    have. Every finding names the report file. These checks run only when the
     emit engine installs a report; :func:`lint_library` never calls them, so the
     library lint never walks the content directory's ``research/`` folder."""
     path = os.path.join(sc.specs_dir(root), "research", slug, "report.md")
@@ -905,6 +909,11 @@ def lint_research(root, slug, errors):
             % first_line, path))
 
     section = _section_lines(text, "## Sources")
+    markers = _citation_markers_outside_code(text)
+    if section is None and not markers:
+        # No citation signal: a supplied document, validated on its title only.
+        return
+
     source_numbers = set()
     if section is None:
         errors.append(LintError(
@@ -919,7 +928,6 @@ def lint_research(root, slug, errors):
                 "report.md `## Sources` section has no numbered entries "
                 "(at least one `N. …` required)", path))
 
-    markers = _citation_markers_outside_code(text)
     if not markers:
         errors.append(LintError(
             "report.md has no inline `[n]` citation markers (at least one "
