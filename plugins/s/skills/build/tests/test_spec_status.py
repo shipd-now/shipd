@@ -1883,9 +1883,9 @@ class WorkspaceShowChainTest(SpecStatusTestBase):
 
 class TestInitVerb(SpecStatusTestBase):
     """The ``init`` verb (spec-status layout-init-verb): create the content
-    directory's ``verified/``/``planned/``/``completed/`` layout safely, report
-    one ``created``/``exists`` line per directory plus the ready summary, and
-    never touch anything that already exists."""
+    directory's ``verified/``/``planned/``/``completed/``/``research/`` layout
+    safely, report one ``created``/``exists`` line per directory plus the ready
+    summary, and never touch anything that already exists."""
 
     SUMMARY = "all shipd directories are ready"
 
@@ -1896,9 +1896,10 @@ class TestInitVerb(SpecStatusTestBase):
             ["python3", SCRIPT, "init", "--root", self.root, *args],
             capture_output=True, text=True)
 
+    NAMES = ("verified", "planned", "completed", "research")
+
     def layout(self, content=".shipd"):
-        return [os.path.join(self.root, content, name)
-                for name in ("verified", "planned", "completed")]
+        return [os.path.join(self.root, content, name) for name in self.NAMES]
 
     def test_fresh_root_gets_the_full_layout(self):
         r = self.init()
@@ -1907,9 +1908,9 @@ class TestInitVerb(SpecStatusTestBase):
             self.assertTrue(os.path.isdir(path), path)
         lines = r.stdout.splitlines()
         self.assertEqual(
-            sorted(lines[:3]),
+            sorted(lines[:len(self.NAMES)]),
             sorted(["created %s" % os.path.join(".shipd", name) + os.sep
-                    for name in ("verified", "planned", "completed")]))
+                    for name in self.NAMES]))
         self.assertEqual(lines[-1], self.SUMMARY)
 
     def test_existing_content_is_never_clobbered(self):
@@ -1918,12 +1919,21 @@ class TestInitVerb(SpecStatusTestBase):
         os.makedirs(os.path.dirname(spec))
         with open(spec, "w", encoding="utf-8") as fh:
             fh.write("## Requirements\n")
+        report = os.path.join(self.root, ".shipd", "research", "probe",
+                              "report.md")
+        os.makedirs(os.path.dirname(report))
+        with open(report, "w", encoding="utf-8") as fh:
+            fh.write("## Sources\n")
         r = self.init()
         self.assertEqual(r.returncode, 0, r.stderr)
         with open(spec, encoding="utf-8") as fh:
             self.assertEqual(fh.read(), "## Requirements\n")
+        with open(report, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "## Sources\n")
         lines = r.stdout.splitlines()
         self.assertIn("exists %s" % os.path.join(".shipd", "verified") + os.sep,
+                      lines)
+        self.assertIn("exists %s" % os.path.join(".shipd", "research") + os.sep,
                       lines)
         self.assertIn(
             "created %s" % os.path.join(".shipd", "planned") + os.sep, lines)
@@ -1936,7 +1946,7 @@ class TestInitVerb(SpecStatusTestBase):
         r = self.init()
         self.assertEqual(r.returncode, 0, r.stderr)
         lines = r.stdout.splitlines()
-        for name in ("verified", "planned", "completed"):
+        for name in self.NAMES:
             self.assertIn(
                 "exists %s" % os.path.join(".shipd", name) + os.sep, lines)
         self.assertNotIn("created", r.stdout)
@@ -1966,6 +1976,23 @@ class TestInitVerb(SpecStatusTestBase):
             os.path.exists(os.path.join(self.root, ".shipd", "verified")))
         self.assertFalse(
             os.path.exists(os.path.join(self.root, ".shipd", "completed")))
+        self.assertTrue(os.path.isfile(blocker))
+
+    def test_file_at_research_refuses_and_creates_nothing(self):
+        # `research` joined the created set last, so it is the target most
+        # likely to be probed after the others: the refusal still precedes
+        # every makedirs call.
+        os.makedirs(os.path.join(self.root, ".shipd"))
+        blocker = os.path.join(self.root, ".shipd", "research")
+        with open(blocker, "w", encoding="utf-8") as fh:
+            fh.write("not a directory\n")
+        r = self.init()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("Error:", r.stderr)
+        self.assertIn(blocker, r.stderr)
+        for name in ("verified", "planned", "completed"):
+            self.assertFalse(
+                os.path.exists(os.path.join(self.root, ".shipd", name)))
         self.assertTrue(os.path.isfile(blocker))
 
     def test_configured_content_directory_is_honored(self):

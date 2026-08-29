@@ -38,6 +38,12 @@ over the markdown described here — no language model reads or writes these fil
       brief.md                   Video: header + Speakers/Intents/Sources
 ```
 
+`shipd init` (delegating to `spec_status.py init`) creates four of these
+directories — `verified/`, `planned/`, `completed/`, and `research/` — under the
+resolved content directory, and never clobbers anything already there, so it is
+safe to re-run. Every other directory in the layout above appears lazily, when
+its engine first installs something into it.
+
 - `.shipd/verified/<capability>/spec.md` is the **master library**: the current,
   canonical definition of every requirement, one file per capability. The merge
   engine reads and writes only these files.
