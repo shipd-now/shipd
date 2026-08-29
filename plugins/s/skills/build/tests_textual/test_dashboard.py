@@ -4426,6 +4426,7 @@ class LiveRefreshTest(unittest.IsolatedAsyncioTestCase):
         app = dashboard.BoardApp(root="/x", interval=0.05, board_fn=board_fn)
         async with app.run_test() as pilot:
             unplanned = app.query_one("#lane-unplanned", dashboard.Lane)
+            ready = app.query_one("#lane-ready", dashboard.Lane)
             self.assertTrue(list(unplanned.query(dashboard.TaskCard)))
 
             # Poll for the repainted lanes rather than sleeping one fixed
@@ -4439,12 +4440,10 @@ class LiveRefreshTest(unittest.IsolatedAsyncioTestCase):
             deadline = time.monotonic() + 10.0
             while time.monotonic() < deadline:
                 await pilot.pause(0.05)
-                if (list(app.query_one("#lane-ready", dashboard.Lane)
-                         .query(dashboard.TaskCard))
+                if (list(ready.query(dashboard.TaskCard))
                         and not list(unplanned.query(dashboard.TaskCard))):
                     break
 
-            ready = app.query_one("#lane-ready", dashboard.Lane)
             self.assertTrue(list(ready.query(dashboard.TaskCard)))
             self.assertFalse(list(unplanned.query(dashboard.TaskCard)))
 
