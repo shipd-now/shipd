@@ -56,10 +56,9 @@ to the matching exit — external unknowns to `/s:research`, a multi-change
 feature to `/s:epic`, a single buildable change to `/s:plan`, a reported
 defect to `/s:fix`, a decision wanting the user's standing opinion to
 `/s:ask` — naming the command without invoking it. When the user gives a
-wrap-up cue,
-the skill SHALL print a debrief as response text — the problem, the options
-considered, the recommendation with its rationale, the known risks, and the
-suggested next command — and SHALL write no file.
+wrap-up cue, the skill SHALL print a debrief as response text — the problem,
+the options considered, the recommendation with its rationale, the known
+risks, and the suggested next command — and SHALL write no file.
 
 #### Scenario: Wrap-up cue produces a debrief
 - **WHEN** the user says "wrap up" after discussing an idea
