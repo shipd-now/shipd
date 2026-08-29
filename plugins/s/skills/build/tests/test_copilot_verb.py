@@ -1099,6 +1099,16 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertIn('"repos/$REPO/pulls/$PR_NUMBER/files', posting,
                       "the posting step never reads the diff it verifies "
                       "findings against")
+        # A single page caps the diff map at 100 files, and a finding in the
+        # 101st is folded into the body as prose — indistinguishable from one
+        # that named a path the pull request never touched. Scoped to the read
+        # that writes $files_file: a bare `--paginate` over the whole step
+        # would be satisfied by the reviews poll, which paginates already.
+        files_read = posting[posting.index('files_file="'):
+                             posting.index('> "$files_file"')]
+        self.assertIn("--paginate", files_read,
+                      "the changed-files read takes a single page, so the "
+                      "diff map is short on a large pull request")
         self.assertLess(posting.index("/files"),
                         posting.index('--input "$review_payload"'),
                         "the diff is read after the review is posted")

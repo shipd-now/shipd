@@ -623,12 +623,16 @@ jobs:
             # facts: that agent ran `--allow-all-tools` over a diff it cannot
             # be trusted not to be steered by. So this step reads the pull
             # request's own diff and checks every path and range against it
-            # before anchoring anything on them. Both reads are best effort:
+            # before anchoring anything on them. That diff has to cover every
+            # changed file: a truncated read is indistinguishable downstream
+            # from a path the pull request never touched, so it would silently
+            # withhold the anchoring a finding was computed for instead of
+            # reporting the finding as unplaceable. Both reads are best effort:
             # a missing findings file, or a diff that could not be read,
             # anchors nothing and posts the body alone.
             findings_file="${RUNNER_TEMP:-.}/shipd-copilot-review-findings.json"
             files_file="${RUNNER_TEMP:-.}/shipd-copilot-review-files.json"
-            if ! "$gh_bin" api \
+            if ! "$gh_bin" api --paginate \
                 "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" \
                 > "$files_file"; then
               echo "The diff of $HEAD_SHA could not be read; the review will" \

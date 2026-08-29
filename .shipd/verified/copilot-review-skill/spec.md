@@ -129,13 +129,23 @@ Where the gate's own reviewer produced the review, the workflow SHALL publish
 it as a pull-request review rather than as an issue comment, submitting the
 event `COMMENT`, carrying the review body and one anchored inline comment per
 finding whose severity is `high` or `medium` and whose path and line range the
-workflow itself verifies against the diff it computed. A finding naming a path
+workflow itself verifies against the diff it computed. That diff SHALL cover
+every file the pull request changed, the workflow paginating the changed-files
+read rather than taking a single page of it: a short read is indistinguishable
+downstream from a finding that named a path the pull request never touched, so
+a truncated diff silently withholds the anchoring a finding was computed for
+instead of reporting that it could not be placed. A finding naming a path
 or range outside that diff, and every finding whose severity is `low`, SHALL be
 folded into the body as prose rather than anchored — an inline comment opens a
 review thread, and a repository requiring conversation resolution would
 otherwise let a `low` finding block a merge the rubric says it never blocks.
 Where an anchored finding also carries a replacement, its inline comment SHALL
 include that replacement as a committable `suggestion` block.
+
+#### Scenario: The changed-files read is paginated
+- **WHEN** the posting step's changed-files read is inspected
+- **THEN** it carries the option that fetches every page, so the diff map is
+  not capped at a single page's worth of files
 
 #### Scenario: A reviewer that produced nothing fails the job
 - **WHEN** the gate's own reviewer writes no review body
