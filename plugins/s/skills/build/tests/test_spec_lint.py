@@ -1307,14 +1307,13 @@ class EpicVideoLintTest(unittest.TestCase):
 class ResearchReportLintTest(unittest.TestCase):
     """Research report validation (shipd-spec-format research-report-format,
     shipd-spec-lint research-report-validation): ``lint_research(root, slug,
-    errors)`` enforces the citation skeleton — a non-empty ``# <title>`` on
-    line 1, a ``## Sources`` section with at least one numbered entry, at least
-    one inline ``[n]`` marker, and every marker (outside fenced code blocks)
-    resolving to a listed source. Library linting never walks ``research/`` on
-    its own.
-
-    Written test-first; expected to FAIL until ``lint_research`` lands in
-    ``spec_lint.py`` (task 1.2)."""
+    errors)`` always enforces a non-empty ``# <title>`` on line 1, and enforces
+    the citation skeleton — a ``## Sources`` section with at least one numbered
+    entry, at least one inline ``[n]`` marker, and every marker (outside fenced
+    code blocks) resolving to a listed source — only when the report carries a
+    citation signal (a ``## Sources`` section, or at least one marker). A
+    titled report carrying neither signal is accepted, so a supplied document
+    installs clean. Library linting never walks ``research/`` on its own."""
 
     CONFORMING = (
         "# Payment API landscape\n"
@@ -1359,7 +1358,27 @@ class ResearchReportLintTest(unittest.TestCase):
         self._write_report("payment-apis", self.CONFORMING)
         self.assertEqual(self._errors("payment-apis"), [])
 
+    def test_uncited_titled_document_passes(self):
+        # A supplied document — titled, no `## Sources` section, no `[n]`
+        # markers — carries no citation signal, so only the title check runs.
+        text = (
+            "# Payments strategy brief\n"
+            "\n"
+            "## Context\n"
+            "\n"
+            "We move to a single processor next quarter.\n"
+        )
+        self._write_report("payments-strategy", text)
+        self.assertEqual(self._errors("payments-strategy"), [])
+
+    def test_uncited_untitled_document_still_errors(self):
+        # The title check always runs, citation signal or not.
+        self._write_report("payments-strategy", "Not a title.\n")
+        errors = self._errors("payments-strategy")
+        self.assertTrue(has(errors, "line 1"), errors)
+
     def test_missing_sources_section_errors(self):
+        # The marker is the citation signal, so the full skeleton applies.
         text = (
             "# Payment API landscape\n"
             "\n"

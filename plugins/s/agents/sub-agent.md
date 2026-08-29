@@ -64,6 +64,9 @@ wrong tree.)
    - When the change carries an `artefacts/` directory, read the artefacts the
      artifacts reference and treat their content as binding. Where none is
      present, this step is a no-op.
+   - When `plan.md`'s `## Implementation` names an installed research report by
+     its content-directory `research/` path, read it as a **read-only**
+     reference; never edit it. Where no report is named, this step is a no-op.
 2. Claim the next task atomically:
    `bash <CLAIM_SCRIPT> claim <change-name>`
    It prints `ID<TAB>TASK_TEXT`, or **nothing** if no task is currently ready.

@@ -306,7 +306,11 @@ contract holds. When the change carries an `artefacts/` directory, it is part
 of this named artifact set too: the sub-agent reads the artefacts its
 artifacts reference by their change-relative path — the artefact content
 travels by that path, never as spawn-message content, so the clean-context
-contract holds. Do
+contract holds. When `plan.md`'s `## Implementation` names an installed
+research report by its content-directory `research/` path, that report is part
+of this named artifact set too: the sub-agent reads it as a read-only
+reference — the report travels by that plan-named path, never as spawn-message
+content, so the clean-context contract holds. Do
 **not** restate global baseline rules the sub-agent already inherits or reads
 (project `CLAUDE.md`/`AGENTS.md`, the constitution); the spec on disk is the
 single compiled source of context. When — and only when — a build carries

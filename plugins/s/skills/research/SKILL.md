@@ -123,10 +123,11 @@ research with a destination (a report), not an open-ended crawl.
    text behind it. Note the claim and the source it came from together; you will
    cite that pairing. Corroborate load-bearing claims across sources where you
    can, and record disagreement between sources rather than smoothing it over.
-5. **Compose.** Write the report (grammar below): a summary, themed findings
-   sections built from the sub-questions, a gaps-and-caveats section, and a
-   numbered `## Sources` list. Put an inline `[n]` marker on **every**
-   load-bearing claim, pointing at the source that anchors it. A claim you could
+5. **Compose.** Write the report (grammar below): a title, the provenance note
+   directly under it, a summary, themed findings sections built from the
+   sub-questions, a gaps-and-caveats section, and a numbered `## Sources` list.
+   Put an inline `[n]` marker on **every** load-bearing claim, pointing at the
+   source that anchors it. A claim you could
    not anchor to a fetched source does **not** get asserted as a cited
    finding — **downgrade it to gaps & caveats** (as an open question or an
    unverified note), never state it as fact.
@@ -134,12 +135,19 @@ research with a destination (a report), not an open-ended crawl.
 ## The report grammar — what to compose
 
 Author the report body in this shape. The engine's linter mandates only the
-**citation skeleton** — the title line, the numbered `## Sources` section, and
-resolving `[n]` markers (see the emission contract); the Summary / Findings /
-Gaps sections below are composition guidance you follow, not lint rules.
+title line unconditionally; it enforces the rest of the **citation
+skeleton** — the numbered `## Sources` section and resolving `[n]` markers (see
+the emission contract) — only on a report that cites at all, so a supplied
+context document carrying no citations installs untouched. That leniency is the
+engine's, not yours: a report **you** compose is always fully cited, always
+carries the whole skeleton, and always labels itself with the provenance note
+below. The Summary / Findings / Gaps sections are composition guidance you
+follow, not lint rules.
 
 ```
 # <report title>
+
+> Prepared by the shipd research skill (/s:research).
 
 ## Summary
 
@@ -168,6 +176,10 @@ it [2].
 ```
 
 - **Title.** Line 1 is a non-empty `# <title>`.
+- **Provenance note.** Directly under the title line, on its own, compose
+  `> Prepared by the shipd research skill (/s:research).` — it keeps a
+  skill-composed report distinguishable from a document someone supplied. The
+  linter never checks it; you always write it.
 - **Citations.** Every load-bearing claim carries an inline `[n]` marker whose
   number appears in the `## Sources` list; at least one marker is required.
   A `[n](url)` (a markdown link) is not a marker, and index expressions inside

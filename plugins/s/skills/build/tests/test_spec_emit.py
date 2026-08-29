@@ -342,6 +342,30 @@ class ResearchEmitTest(SpecEmitTestBase):
         self.assertFalse(os.path.exists(
             os.path.join(self.root, ".shipd", "research", "payment-apis")))
 
+    def test_supplied_uncited_document_installs(self):
+        # A user-supplied context document — titled, but with no `## Sources`
+        # section and no `[n]` markers — carries no citation signal, so the
+        # skeleton checks never fire and the install is clean
+        # (shipd-spec-format research-report-format).
+        src = self.stage_file(
+            "# Payments strategy brief\n"
+            "\n"
+            "## Context\n"
+            "\n"
+            "We move to a single processor next quarter.\n")
+        r = self.cli("research", "payments-strategy", "--from", src)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(self._report_path("payments-strategy")))
+
+    def test_untitled_document_leaves_no_directory(self):
+        # The title check always runs, citation signal or not.
+        src = self.stage_file("Not a title.\n\nJust prose.\n")
+        r = self.cli("research", "payments-strategy", "--from", src)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("line 1", r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(
+            self.root, ".shipd", "research", "payments-strategy")))
+
     def test_existing_destination_refused_without_replace(self):
         src = self.stage_file(CLEAN_REPORT)
         self.assertEqual(

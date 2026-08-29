@@ -5,9 +5,9 @@ sub-agent and validator role contracts.
 The contracts are Markdown files read by the model, so they can't be
 exercised as code; instead these tests pin their load-bearing text the way
 test_statusline.py pins the statusline's behavior. They assert the workspace
-gate section (sub-agent) and the design-fidelity handoff text (both) carry
-each required element, so a contract regression (a dropped or reworded
-clause) fails CI.
+gate section (sub-agent), the design-fidelity handoff text (both), and the
+research-report artifact-set bullet (sub-agent) carry each required element,
+so a contract regression (a dropped or reworded clause) fails CI.
 """
 
 import os
@@ -85,6 +85,56 @@ class DesignReferenceContractTest(unittest.TestCase):
 
     def test_builds_to_match_it(self):
         self.assertIn("match it", self.text)
+
+
+class ResearchReferenceContractTest(unittest.TestCase):
+    """The research-report handoff (build-subagent-handoff
+    artifact-compiled-context-handoff): when plan.md's ## Implementation names
+    an installed research report by its content-directory research/ path, the
+    sub-agent's step-1 artifact-set list sends it to that path as a read-only
+    reference, so the report travels by path rather than as spawn-message
+    prose. Where no report is named, the step is a no-op."""
+
+    def setUp(self):
+        with open(CONTRACT, encoding="utf-8") as fh:
+            self.text = fh.read().lower()
+
+    def research_bullet(self):
+        """The artifact-set bullet naming the research report: from the list
+        marker opening the item that mentions an installed research report, up
+        to the next list marker or numbered step (or end of file). Scoping to
+        the bullet keeps the assertions from passing on the sibling
+        design-scratch bullet's wording."""
+        lines = self.text.splitlines()
+        start = None
+        for idx, line in enumerate(lines):
+            if line.lstrip().startswith("- ") and "research report" in line:
+                start = idx
+                break
+        self.assertIsNotNone(
+            start,
+            "contract's artifact-set list is missing a research-report bullet")
+        end = len(lines)
+        for idx in range(start + 1, len(lines)):
+            stripped = lines[idx].lstrip()
+            if stripped.startswith("- ") or re.match(r"^\d+\. ", stripped):
+                end = idx
+                break
+        return "\n".join(lines[start:end])
+
+    def test_reads_the_plan_named_installed_research_report(self):
+        bullet = self.research_bullet()
+        self.assertIn("installed research report", bullet)
+        self.assertIn("## implementation", bullet)
+        self.assertIn("research/", bullet)
+
+    def test_treats_it_as_read_only_and_never_edits_it(self):
+        bullet = self.research_bullet()
+        self.assertIn("read-only", bullet)
+        self.assertIn("never edit it", bullet)
+
+    def test_naming_no_report_makes_the_step_a_no_op(self):
+        self.assertIn("no-op", self.research_bullet())
 
 
 class ValidatorDesignReferenceContractTest(unittest.TestCase):

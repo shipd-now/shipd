@@ -60,7 +60,27 @@ about. A question you could have answered by reading is a failure of this skill.
    context before your question round — they may already answer questions you
    would otherwise ask. Record every report you actually read as a link entry in
    the epic's `## Research` section (see the epic contract), and never invent an
-   entry for a file you did not read. **Read any supplied video brief the same
+   entry for a file you did not read. **Install a supplied document that does
+   not already live under `research/`:** when the user points authoring at a
+   context document elsewhere — a strategy doc, a verbatim brief the members
+   must build from — install it through the emit engine first, so the epic can
+   link it and every downstream skill can read it back:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_emit.py" research <slug> --from <file>
+   ```
+
+   Pick `<slug>` as the kebab-case form of the document's level-1 title, or of
+   its filename when the document carries no title. Where the first line is not
+   a level-1 title, stage a **copy** that prepends a `# <title>` derived from
+   the filename and install that copy — the user's original file is never
+   edited. Then read and link the installed report exactly as any other
+   consumed research. The engine validates the title but no longer demands a
+   citation skeleton, so an uncited document installs clean. **Never copy a
+   document into the spec tree yourself** — a raw write into `research/` is
+   forbidden, the emit engine is the only writer. A file the user names that is
+   already under the content dir's `research/` folder is read and linked as
+   before; nothing is reinstalled. **Read any supplied video brief the same
    way:** when the user names a video bundle slug, or points authoring at a
    brief under the content dir's `video/` folder, read it with
    `python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" cat
