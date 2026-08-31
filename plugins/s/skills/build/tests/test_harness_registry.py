@@ -127,6 +127,22 @@ class ResearchedPathsTest(unittest.TestCase):
         self.assertEqual(entry["features"],
                          ("subagents", "file-references"))
 
+    def test_pi_paths(self):
+        entry = hr.get("pi")
+        self.assertEqual(entry["repo_pattern"],
+                         ".pi/prompts/shipd-{command}.md")
+        self.assertEqual(entry["user_dir"], "~/.pi/agent/prompts/")
+        self.assertEqual(entry["dialect"], "yaml")
+        self.assertEqual(entry["frontmatter"],
+                         ("description", "argument-hint"))
+        self.assertEqual(entry["features"], ("file-references",))
+
+    def test_pi_and_oh_my_pi_are_separate(self):
+        self.assertIn("oh-my-pi", hr.ids())
+        self.assertIn("pi", hr.ids())
+        self.assertNotEqual(hr.get("oh-my-pi")["repo_pattern"],
+                            hr.get("pi")["repo_pattern"])
+
     def test_aider_is_a_single_conventions_file(self):
         entry = hr.get("aider")
         self.assertEqual(entry["repo_pattern"], "shipd-conventions.md")

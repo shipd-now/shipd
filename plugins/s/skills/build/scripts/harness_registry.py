@@ -164,6 +164,15 @@ HARNESSES = (
         "frontmatter": ("description",),
         "features": ("subagents", "file-references"),
     },
+    {
+        "id": "pi",
+        "name": "Pi",
+        "repo_pattern": ".pi/prompts/shipd-{command}.md",
+        "user_dir": "~/.pi/agent/prompts/",
+        "dialect": "yaml",
+        "frontmatter": ("description", "argument-hint"),
+        "features": ("file-references",),
+    },
 )
 
 

@@ -62,6 +62,9 @@ ABORTED = "aborted"
 
 # Single bytes to key names. ``\x03`` is the interrupt: raw mode delivers it
 # as a byte rather than a signal, and the flow treats it exactly as ``q``.
+# ``\x1b`` (a bare Esc) is here too and also treated as ``q`` — but the
+# ``\x1b[`` branch in :func:`decode_keys` runs first, so this entry only ever
+# sees an Esc that introduces no escape sequence.
 _KEYS = {
     b" ": TOGGLE,
     b"a": ALL,
@@ -71,6 +74,7 @@ _KEYS = {
     b"q": ABORT,
     b"Q": ABORT,
     b"\x03": ABORT,
+    b"\x1b": ABORT,
 }
 
 # The final byte of a ``\x1b[`` sequence, for the two arrows that move.
@@ -87,7 +91,7 @@ RESET = wordmark.RESET
 CLEAR_LINE = "\x1b[2K"
 
 PROMPT = "Which coding harnesses do you work in?"
-HINT = "↑/↓ move · space toggle · a all · enter confirm · q quit"
+HINT = "↑/↓ move · space toggle · a all · enter confirm · esc/q quit"
 LINE_HINT = ("toggle by number, `a` for all, empty line to confirm, "
              "`q` to quit")
 REPO_ONLY = "repo only"
