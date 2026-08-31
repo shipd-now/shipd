@@ -1,7 +1,8 @@
-# install-tui
+## MODIFIED Requirements
 
 ### Requirement: Interactive install verb
 id: install-verb
+base: 5e2a5ad80f4e
 
 The `shipd` binary SHALL provide an `install` verb. Where `/dev/tty` opens
 read-write and color is enabled for it, the verb SHALL play the animated
@@ -59,21 +60,3 @@ path, including interruption.
 #### Scenario: The key hint names esc
 - **WHEN** the multi-select's key hint is rendered
 - **THEN** it names `esc` as well as `q` for quitting
-
-### Requirement: Persisted harness selection
-id: install-selection
-
-The confirmed selection SHALL persist at `~/.shipd/harnesses.json` as
-`{"version": 1, "harnesses": [<ids>]}`, written atomically. On load, the
-verb SHALL preselect the recorded harnesses and SHALL drop ids the registry
-no longer declares. Re-running `shipd install` SHALL reopen the selection
-from the record and overwrite it on confirm.
-
-#### Scenario: Re-run preselects the record
-- **WHEN** the flow runs with a record holding `codex` plus an unknown id
-- **THEN** `codex` starts selected, the unknown id is ignored, and a
-  confirmed run rewrites the record without the unknown id
-
-#### Scenario: The record round-trips
-- **WHEN** a selection is confirmed and the file is re-read
-- **THEN** it parses as JSON with `version` 1 and exactly the confirmed ids

@@ -84,7 +84,7 @@ claude plugin update s@shipd
 ```
 
 On a terminal the installer finishes by running `shipd install`: the animated
-**SHIPD** wordmark plays, then a multi-select over the registry's thirteen
+**SHIPD** wordmark plays, then a multi-select over the registry's fourteen
 harnesses opens — read from `/dev/tty`, so it works even under `curl | sh`,
 which owns stdin. The confirmed selection is saved to
 **`~/.shipd/harnesses.json`**, and for every selected harness that declares a

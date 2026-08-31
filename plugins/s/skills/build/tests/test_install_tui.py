@@ -45,6 +45,7 @@ TOGGLE = b" "
 CONFIRM = b"\r"
 ABORT = b"q"
 INTERRUPT = b"\x03"
+ESCAPE = b"\x1b"
 
 # The registry position of the harness the spec's interactive scenario names.
 CODEX_INDEX = hr.ids().index("codex")
@@ -98,6 +99,12 @@ class DecodeKeysTest(unittest.TestCase):
     def test_every_abort_key_decodes_to_abort(self):
         self.assertEqual(it.decode_keys(ABORT), [it.ABORT])
         self.assertEqual(it.decode_keys(INTERRUPT), [it.ABORT])
+        self.assertEqual(it.decode_keys(ESCAPE), [it.ABORT])
+
+    def test_escape_sequences_keep_their_meaning(self):
+        self.assertEqual(it.decode_keys(b"\x1b[A"), [it.UP])
+        self.assertEqual(it.decode_keys(b"\x1b[B"), [it.DOWN])
+        self.assertEqual(it.decode_keys(b"\x1b[C"), [])
 
     def test_a_selects_all(self):
         self.assertEqual(it.decode_keys(b"a"), [it.ALL])
@@ -428,6 +435,16 @@ class PtyTest(HomeTestCase):
         self.assertIn(wordmark.SHOW_CURSOR, output)
         self.assertEqual(home_tree(self.home), [],
                          "an aborted flow must write nothing")
+
+    def test_a_bare_escape_aborts_like_q(self):
+        code, output, before, after = self.drive(
+            TOGGLE + DOWN + TOGGLE + ESCAPE)
+        self.assertEqual(code, 0)
+        self.assertEqual(before, after)
+        self.assertIn(wordmark.SHOW_CURSOR, output)
+        self.assertEqual(home_tree(self.home), [],
+                         "an aborted flow must write nothing")
+        self.assertIn("esc", output)
 
     def test_an_interrupt_aborts_like_q(self):
         code, _output, before, after = self.drive(TOGGLE + INTERRUPT)

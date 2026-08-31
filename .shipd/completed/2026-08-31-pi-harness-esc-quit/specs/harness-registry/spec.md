@@ -1,7 +1,8 @@
-# harness-registry
+## MODIFIED Requirements
 
 ### Requirement: Registry data
 id: registry-data
+base: 257d6adfcdea
 
 The engine SHALL provide a stdlib-only module
 `plugins/s/skills/build/scripts/harness_registry.py` declaring `FEATURES` —
@@ -68,6 +69,7 @@ returning the ordered id tuple.
 
 ### Requirement: Harness read verbs
 id: harness-read-verbs
+base: 427475b0c646
 
 The `shipd` binary SHALL provide a `harness` verb whose read actions are
 read-only: bare or with `list` it SHALL print one line per registry entry;
