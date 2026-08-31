@@ -121,6 +121,7 @@ verbs:
                              the harness registry, and the generated /s:
                              command files in a repo or in your home
   install                    pick your harnesses and install their commands
+  update [--check]           report or install a newer published plugin version
 
 options:
   -h, --help                 print this banner
@@ -1988,6 +1989,208 @@ def cmd_install(args):
     return iu.main(args)
 
 
+# ---------------------------------------------------------------------------
+# update (shipd-cli cli-update)
+# ---------------------------------------------------------------------------
+
+# The registered marketplace name, the installed plugin's id, and the entry
+# name inside that marketplace's own manifest — the three identifiers
+# ``cmd_update`` resolves the installed and available versions through.
+CLAUDE_MARKETPLACE = "shipd"
+CLAUDE_PLUGIN_ID = "s@shipd"
+CLAUDE_PLUGIN_NAME = "s"
+
+# The wall-clock ceiling on the marketplace refresh. A hung `claude` must
+# cost the verb seconds, not stall it forever — reporting "up to date" from a
+# refresh that never ran would be worse than erroring.
+MARKETPLACE_TIMEOUT = 120
+
+
+class UpdateError(Exception):
+    """Raised by the version-resolution helpers below; its message is the
+    ``Error:`` reason :func:`cmd_update` reports."""
+
+
+def _plugins_home():
+    """``~/.claude/plugins`` — the directory holding both the marketplace
+    registration and (by default) the plugin cache, resolved against the
+    current ``HOME`` so tests can point it elsewhere."""
+    return Path.home() / ".claude" / "plugins"
+
+
+def _cache_root():
+    """The plugin cache root the installed version is resolved under —
+    ``SHIPD_PLUGIN_CACHE`` when set, otherwise
+    ``<plugins-home>/cache/shipd/s``, mirroring ``install.sh``'s launcher."""
+    override = os.environ.get("SHIPD_PLUGIN_CACHE")
+    if override:
+        return override
+    return str(_plugins_home() / "cache" / "shipd" / "s")
+
+
+def newest_installed(cache_root):
+    """The newest version-named directory under ``cache_root``, by the same
+    dotted-integer ordering :func:`check_snapshot` uses, or ``None`` when the
+    root is absent, unreadable, or holds no version directory."""
+    versions = [name for name in _subdirs(cache_root)
+                if VERSION_DIR_RE.match(name)]
+    return max(versions, key=_version_key) if versions else None
+
+
+def marketplace_location(plugins_home):
+    """The registered ``shipd`` marketplace's ``installLocation``, or
+    ``None`` when ``known_marketplaces.json`` is missing, unparseable, or
+    carries no ``shipd`` entry naming one."""
+    path = plugins_home / "known_marketplaces.json"
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    entry = data.get(CLAUDE_MARKETPLACE) if isinstance(data, dict) else None
+    location = (entry.get("installLocation")
+                if isinstance(entry, dict) else None)
+    return location if isinstance(location, str) and location else None
+
+
+def marketplace_version(location):
+    """The version the ``shipd`` marketplace's own copy of the plugin
+    manifest declares: ``location``'s marketplace manifest's ``s`` entry,
+    followed through its relative-path ``source`` to that copy's own
+    ``plugin.json``. Raises :class:`UpdateError` naming the reason wherever a
+    manifest is missing, unparseable, or malformed."""
+    manifest_path = os.path.join(location, ".claude-plugin",
+                                  "marketplace.json")
+    try:
+        with open(manifest_path, encoding="utf-8") as fh:
+            manifest = json.load(fh)
+    except OSError as exc:
+        raise UpdateError("cannot read %s: %s" % (manifest_path, exc))
+    except ValueError as exc:
+        raise UpdateError("cannot parse %s: %s" % (manifest_path, exc))
+    entries = manifest.get("plugins") if isinstance(manifest, dict) else None
+    entry = next((e for e in entries or []
+                  if isinstance(e, dict)
+                  and e.get("name") == CLAUDE_PLUGIN_NAME), None)
+    if entry is None:
+        raise UpdateError("%s declares no `%s` plugin entry"
+                           % (manifest_path, CLAUDE_PLUGIN_NAME))
+    source = entry.get("source")
+    if (not isinstance(source, str) or not source
+            or os.path.isabs(source) or "://" in source):
+        raise UpdateError("%s's `%s` entry has no relative-path `source`"
+                           % (manifest_path, CLAUDE_PLUGIN_NAME))
+    plugin_manifest_path = os.path.join(location, source, ".claude-plugin",
+                                         "plugin.json")
+    try:
+        with open(plugin_manifest_path, encoding="utf-8") as fh:
+            plugin_manifest = json.load(fh)
+    except OSError as exc:
+        raise UpdateError("cannot read %s: %s" % (plugin_manifest_path, exc))
+    except ValueError as exc:
+        raise UpdateError("cannot parse %s: %s" % (plugin_manifest_path, exc))
+    version = (plugin_manifest.get("version")
+               if isinstance(plugin_manifest, dict) else None)
+    if not isinstance(version, str) or not version:
+        raise UpdateError("%s declares no `version`" % plugin_manifest_path)
+    if not VERSION_DIR_RE.match(version):
+        raise UpdateError("%s declares a non-numeric `version`: %r"
+                           % (plugin_manifest_path, version))
+    return version
+
+
+def _claude_run(args, timeout=None):
+    """``(returncode, stdout, stderr)`` for ``claude <args...>`` — the single
+    subprocess seam :func:`cmd_update` runs through, mirroring
+    :func:`_gh_run`, so tests stub it instead of shelling out. A timeout or a
+    ``claude`` missing from PATH both read as an ordinary nonzero result."""
+    try:
+        proc = subprocess.run(["claude"] + list(args), capture_output=True,
+                              text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return (1, "", "claude timed out after %ss" % timeout)
+    except OSError as exc:
+        return (1, "", str(exc))
+    return (proc.returncode, proc.stdout, proc.stderr)
+
+
+def cmd_update(args):
+    """Report whether a newer plugin version is published and, unless
+    ``--check`` is given, install it through the ``claude`` CLI.
+
+    In-binary like ``doctor`` / ``install``: it drives subprocesses and
+    prints its own report, so it must not replace this process.
+    """
+    parser = argparse.ArgumentParser(
+        prog="shipd update",
+        description="Report whether a newer shipd plugin version is "
+                    "published and, unless --check is given, install it.")
+    parser.add_argument(
+        "--check", action="store_true",
+        help="report only; install nothing")
+    opts = parser.parse_args(args)
+
+    try:
+        if shutil.which("claude") is None:
+            raise UpdateError(
+                "`claude` is not on PATH — install the Claude Code CLI, "
+                "then re-run")
+
+        plugins_home = _plugins_home()
+        location = marketplace_location(plugins_home)
+        if location is None:
+            raise UpdateError(
+                "the `%s` marketplace is not registered — run `claude "
+                "plugin marketplace add shipd-now/shipd`" % CLAUDE_MARKETPLACE)
+
+        rc, _out, err = _claude_run(
+            ["plugin", "marketplace", "update", CLAUDE_MARKETPLACE],
+            timeout=MARKETPLACE_TIMEOUT)
+        if rc != 0:
+            raise UpdateError(
+                "cannot refresh the `%s` marketplace: %s"
+                % (CLAUDE_MARKETPLACE, (err or "").strip() or
+                   "exit %d" % rc))
+
+        available = marketplace_version(location)
+
+        cache_root = _cache_root()
+        installed = newest_installed(cache_root)
+        if installed is None:
+            raise UpdateError(
+                "no installed shipd plugin snapshot under %s — run `claude "
+                "plugin install %s`" % (cache_root, CLAUDE_PLUGIN_ID))
+
+        if _version_key(available) <= _version_key(installed):
+            print("up to date — %s is the newest published version"
+                  % installed)
+            return 0
+
+        if opts.check:
+            print("update available: %s -> %s — run `shipd update` to "
+                  "apply" % (installed, available))
+            return 0
+
+        print("updating %s: %s -> %s" % (CLAUDE_PLUGIN_ID, installed,
+                                          available))
+        sys.stdout.flush()
+        rc, out, err = _claude_run(["plugin", "update", CLAUDE_PLUGIN_ID])
+        if out:
+            sys.stdout.write(out)
+        if rc != 0:
+            raise UpdateError(
+                "cannot update %s: %s"
+                % (CLAUDE_PLUGIN_ID, (err or "").strip() or
+                   "exit %d" % rc))
+
+        newest = newest_installed(cache_root)
+        print("updated to %s — start a new session to load it" % newest)
+        return 0
+    except UpdateError as exc:
+        _err(str(exc))
+        return 1
+
+
 def main(argv):
     if not argv:
         sys.stderr.write(USAGE)
@@ -2012,6 +2215,8 @@ def main(argv):
         return cmd_harness(rest)
     if verb == "install":
         return cmd_install(rest)
+    if verb == "update":
+        return cmd_update(rest)
     if verb not in VERB_TABLE:
         sys.stderr.write(USAGE)
         return 2
