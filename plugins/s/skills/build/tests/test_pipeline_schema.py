@@ -157,12 +157,6 @@ class StageOptionsTest(unittest.TestCase):
 class AutopilotOptsTest(unittest.TestCase):
     """The `autopilot`-namespaced driver knobs and their bounds."""
 
-    def test_defaults_are_schema_declared(self):
-        opts = ps.AutopilotOpts()
-        self.assertEqual(opts.attempts, 3)
-        self.assertIsNone(opts.timeout)
-        self.assertIsNone(opts.max_resumes)
-
     def test_full_options_are_accepted(self):
         entry = {"stage": "build",
                  "autopilot": {"attempts": 2, "timeout": 900,

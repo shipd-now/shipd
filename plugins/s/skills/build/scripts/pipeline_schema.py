@@ -60,17 +60,6 @@ _STAGE_FORM_KEYS["review"] = _SHARED_STAGE_KEYS | _REVIEW_EXTRA_KEYS
 _CUSTOM_KEYS = frozenset({"custom", "command", "autopilot"})
 
 
-class AutopilotOpts:
-    """The `autopilot`-namespaced driver knobs any entry may carry, and their
-    schema-declared defaults — documentation only: a resolved entry never
-    carries a key its author did not write (see :func:`validate_entries`)."""
-
-    def __init__(self, attempts=3, timeout=None, max_resumes=None):
-        self.attempts = attempts
-        self.timeout = timeout
-        self.max_resumes = max_resumes
-
-
 # ---------------------------------------------------------------------------
 # Leaf-value checks — no coercion; `bool` is checked before `int` since
 # `True`/`False` are `int` instances in Python.
