@@ -41,7 +41,7 @@ MANIFEST = os.path.join(PLUGIN_ROOT, ".claude-plugin", "plugin.json")
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
 VERBS = ("init", "list", "status", "locate", "related", "epic", "workspace",
          "board", "metrics", "lint", "doctor", "statusline", "copilot",
-         "vendor", "harness", "install")
+         "vendor", "harness", "install", "update")
 
 
 def _load_binary():
@@ -2436,6 +2436,197 @@ class InstallVerbTest(unittest.TestCase):
         r = self.cli("codex")
         self.assertEqual(r.returncode, 2)
         self.assertEqual(os.listdir(self.home), [])
+
+
+class ShipdUpdateVerbTests(unittest.TestCase):
+    """``shipd update`` (shipd-cli cli-update): compares the newest installed
+    plugin snapshot against the version the registered ``shipd`` marketplace
+    publishes and, unless ``--check`` is given, applies it through the
+    ``claude`` CLI. Driven in-process against fabricated fixtures — a
+    throwaway ``HOME``, a ``SHIPD_PLUGIN_CACHE``-rooted cache, a fabricated
+    ``known_marketplaces.json`` and marketplace tree, and a stub over
+    ``shipd._claude_run`` — the doctor-check style, since the real thing
+    touches ``~/.claude`` and the network.
+    """
+
+    MARKETPLACE_KEY = "plugin marketplace update shipd"
+    APPLY_KEY = "plugin update s@shipd"
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="shipd-update-test-")
+        self.home = os.path.join(self.tmp, "home")
+        os.makedirs(self.home)
+        self.cache = os.path.join(self.tmp, "cache")
+        self.marketplace_dir = os.path.join(self.tmp, "marketplace-checkout")
+        self._env_patch = unittest.mock.patch.dict(
+            os.environ,
+            {"HOME": self.home, "SHIPD_PLUGIN_CACHE": self.cache}, clear=True)
+        self._env_patch.start()
+        # ``clear=True`` above wipes PATH too, so a real ``which("claude")``
+        # would depend on this machine — stubbed here so every test but the
+        # missing-claude one sees it as present, the fabricated-fixtures style
+        # this class's docstring commits to.
+        self._which_patch = unittest.mock.patch.object(
+            shipd.shutil, "which",
+            lambda name: "/usr/bin/claude" if name == "claude" else None)
+        self._which_patch.start()
+
+    def tearDown(self):
+        self._which_patch.stop()
+        self._env_patch.stop()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def make_cache(self, versions):
+        """A fabricated cache root ``<cache>/<version>/bin/`` for each
+        version, rooted at the env-overridden ``SHIPD_PLUGIN_CACHE`` rather
+        than the real cache path."""
+        for version in versions:
+            os.makedirs(os.path.join(self.cache, version, "bin"))
+
+    def register_marketplace(self, version, plugin_name="s",
+                              source="./plugins/s"):
+        """A fabricated ``known_marketplaces.json`` naming
+        ``self.marketplace_dir`` as the ``shipd`` marketplace's install
+        location, plus that location's own marketplace manifest and the
+        ``s`` plugin's manifest declaring ``version`` — mirrors this
+        machine's real registration (plan.md's ``## Implementation``)."""
+        plugins_dir = os.path.join(self.home, ".claude", "plugins")
+        os.makedirs(plugins_dir, exist_ok=True)
+        registry = {
+            "shipd": {
+                "source": {"source": "directory", "path": self.marketplace_dir},
+                "installLocation": self.marketplace_dir,
+            }
+        }
+        with open(os.path.join(plugins_dir, "known_marketplaces.json"),
+                  "w", encoding="utf-8") as fh:
+            json.dump(registry, fh)
+        manifest_dir = os.path.join(self.marketplace_dir, ".claude-plugin")
+        os.makedirs(manifest_dir, exist_ok=True)
+        with open(os.path.join(manifest_dir, "marketplace.json"),
+                  "w", encoding="utf-8") as fh:
+            json.dump({"plugins": [{"name": plugin_name, "source": source}]},
+                      fh)
+        plugin_manifest_dir = os.path.join(
+            self.marketplace_dir, "plugins", "s", ".claude-plugin")
+        os.makedirs(plugin_manifest_dir, exist_ok=True)
+        with open(os.path.join(plugin_manifest_dir, "plugin.json"),
+                  "w", encoding="utf-8") as fh:
+            json.dump({"version": version}, fh)
+
+    def claude_stub(self, responses, apply_creates=None):
+        """A ``_claude_run`` stand-in answering from ``responses`` (the
+        joined argument string -> ``(returncode, stdout, stderr)``); every
+        call is recorded on ``self.claude_calls`` and an unlisted one fails
+        the test. When ``apply_creates`` is given, the ``plugin update`` call
+        also creates that version directory under the fabricated cache,
+        mirroring the real command fetching a new snapshot before
+        ``cmd_update`` re-resolves what the cache actually holds."""
+        self.claude_calls = []
+
+        def run(args, timeout=None):
+            key = " ".join(args)
+            self.claude_calls.append((key, timeout))
+            if key not in responses:
+                self.fail("unexpected claude invocation: %s" % key)
+            if apply_creates and key == self.APPLY_KEY:
+                os.makedirs(os.path.join(self.cache, apply_creates, "bin"),
+                            exist_ok=True)
+            return responses[key]
+
+        return run
+
+    def run_update(self, argv, responses, apply_creates=None):
+        run = self.claude_stub(responses, apply_creates=apply_creates)
+        out, err = io.StringIO(), io.StringIO()
+        with unittest.mock.patch.object(shipd, "_claude_run", run), \
+                redirect_stdout(out), redirect_stderr(err):
+            code = shipd.cmd_update(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_missing_claude_is_an_actionable_error(self):
+        with unittest.mock.patch.object(shipd.shutil, "which",
+                                        lambda name: None):
+            code, out, err = self.run_update([], {})
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        lines = err.strip().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("Error:"))
+        self.assertIn("claude", lines[0])
+        self.assertIn("PATH", lines[0])
+        self.assertEqual(self.claude_calls, [])
+
+    def test_newer_version_is_applied(self):
+        self.make_cache(["0.6.9"])
+        self.register_marketplace("0.6.10")
+        code, out, _err = self.run_update(
+            [], {
+                self.MARKETPLACE_KEY: (0, "", ""),
+                self.APPLY_KEY: (0, "Updated s@shipd\n", ""),
+            }, apply_creates="0.6.10")
+        self.assertEqual(code, 0)
+        self.assertIn("0.6.9", out)
+        self.assertIn("0.6.10", out)
+        self.assertIn("new session", out)
+        self.assertIn(self.APPLY_KEY, [key for key, _t in self.claude_calls])
+
+    def test_check_reports_without_applying(self):
+        self.make_cache(["0.6.9"])
+        self.register_marketplace("0.6.10")
+        code, out, _err = self.run_update(
+            ["--check"], {self.MARKETPLACE_KEY: (0, "", "")})
+        self.assertEqual(code, 0)
+        self.assertIn("0.6.9", out)
+        self.assertIn("0.6.10", out)
+        self.assertNotIn(self.APPLY_KEY, [key for key, _t in self.claude_calls])
+
+    def test_already_current_changes_nothing(self):
+        self.make_cache(["0.6.10"])
+        self.register_marketplace("0.6.10")
+        code, out, _err = self.run_update(
+            [], {self.MARKETPLACE_KEY: (0, "", "")})
+        self.assertEqual(code, 0)
+        self.assertIn("0.6.10", out)
+        self.assertEqual([key for key, _t in self.claude_calls],
+                         [self.MARKETPLACE_KEY])
+
+    def test_newest_snapshot_wins_numerically(self):
+        self.make_cache(["0.6.9", "0.6.10"])
+        self.assertEqual(shipd.newest_installed(self.cache), "0.6.10")
+
+    def test_unregistered_marketplace_is_an_actionable_error(self):
+        self.make_cache(["0.6.9"])
+        code, _out, err = self.run_update([], {})
+        self.assertEqual(code, 1)
+        self.assertIn("claude plugin marketplace add shipd-now/shipd", err)
+
+    def test_failing_marketplace_refresh_reports_no_comparison(self):
+        self.make_cache(["0.6.9"])
+        self.register_marketplace("0.6.10")
+        code, out, err = self.run_update(
+            [], {self.MARKETPLACE_KEY: (1, "", "boom")})
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertTrue(err.strip())
+
+    def test_empty_cache_is_an_actionable_error(self):
+        self.register_marketplace("0.6.10")
+        code, _out, err = self.run_update(
+            [], {self.MARKETPLACE_KEY: (0, "", "")})
+        self.assertEqual(code, 1)
+        self.assertIn("claude plugin install s@shipd", err)
+
+    def test_failing_apply_is_an_error(self):
+        self.make_cache(["0.6.9"])
+        self.register_marketplace("0.6.10")
+        code, _out, err = self.run_update(
+            [], {
+                self.MARKETPLACE_KEY: (0, "", ""),
+                self.APPLY_KEY: (1, "", "apply failed"),
+            })
+        self.assertEqual(code, 1)
+        self.assertTrue(err.strip())
 
 
 if __name__ == "__main__":

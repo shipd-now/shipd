@@ -76,8 +76,11 @@ to the entry you already have rather than replacing it wholesale.
 
 Enabled, updates are fetched shortly after a session starts and load in the
 **next** session (or right away after `/reload-plugins`) — the launcher already
-runs the newest installed snapshot, so nothing needs re-linking. Updating by
-hand works at any time and is the fallback if you leave auto-update off:
+runs the newest installed snapshot, so nothing needs re-linking. `shipd update`
+is the one-command manual upgrade — it compares your installed snapshot
+against what the marketplace publishes and applies a newer one; `shipd update
+--check` reports what it would do without changing anything. Updating by
+hand works at any time too, and is the fallback if you leave auto-update off:
 
 ```bash
 claude plugin update s@shipd
@@ -400,6 +403,7 @@ shipd board text               the delivery board, printed once
 shipd metrics                  delivery metrics (default: summary)
 shipd lint [change]            structurally validate specs and change deltas
 shipd harness [list|show <id>] the harness-adapter registry
+shipd update [--check]         report or install a newer published plugin version
 ```
 
 Every verb but `list` delegates straight to the engine script, so output, exit

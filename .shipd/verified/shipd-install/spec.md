@@ -103,8 +103,11 @@ labeled dev mode. The install-mode documentation, and the quickstart's
 install step, SHALL document enabling Claude Code's marketplace
 auto-update for `shipd` (the `/plugin` toggle and the `"autoUpdate": true`
 settings entry), the apply semantics (next session start, or
-`/reload-plugins`), and `claude plugin update s@shipd` as the manual
-fallback. The installation documentation SHALL additionally document a
+`/reload-plugins`), and both `shipd update` — the one-command manual upgrade,
+with `shipd update --check` naming the report-only form — and
+`claude plugin update s@shipd` as the manual
+fallbacks. The README's `shipd` CLI verb listing SHALL name `update` among
+the verbs. The installation documentation SHALL additionally document a
 per-repo mode, explicitly labeled, covering: `shipd vendor add` as the
 entry command, the four surfaces it writes (the vendored
 `<content-dir>/plugin/` tree, the marketplace manifest, the
@@ -130,6 +133,12 @@ re-running `shipd vendor add` after a plugin update, and removal via
   install step
 - **THEN** the auto-update enable step, its apply semantics, and the
   manual `claude plugin update s@shipd` fallback are documented
+
+#### Scenario: The update verb is documented as the manual upgrade
+- **WHEN** a reader finishes the install-mode section
+- **THEN** `shipd update` is named as the one-command manual upgrade,
+  `shipd update --check` as its report-only form, and the README's `shipd`
+  CLI verb listing includes `update`
 
 #### Scenario: Per-repo mode is documented
 - **WHEN** a reader reaches the installation documentation's per-repo mode
