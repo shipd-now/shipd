@@ -9,10 +9,13 @@
 # It also provides `remove <change>`, a *guarded* teardown: removal refuses
 # (exit 2, listing every reason) while the worktree shows work in progress —
 # uncommitted/untracked files, an unshipped change under `.shipd/planned/`, a
-# `[~]` task claim or `.tasks.lock` in a planned checklist, or any file
-# modified within the idle window (default 30 minutes,
-# `SHIPD_WORKTREE_IDLE_MINUTES` overrides; `0` disables the activity guard). This
-# stops a parallel session from pruning a worktree out from under a live one.
+# `[~]` task claim or `.tasks.lock` in a planned checklist, or — only while the
+# tree is already dirty — any file modified within the idle window (default 30
+# minutes, `SHIPD_WORKTREE_IDLE_MINUTES` overrides; `0` disables the activity
+# guard). A clean tree never triggers the idle guard on its own: a worktree
+# whose work is fully committed removes however recently its files were
+# written. This stops a parallel session from pruning a worktree out from
+# under a live one.
 # `--force` performs the removal anyway, printing each guard it overrode. The
 # unshipped-change guard skips a planned change that is base content — tracked,
 # locally clean, and identical to the base branch — since that is not the
@@ -99,6 +102,29 @@ branch_is_merged() {
   return 1
 }
 
+# Is a branch's remote-tracking ref gone after once having existed? True
+# (exit 0) only when the branch carries recorded upstream config
+# (`branch.<branch>.remote`, set by `git push -u`, the workflow in
+# AGENTS.md) and that remote's tracking ref for it is now absent — the state
+# a squash merge that deletes its remote branch leaves, even when the base
+# moved and the content probe can no longer match the patch. False (exit 1)
+# both when the tracking ref still exists and when the branch was never
+# pushed at all (no `branch.<branch>.remote` recorded): an unpushed local
+# branch has no tracking ref either, so this probe must decline rather than
+# read that as "gone" and delete it. The remote name is read from that config
+# rather than assumed, so a remote not named `origin` is honored too. This is
+# the second merged-ness probe `prune-branches` consults when the content
+# probe reports not-merged. Silent on stdout either way.
+branch_remote_ref_gone() {
+  local branch="$1" remote
+  remote=$(git config --get "branch.$branch.remote" 2>/dev/null) || return 1
+  [ -n "$remote" ] || return 1
+  if git rev-parse --verify --quiet "refs/remotes/$remote/$branch" >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
+}
+
 # Is a planned change directory *base content* rather than the worktree's own
 # work? True (exit 0) only when all three probes hold against the resolved
 # base: the path is tracked (an untracked-only directory is never base
@@ -176,8 +202,10 @@ cmd_remove() {
 
   reasons=()
 
-  # 1. Dirty tree: any uncommitted or untracked path.
-  if [ -n "$(git -C "$WORKTREE" status --porcelain 2>/dev/null)" ]; then
+  # 1. Dirty tree: any uncommitted or untracked path. Computed once and reused
+  # by guard 4 below, which only runs while this is non-empty.
+  PORCELAIN=$(git -C "$WORKTREE" status --porcelain 2>/dev/null)
+  if [ -n "$PORCELAIN" ]; then
     reasons+=("dirty worktree: uncommitted or untracked files")
   fi
 
@@ -215,11 +243,16 @@ cmd_remove() {
     done
   fi
 
-  # 4. Recent activity inside the idle window (skipped when IDLE=0). The probe
-  # is `find -mmin`, which both GNU and BSD (macOS) find implement — unlike
+  # 4. Recent activity inside the idle window (skipped when IDLE=0), and only
+  # while the tree is dirty (guard 1's $PORCELAIN, reused rather than
+  # recomputed). This makes the probe non-decisive: a dirty tree already
+  # refuses through guard 1, so this can only add a second reason line beside
+  # it — a clean tree is indistinguishable from a finished close-out, so there
+  # is nothing left here for the probe to protect. The probe itself is
+  # `find -mmin`, which both GNU and BSD (macOS) find implement — unlike
   # `-newermt`/`-quit`, whose grammar/availability differs across find flavors.
   # `| head -n1` stops the walk at the first hit without the GNU-only `-quit`.
-  if [ "$IDLE" -gt 0 ]; then
+  if [ "$IDLE" -gt 0 ] && [ -n "$PORCELAIN" ]; then
     hit=$(find "$WORKTREE" -mmin "-$IDLE" -print 2>/dev/null | head -n 1 || true)
     if [ -n "$hit" ]; then
       reasons+=("file modified within the idle window (last $IDLE minutes): $hit")
@@ -274,7 +307,7 @@ cmd_prune_branches() {
     return 1
   fi
 
-  local base checked_out branch pruned kept
+  local base checked_out branch pruned kept remote_probe_available
   base=$(resolve_base_branch)
   if [ -z "$base" ]; then
     echo "error: prune-branches needs a base branch, but the root checkout's HEAD is detached" >&2
@@ -286,6 +319,25 @@ cmd_prune_branches() {
   # `branch refs/heads/<name>` line.
   checked_out=$(git worktree list --porcelain | sed -n 's|^branch refs/heads/||p')
 
+  # Refresh remote-tracking refs once, before judging merged-ness. `--all`
+  # refreshes every configured remote, not just one hardcoded name — the
+  # second probe reads each branch's own recorded remote (below), which need
+  # not be "origin". `fetch.prune` is unset by default and `git pull` never
+  # prunes, so a remote branch deleted by a squash merge leaves its local
+  # tracking ref behind unless this runs. Where no remote is configured, or
+  # the fetch fails (offline, unreachable host), the remote probe below is
+  # unavailable and the loop falls back to the content probe alone — the same
+  # outcome as before this refresh existed, never a wrongly deleted branch.
+  # The verb never depends on the network.
+  remote_probe_available=0
+  if [ -n "$(git remote 2>/dev/null)" ]; then
+    if git fetch --prune --all --quiet 2>/dev/null; then
+      remote_probe_available=1
+    else
+      echo "note: could not refresh remote-tracking refs; falling back to the content probe" >&2
+    fi
+  fi
+
   pruned=0
   kept=0
   while read -r branch; do
@@ -296,6 +348,10 @@ cmd_prune_branches() {
       continue
     fi
     if branch_is_merged "$base" "$branch"; then
+      git branch -D "$branch" >/dev/null
+      echo "pruned: $branch"
+      pruned=$((pruned + 1))
+    elif [ "$remote_probe_available" -eq 1 ] && branch_remote_ref_gone "$branch"; then
       git branch -D "$branch" >/dev/null
       echo "pruned: $branch"
       pruned=$((pruned + 1))

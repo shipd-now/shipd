@@ -21,6 +21,7 @@ SCRIPT = os.path.normpath(os.path.join(HERE, "..", "scripts", "worktree.sh"))
 class WorktreeScriptTestBase(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="worktree-test-")
+        self._extra_dirs = []
         # A minimal git repo: init + identity + one commit so a branch exists.
         self.git("init", "-q")
         self.git("config", "user.email", "test@example.com")
@@ -32,6 +33,8 @@ class WorktreeScriptTestBase(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
+        for d in self._extra_dirs:
+            shutil.rmtree(d, ignore_errors=True)
 
     def git(self, *args):
         return subprocess.run(
@@ -129,6 +132,22 @@ class WorktreeScriptTestBase(unittest.TestCase):
         same content, no ancestry link back to the branch."""
         self.git("merge", "--squash", branch)
         self.git("commit", "-q", "-m", "squash merge of " + branch)
+
+    def add_origin(self, remote="origin"):
+        """Create a bare repository in a second temp directory, wire it as
+        `remote` (default "origin"), and push the base branch — a local
+        stand-in for a real remote so remote-tracking-ref tests run entirely
+        offline. Never reaches the network. The temp directory is registered
+        for cleanup in tearDown. Returns the bare repository's path."""
+        origin = tempfile.mkdtemp(prefix="worktree-origin-")
+        self._extra_dirs.append(origin)
+        subprocess.run(
+            ["git", "init", "-q", "--bare", origin],
+            capture_output=True, text=True, check=True)
+        self.git("remote", "add", remote, origin)
+        base = self.git("symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
+        self.git("push", "-q", remote, base)
+        return origin
 
 
 class CreateWorktreeTest(WorktreeScriptTestBase):
@@ -337,6 +356,95 @@ class PruneBranchesTest(WorktreeScriptTestBase):
         self.assertFalse(self.branch_exists("change/a"))
         self.assertFalse(self.branch_exists("change/b"))
 
+    def test_branch_merged_onto_a_moved_base_is_pruned(self):
+        # The content probe alone mis-reports this branch as unmerged: the
+        # base moved (an unrelated edit to the same file) between the
+        # branch's fork point and its squash merge, so the squash commit's
+        # diff is computed against different content and the patch
+        # identities differ. The second probe — an absent remote-tracking
+        # ref, the state a squash merge that deletes its remote branch
+        # leaves — is what catches it.
+        self.add_origin()
+        wt = self.make_worktree("merged")
+        with open(os.path.join(wt, "README.md"), "a") as fh:
+            fh.write("branch edit\n")
+        self.git_in(wt, "add", "README.md")
+        self.git_in(wt, "commit", "-q", "-m", "branch edits README")
+        # -u records branch.change/merged.remote, the upstream config the
+        # real workflow's `git push -u origin change/<x>` always sets and
+        # the second probe now requires as evidence the branch was ever
+        # pushed at all.
+        self.git_in(wt, "push", "-q", "-u", "origin", "change/merged")
+        self.git("worktree", "remove", wt)
+
+        # The base moves: an unrelated edit to the same file lands before
+        # the squash merge.
+        with open(os.path.join(self.root, "README.md"), "w") as fh:
+            fh.write("base moved on\nseed\n")
+        self.git("add", "README.md")
+        self.git("commit", "-q", "-m", "base moves on")
+
+        self.squash_merge("change/merged")
+
+        # A squash-merged PR deletes only the remote branch.
+        subprocess.run(
+            ["git", "push", "-q", "origin", "--delete", "change/merged"],
+            cwd=self.root, capture_output=True, text=True, check=True)
+
+        r = self.run_helper("prune-branches")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        out = self.combined(r)
+        self.assertIn("pruned: change/merged", out)
+        self.assertFalse(self.branch_exists("change/merged"))
+
+    def test_branch_with_a_surviving_remote_ref_is_kept(self):
+        self.add_origin()
+        wt = self.make_worktree("wip")
+        with open(os.path.join(wt, "wip.txt"), "w") as fh:
+            fh.write("still going\n")
+        self.git_in(wt, "add", "wip.txt")
+        self.git_in(wt, "commit", "-q", "-m", "wip commit")
+        self.git_in(wt, "push", "-q", "-u", "origin", "change/wip")
+        self.git("worktree", "remove", wt)
+
+        r = self.run_helper("prune-branches")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        out = self.combined(r)
+        self.assertIn("kept: change/wip", out)
+        self.assertTrue(self.branch_exists("change/wip"))
+
+    def test_unpushed_local_branch_is_never_pruned(self):
+        # No `branch.<branch>.remote` config at all (never pushed) — the
+        # remote probe must decline rather than read the absent tracking ref
+        # as "gone" and delete real, unshipped local work.
+        self.add_origin()
+        self.branch_with_commit("never-pushed")  # unmerged, local-only
+
+        r = self.run_helper("prune-branches")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        out = self.combined(r)
+        self.assertIn("kept: change/never-pushed", out)
+        self.assertTrue(self.branch_exists("change/never-pushed"))
+
+    def test_non_origin_remote_does_not_prune_unmerged_branches(self):
+        # The only remote is named "upstream", not "origin" — the probe must
+        # read the branch's own recorded remote rather than assume "origin",
+        # or it would treat a genuinely tracked, unmerged branch as gone.
+        self.add_origin(remote="upstream")
+        wt = self.make_worktree("on-upstream")
+        with open(os.path.join(wt, "work.txt"), "w") as fh:
+            fh.write("still going\n")
+        self.git_in(wt, "add", "work.txt")
+        self.git_in(wt, "commit", "-q", "-m", "wip commit")
+        self.git_in(wt, "push", "-q", "-u", "upstream", "change/on-upstream")
+        self.git("worktree", "remove", wt)
+
+        r = self.run_helper("prune-branches")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        out = self.combined(r)
+        self.assertIn("kept: change/on-upstream", out)
+        self.assertTrue(self.branch_exists("change/on-upstream"))
+
     def test_unmerged_and_checked_out_branches_survive(self):
         self.branch_with_commit("wip")   # unmerged, no worktree
         self.make_worktree("active")     # merged, but checked out
@@ -396,6 +504,23 @@ class RemoveWorktreeTest(WorktreeScriptTestBase):
         self.assertFalse(os.path.exists(wt))
         # Removed and pruned: git no longer tracks the worktree.
         self.assertFalse(self.worktree_listed(wt))
+
+    def test_recently_written_clean_worktree_removes(self):
+        # Files just written and committed seconds ago, no --force and no
+        # SHIPD_WORKTREE_IDLE_MINUTES override: the tree is clean, so the idle
+        # probe must not run at all.
+        wt = self.make_worktree("my-change")
+        with open(os.path.join(wt, "scratch.txt"), "w") as fh:
+            fh.write("just finished\n")
+        self.git_in(wt, "add", "-A")
+        self.git_in(wt, "commit", "-q", "-m", "just finished")
+        r = self.run_helper("remove", "my-change")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertFalse(os.path.exists(wt))
+        self.assertFalse(self.worktree_listed(wt))
+        out = self.combined(r).lower()
+        self.assertNotIn("idle", out)
+        self.assertNotIn("--force", out)
 
     def test_idle_minutes_zero_disables_activity_for_cold_case(self):
         # A brand-new worktree has fresh mtimes; SHIPD_WORKTREE_IDLE_MINUTES=0
@@ -457,9 +582,13 @@ class RemoveWorktreeTest(WorktreeScriptTestBase):
         self.assertIn(".tasks.lock", self.combined(r))
 
     def test_fresh_activity_refuses(self):
+        # The idle probe now runs only while the tree is dirty, so "fresh
+        # activity" here means a freshly edited (and thus uncommitted) file,
+        # not merely a bumped mtime on unchanged, committed content.
         wt = self.make_worktree("my-change")
         self.age_tree(wt)  # everything cold ...
-        self.touch_now(os.path.join(wt, "README.md"))  # ... but one fresh file
+        with open(os.path.join(wt, "README.md"), "a") as fh:
+            fh.write("fresh edit\n")  # ... but one file freshly edited
         r = self.run_helper("remove", "my-change")
         self.assertEqual(r.returncode, 2, self.combined(r))
         self.assertTrue(os.path.isdir(wt))
