@@ -312,8 +312,11 @@ also provide `remove <change>`, which SHALL refuse — exit
 code 2, listing every applicable reason — while the worktree shows work
 in progress: uncommitted or untracked files, any change still under its
 `.shipd/planned/`, task-claim marks (`[~]`) or a coordination lock in its
-planned checklists, or any file modified within the idle window (default
-30 minutes, overridable via `SHIPD_WORKTREE_IDLE_MINUTES`). The
+planned checklists, or — **only while the worktree's tree is dirty** — any
+file modified within the idle window (default 30 minutes, overridable via
+`SHIPD_WORKTREE_IDLE_MINUTES`). Where the tree is clean, the idle probe
+SHALL NOT run and SHALL NOT contribute a reason, so a worktree whose work
+is fully committed removes however recently its files were written. The
 unshipped-change guard SHALL NOT fire for a planned change directory that
 is base content rather than the worktree's own work — one that is
 tracked, has no local modifications or untracked files, and is
@@ -362,6 +365,14 @@ assumption about the repository beyond git itself.
   no claims, and no file touched inside the idle window
 - **WHEN** `remove my-change` runs
 - **THEN** the worktree is gone and the exit code is zero
+
+#### Scenario: A just-finished clean worktree removes without --force
+- **GIVEN** a worktree whose files were all written and committed seconds
+  ago, with a clean tree, nothing under `.shipd/planned/`, and no claims
+- **WHEN** `remove my-change` runs with no `--force` and the default idle
+  window
+- **THEN** the worktree is gone, the exit code is zero, and no reason
+  naming the idle window is printed
 
 #### Scenario: In-progress work refuses removal
 - **GIVEN** a worktree carrying an unshipped change under `.shipd/planned/`
@@ -545,10 +556,20 @@ id: prune-merged-change-branches
 
 The worktree helper SHALL provide a `prune-branches` verb that, run from the
 repository root, deletes every local `change/*` branch whose content is merged
-into the base branch — judged by the same content-based, squash-aware probe as
-the fresh-branch flag — and SHALL never delete the root checkout's current
+into the base branch and SHALL never delete the root checkout's current
 branch, any branch checked out in a worktree, any unmerged branch, or any
-branch outside `change/*`. It SHALL print one line per deleted branch and one
+branch outside `change/*`. Merged-ness SHALL be judged by two probes in
+order: the content-based, squash-aware probe the fresh-branch flag uses;
+and, where that probe reports not-merged, whether the branch's
+remote-tracking ref is absent — the state a squash merge that deletes its
+remote branch leaves. Because the content probe compares patch identities
+against the base, it SHALL NOT be relied on alone: a branch whose base
+moved between its fork point and its merge yields a different patch and is
+otherwise mis-reported as unmerged. Where a remote is configured, the verb
+SHALL refresh the remote-tracking refs (a pruning fetch) before the second
+probe, and SHALL fall back to the first probe's verdict alone where no
+remote is configured or the refresh fails, so the verb never depends on
+network availability. It SHALL print one line per deleted branch and one
 per kept candidate with the reason, and SHALL exit zero whether or not
 anything was deleted. If the root checkout's HEAD is detached, then the verb
 SHALL error exiting non-zero.
@@ -559,6 +580,30 @@ SHALL error exiting non-zero.
 - **WHEN** `worktree.sh prune-branches` runs
 - **THEN** both branches are deleted, each named on a `pruned:` line, and the
   exit code is zero
+
+#### Scenario: A branch merged onto a moved base is pruned
+- **GIVEN** a local `change/a` whose content was squash-merged into the base
+  after an unrelated commit touching the same files had already landed there,
+  so the content probe reports it unmerged, and whose remote branch was
+  deleted by that merge
+- **WHEN** `worktree.sh prune-branches` runs against a repository whose
+  remote no longer carries the branch
+- **THEN** `change/a` is deleted and named on a `pruned:` line, and the exit
+  code is zero
+
+#### Scenario: A remote-less repository still prunes by content
+- **GIVEN** a repository with no remote configured and a `change/a` whose
+  content was squash-merged into the base with the base unmoved
+- **WHEN** `worktree.sh prune-branches` runs
+- **THEN** `change/a` is deleted, no error about a missing remote is printed,
+  and the exit code is zero
+
+#### Scenario: A branch whose remote ref survives is kept
+- **GIVEN** a local `change/a` that the content probe reports unmerged and
+  whose remote-tracking ref still exists
+- **WHEN** `worktree.sh prune-branches` runs
+- **THEN** `change/a` still exists, named on a `kept:` line, and the exit
+  code is zero
 
 #### Scenario: Unmerged and checked-out branches survive
 - **GIVEN** an unmerged `change/wip` and a `change/active` checked out in
