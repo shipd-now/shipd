@@ -281,6 +281,8 @@ documentation: the interactive install finish (`shipd install`) — the
 animated wordmark, the harness multi-select over the registry's fourteen
 harnesses, the selection record at `~/.shipd/harnesses.json`, user-global
 command generation for harnesses declaring a user-global directory, the
+read-only `shipd doctor` preflight that closes a confirmed finish (and its
+absence on the headless and aborted paths), the
 headless degradation that prints a note and writes nothing, and re-running
 `shipd install` to reopen the selection — and, in an explicitly labeled
 harness-mode subsection, the repo-level `shipd harness add`/`remove` actions
@@ -305,6 +307,11 @@ repository.
   harness multi-select, the `~/.shipd/harnesses.json` selection record, the
   headless write-nothing degradation, and re-running `shipd install` to
   reopen the selection
+
+#### Scenario: The closing preflight is documented
+- **WHEN** a reader finishes the README's install finish paragraph
+- **THEN** it states that a confirmed finish closes by running the read-only
+  `shipd doctor` preflight, and that the headless and aborted paths do not
 
 #### Scenario: Repo-level installation is documented
 - **WHEN** a reader reaches the README's harness-mode subsection

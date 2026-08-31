@@ -19,7 +19,11 @@ terminal:
     registry and this module's own constant name;
   * :func:`multiselect` and :func:`run` — the raw-mode loop on ``/dev/tty``,
     its numbered line-prompt fallback for a terminal that will not go raw, and
-    the headless degradation that prints a note and writes nothing.
+    the headless degradation that prints a note and writes nothing;
+  * an optional ``finish`` hook :func:`run` calls once a confirmed selection
+    has been saved and reported, with the same terminal handle — the seam
+    ``cmd_install`` uses to close the flow with the read-only ``doctor``
+    preflight.
 
 Every terminal exit path — confirm, abort, interrupt, exception — restores the
 saved terminal attributes and the cursor in a ``finally``.
@@ -491,13 +495,17 @@ def _non_interactive(out):
         flush()
 
 
-def run(tty=None, out=None):
+def run(tty=None, out=None, finish=None):
     """The ``shipd install`` flow. Returns the verb's exit code.
 
     ``tty`` is the controlling-terminal handle, opened here when the caller
     passes none; ``out`` receives the headless output only. Every path that
     cannot ask — no ``/dev/tty``, or color disabled for it — prints the plain
-    banner and the note, writes nothing, and exits 0.
+    banner and the note, writes nothing, and exits 0. ``finish``, when given,
+    is called once as ``finish(tty)`` after a confirmed selection has been
+    saved and reported — on both the empty-selection note and the
+    per-harness report — but never on an abort, the headless path, or a
+    generation refusal.
     """
     out = sys.stdout if out is None else out
     opened = None
@@ -520,29 +528,32 @@ def run(tty=None, out=None):
             tty.write("\nNo harnesses selected. Re-run `shipd install` any "
                       "time to pick some.\n")
             tty.flush()
-            return 0
-        tty.write("\n")
-        reason = install_selection(chosen, tty)
-        tty.flush()
-        if reason is not None:
-            cc.err(reason, stream=tty)
-            return 1
+        else:
+            tty.write("\n")
+            reason = install_selection(chosen, tty)
+            tty.flush()
+            if reason is not None:
+                cc.err(reason, stream=tty)
+                return 1
+        if finish is not None:
+            finish(tty)
         return 0
     finally:
         if opened is not None:
             opened.close()
 
 
-def main(argv=None):
+def main(argv=None, finish=None):
     """The ``shipd install`` entry point. The verb takes no arguments: the
-    one question it asks is the interactive one."""
+    one question it asks is the interactive one. ``finish`` is forwarded to
+    :func:`run`."""
     parser = argparse.ArgumentParser(
         prog="shipd install",
         description="Pick the coding harnesses you work in and install their "
                     "shipd commands into your home directory. Run it from a "
                     "terminal; `shipd harness add <id>` covers one repo.")
     parser.parse_args(argv)
-    return run()
+    return run(finish=finish)
 
 
 if __name__ == "__main__":
