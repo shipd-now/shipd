@@ -406,10 +406,11 @@ shipd harness [list|show <id>] the harness-adapter registry
 shipd update [--check]         report or install a newer published plugin version
 ```
 
-Every verb but `list` delegates straight to the engine script, so output, exit
-codes, and trailing flags (`--root`, slugs) behave exactly as they do against
-the script itself. `board`'s optional mode word — `text`, and only as the
-first argument — is the one thing consumed on the way through; everything
+Every verb but `list`, `harness`, and `update` delegates straight to the engine
+script, so output, exit codes, and trailing flags (`--root`, slugs) behave
+exactly as they do against the script itself. `board`'s optional mode word —
+`text`, and only as the first argument — is the one thing consumed on the way
+through; everything
 after it still passes verbatim. Mutating verbs (`set-status`, `merge`, `emit`, `autopilot`,
 `worktree remove`) stay behind their guarded scripts and skills.
 
