@@ -3,13 +3,10 @@
 (shipd-config autonomous-pipeline-key, pipeline-entry-validation).
 
 Every case here declares the ``autonomous-pipeline`` key, which is exactly the
-path that validates through the pydantic ``pipeline_schema`` models — so the
-suite REQUIRES pydantic (repo-root requirements.txt) and lives outside the
-stdlib-only ``tests/`` suite. The no-key default resolution and the fail-closed
-behaviour when pydantic is missing stay in ``tests/test_spec_common.py``, which
-must keep passing with pydantic absent.
+path that validates through the stdlib-only ``pipeline_schema`` module. The
+no-key default resolution lives in ``tests/test_spec_common.py``.
 
-    python3 -m unittest discover -s plugins/s/skills/build/tests_pydantic -v
+    python3 -m unittest discover -s plugins/s/skills/build/tests -v
 """
 
 import contextlib
@@ -303,9 +300,9 @@ BASIC_ENTRIES = [
 
 class ResolvePresetPipelineTest(unittest.TestCase):
     """The string form of the key: a preset name expands through the shipped
-    table and the same pydantic validation as a user-authored list (shipd-config
-    pipeline-presets). Only the ``default`` preset resolves without pydantic,
-    and that case lives in the stdlib ``tests/test_spec_common.py`` suite.
+    table and the same stdlib-only validation as a user-authored list
+    (shipd-config pipeline-presets). The ``default`` preset's own case also
+    lives in the stdlib ``tests/test_spec_common.py`` suite.
     ``$HOME`` is always overridden to an empty directory so the real home config
     never leaks into a test."""
 

@@ -60,7 +60,7 @@ code is `1` when a required check failed, `0` otherwise.
 
 Parse each line into `(level, check, detail)` and keep the whole output
 verbatim as the **before** state. The checks are `python`, `git`, `config`,
-`pipeline`, `gh`, `difft`, `textual`, `pydantic`, `snapshot`, `statusline`,
+`pipeline`, `gh`, `difft`, `textual`, `snapshot`, `statusline`,
 `protection`, `automerge`, and `copilot-secret`.
 
 **Unparseable output is your own failure.** If the command produced no output,
@@ -83,7 +83,6 @@ exhaustive: a finding not listed here is **report-only**.
 | Finding | Remedy | How it runs |
 | --- | --- | --- |
 | `warn textual` — not importable | `python3 -m ` followed by the `pip install` command **this finding's own detail names** | Runnable on consent. Relay the detail's command verbatim, never compose your own: the preflight composed it for this environment — `-r requirements.txt` in a checkout, the pinned `textual>=8.2.8,<9` range otherwise, with `--user --break-system-packages` prepended when the interpreter is externally managed (PEP 668), which is what makes the command runnable there at all. The range mirrors `requirements.txt`; keep the two in step. |
-| `warn pydantic` or `fail pydantic` — not importable | `python3 -m ` followed by the `pip install` command **that finding's own detail names** | Runnable on consent — relayed verbatim the same way (pinned range `pydantic>=2.12,<3`, `--user --break-system-packages` prepended on an externally managed interpreter), and the same command for both levels; the `fail` is only the escalation the preflight applies when a declared `autonomous-pipeline` needs it. The range mirrors `requirements.txt`; the two must change together. |
 | `warn difft` — not on PATH | `python3 "${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/semdiff.py" doctor --fix` | Runnable on consent. It is the review engine's **tiered installer** (Homebrew, then cargo, then a prebuilt binary), so **state in the dialog before it runs that it may reach the network to download difftastic** — the one remedy here that does. |
 | `warn snapshot` — a newer version is installed | `claude plugin update s@shipd` | Runnable on consent. Always add the note that the update applies **in a new session** — skills load at session start. |
 | `warn statusline` — not registered | `<shipd> statusline install` | Runnable on consent, with the binary resolved exactly as step 1 resolved it for the preflight — the registration it writes points at that same installation. Always add the note that the statusline appears **in a new session**. |
@@ -96,7 +95,7 @@ exhaustive: a finding not listed here is **report-only**.
 | `warn gh` — present but not authenticated | `gh auth login` | **Never run by you.** It is interactive. Hand it to the user to run themselves as `! gh auth login`. |
 | `fail python` — interpreter below 3.9 | none | **Report-only.** Never install or switch an interpreter; relay the check's hint. |
 | `fail config` — unusable configuration | none | **Report-only.** Never edit a `.shipd-config.json`. Report the file and the error the check named, and propose no remedy command. |
-| `fail pipeline` — the declared pipeline does not resolve | none | **Report-only.** Never edit a `.shipd-config.json` to repair a declared pipeline. Report the resolver's error verbatim. When its detail names missing pydantic, the pydantic row's install **is** the fix — offer that one remedy for the pair and still propose no config edit. |
+| `fail pipeline` — the declared pipeline does not resolve | none | **Report-only.** Never edit a `.shipd-config.json` to repair a declared pipeline. Report the resolver's error verbatim; no remedy installs a package on its behalf, since the resolver depends on none. |
 
 Distinguish the two `gh` warnings by the detail text: "not on PATH" is the
 installable one; "is not authenticated" is the hand-off one.

@@ -31,13 +31,12 @@ status CLI's `pipeline-show --json` verb once:
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-show --json
 ```
 
-- **Non-zero exit stops the flow.** A validation error (e.g. `entry 4
-  ({"stage": "build", "validater": false}): build.validater: Extra inputs are
-  not permitted`) or a missing
-  pydantic (`… requires pydantic; pip install -r requirements.txt`) means the
-  declared pipeline is unusable: report the engine's own error text and stop
-  **before investigating and before any question round** — nothing
-  investigated, nothing emitted. A declared pipeline never half-runs.
+- **Non-zero exit stops the flow.** A validation error (e.g. ``entry 4
+  ({"stage": "build", "validater": false}): validater: unknown key
+  `validater` ``) means the declared pipeline is unusable: report the engine's
+  own error text and stop **before investigating and before any question
+  round** — nothing investigated, nothing emitted. A declared pipeline never
+  half-runs.
 - **Announce a declared provenance, and only a declared one.** The emitted
   object's `source` field names where the pipeline came from — read it there,
   never by parsing the flagless verb's human-rendered header line. When a
@@ -391,8 +390,8 @@ conditions still end a turn and wait for the user:
   and on accept scaffold it with `spec_status.py init` (see "Requirements"
   above).
 - **An unresolvable pipeline** — `pipeline-show` exits non-zero at the start of
-  the flow (a declaration that fails validation, or a missing pydantic); the
-  skill reports the engine's error text and stops before investigating.
+  the flow (a declaration that fails validation); the skill reports the
+  engine's error text and stops before investigating.
 - **A depth-path grill round** — the depth path's grill loop opens a round
   because its agenda of open decisions is non-empty (`dialogue.md`).
 - **An `INSUFFICIENT` oracle verdict** — a task-shaping decision the oracle

@@ -49,15 +49,14 @@ shipd doctor
 ```
 
 It reports one line per check — `python`, `git`, `config`, `pipeline`, `gh`,
-`textual`, `pydantic`, `snapshot`, `statusline` — and a closing `doctor: ok` or
+`textual`, `snapshot`, `statusline` — and a closing `doctor: ok` or
 `doctor: N problem(s)`. Only a `fail` line has to be resolved before you
 continue: `warn` lines are optional extras (`gh` is needed only when you ship
-a pull request, `textual` only for the full-screen delivery board, `pydantic`
-only for declared-pipeline validation). A `warn statusline` line is the one
-you can clear in a single command — `shipd statusline install`, see step 6.
-Nothing is installed or edited by this verb.
+a pull request, `textual` only for the full-screen delivery board). A `warn
+statusline` line is the one you can clear in a single command — `shipd
+statusline install`, see step 6. Nothing is installed or edited by this verb.
 
-`pydantic` is what unlocks the cheap-delivery opt-in: with it installed, putting
+Cheapening a delivery needs nothing installed: putting
 `{"autonomous-pipeline": "eco"}` in `.shipd-config.json` runs deliveries on the
 eco preset. Separately, declaring `{"pr-mode": "draft"}` at a workspace root
 makes deliveries beneath it stop at a draft PR for human review instead of
@@ -127,8 +126,7 @@ The delivery board, full-screen:
 shipd board
 ```
 
-This is one of the engine's two third-party dependencies (the other is
-`pydantic`, used only for declared-pipeline validation) — `pip install
+This is the engine's one third-party dependency — `pip install
 'textual>=8.2.8,<9'` if `shipd doctor` warned that it is not importable.
 Without it, the same board printed once:
 

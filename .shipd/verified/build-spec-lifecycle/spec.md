@@ -425,7 +425,7 @@ effective autonomous pipeline exactly once by running the status CLI's
 from the emitted JSON object's `entries` dicts and the provenance from its
 `source` field, never re-deriving them from configuration files and never
 parsing the human-rendered label lines, which carry no contract status. If
-the resolution exits non-zero (a validation error or missing pydantic),
+the resolution exits non-zero (a validation error),
 then the flow SHALL report the engine's error text and stop before any
 spec work — a declared pipeline never half-runs. Where the resolved
 `build` entry declares `subagent_model`, build SHALL spawn `s:sub-agent`

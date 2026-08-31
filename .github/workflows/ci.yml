@@ -21,14 +21,11 @@ jobs:
       - name: Run engine test suite
         run: python3 -m unittest discover -s plugins/s/skills/build/tests -v
 
-      - name: Install third-party deps (board tui + pipeline validation)
+      - name: Install third-party deps (board tui)
         run: python3 -m pip install -r requirements.txt
 
       - name: Run textual-dependent test suite
         run: python3 -m unittest discover -s plugins/s/skills/build/tests_textual -v
-
-      - name: Run pydantic-dependent test suite
-        run: python3 -m unittest discover -s plugins/s/skills/build/tests_pydantic -v
 
       - name: Run review test suite
         run: python3 -m unittest discover -s plugins/s/skills/review/tests -v

@@ -403,11 +403,11 @@ def check_config(root):
 
 def check_pipeline(root, resolve=None):
     """The effective autonomous pipeline at ``root``, through the engine's own
-    resolver. A declared pipeline that cannot resolve — malformed entries, an
-    unknown preset, or pydantic missing — is a hard stop for the delivery
-    surfaces that run it, so it fails the preflight carrying the resolver's own
-    error line. ``resolve`` is the injection point; it defaults to the real
-    resolver once the engine is loaded."""
+    resolver. A declared pipeline that cannot resolve — malformed entries or an
+    unknown preset — is a hard stop for the delivery surfaces that run it, so
+    it fails the preflight carrying the resolver's own error line. ``resolve``
+    is the injection point; it defaults to the real resolver once the engine
+    is loaded."""
     _load_engine()
     resolve = resolve or sc.resolve_pipeline
     try:
@@ -445,10 +445,9 @@ def check_difft(which=shutil.which):
     return ("ok", "difft", "found at %s" % found)
 
 
-# The pinned ranges the install hints fall back to, mirroring
-# ``requirements.txt`` and the doctor skill's remedy table — change all three.
-PINNED_SPECIFIERS = {"textual": "textual>=8.2.8,<9",
-                     "pydantic": "pydantic>=2.12,<3"}
+# The pinned range the install hint falls back to, mirroring
+# ``requirements.txt`` and the doctor skill's remedy table — change both.
+PINNED_SPECIFIERS = {"textual": "textual>=8.2.8,<9"}
 
 
 # PEP 668: a distribution-managed interpreter (Homebrew, Debian, …) plants
@@ -504,55 +503,6 @@ def check_textual(root, find_spec=importlib.util.find_spec,
     return ("warn", "textual",
             "not importable — only the board (`shipd board`) needs it; %s"
             % _install_hint(root, "textual", managed=managed))
-
-
-def _pipeline_needs_pydantic(root):
-    """The config path declaring an ``autonomous-pipeline`` whose validation
-    imports pydantic, or ``None`` when nothing at ``root`` does.
-
-    Mirrors :func:`spec_common.resolve_pipeline`'s pydantic-import path exactly:
-    only a list value or a known preset other than ``default`` reaches the lazy
-    import. An absent key, the ``default`` preset, an unknown preset name, a
-    value of any other type, or a configuration that will not resolve all stop
-    short of it — and the last three already surface through the ``config`` and
-    ``pipeline`` checks, so they must not also escalate this one."""
-    _load_engine()
-    try:
-        config, prov = sc.resolve_config(root)
-    except sc.ConfigError:
-        return None
-    raw = config.get(sc.PIPELINE_KEY)
-    validated = isinstance(raw, list) or (
-        isinstance(raw, str) and raw != "default"
-        and raw in sc.PIPELINE_PRESETS)
-    if not validated:
-        return None
-    return prov.get(sc.PIPELINE_KEY, "default")
-
-
-def check_pydantic(root, find_spec=importlib.util.find_spec,
-                   managed=externally_managed):
-    """The engine's other scoped third-party dependency — declared-pipeline
-    validation only, so its absence is a warning where nothing declares a
-    pipeline, and a failure where ``root``'s configuration declares one that
-    cannot be validated without it. Probed, never imported, so this binary
-    stays stdlib-only."""
-    try:
-        found = find_spec("pydantic") is not None
-    except (ImportError, ValueError):
-        found = False
-    if found:
-        return ("ok", "pydantic",
-                "importable; declared pipelines can be validated")
-    hint = _install_hint(root, "pydantic", managed=managed)
-    declared_by = _pipeline_needs_pydantic(root)
-    if declared_by:
-        return ("fail", "pydantic",
-                "not importable but %s declares an `%s` needing it; %s"
-                % (declared_by, sc.PIPELINE_KEY, hint))
-    return ("warn", "pydantic",
-            "not importable — only declared-pipeline validation needs it; %s"
-            % hint)
 
 
 def check_snapshot(plugin_root):
@@ -876,7 +826,6 @@ def default_checks(root):
             check_gh(),
             check_difft(),
             check_textual(root),
-            check_pydantic(root),
             check_snapshot(PLUGIN_ROOT),
             check_statusline(),
             check_protection(context),

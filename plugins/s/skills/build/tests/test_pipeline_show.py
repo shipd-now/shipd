@@ -3,13 +3,11 @@
 (spec-status pipeline-show-verb, shipd-config pipeline-entry-validation).
 
 Rendering a *declared* pipeline resolves it, which validates through the
-pydantic ``pipeline_schema`` models — so these cases require pydantic and live
-here rather than in the stdlib-only ``tests/`` suite. The no-key `[default]`
-rendering stays in ``tests/test_spec_status.py``, which must keep passing with
-pydantic absent. The CLI is driven with ``sys.executable`` so the subprocess
-inherits this suite's interpreter (and therefore its pydantic).
+stdlib-only ``pipeline_schema`` module. The no-key `[default]` rendering
+stays in ``tests/test_spec_status.py``. The CLI is driven with
+``sys.executable`` so the subprocess inherits this suite's interpreter.
 
-    python3 -m unittest discover -s plugins/s/skills/build/tests_pydantic -v
+    python3 -m unittest discover -s plugins/s/skills/build/tests -v
 """
 
 import json
@@ -144,10 +142,8 @@ class PipelineShowPresetTest(unittest.TestCase):
     """`pipeline-show` on a preset-resolved pipeline: the preset provenance,
     the per-stage options suffix on each entry line, and `--expand` printing a
     preset as a fork-ready entry list (spec-status pipeline-show-verb,
-    shipd-config pipeline-presets). Expanding a non-`default` preset validates
-    through the schema, so these cases require pydantic. Fixture plumbing —
-    isolated ``$HOME``, throwaway root, `sys.executable` CLI — is the
-    declared-pipeline case's."""
+    shipd-config pipeline-presets). Fixture plumbing — isolated ``$HOME``,
+    throwaway root, `sys.executable` CLI — is the declared-pipeline case's."""
 
     setUp = PipelineShowDeclaredTest.setUp
     tearDown = PipelineShowDeclaredTest.tearDown

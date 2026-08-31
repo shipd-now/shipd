@@ -473,7 +473,7 @@ PIPELINE_FALLBACKS = ("builtin", "skip")
 # The built-in preset names a string `autonomous-pipeline` value may take
 # (shipd-config pipeline-presets). Stdlib-side names only: the entry table
 # itself is data in `pipeline_schema.PRESETS`, keyed by exactly these names, so
-# an unknown name is rejected here without importing pydantic.
+# an unknown name is rejected here without importing that module.
 PIPELINE_PRESETS = ("default", "eco", "basic")
 
 # The config key naming the autonomous pipeline.
@@ -523,25 +523,24 @@ def resolve_pipeline(root):
     the key, returns the built-in default: every :data:`PIPELINE_STAGES` stage in
     canonical order as a plain built-in, with provenance ``"default"`` —
     resolved without importing any third-party package. When a layer declares
-    it, validates every entry against the pydantic models in
+    it, validates every entry against the stdlib-only, table-driven schema in
     :mod:`pipeline_schema` (imported lazily here, so the default path never
-    needs pydantic) and against the canonical relative order of built-in
+    imports it) and against the canonical relative order of built-in
     stages, then returns the ordered effective entries — plain dicts carrying
     exactly the keys each entry declared — together with the provenance (the
     supplying config file path). A declared list is wholesale: stages absent
     from it simply do not run, which is legal (including for gates). Raises
     :class:`ConfigError` listing every validation error, each naming the
-    offending entry by index and content; a declared pipeline with pydantic
-    unavailable fails closed rather than falling back to weaker validation.
+    offending entry by index and content.
 
     A string value names a built-in preset (shipd-config pipeline-presets).
     The name is checked against :data:`PIPELINE_PRESETS` first, so an unknown
     one fails naming the known presets with no import at all; ``"default"``
     short-circuits to the absent key's pipeline, likewise stdlib-only. Every
     other known name expands through :func:`pipeline_schema.expand_preset`,
-    which validates the table's entries exactly like a user-authored list —
-    including the fail-closed behaviour when pydantic is absent. The provenance
-    of a preset-resolved pipeline is ``preset:<name> (<config-path>)``."""
+    which validates the table's entries exactly like a user-authored list.
+    The provenance of a preset-resolved pipeline is
+    ``preset:<name> (<config-path>)``."""
     config, prov = resolve_config(root)
     raw = config.get(PIPELINE_KEY)
     if raw is None:
@@ -561,16 +560,10 @@ def resolve_pipeline(root):
             "`%s` must be a JSON list or a preset name string (from %s)"
             % (PIPELINE_KEY, source))
 
-    # The engine's one pydantic dependency, scoped to this branch by the
-    # constitution: only a *declared* pipeline pays for it. A missing package
-    # is a fail-closed configuration error naming the remedy; anything else
-    # propagates, because it is a real bug rather than an absent dependency.
-    try:
-        import pipeline_schema
-    except ModuleNotFoundError:
-        raise ConfigError(
-            "declared `%s` (from %s) requires pydantic; "
-            "pip install -r requirements.txt" % (PIPELINE_KEY, source))
+    # Imported lazily so the no-key default pipeline never pays for it; the
+    # module is stdlib-only, so a *declared* pipeline never depends on a
+    # third-party package either.
+    import pipeline_schema
 
     try:
         if isinstance(raw, str):
@@ -629,7 +622,7 @@ def resolve_pr_mode(root):
     declaredness is key presence, never the value, so an explicit JSON ``null``
     is a bad value rather than an absent key. Stdlib-only: the mode is
     standalone config, never a pipeline entry, so resolving it never imports
-    pydantic."""
+    any third-party package."""
     config, prov = resolve_config(root)
     if PR_MODE_KEY not in config:
         return PR_MODES[0]

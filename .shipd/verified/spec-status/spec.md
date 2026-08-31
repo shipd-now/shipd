@@ -588,10 +588,8 @@ discoverable workspace or a selected change, and a defaults-only resolution
 SHALL exit zero. The verb SHALL additionally accept `--expand <preset>`,
 printing the named preset's entry list as indented JSON — the exact value a
 config may declare as a custom list — without resolving the repo's own
-pipeline; expanding `default` SHALL require no third-party package, an
-unknown preset SHALL exit non-zero listing the known preset names, and
-expanding any other preset without pydantic importable SHALL exit non-zero
-with the install-hint error.
+pipeline; expanding any preset SHALL require no third-party package, and an
+unknown preset SHALL exit non-zero listing the known preset names.
 
 The verb SHALL additionally accept `--json` as its machine contract: when
 resolving the repo's pipeline it SHALL emit exactly one JSON object on
@@ -623,8 +621,7 @@ stay byte-identical to its pre-flag behavior, and error handling (stderr
   code is non-zero
 
 #### Scenario: Preset pipeline prints options and preset provenance
-- **GIVEN** a repo config declaring `{"autonomous-pipeline": "eco"}` and
-  pydantic importable
+- **GIVEN** a repo config declaring `{"autonomous-pipeline": "eco"}`
 - **WHEN** `pipeline-show` runs
 - **THEN** the source line names `preset:eco` with the repo config path,
   the build line carries `validator=false`,
@@ -633,13 +630,12 @@ stay byte-identical to its pre-flag behavior, and error handling (stderr
   `model=tier-below` and `disposition=high-only`
 
 #### Scenario: Expand prints a fork-ready entry list
-- **WHEN** `pipeline-show --expand eco` runs with pydantic importable
+- **WHEN** `pipeline-show --expand eco` runs
 - **THEN** the output is indented JSON parsing to the eco preset's entry
   list, valid as a declared `autonomous-pipeline` list, and the exit code
   is zero
 
-#### Scenario: Expanding default needs no pydantic
-- **GIVEN** pydantic is not importable
+#### Scenario: Expanding default needs no third-party package
 - **WHEN** `pipeline-show --expand default` runs
 - **THEN** the output is JSON parsing to the six bare registry stages in
   canonical order and the exit code is zero
@@ -650,16 +646,15 @@ stay byte-identical to its pre-flag behavior, and error handling (stderr
   presets `basic`, `default`, and `eco`
 
 #### Scenario: Resolved pipeline is machine-readable
-- **GIVEN** a repo config declaring `{"autonomous-pipeline": "eco"}` and
-  pydantic importable
+- **GIVEN** a repo config declaring `{"autonomous-pipeline": "eco"}`
 - **WHEN** `pipeline-show --json` runs
 - **THEN** stdout parses as one JSON object whose `source` names
   `preset:eco` with the repo config path and whose `entries` hold the
   validated entry dicts, the build entry carrying `subagent_model`
   `tier-two-below`, `validator` false, and `telemetry` false
 
-#### Scenario: Default resolution is machine-readable without pydantic
-- **GIVEN** pydantic is not importable and no layer declares the key
+#### Scenario: Default resolution is machine-readable
+- **GIVEN** no layer declares the key
 - **WHEN** `pipeline-show --json` runs
 - **THEN** stdout parses as one JSON object with `source` `default` and
   `entries` holding the six bare registry stages in canonical order, and

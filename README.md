@@ -313,9 +313,9 @@ so cheapening a delivery is a one-line opt-in, and
 the starting point for a custom one.
 Entries may also carry typed per-stage options — model tiers, `build`'s
 `validator`/`telemetry`/`parallelism`, `review`'s `disposition`, and the
-`autopilot` driver knobs — validated strictly, so an unknown key or a wrongly
-typed value is an error rather than silently ignored config; a declared list
-(and every preset but `default`) requires `pydantic`.
+`autopilot` driver knobs — validated strictly by the engine's stdlib-only
+schema module, requiring no third-party package: an unknown key or a wrongly
+typed value is an error rather than silently ignored config.
 `spec_status.py pipeline-show` prints the effective pipeline and its provenance.
 See [`.shipd/README.md`](.shipd/README.md) for the full entry grammar.
 

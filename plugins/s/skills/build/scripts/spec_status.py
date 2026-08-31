@@ -1894,20 +1894,15 @@ def _expand_pipeline_preset(name):
     An unknown name is a :class:`StatusError` listing the known presets, raised
     before any import; ``default`` expands from the stdlib stage registry, so it
     needs no third-party package. Every other known name expands through
-    ``pipeline_schema``, whose absent pydantic is the same fail-closed
-    install-hint error resolution raises."""
+    ``pipeline_schema``, imported lazily here — the module is stdlib-only, so
+    expanding it never depends on a third-party package either."""
     if name not in sc.PIPELINE_PRESETS:
         raise StatusError(
             "unknown pipeline preset '%s'; known presets: %s"
             % (name, ", ".join(sorted(sc.PIPELINE_PRESETS))))
     if name == "default":
         return [{"stage": stage} for stage in sc.PIPELINE_STAGES]
-    try:
-        import pipeline_schema
-    except ModuleNotFoundError:
-        raise StatusError(
-            "expanding preset '%s' requires pydantic; "
-            "pip install -r requirements.txt" % name)
+    import pipeline_schema
     try:
         return pipeline_schema.expand_preset(name)
     except ValueError as exc:

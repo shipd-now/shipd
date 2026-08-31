@@ -165,14 +165,13 @@ order; `custom` entries MAY appear at any position.
 ### Requirement: Pipeline entry validation
 id: pipeline-entry-validation
 
-`resolve_pipeline(root)` SHALL validate every declared entry against
-pydantic models defined in the engine's `pipeline_schema` module, imported
-lazily and only when a layer declares the `autonomous-pipeline` key — the
-no-key default resolution SHALL never import the module. If a pipeline is
-declared and pydantic is not importable, then resolution SHALL fail with an
-error naming pydantic, the supplying config file, and the
-`pip install -r requirements.txt` remedy — never falling back to weaker
-validation. Validation SHALL reject, naming the offending entry by index
+`resolve_pipeline(root)` SHALL validate every declared entry against the
+stdlib-only, table-driven schema in the engine's `pipeline_schema` module,
+imported lazily and only when a layer declares the `autonomous-pipeline`
+key — the no-key default resolution SHALL never import the module. The
+module SHALL import no third-party package, so resolution SHALL never
+depend on one and SHALL never emit an install hint. Validation SHALL
+reject, naming the offending entry by index
 and content and reporting every offending entry (not only the first): an
 unknown `stage` name; an entry matching none of the declared forms; any
 key not defined for its entry form (unknown keys are forbidden); `tools`
@@ -205,16 +204,17 @@ relative order check for built-in stages.
 - **WHEN** a declared entry reads `{"stage": "plan", "retries": 2}`
 - **THEN** resolution fails naming entry 0 and the unknown `retries` key
 
-#### Scenario: Declared pipeline without pydantic fails closed
-- **GIVEN** pydantic is not importable
+#### Scenario: Validation runs with no third-party package installed
+- **GIVEN** every third-party distribution is unimportable
 - **WHEN** a config layer declares any `autonomous-pipeline` list
-- **THEN** resolution fails with an error naming pydantic and
-  `pip install -r requirements.txt`, and no partial validation runs
+- **THEN** validation runs in full and resolution succeeds or fails on the
+  entries' own merits, and no error names a package or an install hint
 
-#### Scenario: Default resolution needs no pydantic
-- **GIVEN** pydantic is not importable
-- **WHEN** no layer declares the key and the pipeline is resolved
-- **THEN** the full default resolves successfully
+#### Scenario: Strict types are rejected without coercion
+- **WHEN** a declared entry reads `{"stage": "build", "parallelism": "2"}`
+  and another reads `{"stage": "plan", "skip": 1}`
+- **THEN** resolution fails naming each offending entry by index and its
+  offending key, coercing neither value
 
 ### Requirement: Clone sources key
 id: clone-sources-key
@@ -366,12 +366,11 @@ stdlib names constant, with the preset entry table shipped as data in the
 `pipeline_schema` module keyed by exactly those names. When the
 `autonomous-pipeline` value is a string, resolution SHALL first check it
 against the names constant — an unknown name SHALL fail naming the value,
-the supplying config file, and the known preset names, without requiring
-pydantic. The name `default` SHALL resolve to the same entries as the
+the supplying config file, and the known preset names. The name `default`
+SHALL resolve to the same entries as the
 absent key — every registry stage bare, in canonical order — without
 importing any third-party package. Every other known name SHALL expand its
-table entries through the same pydantic validation as a user-declared list,
-including its fail-closed behavior when pydantic is not importable. The
+table entries through the same validation as a user-declared list. The
 provenance of a preset-resolved pipeline SHALL be
 `preset:<name> (<supplying-config-path>)`. The `eco` preset SHALL be:
 research and epic skipped, plan `model` `session`, gate
@@ -384,8 +383,7 @@ skipped, plan `model` `session`, gate skipped, build `validator` false with
 on `session` and SHALL include an unskipped review stage.
 
 #### Scenario: Eco is a one-line opt-in
-- **GIVEN** a repo config declaring `{"autonomous-pipeline": "eco"}` and
-  pydantic importable
+- **GIVEN** a repo config declaring `{"autonomous-pipeline": "eco"}`
 - **WHEN** the pipeline is resolved
 - **THEN** the effective entries are the eco table — research and epic
   skipped, plan on `session`, gate with `autopilot.attempts` 1, build with
@@ -393,27 +391,24 @@ on `session` and SHALL include an unskipped review stage.
   review with `model` `tier-below` and `disposition` `high-only` — and the
   provenance reads `preset:eco` plus the repo config path
 
-#### Scenario: Default preset needs no pydantic
-- **GIVEN** pydantic is not importable
+#### Scenario: Default preset needs no third-party package
 - **WHEN** a config layer declares `{"autonomous-pipeline": "default"}`
 - **THEN** resolution succeeds with every registry stage bare in canonical
   order and provenance `preset:default` plus the config path
 
 #### Scenario: Unknown preset lists the known names
-- **GIVEN** pydantic is not importable
 - **WHEN** a config layer declares `{"autonomous-pipeline": "ecoo"}`
 - **THEN** resolution fails naming `ecoo`, the supplying config file, and
-  the known presets `basic`, `default`, and `eco` — not the pydantic
-  install hint
+  the known presets `basic`, `default`, and `eco`, naming no package
 
-#### Scenario: Non-default preset fails closed without pydantic
-- **GIVEN** pydantic is not importable
+#### Scenario: Every preset expands without a third-party package
+- **GIVEN** every third-party distribution is unimportable
 - **WHEN** a config layer declares `{"autonomous-pipeline": "eco"}`
-- **THEN** resolution fails with the error naming pydantic and
-  `pip install -r requirements.txt`
+- **THEN** resolution succeeds with the eco table and provenance
+  `preset:eco` plus the config path
 
 #### Scenario: Preset table stays valid against the schema
-- **WHEN** the pydantic-dependent test suite runs
+- **WHEN** the engine test suite runs
 - **THEN** every preset's entry list passes entry validation and the
   canonical-order check, and the table's keys equal the stdlib names
   constant
@@ -432,9 +427,9 @@ stage or custom entry; the exclusivity rule that `skip` may only be `true`
 when present and excludes every other field on the entry, with `tools` and
 `replace` mutually exclusive; strict validation (unknown keys and wrongly
 typed values rejected, defaults schema-declared and never injected into
-resolved entries); and the rule that a declared entry list — and every
-preset but `default` — requires pydantic and fails closed with an install
-hint when it is not importable. The copyable config example JSON shipped in
+resolved entries); and the rule that validation is stdlib-only, so a
+declared entry list and every preset resolve with no third-party package
+installed. The copyable config example JSON shipped in
 the plugin's build references SHALL name the optional `autonomous-pipeline`
 key with a pointer to that grammar, without actively declaring a pipeline.
 
