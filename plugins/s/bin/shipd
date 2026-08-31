@@ -2093,6 +2093,9 @@ def marketplace_version(location):
                if isinstance(plugin_manifest, dict) else None)
     if not isinstance(version, str) or not version:
         raise UpdateError("%s declares no `version`" % plugin_manifest_path)
+    if not VERSION_DIR_RE.match(version):
+        raise UpdateError("%s declares a non-numeric `version`: %r"
+                           % (plugin_manifest_path, version))
     return version
 
 

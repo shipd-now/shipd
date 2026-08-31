@@ -2628,6 +2628,19 @@ class ShipdUpdateVerbTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertTrue(err.strip())
 
+    def test_non_dotted_numeric_published_version_is_an_actionable_error(self):
+        self.make_cache(["0.6.9"])
+        self.register_marketplace("1.0.0-rc1")
+        code, out, err = self.run_update(
+            [], {self.MARKETPLACE_KEY: (0, "", "")})
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        lines = err.strip().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("Error:"))
+        self.assertIn("1.0.0-rc1", lines[0])
+        self.assertNotIn(self.APPLY_KEY, [key for key, _t in self.claude_calls])
+
 
 if __name__ == "__main__":
     unittest.main()
