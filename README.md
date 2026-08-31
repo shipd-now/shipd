@@ -93,10 +93,14 @@ which owns stdin. The confirmed selection is saved to
 **`~/.shipd/harnesses.json`**, and for every selected harness that declares a
 user-global command directory its `shipd` command files are generated there; a
 harness that only has a repo-level surface is reported with a pointer to
-[`shipd harness add`](#harness-mode). Headless runs — CI, or anywhere without
-a usable terminal — print the plain banner and a short note, write nothing,
-and exit 0. Re-run `shipd install` by hand at any time to reopen the
-selection, preloaded from the record.
+[`shipd harness add`](#harness-mode). A confirmed finish — whether or not any
+harness was picked — closes by running the same read-only `shipd doctor`
+preflight on that terminal, right after the per-harness report; work through
+whatever it finds with `/s:doctor`. Headless runs — CI, or anywhere without a
+usable terminal — and an aborted picker run no preflight: they print the
+plain banner and a short note (or the abort note), write nothing, and exit 0.
+Re-run `shipd install` by hand at any time to reopen the selection, preloaded
+from the record.
 
 Verify with:
 

@@ -1924,6 +1924,36 @@ def _cmd_harness_files(opts):
 # install (install-tui install-verb)
 # ---------------------------------------------------------------------------
 
+# The finish hook's own two constants: the heading it prints before the
+# checks run, and the pointer line naming the flow that works through
+# whatever the preflight finds.
+INSTALL_FINISH_HEADING = "Checking your setup:"
+INSTALL_FINISH_POINTER = "Work through these with `/s:doctor`."
+
+
+def doctor_finish(handle, root=None, checks=None):
+    """Close a confirmed ``install`` selection with the same read-only
+    preflight ``doctor`` runs, writing straight to ``handle`` — the terminal
+    the rest of the flow just reported on — rather than returning an exit
+    code, which must never reach the verb's own.
+
+    ``checks`` defaults to :func:`default_checks` and ``root`` to
+    ``os.getcwd()``; both are overridable so a test can drive this with
+    fabricated results and never touch the ambient environment.
+    """
+    checks = checks or default_checks
+    root = os.getcwd() if root is None else root
+    handle.write("\n%s\n\n" % INSTALL_FINISH_HEADING)
+    handle.flush()
+    results = checks(root)
+    lines, _code = doctor_report(results)
+    for line in lines:
+        handle.write("%s\n" % line)
+    if any(level != "ok" for level, _name, _detail in results):
+        handle.write("\n%s\n" % INSTALL_FINISH_POINTER)
+    handle.flush()
+    return None
+
 
 def cmd_install(args):
     """Ask which coding harnesses the user works in and install the chosen
@@ -1932,10 +1962,12 @@ def cmd_install(args):
     In-binary like ``harness``: it writes only user-domain files, and it owns
     the terminal for the length of the question, so it must not replace this
     process. Everything it does lives in ``install_tui``; this is the verb's
-    argument surface and nothing else.
+    argument surface and nothing else. A confirmed selection closes with the
+    read-only ``doctor`` preflight (:func:`doctor_finish`), whose verdict
+    never changes this verb's exit code.
     """
     _load_install_tui()
-    return iu.main(args)
+    return iu.main(args, finish=doctor_finish)
 
 
 # ---------------------------------------------------------------------------

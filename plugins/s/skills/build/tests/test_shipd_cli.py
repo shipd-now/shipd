@@ -1639,6 +1639,52 @@ class DoctorCommandTest(unittest.TestCase):
         self.assertEqual(caught.exception.code, 2)
 
 
+class DoctorFinishTest(unittest.TestCase):
+    """``doctor_finish`` closes the install verb's confirmed finish with the
+    same read-only preflight ``doctor`` runs, writing straight to a handle
+    rather than returning an exit code."""
+
+    def finish(self, results, root="/tmp/doctor-finish-unused"):
+        handle = io.StringIO()
+        outcome = shipd.doctor_finish(handle, root=root,
+                                      checks=lambda _root: list(results))
+        return handle.getvalue(), outcome
+
+    def test_an_all_ok_set_has_the_heading_and_no_pointer(self):
+        text, outcome = self.finish([("ok", "python", "3.13.0"),
+                                     ("ok", "git", "found")])
+        self.assertIn(shipd.INSTALL_FINISH_HEADING, text)
+        self.assertIn("ok python — 3.13.0", text)
+        self.assertIn("ok git — found", text)
+        self.assertIn("doctor: ok", text)
+        self.assertNotIn("/s:doctor", text)
+        self.assertIsNone(outcome)
+
+    def test_a_failing_check_writes_its_line_and_the_pointer(self):
+        text, outcome = self.finish([("fail", "git", "not on PATH"),
+                                     ("ok", "python", "3.13.0")])
+        self.assertIn("fail git — not on PATH", text)
+        self.assertIn("doctor: 1 problem(s)", text)
+        self.assertIn("/s:doctor", text)
+        self.assertIsNone(outcome)
+
+    def test_a_warning_alone_also_writes_the_pointer(self):
+        text, outcome = self.finish([("ok", "python", "3.13.0"),
+                                     ("warn", "gh", "not on PATH")])
+        self.assertIn("doctor: 1 problem(s)", text)
+        self.assertIn("/s:doctor", text)
+        self.assertIsNone(outcome)
+
+    def test_checks_and_root_default_to_the_doctor_verbs_own(self):
+        fake = unittest.mock.Mock(
+            side_effect=lambda root: [("ok", "python", "3.13.0")])
+        with unittest.mock.patch.object(shipd, "default_checks", fake):
+            handle = io.StringIO()
+            outcome = shipd.doctor_finish(handle)
+        fake.assert_called_once_with(os.getcwd())
+        self.assertIsNone(outcome)
+
+
 class VendorVerbTestBase(unittest.TestCase):
     """``shipd vendor`` (shipd-cli vendor-verb), driven as a black box through
     the binary itself against throwaway target roots.
@@ -2318,6 +2364,23 @@ class InstallVerbTest(unittest.TestCase):
         r = self.cli("codex")
         self.assertEqual(r.returncode, 2)
         self.assertEqual(os.listdir(self.home), [])
+
+    def test_cmd_install_closes_with_the_doctor_finish_hook(self):
+        calls = []
+
+        class FakeInstallTui:
+            def main(self, args, **kwargs):
+                calls.append((args, kwargs))
+                return 7
+
+        fake = FakeInstallTui()
+        with unittest.mock.patch.object(shipd, "_load_install_tui",
+                                        lambda: None), \
+                unittest.mock.patch.object(shipd, "iu", fake):
+            code = shipd.cmd_install(["--flag"])
+        self.assertEqual(code, 7)
+        self.assertEqual(calls, [(["--flag"],
+                                  {"finish": shipd.doctor_finish})])
 
 
 class ShipdUpdateVerbTests(unittest.TestCase):
