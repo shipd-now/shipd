@@ -1,11 +1,9 @@
-# Third-party dependencies for two scoped surfaces only: the delivery board's
-# `tui` verb (plugins/s/skills/build/scripts/dashboard.py) and declared-pipeline
-# validation, which imports pydantic lazily on that path alone. The rest of the
+# Third-party dependency for one scoped surface only: the delivery board's
+# `tui` verb (plugins/s/skills/build/scripts/dashboard.py). The rest of the
 # spec engine stays stdlib-only Python 3 — see .shipd/constitution.md.
-# Both ranges below are mirrored at two further sites — a consumer of the
+# The range below is mirrored at two further sites — a consumer of the
 # plugin has no checkout to `-r` from — and all three change together:
 #   * plugins/s/skills/doctor/SKILL.md's remedy table
 #   * PINNED_SPECIFIERS in plugins/s/bin/shipd, the `pip install` hint the
-#     textual/pydantic doctor checks fall back to without a requirements.txt
+#     textual doctor check falls back to without a requirements.txt
 textual>=8.2.8,<9
-pydantic>=2.12,<3

@@ -27,7 +27,7 @@ report the healthy checks and stop — propose nothing.
 A finding not listed here is **report-only**: relay its hint and propose no
 command.
 
-- `warn textual`, `warn|fail pydantic` — `python3 -m ` followed by the
+- `warn textual` — `python3 -m ` followed by the
   `pip install` command **the finding's own detail names**, verbatim. The
   preflight composed it for this interpreter; never compose your own.
 - `warn difft` — the review engine's tiered installer,

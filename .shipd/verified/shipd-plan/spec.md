@@ -903,7 +903,7 @@ When the plan flow starts, it SHALL resolve the effective autonomous
 pipeline by running the status CLI's `pipeline-show --json` verb, reading
 the provenance from the emitted object's `source` field rather than
 parsing the human-rendered header line. If the
-resolution exits non-zero (a validation error or missing pydantic), then
+resolution exits non-zero (a validation error), then
 the flow SHALL report the engine's error text and stop before
 investigation or any question round — a declared pipeline never
 half-runs. Where a configuration layer declares the pipeline (list or

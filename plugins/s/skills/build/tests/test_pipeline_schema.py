@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""Unit tests for pipeline_schema: the pydantic entry models behind
+"""Unit tests for pipeline_schema: the stdlib-only entry validator behind
 declared-pipeline validation (shipd-config pipeline-stage-options,
 pipeline-entry-validation).
 
-This suite REQUIRES pydantic (repo-root requirements.txt) and therefore lives
-outside the stdlib-only ``tests/`` suite. Run it with an interpreter that has
-pydantic installed:
-
-    python3 -m unittest discover -s plugins/s/skills/build/tests_pydantic -v
+    python3 -m unittest discover -s plugins/s/skills/build/tests -v
 """
 
 import json
@@ -417,7 +413,7 @@ class GrammarErrorTest(unittest.TestCase):
 
 class ErrorRenderingTest(unittest.TestCase):
     """Errors are rendered as ``entry <i> (<compact-sorted-json>): ...`` lines,
-    one per pydantic error, collected across every offending entry."""
+    one per validation error, collected across every offending entry."""
 
     def test_line_carries_index_and_sorted_entry_json(self):
         entry = {"stage": "plan", "retries": 2}
@@ -445,7 +441,7 @@ class ErrorRenderingTest(unittest.TestCase):
         msg = str(cm.exception)
         self.assertIn("parallelism", msg)
         self.assertIn("telemetry", msg)
-        # One rendered line per pydantic error.
+        # One rendered line per validation error.
         self.assertEqual(len(msg.splitlines()), 2)
 
 

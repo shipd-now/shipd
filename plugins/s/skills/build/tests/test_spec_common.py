@@ -1017,14 +1017,12 @@ class LayeredConfigTest(unittest.TestCase):
 
 class ResolvePipelineTest(unittest.TestCase):
     """resolve_pipeline's stdlib-only surface: the autonomous-pipeline stage
-    registry, the no-key default, and the fail-closed behaviour when a pipeline
-    is declared but pydantic is unavailable (shipd-config
-    autonomous-pipeline-key, pipeline-stage-registry,
-    pipeline-entry-validation). Declared-pipeline validation itself is
-    pydantic's job, so those cases live in
-    ``tests_pydantic/test_resolve_pipeline.py`` and this suite keeps passing
-    with pydantic absent. ``$HOME`` is always overridden to an empty directory
-    so the real home config never leaks into a test."""
+    registry, the no-key default, and resolution with no third-party package
+    installed at all (shipd-config autonomous-pipeline-key,
+    pipeline-stage-registry, pipeline-entry-validation). The full closed-grammar
+    entry validation lives in ``tests/test_resolve_pipeline.py``. ``$HOME`` is
+    always overridden to an empty directory so the real home config never
+    leaks into a test."""
 
     def _write_config(self, d, payload):
         os.makedirs(d, exist_ok=True)
@@ -1057,14 +1055,14 @@ class ResolvePipelineTest(unittest.TestCase):
     def test_preset_names_are_the_stdlib_constant(self):
         self.assertEqual(sc.PIPELINE_PRESETS, ("default", "eco", "basic"))
 
-    def test_default_preset_resolves_without_pydantic(self):
+    def test_default_preset_resolves_with_no_third_party_package(self):
         # `"default"` is the absent key's pipeline with preset provenance, and
         # it never touches the schema module.
         with tempfile.TemporaryDirectory() as tmp, \
                 tempfile.TemporaryDirectory() as home:
             root = os.path.realpath(tmp)
             self._write_config(root, {"autonomous-pipeline": "default"})
-            with imports_blocked("pipeline_schema", "pydantic"), \
+            with imports_blocked("pipeline_schema"), \
                     home_set_to(os.path.realpath(home)):
                 entries, prov = sc.resolve_pipeline(root)
             self.assertEqual(
@@ -1076,14 +1074,14 @@ class ResolvePipelineTest(unittest.TestCase):
                 "preset:default (%s)"
                 % os.path.join(root, sc.CONFIG_FILENAME))
 
-    def test_unknown_preset_lists_known_names_without_pydantic(self):
+    def test_unknown_preset_lists_known_names(self):
         # The name check precedes the import, so an unknown name reports the
-        # roster rather than the missing dependency.
+        # roster without ever importing the schema module.
         with tempfile.TemporaryDirectory() as tmp, \
                 tempfile.TemporaryDirectory() as home:
             root = os.path.realpath(tmp)
             self._write_config(root, {"autonomous-pipeline": "ecoo"})
-            with imports_blocked("pipeline_schema", "pydantic"), \
+            with imports_blocked("pipeline_schema"), \
                     home_set_to(os.path.realpath(home)):
                 with self.assertRaises(sc.ConfigError) as cm:
                     sc.resolve_pipeline(root)
@@ -1092,27 +1090,28 @@ class ResolvePipelineTest(unittest.TestCase):
             self.assertIn(os.path.join(root, sc.CONFIG_FILENAME), msg)
             for name in ("basic", "default", "eco"):
                 self.assertIn(name, msg)
-            self.assertNotIn("pydantic", msg)
 
-    def test_non_default_preset_without_pydantic_fails_closed(self):
+    def test_non_default_preset_resolves_with_no_third_party_package(self):
+        # Validation is stdlib-only, so a non-default preset expands and
+        # resolves in full with every third-party distribution unimportable
+        # (shipd-config pipeline-presets).
         with tempfile.TemporaryDirectory() as tmp, \
                 tempfile.TemporaryDirectory() as home:
             root = os.path.realpath(tmp)
             self._write_config(root, {"autonomous-pipeline": "eco"})
-            with imports_blocked("pipeline_schema", "pydantic"), \
+            with imports_blocked("pydantic"), \
                     home_set_to(os.path.realpath(home)):
-                with self.assertRaises(sc.ConfigError) as cm:
-                    sc.resolve_pipeline(root)
-            msg = str(cm.exception)
-            self.assertIn("pydantic", msg)
-            self.assertIn("pip install -r requirements.txt", msg)
+                entries, prov = sc.resolve_pipeline(root)
+            self.assertTrue(prov.startswith("preset:eco"))
+            self.assertEqual(
+                [e.get("stage") for e in entries], list(sc.PIPELINE_STAGES))
 
     def test_non_list_non_string_value_names_both_forms(self):
         with tempfile.TemporaryDirectory() as tmp, \
                 tempfile.TemporaryDirectory() as home:
             root = os.path.realpath(tmp)
             self._write_config(root, {"autonomous-pipeline": 7})
-            with imports_blocked("pipeline_schema", "pydantic"), \
+            with imports_blocked("pipeline_schema"), \
                     home_set_to(os.path.realpath(home)):
                 with self.assertRaises(sc.ConfigError) as cm:
                     sc.resolve_pipeline(root)
@@ -1121,43 +1120,42 @@ class ResolvePipelineTest(unittest.TestCase):
             self.assertIn("list", msg)
             self.assertIn("preset name string", msg)
 
-    # --- fail-closed on a missing pydantic -------------------------------
+    # --- resolution needs no third-party package --------------------------
 
-    def test_absent_key_resolves_without_pydantic(self):
+    def test_absent_key_resolves_with_no_third_party_package(self):
         # The default pipeline never touches the schema module, so it resolves
-        # with both pydantic and pipeline_schema unimportable.
+        # with the schema module itself unimportable.
         with tempfile.TemporaryDirectory() as tmp, \
                 tempfile.TemporaryDirectory() as home:
-            with imports_blocked("pipeline_schema", "pydantic"), \
+            with imports_blocked("pipeline_schema"), \
                     home_set_to(os.path.realpath(home)):
                 entries, prov = sc.resolve_pipeline(os.path.realpath(tmp))
             self.assertEqual(
                 [e["stage"] for e in entries], list(sc.PIPELINE_STAGES))
             self.assertEqual(prov, "default")
 
-    def test_declared_pipeline_without_pydantic_fails_closed(self):
-        # No fallback to weaker validation: the error names the dependency and
-        # the remedy, and no entry is validated.
+    def test_declared_pipeline_resolves_with_no_third_party_package(self):
+        # The validator is stdlib-only, so a declared list resolves in full
+        # with every third-party distribution unimportable, and no error
+        # names a package or an install hint (shipd-config
+        # pipeline-entry-validation).
         with tempfile.TemporaryDirectory() as tmp, \
                 tempfile.TemporaryDirectory() as home:
             root = os.path.realpath(tmp)
             self._write_config(
                 root, {"autonomous-pipeline": [{"stage": "plan"}]})
-            with imports_blocked("pipeline_schema", "pydantic"), \
+            with imports_blocked("pydantic"), \
                     home_set_to(os.path.realpath(home)):
-                with self.assertRaises(sc.ConfigError) as cm:
-                    sc.resolve_pipeline(root)
-            msg = str(cm.exception)
-            self.assertIn("pydantic", msg)
-            self.assertIn("pip install -r requirements.txt", msg)
-            self.assertIn(sc.CONFIG_FILENAME, msg)
+                entries, prov = sc.resolve_pipeline(root)
+            self.assertEqual(entries, [{"stage": "plan"}])
+            self.assertEqual(prov, os.path.join(root, sc.CONFIG_FILENAME))
 
 
 class ResolvePrModeTest(unittest.TestCase):
     """resolve_pr_mode: the layered `pr-mode` key governing change-shipping PR
-    flows (shipd-config pr-mode-key). Stdlib-only — no pydantic on any path.
-    ``$HOME`` is always overridden to an empty directory so the real home
-    config never leaks into a test."""
+    flows (shipd-config pr-mode-key). Stdlib-only — no third-party package on
+    any path. ``$HOME`` is always overridden to an empty directory so the real
+    home config never leaks into a test."""
 
     def _write_config(self, d, payload):
         os.makedirs(d, exist_ok=True)
@@ -1172,7 +1170,7 @@ class ResolvePrModeTest(unittest.TestCase):
     def test_absent_key_defaults_to_auto(self):
         with tempfile.TemporaryDirectory() as tmp, \
                 tempfile.TemporaryDirectory() as home:
-            with imports_blocked("pipeline_schema", "pydantic"), \
+            with imports_blocked("pipeline_schema"), \
                     home_set_to(os.path.realpath(home)):
                 self.assertEqual(
                     sc.resolve_pr_mode(os.path.realpath(tmp)), "auto")
@@ -1186,7 +1184,7 @@ class ResolvePrModeTest(unittest.TestCase):
             repo = os.path.join(ws, "repo")
             self._write_config(ws, {"workspace": {}, "pr-mode": "draft"})
             os.makedirs(repo, exist_ok=True)
-            with imports_blocked("pipeline_schema", "pydantic"), \
+            with imports_blocked("pipeline_schema"), \
                     home_set_to(os.path.realpath(home)):
                 self.assertEqual(sc.resolve_pr_mode(repo), "draft")
                 _config, prov = sc.resolve_config(repo)
@@ -1200,7 +1198,7 @@ class ResolvePrModeTest(unittest.TestCase):
             repo = os.path.join(ws, "repo")
             self._write_config(ws, {"pr-mode": "draft"})
             self._write_config(repo, {"pr-mode": "auto"})
-            with imports_blocked("pipeline_schema", "pydantic"), \
+            with imports_blocked("pipeline_schema"), \
                     home_set_to(os.path.realpath(home)):
                 self.assertEqual(sc.resolve_pr_mode(repo), "auto")
 
@@ -1209,7 +1207,7 @@ class ResolvePrModeTest(unittest.TestCase):
                 tempfile.TemporaryDirectory() as home:
             root = os.path.realpath(tmp)
             self._write_config(root, {"pr-mode": "always"})
-            with imports_blocked("pipeline_schema", "pydantic"), \
+            with imports_blocked("pipeline_schema"), \
                     home_set_to(os.path.realpath(home)):
                 with self.assertRaises(sc.ConfigError) as cm:
                     sc.resolve_pr_mode(root)
@@ -1227,7 +1225,7 @@ class ResolvePrModeTest(unittest.TestCase):
                 tempfile.TemporaryDirectory() as home:
             root = os.path.realpath(tmp)
             self._write_config(root, {"pr-mode": None})
-            with imports_blocked("pipeline_schema", "pydantic"), \
+            with imports_blocked("pipeline_schema"), \
                     home_set_to(os.path.realpath(home)):
                 with self.assertRaises(sc.ConfigError) as cm:
                     sc.resolve_pr_mode(root)
@@ -1243,7 +1241,7 @@ class ResolvePrModeTest(unittest.TestCase):
                 tempfile.TemporaryDirectory() as home:
             root = os.path.realpath(tmp)
             self._write_config(root, {"pr-mode": ["draft"]})
-            with imports_blocked("pipeline_schema", "pydantic"), \
+            with imports_blocked("pipeline_schema"), \
                     home_set_to(os.path.realpath(home)):
                 with self.assertRaises(sc.ConfigError) as cm:
                     sc.resolve_pr_mode(root)
@@ -1253,7 +1251,7 @@ class ResolvePrModeTest(unittest.TestCase):
 class ResolveModelTierTest(unittest.TestCase):
     """The stdlib model-tier authority the pipeline's consumers resolve a
     `model`/`subagent_model` option through (epic-autopilot
-    stage-model-resolution). Pure: no config, no filesystem, no pydantic."""
+    stage-model-resolution). Pure: no config, no filesystem, no import."""
 
     def test_ladder_is_strongest_first(self):
         self.assertEqual(sc.MODEL_LADDER,

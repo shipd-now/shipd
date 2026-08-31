@@ -682,7 +682,7 @@ class DoctorCheckTest(unittest.TestCase):
 
     # The full preflight roster, in the order ``default_checks`` reports it.
     ALL_CHECKS = ("python", "git", "config", "pipeline", "gh", "difft",
-                  "textual", "pydantic", "snapshot", "statusline",
+                  "textual", "snapshot", "statusline",
                   "protection", "automerge", "copilot-secret")
 
     def probed_check_names(self, root):
@@ -816,13 +816,29 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual((level, name), ("ok", "pipeline"))
         self.assertIn("default", detail)
 
-    def test_declared_pipeline_without_pydantic_fails_naming_the_config(self):
-        root, path = self.repo_with_config(
-            "declared", {"autonomous-pipeline": [{"stage": "plan"}]})
-        level, name, detail = self.pipeline_check(root)
-        self.assertEqual((level, name), ("fail", "pipeline"))
-        self.assertIn("requires pydantic", detail)
-        self.assertIn(path, detail)
+    def test_declared_pipeline_reports_no_pydantic_check(self):
+        # The validator is stdlib-only, so a repo declaring a pipeline never
+        # surfaces a `pydantic` check — the preflight's own roster carries no
+        # such name (shipd-cli doctor-verb). Checked by name rather than by
+        # scanning every detail for the substring "pydantic": an unrelated
+        # check's detail may legitimately embed an absolute path, and that
+        # path is free to contain any substring, this worktree's own
+        # directory name included.
+        root, _path = self.repo_with_config(
+            "declared-pipeline-doctor",
+            {"autonomous-pipeline": [{"stage": "plan"}]})
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        with unittest.mock.patch.object(
+                shipd, "gh_context", lambda **kw: {"skip": "stubbed"}), \
+                unittest.mock.patch.dict(os.environ, env, clear=True):
+            results = shipd.default_checks(root)
+        names = [name for _level, name, _detail in results]
+        self.assertNotIn("pydantic", names)
+        pipeline_level, _name, pipeline_detail = next(
+            r for r in results if r[1] == "pipeline")
+        self.assertEqual(pipeline_level, "ok")
+        self.assertNotIn("pydantic", pipeline_detail)
 
     def test_resolved_pipeline_names_its_entry_count_and_provenance(self):
         level, name, detail = self.pipeline_check(
@@ -887,9 +903,8 @@ class DoctorCheckTest(unittest.TestCase):
     #
     # A vendored per-repo install has no checkout to ``-r`` from, so the hint
     # names the pinned specifier wherever no ``requirements.txt`` sits at the
-    # probed root. Both pins mirror ``requirements.txt``.
+    # probed root. The pin mirrors ``requirements.txt``.
 
-    PYDANTIC_HINT = "pip install 'pydantic>=2.12,<3'"
     TEXTUAL_HINT = "pip install 'textual>=8.2.8,<9'"
     REQUIREMENTS_HINT = "pip install -r requirements.txt"
 
@@ -903,16 +918,20 @@ class DoctorCheckTest(unittest.TestCase):
     OVERRIDE_FLAGS = "--user --break-system-packages"
     MANAGED_REQUIREMENTS_HINT = (
         "pip install --user --break-system-packages -r requirements.txt")
-    MANAGED_PYDANTIC_HINT = (
-        "pip install --user --break-system-packages 'pydantic>=2.12,<3'")
     MANAGED_TEXTUAL_HINT = (
         "pip install --user --break-system-packages 'textual>=8.2.8,<9'")
+
+    def undeclared_repo(self, name="undeclared"):
+        """A throwaway repo root whose layered config declares no pipeline."""
+        root = os.path.join(self.tmp, name)
+        os.makedirs(root, exist_ok=True)
+        return root
 
     def with_requirements(self, root):
         """Plant a ``requirements.txt`` at ``root`` — the checkout case."""
         with open(os.path.join(root, "requirements.txt"), "w",
                   encoding="utf-8") as fh:
-            fh.write("textual>=8.2.8,<9\npydantic>=2.12,<3\n")
+            fh.write("textual>=8.2.8,<9\n")
         return root
 
     # -- the externally-managed probe --------------------------------------
@@ -974,147 +993,10 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertIn(self.MANAGED_TEXTUAL_HINT, detail)
         self.assertNotIn("-r requirements.txt", detail)
 
-    # -- pydantic ----------------------------------------------------------
-
-    def pydantic_check(self, root, **kwargs):
-        """``check_pydantic`` with ``HOME`` pointed at the throwaway home: the
-        escalation predicate reads the layered config, so the real user's
-        outermost layer must never reach it."""
-        env = dict(os.environ)
-        env["HOME"] = self.home
-        with unittest.mock.patch.dict(os.environ, env, clear=True):
-            return shipd.check_pydantic(root, **kwargs)
-
-    def undeclared_repo(self, name="undeclared"):
-        """A throwaway repo root whose layered config declares no pipeline."""
-        root = os.path.join(self.tmp, name)
-        os.makedirs(root, exist_ok=True)
-        return root
-
-    def test_pydantic_importable_is_ok(self):
-        level, name, _detail = self.pydantic_check(
-            self.undeclared_repo(), find_spec=lambda name: object())
-        self.assertEqual((level, name), ("ok", "pydantic"))
-
-    def test_pydantic_missing_warns_about_pipeline_validation_only(self):
-        root = self.with_requirements(self.undeclared_repo())
-        level, name, detail = self.pydantic_check(
-            root, find_spec=lambda name: None, managed=self.UNMANAGED)
-        self.assertEqual((level, name), ("warn", "pydantic"))
-        self.assertIn("pipeline", detail)
-        self.assertIn(self.REQUIREMENTS_HINT, detail)
-        self.assertNotIn(self.OVERRIDE_FLAGS, detail)
-
-    def test_pydantic_hint_pins_the_specifier_without_a_requirements_file(
-            self):
-        level, name, detail = self.pydantic_check(
-            self.undeclared_repo("pydantic-vendored"),
-            find_spec=lambda name: None, managed=self.UNMANAGED)
-        self.assertEqual((level, name), ("warn", "pydantic"))
-        self.assertIn(self.PYDANTIC_HINT, detail)
-        self.assertNotIn("-r requirements.txt", detail)
-        self.assertNotIn(self.OVERRIDE_FLAGS, detail)
-
-    def test_escalated_pydantic_hint_pins_the_specifier_too(self):
-        # The ``fail`` form carries the same context-aware hint as the
-        # ``warn`` one — a vendored repo has no checkout either way.
-        root, _path = self.repo_with_config(
-            "escalating-vendored",
-            {"autonomous-pipeline": [{"stage": "plan"}]})
-        level, name, detail = self.pydantic_check(
-            root, find_spec=lambda name: None, managed=self.UNMANAGED)
-        self.assertEqual((level, name), ("fail", "pydantic"))
-        self.assertIn(self.PYDANTIC_HINT, detail)
-        self.assertNotIn("-r requirements.txt", detail)
-        self.assertNotIn(self.OVERRIDE_FLAGS, detail)
-
-    def test_managed_interpreter_flags_the_pydantic_requirements_hint(self):
-        root = self.with_requirements(self.undeclared_repo("pydantic-managed"))
-        level, name, detail = self.pydantic_check(
-            root, find_spec=lambda name: None, managed=self.MANAGED)
-        self.assertEqual((level, name), ("warn", "pydantic"))
-        self.assertIn(self.MANAGED_REQUIREMENTS_HINT, detail)
-
-    def test_managed_interpreter_flags_the_pydantic_pinned_hint(self):
-        _level, _name, detail = self.pydantic_check(
-            self.undeclared_repo("pydantic-managed-vendored"),
-            find_spec=lambda name: None, managed=self.MANAGED)
-        self.assertIn(self.MANAGED_PYDANTIC_HINT, detail)
-        self.assertNotIn("-r requirements.txt", detail)
-
-    def test_managed_interpreter_flags_the_escalated_pydantic_hint(self):
-        # The escalated ``fail`` detail is what /s:doctor relays for a
-        # pydantic-caused pipeline failure, so it must be runnable too.
-        root, _path = self.repo_with_config(
-            "escalating-managed",
-            {"autonomous-pipeline": [{"stage": "plan"}]})
-        self.with_requirements(root)
-        level, name, detail = self.pydantic_check(
-            root, find_spec=lambda name: None, managed=self.MANAGED)
-        self.assertEqual((level, name), ("fail", "pydantic"))
-        self.assertIn(self.MANAGED_REQUIREMENTS_HINT, detail)
-
-    def test_pydantic_probe_failure_warns(self):
-        def boom(name):
-            raise ValueError("no parent package")
-        level, name, _detail = self.pydantic_check(
-            self.undeclared_repo(), find_spec=boom)
-        self.assertEqual((level, name), ("warn", "pydantic"))
-
-    def test_pydantic_import_error_probe_warns(self):
-        def boom(name):
-            raise ImportError("no module")
-        level, name, _detail = self.pydantic_check(
-            self.undeclared_repo(), find_spec=boom)
-        self.assertEqual((level, name), ("warn", "pydantic"))
-
-    def test_declared_pipeline_escalates_missing_pydantic_to_a_failure(self):
-        root, path = self.repo_with_config(
-            "escalating", {"autonomous-pipeline": [{"stage": "plan"}]})
-        self.with_requirements(root)
-        level, name, detail = self.pydantic_check(
-            root, find_spec=lambda name: None, managed=self.UNMANAGED)
-        self.assertEqual((level, name), ("fail", "pydantic"))
-        self.assertIn(path, detail)
-        self.assertIn(self.REQUIREMENTS_HINT, detail)
-        self.assertNotIn(self.OVERRIDE_FLAGS, detail)
-
-    def test_known_preset_escalates_missing_pydantic_to_a_failure(self):
-        root, path = self.repo_with_config(
-            "eco-preset", {"autonomous-pipeline": "eco"})
-        level, name, detail = self.pydantic_check(
-            root, find_spec=lambda name: None)
-        self.assertEqual((level, name), ("fail", "pydantic"))
-        self.assertIn(path, detail)
-
-    def test_default_preset_never_escalates_missing_pydantic(self):
-        root, _path = self.repo_with_config(
-            "default-preset", {"autonomous-pipeline": "default"})
-        self.with_requirements(root)
-        level, name, detail = self.pydantic_check(
-            root, find_spec=lambda name: None, managed=self.UNMANAGED)
-        self.assertEqual((level, name), ("warn", "pydantic"))
-        self.assertIn(self.REQUIREMENTS_HINT, detail)
-
-    def test_unknown_preset_never_escalates_missing_pydantic(self):
-        root, _path = self.repo_with_config(
-            "unknown-preset", {"autonomous-pipeline": "nope"})
-        level, name, _detail = self.pydantic_check(
-            root, find_spec=lambda name: None)
-        self.assertEqual((level, name), ("warn", "pydantic"))
-
-    def test_importable_pydantic_is_ok_even_with_a_declared_pipeline(self):
-        root, _path = self.repo_with_config(
-            "declared-and-installed",
-            {"autonomous-pipeline": [{"stage": "plan"}]})
-        level, name, _detail = self.pydantic_check(
-            root, find_spec=lambda name: object())
-        self.assertEqual((level, name), ("ok", "pydantic"))
-
     def test_default_checks_run_in_the_documented_order(self):
         self.assertEqual(self.probed_check_names(self.tmp),
                          ["python", "git", "config", "pipeline", "gh", "difft",
-                          "textual", "pydantic", "snapshot", "statusline",
+                          "textual", "snapshot", "statusline",
                           "protection", "automerge", "copilot-secret"])
 
     # -- statusline --------------------------------------------------------

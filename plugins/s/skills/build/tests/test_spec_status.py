@@ -2214,10 +2214,9 @@ class PipelineShowTest(SpecStatusTestBase):
     resolved entry plus the provenance of the key, `[default]` when no layer
     declares it (spec-status pipeline-show-verb). The verb requires neither a
     workspace nor a selected change. Rendering a *declared* pipeline resolves
-    it through the pydantic schema, so those cases live in
-    ``tests_pydantic/test_pipeline_show.py`` and this suite keeps passing with
-    pydantic absent. ``$HOME`` is isolated so the real home config never leaks
-    in."""
+    it through the stdlib-only schema module, so those cases live in
+    ``tests/test_pipeline_show.py``. ``$HOME`` is isolated so the real home
+    config never leaks in."""
 
     def setUp(self):
         super().setUp()
@@ -2242,7 +2241,7 @@ class PipelineShowTest(SpecStatusTestBase):
             self.assertIn(stage, r.stdout)
         self.assertIn("[default]", r.stdout)
 
-    def test_expand_default_prints_bare_stage_json_without_pydantic(self):
+    def test_expand_default_prints_bare_stage_json_needing_no_package(self):
         # `--expand default` resolves no config and needs no third-party
         # package: the JSON is the exact value a config may declare as a list.
         r = self.cli("pipeline-show", "--expand", "default")

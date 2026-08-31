@@ -250,12 +250,10 @@ unbound.** Like every top-level key, `autonomous-pipeline` merges
 Inspect the effective pipeline and its provenance with
 `spec_status.py pipeline-show`.
 
-Validation runs on **pydantic**: a declared entry list — and every preset but
-`default` — is checked against the engine's pipeline schema, and when pydantic
-is not importable resolution **fails closed**, naming pydantic, the config file
-that declared the key, and the `pip install -r requirements.txt` remedy. It
-never falls back to weaker validation. The absent key and the `"default"`
-preset resolve with no third-party package at all.
+Validation runs on the engine's **stdlib-only** pipeline schema module: a
+declared entry list — and every preset — is checked against it with no
+third-party package installed, so resolution never depends on one and never
+emits an install hint.
 
 #### Per-stage options
 
@@ -303,7 +301,7 @@ Instead of a list, the key MAY hold a **string naming a built-in preset**:
 The shipped presets are:
 
 - `default` — every registry stage, bare, in canonical order: exactly the
-  pipeline you get with the key absent, resolved without pydantic.
+  pipeline you get with the key absent.
 - `eco` — the cheap delivery: `research` and `epic` skipped, `plan` on the
   session model, `gate` with one autopilot attempt, `build` without the
   validator on a two-tiers-below subagent model and without telemetry,
@@ -321,11 +319,9 @@ result as your own list — `spec_status.py pipeline-show --expand eco` prints
 the preset's entry list as JSON, which is exactly what the key accepts.
 
 An unknown preset name is an error naming the known presets and the config file
-that supplied it. Every preset but `default` expands through the same pydantic
-validation a declared list gets, so it fails closed with an install hint when
-pydantic is not importable; `default` and `--expand default` need no
-third-party package at all. A preset-resolved pipeline reports its provenance
-as `preset:<name> (<config-path>)`.
+that supplied it. Every preset expands through the same validation a declared
+list gets, with no third-party package installed. A preset-resolved pipeline
+reports its provenance as `preset:<name> (<config-path>)`.
 
 ### PR mode — the `pr-mode` key
 

@@ -94,13 +94,11 @@ planning already answered. Before authoring anything, gate on context:
    ```
    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-show --json
    ```
-   - **Non-zero exit stops the flow.** A validation error (e.g. `entry 4
-     ({"stage": "build", "validater": false}): build.validater: Extra inputs
-     are not permitted`) or a
-     missing pydantic (`… requires pydantic; pip install -r requirements.txt`)
-     means the declared pipeline is unusable: report the engine's own error
-     text and **stop before any spec work** — nothing authored, no sub-agent
-     spawned. A declared pipeline never half-runs.
+   - **Non-zero exit stops the flow.** A validation error (e.g. ``entry 4
+     ({"stage": "build", "validater": false}): validater: unknown key
+     `validater` ``) means the declared pipeline is unusable: report the
+     engine's own error text and **stop before any spec work** — nothing
+     authored, no sub-agent spawned. A declared pipeline never half-runs.
    - **The JSON is the contract.** The verb emits one object: read each
      entry's declared options from the `entries` dicts, e.g.
      `{"stage": "build", "subagent_model": "tier-two-below", "validator":
