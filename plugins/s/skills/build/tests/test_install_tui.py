@@ -490,6 +490,30 @@ class PtyTest(HomeTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(len(calls), 1)
 
+    def test_a_generation_refusal_runs_no_finish(self):
+        # The fourth non-calling branch: the generation refused, so the flow
+        # exits 1 before the hook — the preflight has nothing to close.
+        calls = []
+        with unittest.mock.patch.object(
+                it, "install_selection", lambda _ids, _out: "a file is in the way"):
+            code, _output, _before, _after = self.drive(
+                DOWN * CODEX_INDEX + TOGGLE + CONFIRM, finish=calls.append)
+        self.assertEqual(code, 1)
+        self.assertEqual(calls, [])
+
+    def test_a_raising_finish_never_fails_the_verb(self):
+        # `install.sh` reports any nonzero `shipd install` as a skipped
+        # harness picker, so a hook that blows up must not reach the exit
+        # code of an install that actually completed.
+        def boom(_handle):
+            raise RuntimeError("the preflight exploded")
+
+        code, output, _before, _after = self.drive(
+            DOWN * CODEX_INDEX + TOGGLE + CONFIRM, finish=boom)
+        self.assertEqual(code, 0)
+        self.assertIn("the preflight exploded", output)
+        self.assertEqual(self.record()["harnesses"], ["codex"])
+
 
 class NoTerminalFinishHookTest(HomeTestCase):
     def test_a_headless_run_never_calls_finish(self):

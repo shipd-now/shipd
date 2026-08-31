@@ -505,7 +505,8 @@ def run(tty=None, out=None, finish=None):
     is called once as ``finish(tty)`` after a confirmed selection has been
     saved and reported — on both the empty-selection note and the
     per-harness report — but never on an abort, the headless path, or a
-    generation refusal.
+    generation refusal. A hook that raises is reported and swallowed: it
+    never changes this verb's exit code.
     """
     out = sys.stdout if out is None else out
     opened = None
@@ -536,7 +537,15 @@ def run(tty=None, out=None, finish=None):
                 cc.err(reason, stream=tty)
                 return 1
         if finish is not None:
-            finish(tty)
+            # Fail-soft, like every other trailing best-effort step in the
+            # engine: the hook is a closing report, and a raise here would
+            # turn a completed install — record saved, commands generated —
+            # into a nonzero exit that `install.sh` reports as a skipped
+            # harness picker.
+            try:
+                finish(tty)
+            except Exception as exc:  # never fail a finished install
+                cc.err("the closing check did not run: %s" % exc, stream=tty)
         return 0
     finally:
         if opened is not None:
