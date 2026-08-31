@@ -26,23 +26,10 @@ decisions you have made once are never asked twice; and intent can arrive as
 more than text — a screen recording becomes a cited brief, grounded frame by
 frame, that flows straight into planning.
 
-Today shipd builds itself — every feature in this repository was planned,
-built, validated, reviewed, and shipped by its own pipeline, including an
-autopilot that delivers an approved epic's members to merged PRs unattended.
-Where it is going is the same loop, opened up: a public, installable
-distribution of the plugin and engine; a doctor-checked setup and JSON-first
-CLI surfaces for tooling; multi-repo workspaces where initiatives group epics
-across projects; and a delivery experience where a team states intent — in
-prose, in a brief, on a call recording — and receives verified, auditable
-pull requests back. shipd.now is the bet that the scarce resource in
-agent-driven development is not code generation but **converged context**,
-and that a system which compiles context into specs can ship software you can
-trust without watching it type.
-
 ## How it fits together
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph intent [Intent]
         idea["Idea / request"]
         video["Screen recording<br/>→ cited brief"]
@@ -84,3 +71,16 @@ flowchart LR
     pr --> library --> board
     library -. "compiled context<br/>for the next change" .-> investigate
 ```
+
+Today shipd builds itself — every feature in this repository was planned,
+built, validated, reviewed, and shipped by its own pipeline, including an
+autopilot that delivers an approved epic's members to merged PRs unattended.
+Where it is going is the same loop, opened up: a public, installable
+distribution of the plugin and engine; a doctor-checked setup and JSON-first
+CLI surfaces for tooling; multi-repo workspaces where initiatives group epics
+across projects; and a delivery experience where a team states intent — in
+prose, in a brief, on a call recording — and receives verified, auditable
+pull requests back. shipd.now is the bet that the scarce resource in
+agent-driven development is not code generation but **converged context**,
+and that a system which compiles context into specs can ship software you can
+trust without watching it type.
