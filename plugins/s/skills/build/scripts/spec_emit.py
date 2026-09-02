@@ -124,6 +124,10 @@ def emit_change(root, name, src, replace):
         return sl.lint_change(root, name)
 
     _install_dir(root, True, src, dest_dir, replace, validate, copy)
+    # A successful install into an external store auto-commits locally, scoped
+    # to the installed tree (shipd-config store-autocommit); a no-op for an
+    # in-repo content directory, and a commit failure never fails the install.
+    sc.store_autocommit(root, [dest_dir], "shipd: install change %s" % name)
     print("installed change %s at %s" % (name, dest_dir))
     # Best-effort flow-time-series capture: a change install (unplanned → draft)
     # is one of the three lifecycle mutation chokepoints (delivery-metrics

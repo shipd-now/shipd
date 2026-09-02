@@ -448,11 +448,106 @@ def specs_dirname(config):
     return name
 
 
+# ---------------------------------------------------------------------------
+# External store root (shipd-config store-root-key, store-repo-folder-name)
+# ---------------------------------------------------------------------------
+
+# The config key relocating the content directory into an external store.
+STORE_ROOT_KEY = "store_root"
+
+# Memo of the per-repo store folder name, keyed by ``os.path.realpath(root)``.
+# Deriving the name costs a ``git rev-parse`` subprocess and ``specs_dir`` is
+# on every verb's hot path, so the probe runs once per root per process.
+_STORE_FOLDER_CACHE = {}
+
+
+def repo_store_folder(root):
+    """Return the per-repo folder name for ``root`` inside an external store
+    (shipd-config store-repo-folder-name).
+
+    The name is the basename of the *main checkout's* directory, so every
+    linked worktree resolves the same store folder as the main checkout: probe
+    ``git rev-parse --path-format=absolute --git-common-dir`` from ``root``
+    and take the basename of the printed path's parent directory. Any git
+    failure (git absent, not a repository) falls back to the basename of
+    ``root`` itself. Local git only — never the network. Memoized per
+    ``os.path.realpath(root)``."""
+    key = os.path.realpath(root)
+    if key in _STORE_FOLDER_CACHE:
+        return _STORE_FOLDER_CACHE[key]
+    name = ""
+    try:
+        result = subprocess.run(
+            ["git", "-C", root, "rev-parse", "--path-format=absolute",
+             "--git-common-dir"],
+            capture_output=True, text=True)
+    except OSError:
+        result = None
+    if result is not None and result.returncode == 0:
+        common = result.stdout.strip()
+        if common:
+            name = os.path.basename(os.path.dirname(os.path.abspath(common)))
+    if not name:
+        name = os.path.basename(os.path.abspath(root))
+    _STORE_FOLDER_CACHE[key] = name
+    return name
+
+
+def _resolve_store_root(config, provenance, root):
+    """Resolve the ``store_root`` value out of an already-resolved config, or
+    ``None`` when no layer declares the key. Shared by :func:`store_root_dir`
+    and :func:`specs_dir` so the layered config is resolved only once."""
+    if STORE_ROOT_KEY not in config:
+        return None
+    value = config[STORE_ROOT_KEY]
+    if not isinstance(value, str) or not value:
+        raise ConfigError(
+            "config `store_root` must be a non-empty string, got %r"
+            % (value,))
+    expanded = os.path.expanduser(value)
+    if os.path.isabs(expanded):
+        return os.path.normpath(expanded)
+    # A relative value resolves against the directory of the config file that
+    # declared it — a deliberate departure from the absolute-only `wiki_base` /
+    # `memory_dir` convention, so a committed workspace config stays portable
+    # across machines.
+    declared = provenance.get(STORE_ROOT_KEY)
+    if isinstance(declared, str) and declared != "default":
+        base = os.path.dirname(declared)
+    else:
+        base = os.path.abspath(root)
+    return os.path.normpath(os.path.join(base, expanded))
+
+
+def store_root_dir(root):
+    """Return the absolute external store root governing ``root``, or ``None``
+    when no layer declares ``store_root`` (shipd-config store-root-key).
+
+    ``~`` expands, and a value still relative after expansion resolves against
+    the directory of the config file that declared it (taken from
+    :func:`resolve_config`'s provenance map). A declared value that is not a
+    non-empty string raises :class:`ConfigError` naming ``store_root``. The key
+    merges nearest-wins-wholesale like every other top-level key, so a
+    workspace root's declaration governs every member repo beneath it with no
+    per-repo configuration."""
+    config, provenance = resolve_config(root)
+    return _resolve_store_root(config, provenance, root)
+
+
 def specs_dir(root):
     """Return the absolute content directory for ``root`` (shipd-config
-    content-dir-key): ``root`` joined with the ``dir`` name resolved from
-    ``root``'s layered configuration."""
-    config, _prov = resolve_config(root)
+    content-dir-key, store-root-key).
+
+    Where the layered configuration declares ``store_root``, the external store
+    governs: the content directory is
+    ``<resolved store root>/<repo folder name>``, that per-repo folder directly
+    holding ``verified/``, ``planned/``, ``completed/`` and ``research/``, and
+    the ``dir`` key does not apply. Otherwise it is ``root`` joined with the
+    ``dir`` name resolved from ``root``'s layered configuration."""
+    config, provenance = resolve_config(root)
+    store = _resolve_store_root(config, provenance, root)
+    if store is not None:
+        return os.path.join(store, repo_store_folder(root))
     return os.path.join(root, specs_dirname(config))
 
 
@@ -780,6 +875,23 @@ def wiki_autocommit(store_dir, paths, subject):
         sys.stderr.write("warning: wiki auto-commit skipped: %s\n" % exc)
         return False
     return True
+
+
+def store_autocommit(root, paths, subject):
+    """Auto-commit an engine write into an *externally* resolved content
+    directory, returning True only when a commit was made (shipd-config
+    store-autocommit).
+
+    Returns False without touching git when ``root``'s content directory
+    resolves in-repo — committing in-repo artifacts stays the skill/PR
+    workflow's job, never the engine's. Otherwise delegates to
+    :func:`wiki_autocommit` against the resolved store, inheriting its whole
+    convention: a silent no-op when the store is not inside a git work tree, a
+    commit scoped to exactly ``paths``, one warning line and an unchanged exit
+    code when git fails, and local git only — never the network."""
+    if store_root_dir(root) is None:
+        return False
+    return wiki_autocommit(specs_dir(root), paths, subject)
 
 
 def _ensure_members_gitignore_block(target):

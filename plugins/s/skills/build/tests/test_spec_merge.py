@@ -7,6 +7,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -282,6 +283,142 @@ class MergeAndArchiveTest(unittest.TestCase):
         os.environ["AM_FLOW_LOG_DIR"] = os.path.join(blocker, "nope")
         dst = sm.archive_change(self.tmp, "sample-change", date="2026-07-22")
         self.assertTrue(os.path.isdir(dst))
+
+
+class MergeStoreAutocommitTest(unittest.TestCase):
+    """Merging and archiving into an externally resolved content directory
+    auto-commit locally in the store, scoped to the written paths; an in-repo
+    content directory never does (shipd-config store-autocommit)."""
+
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.store = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.store, True)
+        self.home = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.home, True)
+        self._old_home = os.environ.get("HOME")
+        os.environ["HOME"] = self.home
+        self.addCleanup(self._restore_home)
+        self.flow_dir = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.flow_dir, True)
+        self._old_flow = os.environ.get("AM_FLOW_LOG_DIR")
+        os.environ["AM_FLOW_LOG_DIR"] = self.flow_dir
+        self.addCleanup(self._restore_flow)
+        sc._STORE_FOLDER_CACHE.clear()
+        self.addCleanup(sc._STORE_FOLDER_CACHE.clear)
+        self.repo_folder = os.path.basename(self.tmp)
+
+    def _restore_home(self):
+        if self._old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self._old_home
+
+    def _restore_flow(self):
+        if self._old_flow is None:
+            os.environ.pop("AM_FLOW_LOG_DIR", None)
+        else:
+            os.environ["AM_FLOW_LOG_DIR"] = self._old_flow
+
+    def declare_store(self):
+        with open(os.path.join(self.tmp, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"store_root": self.store}, fh)
+
+    def seed_external_content(self):
+        """Copy the sample content tree into the store's per-repo folder — the
+        layout the external resolution expects (that folder IS the content
+        directory)."""
+        shutil.copytree(os.path.join(SAMPLE_ROOT, ".shipd"),
+                        os.path.join(self.store, self.repo_folder))
+
+    def _git(self, target, *args):
+        subprocess.run(["git", "-C", target, *args],
+                       capture_output=True, text=True, check=True)
+
+    def _init_git(self, target):
+        subprocess.run(["git", "init", "-q", target],
+                       capture_output=True, text=True, check=True)
+        self._git(target, "config", "user.email", "test@example.com")
+        self._git(target, "config", "user.name", "Test")
+
+    def _commit_all(self, target, subject="baseline"):
+        self._git(target, "add", "-A")
+        self._git(target, "commit", "-q", "-m", subject)
+
+    def _commit_count(self, target):
+        r = subprocess.run(
+            ["git", "-C", target, "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True, check=True)
+        return int(r.stdout.strip())
+
+    def _head_files(self, target):
+        # --no-renames so a move shows both ends, not one rename entry.
+        r = subprocess.run(
+            ["git", "-C", target, "show", "--name-only", "--format=",
+             "--no-renames", "HEAD"],
+            capture_output=True, text=True, check=True)
+        return sorted(p for p in r.stdout.split("\n") if p.strip())
+
+    def test_merge_into_git_store_commits_the_master(self):
+        self.seed_external_content()
+        self._init_git(self.store)
+        self._commit_all(self.store)
+        self.declare_store()
+        before = self._commit_count(self.store)
+        sm.merge_change(self.tmp, "sample-change", [])
+        self.assertEqual(self._commit_count(self.store), before + 1)
+        self.assertEqual(
+            self._head_files(self.store),
+            ["%s/verified/auth/spec.md" % self.repo_folder])
+
+    def test_archive_into_git_store_commits_the_move(self):
+        self.seed_external_content()
+        self._init_git(self.store)
+        self._commit_all(self.store)
+        self.declare_store()
+        sm.merge_change(self.tmp, "sample-change", [])
+        before = self._commit_count(self.store)
+        sm.archive_change(self.tmp, "sample-change", date="2026-07-22")
+        self.assertEqual(self._commit_count(self.store), before + 1)
+        committed = self._head_files(self.store)
+        self.assertTrue(committed)
+        # The move is recorded whole: the planned copy leaves, the archived
+        # copy arrives, and nothing outside those two trees is swept in.
+        self.assertTrue(
+            any(p.startswith("%s/completed/2026-07-22-sample-change/"
+                             % self.repo_folder) for p in committed),
+            committed)
+        self.assertTrue(
+            any(p.startswith("%s/planned/sample-change/" % self.repo_folder)
+                for p in committed),
+            committed)
+        self.assertTrue(
+            all(p.startswith("%s/completed/" % self.repo_folder)
+                or p.startswith("%s/planned/" % self.repo_folder)
+                for p in committed),
+            committed)
+
+    def test_in_repo_merge_and_archive_never_commit(self):
+        shutil.copytree(os.path.join(SAMPLE_ROOT, ".shipd"),
+                        os.path.join(self.tmp, ".shipd"))
+        self._init_git(self.tmp)
+        self._commit_all(self.tmp)
+        before = self._commit_count(self.tmp)
+        sm.merge_change(self.tmp, "sample-change", [])
+        sm.archive_change(self.tmp, "sample-change", date="2026-07-22")
+        self.assertEqual(self._commit_count(self.tmp), before)
+
+    def test_non_git_store_writes_succeed_without_a_commit(self):
+        self.seed_external_content()
+        self.declare_store()
+        sm.merge_change(self.tmp, "sample-change", [])
+        dst = sm.archive_change(self.tmp, "sample-change", date="2026-07-22")
+        self.assertTrue(os.path.isdir(dst))
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.store, self.repo_folder, "verified", "auth", "spec.md")))
+        self.assertFalse(os.path.exists(os.path.join(self.store, ".git")))
 
 
 class MalformedConfigCliTest(unittest.TestCase):

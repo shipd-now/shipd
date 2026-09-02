@@ -713,5 +713,91 @@ class ChangeInstallFlowHookTest(SpecEmitTestBase):
             os.path.join(self.planned_dir("my-change"), "plan.md")))
 
 
+class ChangeInstallStoreAutocommitTest(SpecEmitTestBase):
+    """A change installed into an externally resolved content directory
+    auto-commits locally in the store, scoped to the installed files; an
+    in-repo content directory never does (shipd-config store-autocommit)."""
+
+    def setUp(self):
+        super().setUp()
+        self.store = tempfile.mkdtemp(prefix="spec-emit-store-")
+        self.addCleanup(shutil.rmtree, self.store, True)
+        # The per-repo folder under the store is the repo directory's basename
+        # (the non-git fallback — this throwaway root is not a git repo).
+        self.repo_folder = os.path.basename(self.root)
+
+    def declare_store(self):
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"store_root": self.store}, fh)
+
+    def _git(self, target, *args):
+        subprocess.run(["git", "-C", target, *args],
+                       capture_output=True, text=True, check=True)
+
+    def _init_git(self, target):
+        subprocess.run(["git", "init", "-q", target],
+                       capture_output=True, text=True, check=True)
+        self._git(target, "config", "user.email", "test@example.com")
+        self._git(target, "config", "user.name", "Test")
+        with open(os.path.join(target, "README.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("store\n")
+        self._git(target, "add", "-A")
+        self._git(target, "commit", "-q", "-m", "baseline")
+
+    def _commit_count(self, target):
+        r = subprocess.run(
+            ["git", "-C", target, "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True, check=True)
+        return int(r.stdout.strip())
+
+    def _head_files(self, target):
+        r = subprocess.run(
+            ["git", "-C", target, "show", "--name-only", "--format=", "HEAD"],
+            capture_output=True, text=True, check=True)
+        return sorted(p for p in r.stdout.split("\n") if p.strip())
+
+    def test_install_into_git_store_commits_the_installed_files(self):
+        self._init_git(self.store)
+        self.declare_store()
+        before = self._commit_count(self.store)
+        self.stage_change()
+        r = self.cli("change", "my-change", "--from", self.stage)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        dest = os.path.join(self.store, self.repo_folder, "planned",
+                            "my-change")
+        self.assertTrue(os.path.isfile(os.path.join(dest, "plan.md")))
+        self.assertEqual(self._commit_count(self.store), before + 1)
+        prefix = "%s/planned/my-change/" % self.repo_folder
+        committed = self._head_files(self.store)
+        self.assertEqual(
+            committed,
+            sorted([prefix + "plan.md", prefix + "specs/auth/spec.md",
+                    prefix + "tasks.md"]))
+
+    def test_in_repo_install_never_commits(self):
+        # No store_root: the content directory is in-repo, so the install is
+        # the skill/PR workflow's to commit, never the engine's.
+        self._init_git(self.root)
+        before = self._commit_count(self.root)
+        self.stage_change()
+        r = self.cli("change", "my-change", "--from", self.stage)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.planned_dir("my-change"), "plan.md")))
+        self.assertEqual(self._commit_count(self.root), before)
+
+    def test_non_git_store_installs_without_a_commit(self):
+        self.declare_store()
+        self.stage_change()
+        r = self.cli("change", "my-change", "--from", self.stage)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.store, self.repo_folder, "planned", "my-change", "plan.md")))
+        self.assertFalse(os.path.exists(os.path.join(self.store, ".git")))
+        self.assertEqual(r.stderr.strip(), "")
+
+
 if __name__ == "__main__":
     unittest.main()

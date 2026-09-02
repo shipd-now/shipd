@@ -358,6 +358,11 @@ def run_gate(root, change):
         with open(plan_path, "w", encoding="utf-8") as fh:
             fh.write(text)
         ss.write_status(root, change, "ready")
+        # The gate's plan rewrite into an external store auto-commits locally,
+        # scoped to the plan (shipd-config store-autocommit); a no-op for an
+        # in-repo plan, and a commit failure never fails the gate.
+        sc.store_autocommit(root, [plan_path],
+                            "shipd: gate change %s (ready)" % change)
         print("PASS: change '%s' has sufficient context; status is now ready."
               % change)
         return 0
@@ -367,6 +372,8 @@ def run_gate(root, change):
     text = _insert_gate_section(_read(plan_path), findings)
     with open(plan_path, "w", encoding="utf-8") as fh:
         fh.write(text)
+    sc.store_autocommit(root, [plan_path],
+                        "shipd: gate change %s (rejected)" % change)
     print("REJECTED: change '%s' lacks sufficient context (%d finding(s)):"
           % (change, len(findings)))
     for finding in findings:

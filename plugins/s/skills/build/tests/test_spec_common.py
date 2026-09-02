@@ -1015,6 +1015,166 @@ class LayeredConfigTest(unittest.TestCase):
         self.assertIn("nested/specs", str(cm.exception))
 
 
+class ExternalStoreRootTest(unittest.TestCase):
+    """store_root_dir / repo_store_folder / specs_dir's external branch: the
+    optional `store_root` key relocating a repo's content directory into an
+    external store, with a worktree-stable per-repo folder name (shipd-config
+    store-root-key, store-repo-folder-name). ``$HOME`` is always overridden so
+    the real home config never leaks in."""
+
+    def setUp(self):
+        # The git probe is memoized per resolved root; a fresh tempdir per test
+        # cannot collide, but clearing keeps the tests order-independent.
+        getattr(sc, "_STORE_FOLDER_CACHE", {}).clear()
+
+    def _write_config(self, d, payload):
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, sc.CONFIG_FILENAME), "w",
+                  encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        return d
+
+    def test_workspace_declaration_governs_member_repo(self):
+        # A workspace-level store_root, a member repo with no config of its
+        # own: the member's content directory lands under the shared store.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "cai-backend")
+            os.makedirs(repo)
+            self._write_config(ws, {"store_root": "shipd-store"})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.store_root_dir(repo), os.path.join(ws, "shipd-store"))
+                self.assertEqual(
+                    sc.specs_dir(repo),
+                    os.path.join(ws, "shipd-store", "cai-backend"))
+
+    def test_relative_value_resolves_against_declaring_file(self):
+        # `artefacts` declared at /ws resolves to /ws/artefacts even when the
+        # resolution starts three directories deeper.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "team", "repo")
+            os.makedirs(repo)
+            self._write_config(ws, {"store_root": "artefacts"})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.store_root_dir(repo), os.path.join(ws, "artefacts"))
+                self.assertEqual(
+                    sc.specs_dir(repo),
+                    os.path.join(ws, "artefacts", "repo"))
+
+    def test_tilde_expands(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            home_dir = os.path.realpath(home)
+            self._write_config(root, {"store_root": "~/stores/shipd"})
+            with home_set_to(home_dir):
+                self.assertEqual(
+                    sc.store_root_dir(root),
+                    os.path.join(home_dir, "stores", "shipd"))
+
+    def test_absolute_value_used_as_is(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as store, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            store_root = os.path.realpath(store)
+            self._write_config(root, {"store_root": store_root})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.store_root_dir(root), store_root)
+                self.assertEqual(
+                    sc.specs_dir(root),
+                    os.path.join(store_root, os.path.basename(root)))
+
+    def test_empty_value_errors_naming_the_key(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"store_root": ""})
+            with home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.store_root_dir(root)
+            self.assertIn("store_root", str(cm.exception))
+
+    def test_non_string_value_errors_naming_the_key(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"store_root": 7})
+            with home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.store_root_dir(root)
+            self.assertIn("store_root", str(cm.exception))
+
+    def test_undeclared_key_keeps_in_repo_resolution(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"dir": "specs"})
+            with home_set_to(os.path.realpath(home)):
+                self.assertIsNone(sc.store_root_dir(root))
+                self.assertEqual(
+                    sc.specs_dir(root), os.path.join(root, "specs"))
+
+    def test_store_root_supersedes_dir(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(
+                root, {"dir": "specs", "store_root": "store"})
+            with home_set_to(os.path.realpath(home)):
+                resolved = sc.specs_dir(root)
+            self.assertEqual(
+                resolved,
+                os.path.join(root, "store", os.path.basename(root)))
+            self.assertNotIn("specs", resolved.split(os.sep))
+
+    def test_worktree_resolves_the_main_checkouts_folder(self):
+        # A real repo plus a real linked worktree: both resolve one store
+        # folder, named for the main checkout's directory.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "cai-backend")
+            os.makedirs(repo)
+            _git("init", "-q", repo)
+            _git("-C", repo, "config", "user.email", "test@example.com")
+            _git("-C", repo, "config", "user.name", "Test")
+            with open(os.path.join(repo, "README.md"), "w",
+                      encoding="utf-8") as fh:
+                fh.write("hi\n")
+            _git("-C", repo, "add", "-A")
+            _git("-C", repo, "commit", "-q", "-m", "init")
+            wt = os.path.join(repo, ".worktrees", "some-change")
+            _git("-C", repo, "worktree", "add", "-q", "-b", "some-change", wt)
+            self._write_config(ws, {"store_root": "store"})
+            expected = os.path.join(ws, "store", "cai-backend")
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.repo_store_folder(repo), "cai-backend")
+                self.assertEqual(sc.repo_store_folder(wt), "cai-backend")
+                self.assertEqual(sc.specs_dir(repo), expected)
+                self.assertEqual(sc.specs_dir(wt), expected)
+
+    def test_non_git_root_falls_back_to_its_basename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.join(os.path.realpath(tmp), "plain-dir")
+            os.makedirs(root)
+            self.assertEqual(sc.repo_store_folder(root), "plain-dir")
+
+    def test_probe_is_cached_per_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.join(os.path.realpath(tmp), "plain-dir")
+            os.makedirs(root)
+            self.assertEqual(sc.repo_store_folder(root), "plain-dir")
+            self.assertIn(os.path.realpath(root), sc._STORE_FOLDER_CACHE)
+            sc._STORE_FOLDER_CACHE[os.path.realpath(root)] = "memoized"
+            self.assertEqual(sc.repo_store_folder(root), "memoized")
+
+
 class ResolvePipelineTest(unittest.TestCase):
     """resolve_pipeline's stdlib-only surface: the autonomous-pipeline stage
     registry, the no-key default, and resolution with no third-party package

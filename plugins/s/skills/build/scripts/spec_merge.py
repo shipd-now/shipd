@@ -215,6 +215,7 @@ def merge_change(root, change, warnings):
         raise ValueError("no delta specs found for change %r under %s"
                          % (change, deltas_dir))
     affected = []
+    written = []
     for capability in sorted(os.listdir(deltas_dir)):
         delta_path = os.path.join(deltas_dir, capability, "spec.md")
         if not os.path.isfile(delta_path):
@@ -228,7 +229,13 @@ def merge_change(root, change, warnings):
             master = sc.SpecFile(preamble="# %s" % capability)
         merged = apply_delta_to_spec(master, delta, warnings, capability)
         sc.write_spec(mpath, merged)
+        written.append(mpath)
         affected.append(capability)
+    # A merge into an external store auto-commits locally, scoped to exactly
+    # the rewritten masters (shipd-config store-autocommit); a no-op for an
+    # in-repo library, and a commit failure never fails the merge.
+    if written:
+        sc.store_autocommit(root, written, "shipd: merge change %s" % change)
     return affected
 
 
@@ -245,6 +252,11 @@ def archive_change(root, change, date=None):
     if os.path.exists(dst):
         raise ValueError("archive destination already exists: %s" % dst)
     shutil.move(src, dst)
+    # An archive into an external store auto-commits locally, the pathspec
+    # covering both ends of the move so the departure and the arrival land in
+    # one commit (shipd-config store-autocommit). A no-op for an in-repo
+    # content directory, and a commit failure never fails the archive.
+    sc.store_autocommit(root, [src, dst], "shipd: archive change %s" % change)
     # Best-effort flow-time-series capture: archiving a change (→ archived) is
     # one of the three lifecycle mutation chokepoints (delivery-metrics
     # flow-timeseries). A capture failure never fails the archive.
