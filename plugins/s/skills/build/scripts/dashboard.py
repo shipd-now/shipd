@@ -460,13 +460,13 @@ def _resolve_member_transcript(location, session_id):
     transcript as ``(tdir, session_id, path)``, or ``None`` when none resolves:
     the explicit ``session_id`` first (only when its transcript file is on
     disk), else the newest transcript for ``location``. Dependency-free — reuses
-    the build-report resolvers, whose worktree→main-checkout fallback means a
-    build launched from the main checkout still resolves."""
+    the build-report resolvers, whose worktree→main-checkout→ancestor fallback
+    means a build launched from the main checkout — or from a parent directory
+    of the project — still resolves."""
     if not location:
         return None
     try:
-        tdir = br.transcript_dir(location)
-        sid, path = br.find_active_session(tdir, session_id or None)
+        sid, path, tdir = br.discover_session(location, session_id or None)
     except OSError:
         return None
     if sid and path:
