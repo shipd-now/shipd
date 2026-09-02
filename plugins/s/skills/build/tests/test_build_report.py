@@ -629,6 +629,91 @@ class TranscriptDiscoveryFallbackTest(unittest.TestCase):
         self.assertEqual(br.transcript_dir(wt), self._slug_dir(wt))
 
 
+class AncestorSessionDiscoveryTest(unittest.TestCase):
+    """discover_session falls back to the path slugs of the project root's
+    ancestor directories — a session launched from a parent directory that
+    later changed into the project — validating each ancestor candidate by the
+    working directory its trailing records carry. Isolated from ~/.claude via
+    CLAUDE_CONFIG_DIR."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.config = os.path.join(self.tmp, "config")
+        self._prev = os.environ.get("CLAUDE_CONFIG_DIR")
+        os.environ["CLAUDE_CONFIG_DIR"] = self.config
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        if self._prev is None:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        else:
+            os.environ["CLAUDE_CONFIG_DIR"] = self._prev
+
+    def _make_project(self, name="repo"):
+        """A project nested under an ancestor directory: (ancestor, project)."""
+        ancestor = os.path.join(self.tmp, "projects")
+        proj = os.path.join(ancestor, name)
+        os.makedirs(proj)
+        return ancestor, proj
+
+    def _slug_dir(self, project_dir):
+        return os.path.join(self.config, "projects", br.project_slug(project_dir))
+
+    def _write_transcript(self, tdir, sid, cwd=None, mtime=None):
+        """One session transcript whose trailing record carries ``cwd``."""
+        os.makedirs(tdir, exist_ok=True)
+        path = os.path.join(tdir, "%s.jsonl" % sid)
+        lines = [json.dumps({"type": "user", "sessionId": sid})]
+        if cwd is not None:
+            lines.append(json.dumps({"type": "assistant", "cwd": cwd}))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        if mtime is not None:
+            os.utime(path, (mtime, mtime))
+        return path
+
+    def test_ancestor_slug_session_with_matching_cwd_is_found(self):
+        ancestor, proj = self._make_project()
+        tdir = self._slug_dir(ancestor)
+        path = self._write_transcript(tdir, "aaa", cwd=proj)
+        self.assertEqual(br.discover_session(proj), ("aaa", path, tdir))
+
+    def test_foreign_ancestor_session_is_skipped_for_older_match(self):
+        ancestor, proj = self._make_project()
+        other = os.path.join(ancestor, "other-repo")
+        os.makedirs(other)
+        tdir = self._slug_dir(ancestor)
+        mine = self._write_transcript(
+            tdir, "mine", cwd=os.path.join(proj, "src"), mtime=1_000_000
+        )
+        self._write_transcript(tdir, "foreign", cwd=other, mtime=2_000_000)
+        self.assertEqual(br.discover_session(proj), ("mine", mine, tdir))
+
+    def test_own_slug_wins_over_a_newer_ancestor_session(self):
+        ancestor, proj = self._make_project()
+        own = self._slug_dir(proj)
+        mine = self._write_transcript(own, "own", cwd=proj, mtime=1_000_000)
+        self._write_transcript(
+            self._slug_dir(ancestor), "ancestor", cwd=proj, mtime=2_000_000
+        )
+        self.assertEqual(br.discover_session(proj), ("own", mine, own))
+
+    def test_explicit_session_resolves_in_ancestor_without_cwd(self):
+        ancestor, proj = self._make_project()
+        tdir = self._slug_dir(ancestor)
+        path = self._write_transcript(tdir, "explicit")  # no cwd record at all
+        self.assertEqual(
+            br.discover_session(proj, session="explicit"), ("explicit", path, tdir)
+        )
+
+    def test_no_candidate_anywhere_degrades_to_own_slug(self):
+        ancestor, proj = self._make_project()
+        self.assertEqual(
+            br.discover_session(proj), (None, None, self._slug_dir(proj))
+        )
+
+
 class BuildConfigTest(unittest.TestCase):
     """Build settings come from the resolved layered configuration's ``build``
     key (defaults when absent), and the log lands under the resolved build log
