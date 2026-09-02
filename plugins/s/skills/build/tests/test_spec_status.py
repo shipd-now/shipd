@@ -2208,6 +2208,25 @@ class ConfigShowTest(SpecStatusTestBase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("chain:", r.stdout)
 
+    # -- external store (shipd-config store-root-key) ------------------------
+
+    def test_store_root_prints_resolved_external_content_dir(self):
+        # A mis-declared store must be inspectable at a glance, so the resolved
+        # absolute external content directory is printed.
+        store = tempfile.mkdtemp(prefix="spec-status-store-")
+        self.addCleanup(shutil.rmtree, store, True)
+        self._write_config(self.root, {"store_root": store})
+        r = self.cli("config-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        expected = os.path.join(store, os.path.basename(self.root))
+        self.assertIn("store: %s" % expected, r.stdout.splitlines())
+
+    def test_no_store_root_prints_no_store_line(self):
+        self._write_config(self.root, {"dir": "specs"})
+        r = self.cli("config-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("store:", r.stdout)
+
 
 class PipelineShowTest(SpecStatusTestBase):
     """`pipeline-show` prints the effective autonomous pipeline: one line per

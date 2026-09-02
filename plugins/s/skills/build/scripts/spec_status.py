@@ -671,6 +671,11 @@ def cmd_set_status(root, status, change, force):
     if not force:
         _check_guards(root, change, status)
     write_status(root, change, status)
+    # A status write into an external store auto-commits locally, scoped to the
+    # rewritten plan (shipd-config store-autocommit); a no-op for an in-repo
+    # plan, and a commit failure never fails the transition.
+    sc.store_autocommit(root, [_plan_path(root, change)],
+                        "shipd: set-status %s %s" % (change, status))
     print(status)
     return 0
 
@@ -1806,14 +1811,21 @@ def cmd_config_show(root):
     """Print the resolved layered configuration: each effective top-level key
     with the path of the layer that supplied it (or ``default``), the resolved
     content directory, and the workspace root when discoverable (else a
-    none-note). When the resolved workspace chain carries more than one
-    member, additionally prints a ``chain:`` line listing the whole chain,
-    nearest first (shipd-workspace workspace-chain-facilities). Does not
-    require a workspace; exits zero on a default-only resolution
-    (spec-status config-show-verb)."""
+    none-note). When the resolved configuration declares ``store_root``,
+    additionally prints a ``store:`` line carrying the resolved absolute
+    external content directory, so a mis-declared store is inspectable at a
+    glance (shipd-config store-root-key). When the resolved workspace chain
+    carries more than one member, additionally prints a ``chain:`` line listing
+    the whole chain, nearest first (shipd-workspace
+    workspace-chain-facilities). Does not require a workspace; exits zero on a
+    default-only resolution (spec-status config-show-verb)."""
     try:
         config, provenance = sc.resolve_config(root)
         content_dir = sc.specs_dirname(config)
+        # `specs_dir` is the resolution funnel, so the printed path is the very
+        # one every verb writes to — never a re-derivation that could drift.
+        store_content = (sc.specs_dir(root)
+                         if sc.store_root_dir(root) is not None else None)
     except sc.ConfigError as exc:
         raise StatusError(str(exc))
     print("config (resolved from %s):" % os.path.abspath(root))
@@ -1821,6 +1833,8 @@ def cmd_config_show(root):
         src = provenance.get(key, "default")
         print("  %s = %s  [%s]" % (key, json.dumps(config[key]), src))
     print("content-dir: %s" % content_dir)
+    if store_content is not None:
+        print("store: %s" % store_content)
     chain = sc.workspace_chain(root)
     if not chain:
         print("workspace: none discoverable")
