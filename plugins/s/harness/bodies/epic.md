@@ -9,7 +9,7 @@ them. You emit the epic and stop — you never plan or build its members.
 
 ## 1. Work in the epic's own worktree
 
-Create it from the repo root (`"$S/worktree.sh" epic-<slug>`) and work inside
+Create it from the repo root (`shipd worktree epic-<slug>`) and work inside
 `.worktrees/epic-<slug>`, so the artifact is born on `change/epic-<slug>` and
 ships in one PR.
 

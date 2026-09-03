@@ -6,7 +6,9 @@ against a lint-clean change, and only inside that change's own branch.
 
 <!-- include:preamble -->
 
-1. **Work in the change's worktree.** `bash "$S/worktree.sh" <change>`, then
+1. **Work in the change's worktree.** `shipd worktree <change>` — the engine
+   create path, which also runs the repo's configured
+   `post-worktree-scripts` — then
    work in `.worktrees/<change>` on branch `change/<change>`. Never author
    artifacts or edit code in the main checkout. Read `.shipd/constitution.md`
    when it is present and treat every rule in it as binding on what follows.

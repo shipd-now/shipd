@@ -27,7 +27,7 @@ Requirements: this repo must have the `.shipd/` layout (an `.shipd/` dir; the sp
 and linter live under `plugins/s/skills/build/scripts/`).
 
 **Where to run:** author the epic inside its own worktree — create it first with
-`${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/worktree.sh epic-<slug>` and work in
+`"${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree epic-<slug>` and work in
 `.worktrees/epic-<slug>` — so the
 emitted `.shipd/epics/<slug>/` artifact is born on the `change/epic-<slug>` branch and
 ships in one PR.

@@ -79,7 +79,7 @@ reports one `created`/`exists` line per directory and the summary
 
 **Where to run:** planning for a change that will be built runs inside that
 change's worktree — create it first with
-`${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/worktree.sh <change>` and
+`"${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree <change>` and
 work in `.worktrees/<change>` — so the emitted `planned/<change>/` artifacts
 are born on the `change/<change>` branch and travel with the implementation in
 one PR.
