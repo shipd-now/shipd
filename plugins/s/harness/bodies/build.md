@@ -36,17 +36,22 @@ against a lint-clean change, and only inside that change's own branch.
    work yourself. Each spawn message carries only the change name, the
    absolute path to `"$S/claim_task.sh"`, and any build-specific addenda — the
    artifacts on disk are its whole context, so paste no conversation into it.
-   Each executor loops `claim` → implement → `complete` → re-`claim`. When one
+   Each executor loops `claim` → implement → `complete` → re-`claim`, passing
+   a stable personal `--as <label>` on every claim and completion and waiting
+   for barriers with `claim <change> --as <label> --wait` in the foreground of
+   one tool call — never a poll loop, and never a backgrounded claim. When one
    returns a message beginning `QUESTION:`, answer it yourself and
    definitively, updating the artifacts first when the answer exposes a gap in
    the spec, then resume that executor where it paused.
 <!-- else -->
    Do the work yourself, one task at a time.
-   `bash "$S/claim_task.sh" claim <change>` atomically takes the next ready
-   task and prints `ID<TAB>TEXT` (the first line only — read the task's full
-   text in `tasks.md`). Implement exactly that task, then
-   `bash "$S/claim_task.sh" complete <change> <ID>` and claim again. Empty
-   output can mean a barrier has not cleared yet, so stop only once
+   `bash "$S/claim_task.sh" claim <change> --as <label>` atomically takes the
+   next ready task and prints `ID<TAB>TEXT` (the first line only — read the
+   task's full text in `tasks.md`). Implement exactly that task, then
+   `bash "$S/claim_task.sh" complete <change> <ID> --as <label>` and claim
+   again. Empty output can mean a barrier has not cleared yet: wait for it
+   with `claim <change> --as <label> --wait` in the foreground — never a poll
+   loop, and never a backgrounded claim — and stop only once
    `bash "$S/claim_task.sh" status <change>` reports `pending=0`.
 <!-- end -->
 <!-- if:background-tasks -->
