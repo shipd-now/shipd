@@ -184,11 +184,14 @@ leave to its built-in behavior.
 
 ### Per-member setup
 
-`worktree.sh` is idempotent: it reuses a member's existing worktree (or
-re-attaches its existing branch) instead of erroring, so an interrupted run's
-resume needs no guard. For each member being driven, invoke it unconditionally:
+The engine's worktree create path is idempotent: it reuses a member's existing
+worktree (or re-attaches its existing branch) instead of erroring, so an
+interrupted run's resume needs no guard. It also runs the repo's configured
+`post-worktree-scripts` for a newly created or attached worktree, and skips
+them for a reused one. For each member being driven, invoke it
+unconditionally:
 ```
-"${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/worktree.sh" <member>
+"${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree <member>
 ```
 Run every stage for that member with that worktree (`.worktrees/<member>`) as
 the working directory.

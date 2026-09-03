@@ -34,6 +34,15 @@ EPIC_HEADER = (
     "| --- | --- | --- | --- | --- | --- |\n")
 
 
+def _create_argv(slug):
+    """The argv the member-delivery step issues to create a worktree: the
+    engine's ``worktree.py`` create path (worktree-hooks
+    engine-worktree-create), so the repo's configured ``post-worktree-scripts``
+    run before any stage executes in the new worktree. Resolved lazily, at call
+    time, so it reads whatever the module under test declares."""
+    return [sys.executable, autopilot.WORKTREE_PY, slug]
+
+
 def _member_row(slug, risk, desc="a member"):
     return "| %s | %s | low | low | low | %s |\n" % (slug, desc, risk)
 
@@ -387,8 +396,14 @@ class _Seams:
 
     def command_fn(self, cmd, cwd):
         self.commands.append((cmd, cwd))
-        # The real worktree helper creates the member's worktree directory;
-        # mirror that so the vanished-worktree detection has a dir to lose.
+        # The real worktree create path creates the member's worktree
+        # directory; mirror that so the vanished-worktree detection has a dir
+        # to lose.
+        if isinstance(cmd, list) and cmd[:2] == _create_argv("")[:2]:
+            os.makedirs(os.path.join(cwd, ".worktrees", cmd[2]), exist_ok=True)
+            return 0, "", ""
+        # The epic close-out still creates its worktree through the bash
+        # helper directly.
         if isinstance(cmd, list) and cmd and cmd[0] == autopilot.WORKTREE_SH:
             os.makedirs(os.path.join(cwd, ".worktrees", cmd[1]), exist_ok=True)
             return 0, "", ""
@@ -440,9 +455,11 @@ class StageExecutionTest(AutopilotTestBase):
         s = _Seams()
         result = s.drive(self.PGB, self.root)
         self.assertEqual(result.outcome, "shipped")
-        # The worktree came from the plugin's worktree helper.
+        # The worktree came from the engine's worktree create path, so the
+        # repo's configured post-worktree-scripts ran before the first stage.
         first_cmd = s.commands[0][0]
-        self.assertEqual(first_cmd, [autopilot.WORKTREE_SH, "m"])
+        self.assertEqual(first_cmd, _create_argv("m"))
+        self.assertTrue(first_cmd[1].endswith("worktree.py"), first_cmd)
         self.assertEqual([st for st, _m, _p in s.sessions], ["plan", "build"])
         self.assertEqual(len(s.gate_calls), 1)
 
@@ -454,8 +471,8 @@ class StageExecutionTest(AutopilotTestBase):
 
         def command_fn(cmd, cwd):
             s.commands.append((cmd, cwd))
-            if isinstance(cmd, list) and cmd and cmd[0] == autopilot.WORKTREE_SH:
-                os.makedirs(os.path.join(cwd, ".worktrees", cmd[1]),
+            if isinstance(cmd, list) and cmd[:2] == _create_argv("")[:2]:
+                os.makedirs(os.path.join(cwd, ".worktrees", cmd[2]),
                             exist_ok=True)
                 return 0, "", ""
             if isinstance(cmd, list) and cmd[:3] == ["gh", "pr", "view"]:
@@ -602,8 +619,8 @@ class StageKnobsTest(AutopilotTestBase):
 
         def command_fn(cmd, cwd):
             s.commands.append((cmd, cwd))
-            if isinstance(cmd, list) and cmd and cmd[0] == autopilot.WORKTREE_SH:
-                os.makedirs(os.path.join(cwd, ".worktrees", cmd[1]),
+            if isinstance(cmd, list) and cmd[:2] == _create_argv("")[:2]:
+                os.makedirs(os.path.join(cwd, ".worktrees", cmd[2]),
                             exist_ok=True)
                 return 0, "", ""
             if cmd == "false":
@@ -867,7 +884,7 @@ class _ReclaimCommands:
     def __call__(self, cmd, cwd):
         self.calls.append(cmd)
         wt = os.path.join(self.root, ".worktrees", self.slug)
-        if cmd == [autopilot.WORKTREE_SH, self.slug]:
+        if cmd == _create_argv(self.slug):
             rc, out, err = (self.create_results.pop(0)
                             if self.create_results else (0, "", ""))
             if rc == 0:
@@ -916,8 +933,25 @@ class StaleWorktreeReclaimTest(AutopilotTestBase):
              "refs/heads/change/m"], cmd.calls)
         self.assertIn(["git", "branch", "-d", "change/m"], cmd.calls)
         # Create was issued twice: the failing original and the retry.
-        creates = [c for c in cmd.calls if c == [autopilot.WORKTREE_SH, "m"]]
+        creates = [c for c in cmd.calls if c == _create_argv("m")]
         self.assertEqual(len(creates), 2)
+
+    def test_reclaim_remove_stays_on_the_bash_helper(self):
+        """Only *creation* moved to the engine front door: the guarded
+        teardown is still worktree.sh's (worktree-hooks
+        engine-worktree-create)."""
+        self._leftover()
+        cmd = _ReclaimCommands(
+            self.root, "m",
+            create_results=[(1, "", self.ALREADY), (0, "", "")])
+        self._drive(cmd)
+        removes = [c for c in cmd.calls
+                   if c[:2] == ["env", "SHIPD_WORKTREE_IDLE_MINUTES=0"]]
+        self.assertEqual(
+            removes,
+            [["env", "SHIPD_WORKTREE_IDLE_MINUTES=0", autopilot.WORKTREE_SH,
+              "remove", "m"]])
+        self.assertNotIn(autopilot.WORKTREE_PY, removes[0])
 
     def test_guard_refusal_parks_with_refusal_reason(self):
         self._leftover()
@@ -933,7 +967,7 @@ class StaleWorktreeReclaimTest(AutopilotTestBase):
         self.assertIn("dirty: tracked changes present", result.reason)
         # No branch delete and no retried create after the refusal.
         self.assertNotIn(["git", "branch", "-d", "change/m"], cmd.calls)
-        creates = [c for c in cmd.calls if c == [autopilot.WORKTREE_SH, "m"]]
+        creates = [c for c in cmd.calls if c == _create_argv("m")]
         self.assertEqual(len(creates), 1)
 
     def test_unmerged_branch_delete_parks_with_delete_reason(self):
@@ -948,7 +982,7 @@ class StaleWorktreeReclaimTest(AutopilotTestBase):
         self.assertEqual(result.stage, "worktree")
         self.assertIn("not fully merged", result.reason)
         # The branch was left in place — no retried create.
-        creates = [c for c in cmd.calls if c == [autopilot.WORKTREE_SH, "m"]]
+        creates = [c for c in cmd.calls if c == _create_argv("m")]
         self.assertEqual(len(creates), 1)
 
     def test_other_create_failure_parks_without_reclaim(self):
@@ -964,7 +998,7 @@ class StaleWorktreeReclaimTest(AutopilotTestBase):
             ["env", "SHIPD_WORKTREE_IDLE_MINUTES=0", autopilot.WORKTREE_SH,
              "remove", "m"], cmd.calls)
         self.assertFalse(any(c[:1] == ["git"] for c in cmd.calls))
-        creates = [c for c in cmd.calls if c == [autopilot.WORKTREE_SH, "m"]]
+        creates = [c for c in cmd.calls if c == _create_argv("m")]
         self.assertEqual(len(creates), 1)
 
 
@@ -1171,8 +1205,8 @@ class GateEnrichmentTest(AutopilotTestBase):
         worktree = os.path.join(self.root, ".worktrees", "m")
 
         def command_fn(cmd, cwd):
-            if isinstance(cmd, list) and cmd and cmd[0] == autopilot.WORKTREE_SH:
-                os.makedirs(os.path.join(cwd, ".worktrees", cmd[1]),
+            if isinstance(cmd, list) and cmd[:2] == _create_argv("")[:2]:
+                os.makedirs(os.path.join(cwd, ".worktrees", cmd[2]),
                             exist_ok=True)
                 return 0, "", ""
             if isinstance(cmd, list) and cmd[:3] == ["gh", "pr", "view"]:
@@ -1424,8 +1458,8 @@ class VanishedWorktreeTest(AutopilotTestBase):
         sessions = []
 
         def command_fn(cmd, cwd):
-            if isinstance(cmd, list) and cmd and cmd[0] == autopilot.WORKTREE_SH:
-                os.makedirs(os.path.join(cwd, ".worktrees", cmd[1]),
+            if isinstance(cmd, list) and cmd[:2] == _create_argv("")[:2]:
+                os.makedirs(os.path.join(cwd, ".worktrees", cmd[2]),
                             exist_ok=True)
                 return 0, "", ""
             if isinstance(cmd, list) and cmd[:3] == ["gh", "pr", "view"]:
@@ -1535,8 +1569,8 @@ class DraftPrModeTest(AutopilotTestBase):
         worktree = os.path.join(self.root, ".worktrees", "m")
 
         def command_fn(cmd, cwd):
-            if isinstance(cmd, list) and cmd and cmd[0] == autopilot.WORKTREE_SH:
-                os.makedirs(os.path.join(cwd, ".worktrees", cmd[1]),
+            if isinstance(cmd, list) and cmd[:2] == _create_argv("")[:2]:
+                os.makedirs(os.path.join(cwd, ".worktrees", cmd[2]),
                             exist_ok=True)
                 return 0, "", ""
             if isinstance(cmd, list) and cmd[:3] == ["gh", "pr", "view"]:
@@ -1829,8 +1863,8 @@ class HeartbeatSessionIdTest(AutopilotTestBase):
         _make_epic(self.root, "ep", [("a", "low")])
 
         def command_fn(cmd, cwd):
-            if isinstance(cmd, list) and cmd and cmd[0] == autopilot.WORKTREE_SH:
-                os.makedirs(os.path.join(cwd, ".worktrees", cmd[1]),
+            if isinstance(cmd, list) and cmd[:2] == _create_argv("")[:2]:
+                os.makedirs(os.path.join(cwd, ".worktrees", cmd[2]),
                             exist_ok=True)
             return 0, "", ""
 

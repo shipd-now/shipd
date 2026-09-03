@@ -48,8 +48,8 @@ Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
   (`initiative <slug> --from <file>` — the only way `new` writes a brief)
 - Spec linter: `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_lint.py`
   (a sibling skill in the same plugin — this cross-reference is intended)
-- Worktree script (for `set` only):
-  `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/worktree.sh` (run from repo root)
+- Worktree create path (for `set` only):
+  `"${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree` (run from repo root)
 
 Run the CLIs from the repo root (so `--root` may be omitted, defaulting to the
 cwd); they resolve the workspace from there.
@@ -191,7 +191,7 @@ When the target is a genuine epic, proceed:
 1. **Create the worktree** for the edit from the repo root, and work inside it:
 
    ```
-   "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/worktree.sh" initiative-set-<epic>
+   "${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree initiative-set-<epic>
    ```
 
 2. **Write the `Initiative:` line through the engine.** Run the header verb,

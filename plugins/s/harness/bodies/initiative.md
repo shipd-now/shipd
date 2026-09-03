@@ -75,7 +75,7 @@ Asked to attach an initiative to a **change** whose plan carries an `Epic:`
 line, refuse — a member derives its initiative through the epic, and a plan
 carrying both is a lint error. Name that epic as the attachment point instead.
 
-Otherwise create a worktree (`"$S/worktree.sh" initiative-set-<epic>`), work
+Otherwise create a worktree (`shipd worktree initiative-set-<epic>`), work
 inside it, and write the header through the engine rather than editing the epic
 file:
 

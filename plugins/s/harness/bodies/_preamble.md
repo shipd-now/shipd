@@ -9,6 +9,6 @@ S="$HOME/.claude/plugins/cache/shipd/s/$(ls "$HOME/.claude/plugins/cache/shipd/s
 
 Read-only reports come from `shipd <verb>` — `status`, `list`, `lint`, `epic`,
 `workspace`, `doctor` — using the binary on PATH, or `"$S/../../../bin/shipd"`
-when it is not installed there. Every lifecycle mutation runs a script
-directly, `python3 "$S/<script>.py" …`, because the binary deliberately
-exposes no write verb.
+when it is not installed there. Every spec-library mutation runs a script
+directly, `python3 "$S/<script>.py" …` — the binary's verbs stay read/inspect
+plus a few deliberate user-domain exceptions (`worktree` among them).

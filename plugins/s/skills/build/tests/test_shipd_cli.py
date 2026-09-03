@@ -40,8 +40,8 @@ MANIFEST = os.path.join(PLUGIN_ROOT, ".claude-plugin", "plugin.json")
 
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
 VERBS = ("init", "list", "status", "locate", "related", "epic", "workspace",
-         "board", "metrics", "lint", "doctor", "statusline", "copilot",
-         "vendor", "harness", "install", "update")
+         "board", "metrics", "lint", "worktree", "doctor", "statusline",
+         "copilot", "vendor", "harness", "install", "update")
 
 
 def _load_binary():
@@ -288,6 +288,38 @@ class DispatchTest(ShipdCliTestBase):
                 os.path.isdir(os.path.join(target, ".shipd", name)), name)
         self.assertEqual(r.stdout.splitlines()[-1],
                          "all shipd directories are ready")
+
+    def test_worktree_is_a_curated_verb_mapped_to_the_worktree_script(self):
+        """The `worktree` row delegates to ``worktree.py``
+        (shipd-cli cli-dispatch)."""
+        self.assertEqual(shipd.VERB_TABLE.get("worktree"),
+                         ("worktree.py", []))
+
+    def test_the_banner_lists_worktree_as_a_verb(self):
+        # Discriminating on the verb *row*, not a bare substring: `worktrees`
+        # also occurs inside the `list` row's prose.
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        rows = [line.strip() for line in r.stdout.splitlines()
+                if line.strip().startswith("worktree ")]
+        self.assertEqual(len(rows), 1, r.stdout)
+
+    def test_bare_worktree_prints_the_delegate_usage(self):
+        # shipd-cli cli-dispatch: Worktree is a curated verb that delegates.
+        direct = self.script("worktree.py")
+        r = self.cli("worktree")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.returncode, direct.returncode)
+        self.assertEqual(r.stderr, direct.stderr)
+        self.assertIn("usage: worktree.py", r.stderr)
+        # The delegate's own usage, never the shipd banner.
+        self.assertNotIn("usage: shipd <verb>", r.stderr)
+
+    def test_worktree_passes_trailing_arguments_through(self):
+        direct = self.script("worktree.py", "prune-branches")
+        r = self.cli("worktree", "prune-branches")
+        self.assertEqual(r.returncode, direct.returncode)
+        self.assertEqual(r.stderr, direct.stderr)
 
     def test_retired_tui_verb_is_a_usage_error(self):
         r = self.cli("tui")

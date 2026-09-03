@@ -102,7 +102,7 @@ member only reads as archived on the base branch once the squash merge has
 landed:
 
 ```sh
-bash "$S/worktree.sh" epic-close-<slug> --fresh
+"$S/../../../bin/shipd" worktree epic-close-<slug> --fresh
 python3 "$S/spec_status.py" --root .worktrees/epic-close-<slug> epic-sync <slug>
 ```
 

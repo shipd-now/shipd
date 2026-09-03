@@ -16,7 +16,7 @@ Search with the session's built-in web-search and page-fetch tools and
 **nothing else** — no API keys, no external research service. If live web
 access is unavailable, say which tool is missing and stop: never write findings
 from memory, because an uncited report defeats the artifact's purpose. Then
-create the report's worktree (`"$S/worktree.sh" research-<slug>`) and work
+create the report's worktree (`shipd worktree research-<slug>`) and work
 inside `.worktrees/research-<slug>`.
 
 ## 2. Clarify only when the question is unresearchable

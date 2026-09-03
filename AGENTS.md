@@ -42,9 +42,15 @@ Consequences:
 ## Workflow
 
 **One change = one worktree = one branch = one PR.** Every change is developed
-in its own git worktree: the plugin's
-`plugins/s/skills/build/scripts/worktree.sh <change>` creates
-`.worktrees/<change>` on branch `change/<change>`. The whole shipd lifecycle
+in its own git worktree: the plugin's `plugins/s/bin/shipd worktree <change>`
+creates `.worktrees/<change>` on branch `change/<change>` and then runs any
+`post-worktree-scripts` the layered config declares, so a fresh checkout
+arrives already set up. That verb is the create path's front door — it drives
+the git mechanics through `worktree.sh` and adds the hook step; a failing hook
+exits `3` with the worktree left in place, resumable with
+`shipd worktree hooks run` from inside it. Register the scripts through
+`shipd worktree hooks add` (or `/s:worktree-hooks`), never by hand-editing
+`.shipd-config.json`. The whole shipd lifecycle
 (`/s:plan` → `/s:build`, including the `spec_merge.py` merge/archive) runs
 inside that worktree, so the change's artifacts and implementation travel in a
 single PR. The main checkout is only for launching sessions, reviewing, and
@@ -88,7 +94,7 @@ merged ones (squash merges included) and lists everything it keeps.
 
 **Epic status derivations** (`epic-sync`/`epic-set-status`) on a merged epic
 run in a fresh `epic-close-<slug>` worktree — created with
-`worktree.sh epic-close-<slug> --fresh`, so the derivation never adopts a stale
+`shipd worktree epic-close-<slug> --fresh`, so the derivation never adopts a stale
 close-out branch — and ship as a PR, never from the main checkout, whose
 uncommitted epic-file edit a protected-main workflow cannot ship.
 
@@ -117,9 +123,10 @@ query the oracle before interrupting the user, `/s:teach` to
 distill spec artifacts and answered queue entries into the workspace wiki,
 `/s:remember` to capture the user's durable preferences into the personal
 memory store, `/s:memory` to list the captured memories, `/s:forget` to
-remove a captured memory from the personal store, and `/s:doctor` to run the
-read-only `shipd doctor` preflight and then run the remedies the user consents
-to.
+remove a captured memory from the personal store, `/s:worktree-hooks` to author
+and register the `post-worktree-scripts` a fresh worktree runs, and `/s:doctor`
+to run the read-only `shipd doctor` preflight and then run the remedies the
+user consents to.
 
 ### The engine's one third-party dependency
 

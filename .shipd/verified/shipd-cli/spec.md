@@ -5,26 +5,26 @@ id: cli-dispatch
 
 The `shipd` binary SHALL expose exactly the curated verbs `init`, `list`,
 `status`, `locate`, `related`, `epic`, `workspace`, `board`, `metrics`,
-`lint`, `doctor`, `statusline`, `copilot`, `vendor`, `harness`, `install`,
-and `update`, and for every verb except `list`, `doctor`, `statusline`,
-`copilot`, `vendor`, `harness`, `install`, and `update` SHALL delegate by
-replacing its own process with the mapped engine script invocation (`init` ->
-`spec_status.py init`, `status` -> `spec_status.py show`, `locate`
+`lint`, `worktree`, `doctor`, `statusline`, `copilot`, `vendor`, `harness`,
+`install`, and `update`, and for every verb except `list`, `doctor`,
+`statusline`, `copilot`, `vendor`, `harness`, `install`, and `update` SHALL
+delegate by replacing its own process with the mapped engine script invocation
+(`init` -> `spec_status.py init`, `status` -> `spec_status.py show`, `locate`
 -> `spec_status.py locate`, `related` -> `spec_status.py related`, `epic` ->
 `spec_status.py epic-show`, `workspace` -> `spec_status.py workspace-show`,
 `board` -> `dashboard.py` per the board-mode mapping below, `metrics` ->
-`metrics.py`, `lint` -> `spec_lint.py`), passing all trailing arguments
-through verbatim so the delegate's output and exit code are the binary's own.
-When `metrics` is given no trailing arguments, the binary SHALL delegate to
-`metrics.py summary`. When invoked as `shipd board`, the binary SHALL select
-the delegate by the first trailing argument: the bare word `text` SHALL be
-consumed and delegate to `dashboard.py board`, and any other first trailing
-argument (or none) SHALL delegate to `dashboard.py tui` with all trailing
-arguments intact. The binary SHALL resolve the engine scripts relative to its
-own resolved file location. If the verb is unknown or missing — including the
-retired `tui` — the binary SHALL print a usage banner listing the curated
-verbs to stderr and exit `2`; when invoked with `help`, `-h`, or `--help` it
-SHALL print the same banner to stdout and exit `0`.
+`metrics.py`, `lint` -> `spec_lint.py`, `worktree` -> `worktree.py`), passing
+all trailing arguments through verbatim so the delegate's output and exit
+code are the binary's own. When `metrics` is given no trailing arguments, the
+binary SHALL delegate to `metrics.py summary`. When invoked as `shipd board`,
+the binary SHALL select the delegate by the first trailing argument: the bare
+word `text` SHALL be consumed and delegate to `dashboard.py board`, and any
+other first trailing argument (or none) SHALL delegate to `dashboard.py tui`
+with all trailing arguments intact. The binary SHALL resolve the engine
+scripts relative to its own resolved file location. If the verb is unknown or
+missing — including the retired `tui` — the binary SHALL print a usage banner
+listing the curated verbs to stderr and exit `2`; when invoked with `help`,
+`-h`, or `--help` it SHALL print the same banner to stdout and exit `0`.
 
 #### Scenario: Delegated verb preserves output and exit code
 - **WHEN** `shipd locate no-such-change` runs in a repo where that change does
@@ -103,6 +103,12 @@ SHALL print the same banner to stdout and exit `0`.
   invocation creates the layout and exits `0` printing the
   `all shipd directories are ready` summary of `spec_status.py init`, proving
   the delegation
+
+#### Scenario: Worktree is a curated verb that delegates
+- **WHEN** `shipd worktree` runs with no trailing arguments
+- **THEN** the banner of `shipd --help` lists `worktree` among the verbs, and
+  the invocation prints `worktree.py`'s own usage — not the shipd banner —
+  and exits non-zero, proving the delegation
 
 ### Requirement: List in-flight changes
 id: cli-list

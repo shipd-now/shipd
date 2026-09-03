@@ -42,7 +42,7 @@ that the repo has no resolved content-directory layout and stop rather than
 inventing a path.
 
 **Where to run:** author the report inside its own worktree — create it first
-with `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/worktree.sh research-<slug>`
+with `"${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree research-<slug>`
 and work in `.worktrees/research-<slug>` — so the emitted
 `research/<slug>/report.md` artifact is born on the `change/research-<slug>`
 branch and ships in one PR.

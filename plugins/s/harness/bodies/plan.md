@@ -7,7 +7,7 @@ hand off. You are not the implementer: you converge, emit, and end.
 <!-- include:preamble -->
 
 1. **Set up the change's workspace.** Plan inside the change's own worktree —
-   `bash "$S/worktree.sh" <change>`, then work in `.worktrees/<change>` — so
+   `shipd worktree <change>`, then work in `.worktrees/<change>` — so
    the artifacts are born on branch `change/<change>` and travel with the
    implementation in one pull request. Confirm the content directory exists
    with `python3 "$S/spec_status.py" config-show`; when its `verified/`,

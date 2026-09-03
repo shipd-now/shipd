@@ -84,6 +84,7 @@ VERB_TABLE = {
     "board": ("dashboard.py", ["tui"]),
     "metrics": ("metrics.py", []),
     "lint": ("spec_lint.py", []),
+    "worktree": ("worktree.py", []),
 }
 
 # ``board`` leads with the interactive board and exposes its other renderings
@@ -113,6 +114,10 @@ verbs:
   board [text] [args]        the delivery board (default: full-screen)
   metrics [subverb]          delivery metrics (default: summary)
   lint [change]              structurally validate specs and change deltas
+  worktree <change> [--fresh]
+                             create the change's worktree, then run the
+                             configured post-worktree-scripts
+                             (also: remove, prune-branches, hooks)
   doctor                     preflight this environment for shipd
   statusline [install]       report or register the shipd statusline
   copilot [add|remove]       maintain the Copilot code-review skill in a repo

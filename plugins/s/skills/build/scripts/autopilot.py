@@ -39,6 +39,11 @@ from spec_lint import lint_change  # noqa: E402
 # ``--plugin-dir`` handed to driven sessions so ``/s:*`` skills load.
 PLUGIN_DIR = os.path.normpath(os.path.join(SCRIPTS_DIR, "..", "..", ".."))
 WORKTREE_SH = os.path.join(SCRIPTS_DIR, "worktree.sh")
+# The engine's worktree create path: the git mechanics of ``worktree.sh`` plus
+# the repo's configured ``post-worktree-scripts``, so a driven member's
+# worktree is already set up before its first stage runs. Creation goes
+# through here; the guarded teardown stays on the bash helper above.
+WORKTREE_PY = os.path.join(SCRIPTS_DIR, "worktree.py")
 GATE_PY = os.path.join(SCRIPTS_DIR, "spec_gate.py")
 REVIEW_GATE_PY = os.path.join(
     PLUGIN_DIR, "skills", "review", "scripts", "review_gate.py")
@@ -639,7 +644,7 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
     if heartbeat is not None:
         heartbeat.member_started(slug)
     out("Member %s (risk %s): creating worktree" % (slug, member.risk))
-    rc, _o, err = command_fn([WORKTREE_SH, slug], root)
+    rc, _o, err = command_fn([sys.executable, WORKTREE_PY, slug], root)
     if rc != 0 and "already exists" in err:
         # A dead run left the worktree/branch behind; reclaim before parking.
         # Guarded remove (activity guard disabled, every other guard in force),
@@ -667,7 +672,7 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
                     outcome="needs_human", stage="worktree",
                     reason="stale branch delete failed: %s"
                            % (berr.strip() or bout.strip() or brc)))
-        rc, _o, err = command_fn([WORKTREE_SH, slug], root)
+        rc, _o, err = command_fn([sys.executable, WORKTREE_PY, slug], root)
     if rc != 0:
         return _finish(MemberResult(
             outcome="needs_human", stage="worktree",

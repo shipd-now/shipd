@@ -79,8 +79,9 @@ planning already answered. Before authoring anything, gate on context:
 - **Workflow gate (before any artifact or code edit).** Confirm you are working
   inside the change's own worktree — `.worktrees/<change>` on branch
   `change/<change>`. If you are still in the main checkout, create it first with
-  `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/worktree.sh <change>` and continue
-  the whole lifecycle there. One
+  `"${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree <change>` — the engine create
+  path, which runs the repo's configured `post-worktree-scripts` after the
+  worktree exists — and continue the whole lifecycle there. One
   change = one worktree = one branch = one PR; never author artifacts or edit
   code directly in the main checkout.
 
@@ -786,7 +787,7 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
    *after* the squash merge, so a pre-merge sync would read a stale status).
    From the main checkout, spin up a fresh worktree and sync there:
    ```
-   "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/worktree.sh" epic-close-<slug> --fresh
+   "${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree epic-close-<slug> --fresh
    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" \
      --root .worktrees/epic-close-<slug> epic-sync <slug>
    ```
