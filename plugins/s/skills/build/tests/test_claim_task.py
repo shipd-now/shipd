@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """Tests for claim_task.sh group-aware claiming: parallel groups, barrier
-blocking, unready-group emptiness, and untagged (fully sequential) behavior.
+blocking, unready-group emptiness, untagged (fully sequential) behavior, and
+claim liveness — holder-stamped claim records, blocking `claim --wait`,
+state-guarded `complete`/`release`, claim lines in `status`, and
+`release --stale`.
 
 The script is driven as a black box via subprocess against a throwaway temp
 directory laid out as ``.shipd/planned/<change>/tasks.md`` (run with that temp
 root as cwd) — never against the real repo change dirs."""
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -25,6 +30,7 @@ class ClaimScriptTestBase(unittest.TestCase):
             self.root, ".shipd", "planned", CHANGE)
         os.makedirs(self.change_dir)
         self.tasks = os.path.join(self.change_dir, "tasks.md")
+        self.claims = os.path.join(self.change_dir, ".tasks.claims")
 
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
@@ -38,10 +44,52 @@ class ClaimScriptTestBase(unittest.TestCase):
             ["bash", SCRIPT, "claim", CHANGE],
             cwd=self.root, capture_output=True, text=True)
 
-    def cmd(self, action, *extra):
+    def cmd(self, action, *extra, **kw):
         return subprocess.run(
             ["bash", SCRIPT, action, CHANGE, *extra],
-            cwd=self.root, capture_output=True, text=True)
+            cwd=self.root, capture_output=True, text=True, **kw)
+
+    def raw(self, *args, **kw):
+        """Run the script with fully explicit argv (no implied change name)."""
+        return subprocess.run(
+            ["bash", SCRIPT, *args],
+            cwd=self.root, capture_output=True, text=True, **kw)
+
+    def env_without_session(self):
+        env = dict(os.environ)
+        env.pop("CLAUDE_CODE_SESSION_ID", None)
+        return env
+
+    def read_claims(self):
+        """Parse the claim sidecar into {id: (holder, epoch)}; {} when absent."""
+        if not os.path.exists(self.claims):
+            return {}
+        records = {}
+        with open(self.claims, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.rstrip("\n")
+                if not line:
+                    continue
+                parts = line.split("\t")
+                self.assertEqual(
+                    len(parts), 3, "claim record is not id<TAB>holder<TAB>epoch: %r" % line)
+                records[parts[0]] = (parts[1], int(parts[2]))
+        return records
+
+    def backdate(self, task_id, minutes):
+        """Rewrite one claim record's epoch to `minutes` ago."""
+        records = self.read_claims()
+        self.assertIn(task_id, records, "no claim record for task %s" % task_id)
+        holder, _ = records[task_id]
+        records[task_id] = (holder, int(time.time()) - minutes * 60)
+        with open(self.claims, "w", encoding="utf-8") as fh:
+            for tid, (who, epoch) in sorted(records.items(), key=lambda kv: int(kv[0])):
+                fh.write("%s\t%s\t%d\n" % (tid, who, epoch))
+
+    def boxes(self):
+        """The checkbox characters, in file order, as a string like ' ~x'."""
+        with open(self.tasks, encoding="utf-8") as fh:
+            return "".join(re.findall(r"- \[([ ~x])\]", fh.read()))
 
     def id_of(self, completed):
         """Parse the leading ordinal ID from a `ID<TAB>TEXT` stdout line."""
@@ -258,6 +306,319 @@ class BranchGuardTest(ClaimScriptTestBase):
         release = self.cmd("release", "1")
         self.assertEqual(release.returncode, 3)
         self.assertIn("change/%s" % CHANGE, release.stderr)
+
+
+class ClaimRecordTest(ClaimScriptTestBase):
+    """Every claim is stamped in the `.tasks.claims` sidecar with a holder and
+    a timestamp, and the record is cleared when the task is finished."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_tasks(
+            "## 1. Steps\n"
+            "- [ ] 1.1 [P1] a\n"
+            "- [ ] 1.2 [P1] b\n")
+
+    def test_claim_as_records_holder_and_timestamp(self):
+        before = int(time.time())
+        r = self.cmd("claim", "--as", "builder-2")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.id_of(r), "1")
+        records = self.read_claims()
+        self.assertIn("1", records)
+        holder, epoch = records["1"]
+        self.assertEqual(holder, "builder-2")
+        self.assertGreaterEqual(epoch, before)
+        self.assertLessEqual(epoch, int(time.time()) + 1)
+        # tasks.md carries the ordinary in-progress mark and nothing more.
+        self.assertEqual(self.boxes(), "~ ")
+        with open(self.tasks, encoding="utf-8") as fh:
+            self.assertNotIn("builder-2", fh.read())
+
+    def test_bare_claim_records_session_id_default(self):
+        env = self.env_without_session()
+        env["CLAUDE_CODE_SESSION_ID"] = "sess-abc"
+        r = self.cmd("claim", env=env)
+        self.assertEqual(self.id_of(r), "1")
+        self.assertEqual(self.read_claims()["1"][0], "sess-abc")
+
+    def test_bare_claim_without_session_id_records_anon(self):
+        r = self.cmd("claim", env=self.env_without_session())
+        self.assertEqual(self.id_of(r), "1")
+        self.assertEqual(self.read_claims()["1"][0], "anon")
+
+    def test_complete_and_release_clear_the_record(self):
+        self.cmd("claim", "--as", "b1")
+        self.cmd("claim", "--as", "b2")
+        self.assertEqual(sorted(self.read_claims()), ["1", "2"])
+        self.assertEqual(self.cmd("complete", "1").returncode, 0)
+        self.assertEqual(sorted(self.read_claims()), ["2"])
+        self.assertEqual(self.cmd("release", "2").returncode, 0)
+        self.assertEqual(self.read_claims(), {})
+        # The sidecar itself is removed once its last record goes.
+        self.assertFalse(os.path.exists(self.claims))
+
+
+class WaitTest(ClaimScriptTestBase):
+    """`claim --wait` blocks inside the single invocation until it wins a task,
+    nothing is pending, or the timeout passes."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_tasks(
+            "## 1. Steps\n"
+            "- [ ] 1.1 first\n"
+            "- [ ] 1.2 second\n")
+
+    def test_wait_returns_a_ready_task_immediately(self):
+        started = time.time()
+        r = self.cmd("claim", "--wait")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.id_of(r), "1")
+        self.assertLess(time.time() - started, 5)
+
+    def test_wait_blocks_through_a_barrier_then_claims(self):
+        self.assertEqual(self.id_of(self.claim()), "1")
+
+        def finish_barrier():
+            time.sleep(1.5)
+            self.cmd("complete", "1")
+
+        writer = threading.Thread(target=finish_barrier)
+        writer.start()
+        try:
+            r = self.cmd("claim", "--wait", "--timeout", "30")
+        finally:
+            writer.join()
+        self.assertEqual(r.returncode, 0)
+        # The same invocation that started while task 2 was blocked returns it.
+        self.assertEqual(self.id_of(r), "2")
+
+    def test_wait_times_out_empty_on_stdout(self):
+        self.assertEqual(self.id_of(self.claim()), "1")  # barrier held open
+        started = time.time()
+        r = self.cmd("claim", "--wait", "--timeout", "1")
+        elapsed = time.time() - started
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout.strip(), "")
+        self.assertIn("timed out", r.stderr)
+        self.assertLess(elapsed, 20)
+        # The blocked task is untouched.
+        self.assertEqual(self.boxes(), "~ ")
+
+    def test_wait_returns_at_once_when_nothing_is_pending(self):
+        self.write_tasks(
+            "## 1. Steps\n"
+            "- [x] 1.1 first\n"
+            "- [x] 1.2 second\n")
+        started = time.time()
+        r = self.cmd("claim", "--wait")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout.strip(), "")
+        self.assertIn("No pending tasks.", r.stderr)
+        self.assertLess(time.time() - started, 5)
+
+
+class StateGuardTest(ClaimScriptTestBase):
+    """`complete` and `release` refuse any task that is not in progress."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_tasks(
+            "## 1. Steps\n"
+            "- [x] 1.1 done already\n"
+            "- [ ] 1.2 pending\n"
+            "- [~] 1.3 in progress\n")
+
+    def test_completing_a_pending_task_is_refused(self):
+        r = self.cmd("complete", "2")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("pending", r.stderr)
+        self.assertEqual(self.boxes(), "x ~")
+
+    def test_releasing_a_completed_task_is_refused(self):
+        # Regression: `release <change> <id>` on a `- [x]` task used to flip it
+        # back to `- [ ]`, silently undoing finished work.
+        r = self.cmd("release", "1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("done", r.stderr)
+        self.assertEqual(self.boxes(), "x ~")
+
+    def test_releasing_a_pending_task_is_refused(self):
+        r = self.cmd("release", "2")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("pending", r.stderr)
+        self.assertEqual(self.boxes(), "x ~")
+
+    def test_completing_an_already_done_task_is_refused(self):
+        r = self.cmd("complete", "1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("done", r.stderr)
+        self.assertEqual(self.boxes(), "x ~")
+
+    def test_in_progress_task_still_completes(self):
+        r = self.cmd("complete", "3")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.boxes(), "x x")
+
+
+class HolderVerificationTest(ClaimScriptTestBase):
+    """Holder verification is soft: only an explicit, mismatching `--as` is
+    refused; a bare call acts exactly as it did before this change."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_tasks(
+            "## 1. Steps\n"
+            "- [ ] 1.1 [P1] a\n"
+            "- [ ] 1.2 [P1] b\n")
+
+    def test_mismatched_holder_on_complete_is_refused(self):
+        self.cmd("claim", "--as", "builder-1")
+        r = self.cmd("complete", "1", "--as", "builder-2")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("builder-1", r.stderr)
+        self.assertIn("builder-2", r.stderr)
+        self.assertEqual(self.boxes(), "~ ")
+
+    def test_mismatched_holder_on_release_is_refused(self):
+        self.cmd("claim", "--as", "builder-1")
+        r = self.cmd("release", "1", "--as", "builder-2")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("builder-1", r.stderr)
+        self.assertIn("builder-2", r.stderr)
+        self.assertEqual(self.boxes(), "~ ")
+
+    def test_matching_holder_completes(self):
+        self.cmd("claim", "--as", "builder-1")
+        r = self.cmd("complete", "1", "--as", "builder-1")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.boxes(), "x ")
+
+    def test_bare_call_ignores_the_recorded_holder(self):
+        self.cmd("claim", "--as", "builder-1")
+        r = self.cmd("complete", "1")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.boxes(), "x ")
+
+
+class StatusClaimLinesTest(ClaimScriptTestBase):
+    """`status` keeps its counts line byte-identical and appends one line per
+    in-progress task with holder, age, and a stale marker."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_tasks(
+            "## 1. Steps\n"
+            "- [ ] 1.1 [P1] a\n"
+            "- [ ] 1.2 [P1] b\n"
+            "- [ ] 1.3 [P1] c\n")
+
+    def claimed_lines(self, *extra):
+        r = self.cmd("status", *extra)
+        self.assertEqual(r.returncode, 0)
+        lines = r.stdout.rstrip("\n").split("\n")
+        return r, lines
+
+    def test_first_line_is_byte_identical(self):
+        self.cmd("claim", "--as", "b1")
+        r, lines = self.claimed_lines()
+        self.assertEqual(lines[0], "pending=2 in_progress=1 done=0")
+
+    def test_claimed_line_names_id_holder_and_age(self):
+        self.cmd("claim", "--as", "b1")
+        r, lines = self.claimed_lines()
+        claimed = [ln for ln in lines if ln.startswith("claimed:")]
+        self.assertEqual(len(claimed), 1)
+        self.assertRegex(claimed[0], r"^claimed: 1 by b1 age (\d+s|\d+m|\d+h \d+m)$")
+
+    def test_old_claim_is_marked_stale(self):
+        self.cmd("claim", "--as", "b1")
+        self.cmd("claim", "--as", "b2")
+        self.backdate("1", 45)
+        r, lines = self.claimed_lines()
+        claimed = [ln for ln in lines if ln.startswith("claimed:")]
+        self.assertEqual(len(claimed), 2)
+        self.assertEqual(claimed[0], "claimed: 1 by b1 age 45m [stale]")
+        self.assertNotIn("[stale]", claimed[1])
+
+    def test_stale_after_override(self):
+        self.cmd("claim", "--as", "b1")
+        self.backdate("1", 10)
+        _, lines = self.claimed_lines("--stale-after", "5")
+        self.assertIn("[stale]", lines[1])
+        _, lines = self.claimed_lines("--stale-after", "60")
+        self.assertNotIn("[stale]", lines[1])
+
+    def test_recordless_in_progress_is_visible_not_fatal(self):
+        self.write_tasks(
+            "## 1. Steps\n"
+            "- [~] 1.1 orphaned\n"
+            "- [ ] 1.2 next\n")
+        r, lines = self.claimed_lines()
+        self.assertEqual(lines[0], "pending=1 in_progress=1 done=0")
+        self.assertEqual(lines[1], "claimed: 1 by unknown age unknown [stale]")
+
+    def test_no_claim_lines_when_nothing_in_progress(self):
+        r, lines = self.claimed_lines()
+        self.assertEqual(lines, ["pending=3 in_progress=0 done=0"])
+
+
+class StaleReleaseTest(ClaimScriptTestBase):
+    """`release --stale <mins>` reclaims old and record-less claims only."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_tasks(
+            "## 1. Steps\n"
+            "- [ ] 1.1 [P1] a\n"
+            "- [ ] 1.2 [P1] b\n"
+            "- [~] 1.3 [P1] orphaned\n")
+
+    def test_stale_claims_are_reclaimed_fresh_ones_spared(self):
+        self.cmd("claim", "--as", "old-holder")   # task 1
+        self.cmd("claim", "--as", "fresh")        # task 2
+        self.backdate("1", 45)
+        r = self.cmd("release", "--stale", "30")
+        self.assertEqual(r.returncode, 0)
+        released = [ln for ln in r.stdout.rstrip("\n").split("\n") if ln]
+        self.assertEqual(len(released), 2, r.stdout)
+        self.assertIn("old-holder", released[0])
+        self.assertIn("45m", released[0])
+        self.assertIn("Task 1 released", released[0])
+        self.assertIn("Task 3 released", released[1])
+        # Task 1 (old) and task 3 (record-less) are back to pending; task 2 is
+        # untouched and keeps its record.
+        self.assertEqual(self.boxes(), " ~ ")
+        self.assertEqual(sorted(self.read_claims()), ["2"])
+
+    def test_nothing_stale_is_a_clean_no_op(self):
+        self.write_tasks(
+            "## 1. Steps\n"
+            "- [ ] 1.1 [P1] a\n"
+            "- [ ] 1.2 [P1] b\n")
+        self.cmd("claim", "--as", "fresh")
+        r = self.cmd("release", "--stale", "30")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("No stale claims.", r.stdout)
+        self.assertEqual(self.boxes(), "~ ")
+        self.assertEqual(sorted(self.read_claims()), ["1"])
+
+    def test_flags_before_the_change_name_are_accepted(self):
+        self.cmd("claim", "--as", "old-holder")
+        self.backdate("1", 45)
+        r = self.raw("release", "--stale", "30", CHANGE)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("Task 1 released", r.stdout)
+        # The stale claim and the record-less `- [~]` both go back to pending.
+        self.assertEqual(self.boxes(), "   ")
+
+    def test_an_id_and_stale_are_mutually_exclusive(self):
+        self.cmd("claim", "--as", "b1")
+        r = self.cmd("release", "1", "--stale", "30")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self.boxes(), "~ ~")
+        self.assertEqual(sorted(self.read_claims()), ["1"])
 
 
 if __name__ == "__main__":
