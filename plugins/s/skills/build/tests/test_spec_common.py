@@ -885,6 +885,150 @@ class ProjectOfTest(unittest.TestCase):
                 sc.project_of(ws, "apps/backend/repo-x"), "beta")
 
 
+class WorkspaceUniverseSeamTest(unittest.TestCase):
+    """workspace_project_roots / aggregation_universes: the single shared
+    universe-discovery seam every board-shaped read surface consumes
+    (shipd-workspace workspace-universe-discovery). ``$HOME`` is overridden so
+    the real home config never masquerades as an ancestor workspace."""
+
+    def _workspace(self, tmp, projects, repo_dirs=()):
+        """Declare ``projects`` as the registry of a workspace root at ``tmp``
+        and create ``repo_dirs`` (workspace-root-relative) on disk."""
+        ws = os.path.realpath(tmp)
+        _write_ws_config(ws, {"projects": projects})
+        for name in repo_dirs:
+            os.makedirs(os.path.join(ws, name), exist_ok=True)
+        return ws
+
+    def test_workspace_level_yields_declared_repos_in_slug_order(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = self._workspace(tmp, {
+                "zeta": {"repos": ["repos/zeta"]},
+                "alpha": {"repos": ["repos/alpha"]},
+            }, ("repos/zeta", "repos/alpha"))
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.workspace_project_roots(ws),
+                    [("alpha", os.path.join(ws, "repos/alpha")),
+                     ("zeta", os.path.join(ws, "repos/zeta"))])
+
+    def test_repos_of_one_project_keep_declaration_order(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = self._workspace(tmp, {
+                "alpha": {"repos": ["repos/web", {"path": "repos/api"}]},
+            }, ("repos/web", "repos/api"))
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.workspace_project_roots(ws),
+                    [("alpha", os.path.join(ws, "repos/web")),
+                     ("alpha", os.path.join(ws, "repos/api"))])
+
+    def test_aggregation_universes_lists_the_invocation_root_first(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = self._workspace(tmp, {
+                "alpha": {"repos": ["repos/alpha"]},
+            }, ("repos/alpha",))
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.aggregation_universes(ws),
+                    [(None, ws), ("alpha", os.path.join(ws, "repos/alpha"))])
+
+    def test_inside_a_member_repo_the_seam_yields_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = self._workspace(tmp, {
+                "alpha": {"repos": ["repos/alpha"]},
+                "beta": {"repos": ["repos/beta"]},
+            }, ("repos/alpha", "repos/beta"))
+            repo = os.path.join(ws, "repos/alpha")
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.workspace_project_roots(repo), [])
+                self.assertEqual(sc.aggregation_universes(repo), [(None, repo)])
+
+    def test_absent_repo_directory_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = self._workspace(tmp, {
+                "alpha": {"repos": ["repos/alpha"]},
+                "gone": {"repos": ["repos/gone"]},
+            }, ("repos/alpha",))
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.workspace_project_roots(ws),
+                    [("alpha", os.path.join(ws, "repos/alpha"))])
+
+    def test_duplicate_real_path_via_symlink_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = self._workspace(tmp, {
+                "alpha": {"repos": ["repos/alpha"]},
+                "beta": {"repos": ["repos/alpha-link"]},
+            }, ("repos/alpha",))
+            os.symlink(os.path.join(ws, "repos/alpha"),
+                       os.path.join(ws, "repos/alpha-link"))
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.workspace_project_roots(ws),
+                    [("alpha", os.path.join(ws, "repos/alpha"))])
+
+    def test_entry_resolving_to_the_invocation_root_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = self._workspace(tmp, {
+                "alpha": {"repos": ["repos/alpha"]},
+                "self": {"repos": [{"path": "."}]},
+            }, ("repos/alpha",))
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.workspace_project_roots(ws),
+                    [("alpha", os.path.join(ws, "repos/alpha"))])
+
+    def test_non_object_project_entry_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = self._workspace(tmp, {
+                "alpha": {"repos": ["repos/alpha"]},
+                "broken": "not-an-object",
+            }, ("repos/alpha",))
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.workspace_project_roots(ws),
+                    [("alpha", os.path.join(ws, "repos/alpha"))])
+
+    def test_malformed_repo_entry_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = self._workspace(tmp, {
+                "alpha": {"repos": [5, {"url": "x"}, "repos/alpha"]},
+                "listless": {"repos": "repos/alpha"},
+            }, ("repos/alpha",))
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.workspace_project_roots(ws),
+                    [("alpha", os.path.join(ws, "repos/alpha"))])
+
+    def test_unparseable_registry_yields_the_single_universe(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            _write_raw_config(ws, "{ not json")
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.workspace_project_roots(ws), [])
+                self.assertEqual(sc.aggregation_universes(ws), [(None, ws)])
+
+    def test_no_workspace_discoverable_yields_the_single_universe(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.join(os.path.realpath(tmp), "repo")
+            os.makedirs(root, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.workspace_project_roots(root), [])
+                self.assertEqual(sc.aggregation_universes(root), [(None, root)])
+
+
 class LayeredConfigTest(unittest.TestCase):
     """load_layered_config / resolve_config / specs_dirname / specs_dir: the
     ``.shipd-config.json`` layered resolution (shipd-config config-file-discovery,

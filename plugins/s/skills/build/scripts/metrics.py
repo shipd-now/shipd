@@ -385,6 +385,23 @@ def _member_state_and_location(root, slug):
     return state, os.path.abspath(hosting_root)
 
 
+def _epic_file_path(root, epic):
+    """The on-disk ``epic.md`` path for one named epic, resolved through the
+    engine's shared worktree-aware seam (:func:`spec_status._epic_hosting_root`):
+    the invocation root's own copy first, then each of its worktrees in sorted
+    name order.
+
+    Falls back to the plain root-relative path when no candidate hosts the epic,
+    so a genuinely missing epic still reads as missing (the ``None``/zero paths
+    the callers already take) rather than raising. Deliberately per-repo — the
+    declared workspace project universes never enter metrics, whose semantics
+    stay scoped to one repository."""
+    hosting_root = ss._epic_hosting_root(root, epic)
+    if hosting_root is None:
+        return os.path.join(sc.specs_dir(root), "epics", epic, "epic.md")
+    return ss._epic_path(hosting_root, epic)
+
+
 def _member_age_days(location, slug, now):
     """Work-item age in days from the member's ``plan.md`` mtime at
     ``location``, or ``None`` when no such artifact exists — age is **never
@@ -406,7 +423,13 @@ def _member_age_days(location, slug, now):
 def collect_wip(root, now):
     """Collect the live WIP snapshot from the epic tables.
 
-    Walks every ``.shipd/epics/*/epic.md``'s ``## Changes`` stub table (via
+    Enumerates the epics through the engine's shared worktree-aware discovery
+    seam (:func:`spec_status.all_epic_slugs_with_roots`, the same one the status
+    CLI and the dashboard consume), reading each epic from its hosting root, so
+    an epic authored inside a ``.worktrees/<name>`` checkout counts exactly as a
+    root-hosted one does. Scoped to the invocation root and its own worktrees —
+    never the declared project universes, since metric semantics stay per-repo.
+    Walks each epic's ``## Changes`` stub table (via
     :func:`spec_common.parse_epic_changes`), resolves each member's
     worktree-aware lifecycle state, and keeps only the **in-flight** members —
     those that have entered the process (have a plan) but not exited it
@@ -420,17 +443,12 @@ def collect_wip(root, now):
     """
     items = []
     seen = set()
-    epics_dir = os.path.join(sc.specs_dir(root), "epics")
-    try:
-        epic_names = sorted(os.listdir(epics_dir))
-    except OSError:
-        epic_names = []
-    for epic_name in epic_names:
-        epic_path = os.path.join(epics_dir, epic_name, "epic.md")
+    for epic_name, epic_root in ss.all_epic_slugs_with_roots(root):
         try:
-            with open(epic_path, encoding="utf-8") as fh:
+            with open(ss._epic_path(epic_root, epic_name),
+                      encoding="utf-8") as fh:
                 text = fh.read()
-        except OSError:
+        except (OSError, sc.ConfigError):
             continue
         _header, rows = sc.parse_epic_changes(text)
         for slug, _description, _ratings in rows:
@@ -513,27 +531,24 @@ def flow_snapshot(root):
     """The board's full-band lifecycle membership: ``{state: [slug, ...]}`` with
     every state's slug list sorted and deduplicated.
 
-    Walks every ``.shipd/epics/*/epic.md``'s ``## Changes`` stub table (the same
+    Walks each epic's ``## Changes`` stub table (the same
     :func:`spec_common.parse_epic_changes` + :func:`_member_state_and_location`
-    resolution :func:`collect_wip` uses) but keeps **every** band — including
-    ``unplanned`` (the backlog band) and ``archived`` (the cumulative-done band)
-    that :func:`collect_wip` excludes, since a cumulative-flow diagram needs
-    them. A slug seen in more than one epic is attributed to its first-seen
-    state and counted once; no member is attributed to an individual.
+    resolution :func:`collect_wip` uses, over the same shared worktree-aware
+    epic-discovery seam, each epic read from its hosting root) but keeps
+    **every** band — including ``unplanned`` (the backlog band) and ``archived``
+    (the cumulative-done band) that :func:`collect_wip` excludes, since a
+    cumulative-flow diagram needs them. A slug seen in more than one epic is
+    attributed to its first-seen state and counted once; no member is attributed
+    to an individual.
     """
     by_state = {}
     seen = set()
-    epics_dir = os.path.join(sc.specs_dir(root), "epics")
-    try:
-        epic_names = sorted(os.listdir(epics_dir))
-    except OSError:
-        epic_names = []
-    for epic_name in epic_names:
-        epic_path = os.path.join(epics_dir, epic_name, "epic.md")
+    for epic_name, epic_root in ss.all_epic_slugs_with_roots(root):
         try:
-            with open(epic_path, encoding="utf-8") as fh:
+            with open(ss._epic_path(epic_root, epic_name),
+                      encoding="utf-8") as fh:
                 text = fh.read()
-        except OSError:
+        except (OSError, sc.ConfigError):
             continue
         _header, rows = sc.parse_epic_changes(text)
         for slug, _description, _ratings in rows:
@@ -1279,16 +1294,20 @@ def epic_remaining(root, epic):
     """The sorted slugs of an epic's **remaining** members — the epic stub-table
     members whose worktree-aware lifecycle state is not ``archived``.
 
-    Reads ``.shipd/epics/<epic>/epic.md``, parses its ``## Changes`` stub table via
-    :func:`spec_common.parse_epic_changes`, and resolves each member through the
-    same worktree-aware :func:`_member_state_and_location` walk the WIP snapshot
-    uses. "Remaining" means *not yet shipped*, so ``unplanned`` and every
-    in-flight state count; only ``archived`` (shipped/exited) members are
-    dropped. Returns the sorted remaining slugs, or ``None`` when the epic file
-    does not exist (an epic typo is user error the verb reports, unlike an empty
-    history which degrades to n/a).
+    Reads the epic from the root the shared worktree-aware seam
+    (:func:`spec_status._epic_hosting_root`) resolves — the invocation root's
+    own copy first, then its worktrees — falling back to the root-relative path
+    so a genuinely missing epic still reports as missing. Parses its
+    ``## Changes`` stub table via :func:`spec_common.parse_epic_changes`, and
+    resolves each member through the same worktree-aware
+    :func:`_member_state_and_location` walk the WIP snapshot uses. "Remaining"
+    means *not yet shipped*, so ``unplanned`` and every in-flight state count;
+    only ``archived`` (shipped/exited) members are dropped. Returns the sorted
+    remaining slugs, or ``None`` when the epic file does not exist (an epic typo
+    is user error the verb reports, unlike an empty history which degrades to
+    n/a).
     """
-    epic_path = os.path.join(sc.specs_dir(root), "epics", epic, "epic.md")
+    epic_path = _epic_file_path(root, epic)
     try:
         with open(epic_path, encoding="utf-8") as fh:
             text = fh.read()
@@ -1478,8 +1497,9 @@ def _build_exec_block(metrics_dict):
 
 
 def _epic_member_total(root, epic):
-    """The count of stub-table member rows in an epic (its planned scope)."""
-    epic_path = os.path.join(sc.specs_dir(root), "epics", epic, "epic.md")
+    """The count of stub-table member rows in an epic (its planned scope), read
+    from the epic's hosting root via :func:`_epic_file_path`."""
+    epic_path = _epic_file_path(root, epic)
     try:
         with open(epic_path, encoding="utf-8") as fh:
             text = fh.read()
@@ -1516,12 +1536,9 @@ def _build_pm_block(root, metrics_dict, now, config, runs, seed):
     caution = _sparse_caution(_history_summary(daily_counts))
 
     epics = []
-    epics_dir = os.path.join(sc.specs_dir(root), "epics")
-    try:
-        epic_names = sorted(os.listdir(epics_dir))
-    except OSError:
-        epic_names = []
-    for epic_name in epic_names:
+    # Enumerated through the shared worktree-aware discovery seam, so a
+    # worktree-authored epic appears here exactly as it does on the board.
+    for epic_name, _epic_root in ss.all_epic_slugs_with_roots(root):
         remaining = epic_remaining(root, epic_name)
         if remaining is None:
             continue

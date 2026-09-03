@@ -1892,6 +1892,272 @@ class WorkspaceBoardAggregationTest(WorkspaceReportTest):
             ["shared [proj-a] (1)", "shared [proj-b] (1)"])
 
 
+class WorkspaceUniverseVerbTest(WorkspaceBoardAggregationTest):
+    """``epic-show`` (and ``show``'s epic fallback) and ``locate`` resolve
+    across the declared workspace project universes the engine's shared
+    universe-discovery seam yields (spec-status epic-status-verbs, locate-verb,
+    json-output), the invocation root's own universe always winning first,
+    while the mutating epic verbs stay invocation-root-only and the bare
+    ``show`` board renders exactly as it does today.
+
+    Written test-first; expected to FAIL until the universe resolution lands
+    in ``spec_status.py`` (tasks 3.1-3.3)."""
+
+    def blocks(self, stdout):
+        """Split ``locate``'s stdout into a list of ``{key: value}`` dicts, one
+        per blank-line-separated keyed block."""
+        result = []
+        for chunk in stdout.strip().split("\n\n"):
+            block = {}
+            for line in chunk.splitlines():
+                if ":" in line:
+                    key, _, value = line.partition(":")
+                    block[key.strip()] = value.strip()
+            if block:
+                result.append(block)
+        return result
+
+    def json_at(self, root, *args):
+        r = self.cli_at(root, *args)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def project_epic_fixture(self, status="active"):
+        """A workspace root declaring ``proj-a``, whose repo hosts epic ``pe1``
+        with an archived member ``pm1`` and an unplanned member ``pm2``."""
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        self.make_epic("pe1", status=status,
+                       metadata=["Theme: reliability"],
+                       rows=[("pm1", "A", ("low",) * 4),
+                             ("pm2", "B", ("high",) * 4)],
+                       root=repo)
+        self.make_repo_completed(repo, "pm1")
+        return repo
+
+    # -- (1) epic-show resolves a project-hosted epic ------------------------
+
+    def test_epic_show_resolves_a_project_hosted_epic(self):
+        self.project_epic_fixture()
+        r = self.cli("epic-show", "pe1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "pe1: active")
+        self.assertEqual(lines[1], "Theme: reliability")
+        self.assertEqual(lines[2], "project: proj-a")
+        # Member states derive from the project repo, not the invocation root.
+        self.assertIn("shipped 1/2", lines)
+        self.assertEqual(self.lane_of(out, "pm1"), "SHIPPED")
+        self.assertEqual(self.lane_of(out, "pm2"), "UNPLANNED")
+
+    def test_project_line_follows_the_worktree_line(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        self.make_epic("pe1", status="ready",
+                       metadata=["Theme: reliability"],
+                       rows=[("pm1", "A", ("low",) * 4)],
+                       root=os.path.join(repo, ".worktrees", "epic-pe1"))
+        r = self.cli("epic-show", "pe1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[0], "pe1: ready")
+        self.assertEqual(lines[1], "Theme: reliability")
+        self.assertEqual(lines[2], "worktree: epic-pe1")
+        self.assertEqual(lines[3], "project: proj-a")
+
+    def test_a_root_hosted_epic_carries_no_project_line(self):
+        self.declare_projects("proj-a")
+        self.make_project_repo("proj-a")
+        self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])
+        r = self.cli("epic-show", "e1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("project:", r.stdout)
+
+    def test_the_invocation_root_universe_wins_a_shared_slug(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        self.make_epic("shared", status="ready",
+                       rows=[("m1", "A", ("low",) * 4)])
+        self.make_epic("shared", status="complete",
+                       rows=[("pm1", "B", ("low",) * 4)], root=repo)
+        r = self.cli("epic-show", "shared")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines()[0], "shared: ready")
+        self.assertNotIn("project:", r.stdout)
+        self.assertIsNotNone(self.member_line(r.stdout, "m1"))
+        self.assertIsNone(self.member_line(r.stdout, "pm1"))
+
+    def test_show_fallback_matches_epic_show_for_a_project_epic(self):
+        self.project_epic_fixture()
+        show = self.cli("show", "pe1")
+        epic_show = self.cli("epic-show", "pe1")
+        self.assertEqual(show.returncode, 0, show.stderr)
+        self.assertEqual(epic_show.returncode, 0, epic_show.stderr)
+        # Byte-identical: one renderer serves both verbs, project universes too.
+        self.assertEqual(show.stdout, epic_show.stdout)
+        self.assertIn("project: proj-a", show.stdout)
+
+    def test_inside_a_member_repo_epic_show_stays_per_repo(self):
+        self.declare_projects("proj-a", "proj-b")
+        repo_a = self.make_project_repo("proj-a")
+        self.make_project_repo("proj-b")
+        self.make_epic("pe2", status="ready",
+                       rows=[("pm2", "B", ("low",) * 4)],
+                       root=os.path.join(self.root, "proj-b"))
+        r = self.cli_at(repo_a, "epic-show", "pe2")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("epic 'pe2' not found", r.stderr)
+
+    # -- (2) the mutating epic verbs never reach a project universe ---------
+
+    def test_epic_sync_refuses_a_project_hosted_epic(self):
+        repo = self.project_epic_fixture(status="ready")
+        path = os.path.join(repo, ".shipd", "epics", "pe1", "epic.md")
+        with open(path, encoding="utf-8") as fh:
+            before = fh.read()
+        r = self.cli("epic-sync", "pe1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("epic 'pe1' not found", r.stderr)
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), before)
+
+    def test_epic_set_status_refuses_a_project_hosted_epic(self):
+        repo = self.project_epic_fixture(status="draft")
+        path = os.path.join(repo, ".shipd", "epics", "pe1", "epic.md")
+        with open(path, encoding="utf-8") as fh:
+            before = fh.read()
+        r = self.cli("epic-set-status", "ready", "pe1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("epic 'pe1' not found", r.stderr)
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), before)
+
+    # -- (3) epic-show --json carries the owning project --------------------
+
+    def test_epic_show_json_carries_the_owning_project(self):
+        self.project_epic_fixture()
+        data = self.json_at(self.root, "epic-show", "pe1", "--json")
+        self.assertEqual(data["kind"], "epic")
+        self.assertEqual(data["project"], "proj-a")
+        self.assertIsNone(data["worktree"])
+        self.assertEqual(data["shipped"], {"done": 1, "total": 2})
+
+    def test_a_root_hosted_epics_json_project_is_null(self):
+        self.declare_projects("proj-a")
+        self.make_project_repo("proj-a")
+        self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])
+        data = self.json_at(self.root, "epic-show", "e1", "--json")
+        self.assertIsNone(data["project"])
+
+    # -- (4) locate resolves across the universes ---------------------------
+
+    def test_locate_finds_a_project_repo_change(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        self.make_repo_change(repo, "pchange", "active")
+        r = self.cli("locate", "pchange")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["change"], "pchange")
+        self.assertEqual(blocks[0]["root"], os.path.abspath(repo))
+        self.assertEqual(blocks[0]["dir"],
+                         os.path.join(".shipd", "planned", "pchange"))
+        self.assertEqual(blocks[0]["status"], "active")
+        self.assertEqual(blocks[0]["project"], "proj-a")
+
+    def test_locate_lists_the_root_block_before_the_project_block(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        self.make_change("both", status="ready")
+        self.make_repo_change(repo, "both", "active")
+        r = self.cli("locate", "both")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual([b["root"] for b in blocks],
+                         [os.path.abspath(self.root), os.path.abspath(repo)])
+        # Only the project block carries the annotation.
+        self.assertNotIn("project", blocks[0])
+        self.assertEqual(blocks[1]["project"], "proj-a")
+
+    def test_locate_finds_a_change_in_a_project_repos_worktree(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        wt = os.path.join(repo, ".worktrees", "member-a")
+        self.make_repo_change(wt, "member-a", "rejected")
+        r = self.cli("locate", "member-a")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["root"], os.path.abspath(wt))
+        self.assertEqual(blocks[0]["status"], "rejected")
+        self.assertEqual(blocks[0]["project"], "proj-a")
+
+    def test_inside_a_member_repo_locate_stays_per_repo(self):
+        self.declare_projects("proj-a", "proj-b")
+        repo_a = self.make_project_repo("proj-a")
+        repo_b = self.make_project_repo("proj-b")
+        self.make_repo_change(repo_a, "x", "ready")
+        self.make_repo_change(repo_b, "x", "active")
+        r = self.cli_at(repo_a, "locate", "x")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["root"], os.path.abspath(repo_a))
+        self.assertNotIn("project", blocks[0])
+
+    def test_locate_of_an_unknown_change_still_errors(self):
+        self.declare_projects("proj-a")
+        self.make_project_repo("proj-a")
+        r = self.cli("locate", "no-such-change")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no-such-change", r.stderr)
+        self.assertIn(os.path.abspath(self.root), r.stderr)
+
+    # -- (5) locate --json rows always carry their project ------------------
+
+    def test_locate_json_rows_always_carry_their_project(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        self.make_change("both", status="ready")
+        self.make_repo_change(repo, "both", "active")
+        rows = self.json_at(self.root, "locate", "both", "--json")
+        self.assertEqual(
+            rows,
+            [{"change": "both", "root": os.path.abspath(self.root),
+              "dir": os.path.join(".shipd", "planned", "both"),
+              "status": "ready", "project": None},
+             {"change": "both", "root": os.path.abspath(repo),
+              "dir": os.path.join(".shipd", "planned", "both"),
+              "status": "active", "project": "proj-a"}])
+
+    # -- (6) the bare board renders exactly as it does today ----------------
+
+    def test_the_workspace_board_renders_unchanged_through_the_seam(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])
+        self.make_epic("pe1", status="ready",
+                       rows=[("pm1", "B", ("low",) * 4)], root=repo)
+        self.make_repo_change(repo, "psolo", "active")
+        self.assertEqual(
+            self.report(),
+            "2 specs · 2 epics · 0 initiatives\n"
+            "shipped 0/3\n"
+            "\n"
+            "UNPLANNED (2)\n"
+            "  %-20s %-22s %-12s risk %s\n"
+            "  %-20s %-22s %-12s risk %s [proj-a]\n"
+            "READY (0)\n"
+            "BUILDING (1)\n"
+            "  %-20s %-22s %-12s risk %s [proj-a]\n"
+            "SHIPPED (0)\n"
+            % ("e1", "m1", "unplanned", "low",
+               "pe1", "pm1", "unplanned", "low",
+               "standalone", "psolo", "active", "?"))
+
+
 class InitiativeVerbTest(SpecStatusTestBase):
     """The three initiative status verbs (spec-status initiative-status-verbs):
     ``initiative-show``, ``initiative-sync``, ``initiative-set-status``.
@@ -4771,7 +5037,7 @@ class LocateJsonTest(SpecStatusTestBase):
             json.loads(r.stdout),
             [{"change": "dark-mode", "root": os.path.abspath(self.root),
               "dir": os.path.join(".shipd", "planned", "dark-mode"),
-              "status": "rejected"}])
+              "status": "rejected", "project": None}])
 
     def test_locate_json_lists_root_before_worktree_matches(self):
         self.make_change("both", status="active")
@@ -4782,6 +5048,9 @@ class LocateJsonTest(SpecStatusTestBase):
         self.assertEqual([row["root"] for row in rows],
                          [os.path.abspath(self.root), os.path.abspath(wt)])
         self.assertEqual([row["status"] for row in rows], ["active", "ready"])
+        # A match from the invocation root's own universe carries a null
+        # project, worktree matches included.
+        self.assertEqual([row["project"] for row in rows], [None, None])
 
     def test_locate_text_is_unchanged_without_the_flag(self):
         self.make_change("dark-mode", status="rejected")

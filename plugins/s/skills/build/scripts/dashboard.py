@@ -827,10 +827,28 @@ def member_signal(member, entry):
     return None
 
 
+def _card_spec_parts(spec):
+    """One card spec normalized to ``(epic_slug, epic_status, member, entry,
+    project)``.
+
+    :func:`_lane_contents` emits the five-element form — the epic's ``project``
+    is half of its identity (delivery-dashboard board-aggregation), and without
+    it a card cannot say which universe's copy of its slug it belongs to. A
+    hand-built four-element fixture spec is read as carrying no project, so it
+    behaves exactly as it did on a single-universe board. Pure — no
+    ``textual``."""
+    epic_slug, epic_status, member, entry = spec[:4]
+    project = spec[4] if len(spec) > 4 else None
+    return epic_slug, epic_status, member, entry, project
+
+
 def _lane_contents(board, now=None):
     """The exact per-lane data ``_render_lanes`` mounts, derived purely from
     ``board``: for every lane in :data:`LANES`, the ordered list of card
-    specs ``(epic_slug, epic_status, member, entry)``. The ``shipped`` lane's
+    specs ``(epic_slug, epic_status, member, entry, project)`` — the epic's
+    ``project`` riding along because epic slugs are not unique across
+    universes, so only the ``(slug, project)`` pair identifies the epic a card
+    belongs to (delivery-dashboard board-aggregation). The ``shipped`` lane's
     cards stay grouped per epic implicitly — since epics are walked in board
     order, one epic's shipped members are always contiguous in its list — so
     ``_render_lanes`` can fold consecutive same-epic runs into one
@@ -859,7 +877,8 @@ def _lane_contents(board, now=None):
                 entry = dict(entry)
                 entry["stale"] = True
                 entry["stage"] = _age(hb.get("updated_at"), verb="died")
-            contents[lane_name].append((epic["slug"], status, member, entry))
+            contents[lane_name].append(
+                (epic["slug"], status, member, entry, epic.get("project")))
     # Standalone changes (planned outside any epic) fold in under the pseudo-
     # epic slug `standalone` (status None) with an empty heartbeat entry, so the
     # same `_member_column` state→lane mapping epic members use places them and
@@ -868,7 +887,12 @@ def _lane_contents(board, now=None):
     for member in board.get("standalone", []):
         entry = {}
         lane_name = _member_column(member, entry, now=now)
-        contents[lane_name].append(("standalone", None, member, entry))
+        # The pseudo-epic carries no project of its own: standalone rows from
+        # every universe share one `standalone` group exactly as they always
+        # have (their own `project` rides on the row, and their artifacts
+        # resolve from the row's `location`), and they have no epic-scoped
+        # actions to mis-root.
+        contents[lane_name].append(("standalone", None, member, entry, None))
     return contents
 
 
@@ -1117,30 +1141,60 @@ def build_board(root, epic=None):
     Returns ``{"root", "generated_at", "epics": [...], "groups": [...],
     "standalone": [...]}`` where each epic carries its status, theme, initiative
     context, hosting ``location``, worktree-aware member states, live heartbeat,
-    and last run report (design: board data shape). Epics are discovered
-    through :func:`_epic_slugs` — the invocation root's own first, then those
-    hosted only under a ``.worktrees/<name>`` worktree, each aggregated exactly
-    once from its hosting root — so an epic authored in its own worktree is on
-    the board before its PR merges. The flat ``epics`` list is preserved;
-    ``groups`` buckets those same epic dicts under their initiative (a
-    workspace-wide group for epics carrying no ``Initiative:``);
-    ``standalone`` holds the changes planned outside any epic
+    and last run report (design: board data shape).
+
+    The board aggregates one **universe** per repo the engine's shared
+    universe-discovery seam yields (``sc.aggregation_universes``,
+    shipd-workspace workspace-universe-discovery): the invocation root's own
+    always, plus — for a workspace-level invocation — each declared project
+    repo in slug order. Within a universe the pipeline is exactly what it has
+    always been: epics discovered through :func:`_epic_slugs` (that universe's
+    root first, then those hosted only under one of its ``.worktrees/<name>``
+    worktrees, each aggregated exactly once from its hosting root), members and
+    standalone changes derived against that universe's root. Every epic dict
+    gains its owning declared project's slug as ``project`` (``None`` for the
+    invocation root's own universe) and its universe's absolute root as
+    ``universe_root`` — the root a board action's launch is built against, so a
+    project member's worktree, the driver's ``--root``, and the session working
+    directory all land in that project's repo — and every standalone row gains
+    the same ``project``. Epic slugs are **not** deduplicated across universes:
+    separate repos are separate spec universes, told apart by their ``project``.
+
+    The flat ``epics`` list is preserved; ``groups`` buckets those same epic
+    dicts under their initiative (a workspace-wide group for epics carrying no
+    ``Initiative:``); ``standalone`` holds the changes planned outside any epic
     (:func:`standalone_changes`, empty when none), each with empty board
-    ``actions`` (run/open are epic-scoped). An explicit ``epic`` no candidate
-    hosts raises ``ValueError`` — the CLI turns it into a one-line error rather
-    than a raw FileNotFoundError from ``_epic_board``."""
-    if epic is not None:
-        hosting_root = ss._epic_hosting_root(root, epic)
-        if hosting_root is None:
-            raise ValueError(
-                "epic '%s' not found under %s" % (epic, sc.specs_dir(root)))
-        pairs = [(epic, hosting_root)]
-    else:
-        pairs = _epic_slugs(root)
-    epics = [_epic_board(root, s, hosting_root=r) for s, r in pairs]
-    standalone = standalone_changes(root, _all_epic_member_slugs(root))
-    for row in standalone:
-        row["actions"] = []
+    ``actions`` (run/open are epic-scoped) and discovered per universe with
+    that universe's own member-slug exclusion set. An explicit ``epic``
+    resolves against the universes in seam order, the first hosting universe
+    winning; one no universe hosts raises ``ValueError`` — the CLI turns it
+    into a one-line error rather than a raw FileNotFoundError from
+    ``_epic_board``."""
+    epics = []
+    standalone = []
+    for project, universe_root in sc.aggregation_universes(root):
+        if epic is None:
+            pairs = _epic_slugs(universe_root)
+        elif epics:
+            # An earlier universe already hosts the scoped epic — the first
+            # hosting universe wins, so this one contributes no epic row.
+            pairs = []
+        else:
+            hosting_root = ss._epic_hosting_root(universe_root, epic)
+            pairs = [] if hosting_root is None else [(epic, hosting_root)]
+        for slug, hosting_root in pairs:
+            row = _epic_board(universe_root, slug, hosting_root=hosting_root)
+            row["project"] = project
+            row["universe_root"] = os.path.abspath(universe_root)
+            epics.append(row)
+        for row in standalone_changes(universe_root,
+                                      _all_epic_member_slugs(universe_root)):
+            row["actions"] = []
+            row["project"] = project
+            standalone.append(row)
+    if epic is not None and not epics:
+        raise ValueError(
+            "epic '%s' not found under %s" % (epic, sc.specs_dir(root)))
     board = {
         "root": os.path.abspath(root),
         "generated_at": time.time(),
@@ -1159,6 +1213,27 @@ def build_board(root, epic=None):
 # Pure renderers
 # ---------------------------------------------------------------------------
 
+def epic_universe_root(epic, board_root):
+    """The root an epic's ``[worktree]`` marker and its board actions resolve
+    against: its own universe's root when the aggregation gave it one, else the
+    board root (delivery-dashboard board-aggregation).
+
+    A project universe's epic lives under its own repo, so both its marker and
+    its launches must measure from that repo — not the invocation root the
+    board was built at. A hand-built fixture carrying no ``universe_root``
+    falls back to ``board_root``, keeping the single-universe rendering
+    byte-identical. Pure — no ``textual``."""
+    return epic.get("universe_root") or board_root
+
+
+def _project_marker(project):
+    """The ``  [<project>]`` text-board marker for an epic aggregated from a
+    declared project universe — the empty string for the invocation root's own
+    universe (``None``), so a single-universe board renders exactly as it
+    always has (delivery-dashboard board-aggregation)."""
+    return "  [%s]" % project if project else ""
+
+
 def _render_epic_lines(epic, board_root):
     """Render one epic's header, run line, and member rows (the shared body of
     the text board, indented under its initiative group header)."""
@@ -1166,12 +1241,18 @@ def _render_epic_lines(epic, board_root):
     header = "  epic %s [%s]" % (epic["slug"], epic.get("status") or "?")
     if epic.get("theme"):
         header += "  theme: %s" % epic["theme"]
-    # An epic authored inside a worktree (its `location` is not the board root)
-    # is marked exactly as a worktree-derived member row is (delivery-dashboard
-    # board-aggregation). A fixture carrying no `location` stays unmarked.
+    # An epic authored inside a worktree (its `location` is not its universe's
+    # root) is marked exactly as a worktree-derived member row is, and an epic
+    # from a declared project universe carries its `[<project>]` marker after
+    # that (delivery-dashboard board-aggregation). Both measure from the epic's
+    # own universe, so a project epic sitting at its repo's root is not
+    # mistaken for a worktree-hosted one. A fixture carrying no `location`
+    # stays unmarked.
+    universe_root = epic_universe_root(epic, board_root)
     location = epic.get("location")
-    if location and location != board_root:
+    if location and location != universe_root:
         header += "  [worktree]"
+    header += _project_marker(epic.get("project"))
     lines.append(header)
 
     hb = epic.get("heartbeat")
@@ -1188,7 +1269,10 @@ def _render_epic_lines(epic, board_root):
         stage = entry.get("stage") or ""
         if stage and entry.get("attempt"):
             stage = "%s#%s" % (stage, entry["attempt"])
-        loc = " [worktree]" if m.get("location") != board_root else ""
+        # Member states derive from the epic's own universe, so their worktree
+        # marker measures from that universe's root too — otherwise every
+        # member of a project epic would read `[worktree]`.
+        loc = " [worktree]" if m.get("location") != universe_root else ""
         acts = m.get("actions") or []
         act = " (%s)" % "/".join(acts) if acts else ""
         lines.append("      %-22s %-12s %-10s risk %-6s%s%s" % (
@@ -1245,18 +1329,23 @@ def _lane_signature(cards, group_mode, search_query, initiative_by_epic=None,
     chip change always repaints and an idle refresh under steady chips repaints
     nothing. While a grouping mode is active (``epic`` or
     ``initiative``) each card also folds in its epic's initiative identity
-    from ``initiative_by_epic`` (epic slug → ``(slug, status)`` or ``None``) —
-    the group headers render it, so re-tagging an epic to another initiative
-    or an initiative status change repaints the lane; flat ``none`` lanes
-    render no initiative, so there it is ignored. Depends solely on
+    from ``initiative_by_epic`` (``(epic slug, project)`` → ``(slug, status)``
+    or ``None``) — the group headers render it, so re-tagging an epic to
+    another initiative or an initiative status change repaints the lane; flat
+    ``none`` lanes render no initiative, so there it is ignored. The key is the
+    epic's full ``(slug, project)`` identity because two universes' same-slug
+    epics can sit in one lane with different initiatives (delivery-dashboard
+    board-aggregation). The card's own project folds in too, so a header's
+    ``[<project>]`` marker changing repaints its lane. Depends solely on
     board-derived content plus the grouping mode and query, never on other
     transient UI state (e.g. a collapsed epic group), so such state survives
     an unchanged refresh while changing the mode always repaints."""
     initiative_by_epic = initiative_by_epic or {}
     sig = [group_mode, search_query, tuple(filters)]
-    for epic_slug, status, member, entry in cards:
+    for spec in cards:
+        epic_slug, status, member, entry, project = _card_spec_parts(spec)
         entry = entry or {}
-        initiative = (initiative_by_epic.get(epic_slug)
+        initiative = (initiative_by_epic.get((epic_slug, project))
                       if group_mode != "none" else None)
         # A live interactive build heartbeat drives both the card's lane and
         # its stage suffix, so its stage folds in too — a stage transition
@@ -1267,7 +1356,7 @@ def _lane_signature(cards, group_mode, search_query, initiative_by_epic=None,
         build_hb = member.get("build_heartbeat")
         build_stage = build_hb.get("stage") if _build_is_live(build_hb) \
             else None
-        sig.append((epic_slug, status, initiative,
+        sig.append((epic_slug, project, status, initiative,
                     member.get("slug"), member.get("state"),
                     entry.get("stage"), entry.get("state"), build_stage,
                     tuple(member.get("actions") or ())))
@@ -1479,25 +1568,69 @@ _LAUNCH_BUILDERS = {
 }
 
 
-def _find_member(board, epic_slug, member_slug):
+# The "no project discriminator given" sentinel for the epic lookups below.
+# A board's epic slugs are **not** unique — the aggregation never dedups a slug
+# across universes (delivery-dashboard board-aggregation) — so an epic's
+# identity is the ``(slug, project)`` pair, and ``None`` is a *real* project
+# value (the invocation root's own universe). A distinct sentinel is therefore
+# the only way to say "any universe": the undiscriminated, slug-alone lookup
+# every single-universe caller has always run.
+_ANY_PROJECT = object()
+
+
+def _epic_matches(epic, epic_slug, project):
+    """Whether ``epic`` is the one named by ``epic_slug`` and — unless
+    ``project`` is :data:`_ANY_PROJECT` — aggregated from the universe of that
+    declared project (``None`` for the invocation root's own)."""
+    if epic.get("slug") != epic_slug:
+        return False
+    return project is _ANY_PROJECT or epic.get("project") == project
+
+
+def _find_member(board, epic_slug, member_slug, project=_ANY_PROJECT):
     """The member row for ``member_slug`` under ``epic_slug`` in ``board``, or
     ``None`` — the resolution a click/keypress on a card button runs to reach the
-    member's session id and worktree."""
+    member's session id and worktree. ``project`` narrows the search to that
+    universe's copy of the slug; omitted, the first epic of that slug hosting
+    the member wins."""
+    epic, member = _find_epic_hosting_member(
+        board, epic_slug, member_slug, project)
+    return member
+
+
+def _find_epic_hosting_member(board, epic_slug, member_slug,
+                              project=_ANY_PROJECT):
+    """``(epic, member)`` for the ``epic_slug`` copy that actually hosts
+    ``member_slug``, or ``(None, None)``.
+
+    The same slug can name one epic per universe, so resolving the epic and its
+    member independently can pair a member with a *sibling* universe's epic —
+    and then launch it into the wrong repo. Resolving both together never can:
+    the epic returned is by construction the one the member belongs to. Pass
+    ``project`` when the caller knows which universe it means; without it the
+    first hosting copy in board order wins, which is exactly the single-universe
+    behaviour."""
     for epic in board.get("epics", []):
-        if epic.get("slug") != epic_slug:
+        if not _epic_matches(epic, epic_slug, project):
             continue
         for m in epic.get("members", []):
             if m.get("slug") == member_slug:
-                return m
-    return None
+                return epic, m
+    return None, None
 
 
-def _find_epic(board, epic_slug):
+def _find_epic(board, epic_slug, project=_ANY_PROJECT):
     """The epic dict for ``epic_slug`` in ``board``, or ``None`` — the lookup
     an epic group header runs to read its initiative at mount time (rather
-    than threading it through :func:`_lane_contents`)."""
+    than threading it through :func:`_lane_contents`).
+
+    ``project`` is the identity discriminator: with it the lookup resolves the
+    ``(slug, project)`` pair, so a project universe's epic can never be
+    answered with the invocation root's (or another project's) same-slug epic
+    (delivery-dashboard board-aggregation). Omitted, the lookup stays the
+    slug-alone one every single-universe caller has always run."""
     for epic in board.get("epics", []):
-        if epic.get("slug") == epic_slug:
+        if _epic_matches(epic, epic_slug, project):
             return epic
     return None
 
@@ -1536,7 +1669,7 @@ def _count_suffix(count):
 
 
 def epic_group_title(epic_slug, epic_status, initiative, stalled=False,
-                     count=None, worktree=False):
+                     count=None, worktree=False, project=None):
     """The label text for one epic's group header: slug + status, plus the
     initiative's slug when the epic belongs to one (delivery-dashboard
     board-epic-grouping spec) — re-homing the initiative -> epic structure
@@ -1550,13 +1683,19 @@ def epic_group_title(epic_slug, epic_status, initiative, stalled=False,
     a muted ``[worktree]`` marker closes the title; its brackets are
     **escaped** (``\\[``) so content markup paints them literally instead of
     swallowing the word as a style tag. ``worktree=False`` keeps the output
-    byte-identical to before the marker. Pure — no ``textual``."""
+    byte-identical to before the marker. When ``project`` is given — the epic
+    was aggregated from a declared workspace project universe
+    (delivery-dashboard board-aggregation) — a muted ``[<project>]`` marker
+    follows the worktree marker, escaped the same way; ``project=None`` keeps
+    the output byte-identical to before it. Pure — no ``textual``."""
     title = "%s [%s]" % (epic_slug, epic_status)
     if initiative:
         title += " · %s" % initiative.get("slug")
     title += _count_suffix(count)
     if worktree:
         title += " [$fg-muted]\\[worktree][/]"
+    if project:
+        title += " [$fg-muted]\\[%s][/]" % project
     if stalled:
         title = "[$text-error]✗[/] " + title
     return title
@@ -1575,14 +1714,29 @@ def initiative_group_title(initiative):
 def resolve_action_launch(board, root, region):
     """Resolve a card-button ``region`` to its launch spec (or ``None``): the
     builder lookup plus member resolution, without spawning anything. Pure — the
-    testable core of the tui's launch dispatch."""
+    testable core of the tui's launch dispatch.
+
+    The launch is built against the epic's own ``universe_root`` (falling back
+    to ``root``), so a declared project's member worktree, autopilot ``--root``,
+    and session working directory all land in that project's repo rather than
+    the invocation root (delivery-dashboard board-aggregation).
+
+    That universe root comes from the epic copy that **hosts the named
+    member**, and from the copy the region's own ``project`` names when it
+    carries one — never from whichever same-slug epic happens to come first in
+    board order, which would launch a project member into a sibling universe's
+    repo. A region without a ``project`` key resolves exactly as it always
+    has."""
     builder = _LAUNCH_BUILDERS.get(region.get("action"))
     if builder is None:
         return None
-    member = _find_member(board, region.get("epic"), region.get("member"))
+    epic_slug = region.get("epic")
+    epic, member = _find_epic_hosting_member(
+        board, epic_slug, region.get("member"),
+        region.get("project", _ANY_PROJECT))
     if member is None:
         return None
-    return builder(root, region.get("epic"), member)
+    return builder(epic_universe_root(epic, root), epic_slug, member)
 
 
 # ---------------------------------------------------------------------------
@@ -2151,9 +2305,12 @@ class EpicRunConfirmScreen(ModalScreen):
     }
     """
 
-    def __init__(self, epic_slug):
+    def __init__(self, epic_slug, epic_project=None):
         super().__init__()
         self.epic_slug = epic_slug
+        # Which universe's copy of the slug the confirmed run drives
+        # (delivery-dashboard board-aggregation).
+        self.epic_project = epic_project
 
     def compose(self) -> ComposeResult:
         with Container():
@@ -2180,7 +2337,7 @@ class EpicRunConfirmScreen(ModalScreen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "epic-run-yes":
-            self.app.dispatch_epic_run(self.epic_slug)
+            self.app.dispatch_epic_run(self.epic_slug, self.epic_project)
             self.dismiss()
         elif event.button.id in ("epic-run-no", "epic-run-close"):
             self.dismiss()
@@ -2338,12 +2495,22 @@ class EpicDetailScreen(ModalScreen):
     }
     """
 
-    def __init__(self, epic_slug):
+    def __init__(self, epic_slug, epic_project=None):
         super().__init__()
         self.epic_slug = epic_slug
+        # The other half of the epic's identity — the modal re-resolves the
+        # epic live on every compose, and a bare slug can name one epic per
+        # universe (delivery-dashboard board-aggregation).
+        self.epic_project = epic_project
+
+    def _epic(self):
+        """This modal's epic, re-resolved live on its full ``(slug, project)``
+        identity — ``{}`` when the board no longer carries it."""
+        return _find_epic(self.app.board, self.epic_slug,
+                          self.epic_project) or {}
 
     def compose(self) -> ComposeResult:
-        epic = _find_epic(self.app.board, self.epic_slug) or {}
+        epic = self._epic()
         theme = epic.get("theme")
         initiative = epic.get("initiative")
 
@@ -2464,7 +2631,7 @@ class EpicDetailScreen(ModalScreen):
         # file the overview above is showing (delivery-dashboard
         # board-aggregation); a no-op when the epic file is absent
         # (board-modal-chrome).
-        epic = _find_epic(self.app.board, self.epic_slug) or {}
+        epic = self._epic()
         epic_root = epic.get("location") or self.app.root
         epic_path = os.path.join(
             sc.specs_dir(epic_root), "epics", self.epic_slug, "epic.md")
@@ -2479,13 +2646,14 @@ class EpicDetailScreen(ModalScreen):
             # Re-run the epic-level autopilot directly — the stall banner's
             # own Retry, unchanged (delivery-dashboard board-epic-grouping
             # spec) — then close the modal.
-            self.app.dispatch_epic_run(self.epic_slug)
+            self.app.dispatch_epic_run(self.epic_slug, self.epic_project)
             self.dismiss()
         elif event.button.id == "epic-run":
             # Run epic opens the confirmation modal — the epic-level run
             # dispatches only from that modal's Yes, exactly as before
             # (delivery-dashboard board-epic-grouping spec).
-            self.app.push_screen(EpicRunConfirmScreen(self.epic_slug))
+            self.app.push_screen(
+                EpicRunConfirmScreen(self.epic_slug, self.epic_project))
 
 
 class TaskCard(Static):
@@ -2517,12 +2685,18 @@ class TaskCard(Static):
     ]
 
     def __init__(self, epic_slug, member, entry, epic_status, search_query="",
-                 **kwargs):
+                 epic_project=None, **kwargs):
         self.epic_slug = epic_slug
         self.member = member
         self.entry = entry or {}
         self.epic_status = epic_status
         self.search_query = search_query
+        # The other half of the card's epic identity: which universe's copy of
+        # `epic_slug` this card belongs to (delivery-dashboard
+        # board-aggregation). `None` is the invocation root's own universe —
+        # what a single-universe board's every card carries — so the dispatch
+        # below re-resolves the epic on the pair, never on the slug alone.
+        self.epic_project = epic_project
         super().__init__(self._card_text(), **kwargs)
 
     def _card_text(self):
@@ -2639,14 +2813,18 @@ class EpicCollapsibleTitle(CollapsibleTitle):
 
     class OpenEpic(Message):
         """Posted when the title is clicked off the collapse arrow — carries
-        the epic slug so the board app can push its detail modal."""
+        the epic's full ``(slug, project)`` identity so the board app can push
+        the detail modal for *this* universe's copy of the slug, not a
+        same-slug sibling's (delivery-dashboard board-aggregation)."""
 
-        def __init__(self, epic_slug):
+        def __init__(self, epic_slug, epic_project=None):
             self.epic_slug = epic_slug
+            self.epic_project = epic_project
             super().__init__()
 
-    def __init__(self, *args, epic_slug=None, **kwargs):
+    def __init__(self, *args, epic_slug=None, epic_project=None, **kwargs):
         self.epic_slug = epic_slug
+        self.epic_project = epic_project
         super().__init__(*args, **kwargs)
 
     def _on_click(self, event) -> None:
@@ -2655,7 +2833,8 @@ class EpicCollapsibleTitle(CollapsibleTitle):
         if event.offset.x <= 1:
             self.post_message(self.Toggle())
         else:
-            self.post_message(self.OpenEpic(self.epic_slug))
+            self.post_message(
+                self.OpenEpic(self.epic_slug, self.epic_project))
 
 
 class EpicCollapsible(Collapsible):
@@ -2671,13 +2850,14 @@ class EpicCollapsible(Collapsible):
     inherited ``Toggle`` message the new title still posts on an arrow
     click."""
 
-    def __init__(self, *children, epic_slug=None, title="Toggle",
-                 collapsed=True, **kwargs):
+    def __init__(self, *children, epic_slug=None, epic_project=None,
+                 title="Toggle", collapsed=True, **kwargs):
         super().__init__(*children, title=title, collapsed=collapsed,
                           **kwargs)
         self._title = EpicCollapsibleTitle(
             label=title, collapsed_symbol="▶", expanded_symbol="▼",
-            collapsed=collapsed, epic_slug=epic_slug)
+            collapsed=collapsed, epic_slug=epic_slug,
+            epic_project=epic_project)
 
 
 class EpicGroupRow(Horizontal):
@@ -3978,15 +4158,17 @@ class BoardApp(App):
         active search query (delivery-dashboard board-search spec) and the
         active filter chips (board-filter-strip spec): each card spec is tested
         with :func:`_search_matches` **and** :func:`_filter_matches`, its epic's
-        initiative resolved via :func:`_find_epic`. An empty query and empty
-        chips keep every member."""
+        initiative resolved via :func:`_find_epic` on the card's full
+        ``(slug, project)`` identity. An empty query and empty chips keep every
+        member."""
         raw = _lane_contents(self.board)
         contents = {}
         for lane_name in LANES:
             kept = []
             for spec in raw[lane_name]:
-                epic_slug, _status, member, _entry = spec
-                epic = _find_epic(self.board, epic_slug)
+                epic_slug, _status, member, _entry, project = \
+                    _card_spec_parts(spec)
+                epic = _find_epic(self.board, epic_slug, project)
                 initiative = epic.get("initiative") if epic else None
                 if (_search_matches(self.search_query, epic_slug, initiative,
                                     member["slug"])
@@ -4021,8 +4203,11 @@ class BoardApp(App):
         # initiative re-tag or status change must repaint (delivery-dashboard
         # board-tui spec: repaint the lanes whose board-derived content
         # changed).
+        # Keyed by the epic's full `(slug, project)` identity — two universes'
+        # same-slug epics can carry different initiatives (delivery-dashboard
+        # board-aggregation), and a slug-keyed map would collapse them.
         initiative_by_epic = {
-            epic.get("slug"): (
+            (epic.get("slug"), epic.get("project")): (
                 (epic["initiative"].get("slug"),
                  epic["initiative"].get("status"))
                 if epic.get("initiative") else None)
@@ -4057,10 +4242,13 @@ class BoardApp(App):
                     await self._mount_initiative_groups(
                         lane, lane_name, contents[lane_name])
                 else:
-                    for epic_slug, status, member, entry in contents[lane_name]:
+                    for spec in contents[lane_name]:
+                        epic_slug, status, member, entry, project = \
+                            _card_spec_parts(spec)
                         await lane.mount(
                             TaskCard(epic_slug, member, entry, status,
                                      search_query=self.search_query,
+                                     epic_project=project,
                                      classes="lane-item"))
 
     async def _mount_epic_groups(self, lane, lane_name, cards):
@@ -4073,8 +4261,15 @@ class BoardApp(App):
         so a single pass folding consecutive same-epic specs into one group
         suffices. Used for every lane when ``group_by_epic`` is on
         (generalises the previous shipped-lane-only grouping to the whole
-        board)."""
+        board).
+
+        The run is folded on each card's full ``(slug, project)`` identity, and
+        the group re-resolves its epic on that same pair — so two universes'
+        same-slug epics never merge into one group, and each header reads its
+        own universe's status, initiative, ``[worktree]``/``[<project>]``
+        markers, and hosting root (delivery-dashboard board-aggregation)."""
         group_slug = None
+        group_project = None
         group_status = None
         group_cards = []
 
@@ -4085,7 +4280,7 @@ class BoardApp(App):
                 # epic-scoped — and a bare `standalone` title (delivery-dashboard
                 # board-standalone-changes spec).
                 is_standalone = group_slug == "standalone"
-                epic = _find_epic(self.board, group_slug)
+                epic = _find_epic(self.board, group_slug, group_project)
                 initiative = epic.get("initiative") if epic else None
                 # The per-lane card count rides the title as a muted ` (N)`
                 # suffix (delivery-dashboard board-epic-grouping spec) — the
@@ -4093,16 +4288,21 @@ class BoardApp(App):
                 # same suffix, no separate count element.
                 count = len(group_cards)
                 # An epic hosted under a worktree carries the `[worktree]`
-                # marker its board row does (delivery-dashboard
+                # marker its board row does, and one from a declared project
+                # universe the `[<project>]` marker after it — both measured
+                # from the epic's own universe root (delivery-dashboard
                 # board-aggregation).
                 location = epic.get("location") if epic else None
+                universe_root = (
+                    epic_universe_root(epic, self.board.get("root"))
+                    if epic else self.board.get("root"))
                 title = ("standalone" + _count_suffix(count)) if is_standalone \
                     else epic_group_title(
                         group_slug, group_status, initiative,
                         stalled=epic_stalled(epic) if epic else False,
                         count=count,
-                        worktree=bool(location
-                                      and location != self.board.get("root")))
+                        worktree=bool(location and location != universe_root),
+                        project=epic.get("project") if epic else None)
                 # An *epic* group's header title itself splits the click
                 # (delivery-dashboard board-epic-grouping spec): the arrow
                 # cell toggles, anywhere else opens the epic-detail modal —
@@ -4111,7 +4311,14 @@ class BoardApp(App):
                 # via `EpicCollapsible`; standalone keeps the stock
                 # `Collapsible` since epic actions are epic-scoped and it has
                 # no epic to open.
+                # A widget id must be unique in the DOM, and two universes can
+                # contribute the same epic slug to one lane — so a project
+                # universe's group qualifies its id with the project
+                # (delivery-dashboard board-aggregation). Root-universe groups
+                # keep the historical unqualified id.
                 group_id = "epic-group-%s-%s" % (lane_name, group_slug)
+                if group_project:
+                    group_id += "--%s" % group_project
                 if is_standalone:
                     collapsible = Collapsible(
                         *group_cards, title=title, collapsed=False,
@@ -4120,16 +4327,19 @@ class BoardApp(App):
                     collapsible = EpicCollapsible(
                         *group_cards, title=title, collapsed=False,
                         id=group_id, classes="epic-group",
-                        epic_slug=group_slug)
+                        epic_slug=group_slug, epic_project=group_project)
                 await lane.mount(EpicGroupRow(
                     collapsible, classes="epic-group-row lane-item"))
 
-        for epic_slug, status, member, entry in cards:
-            if epic_slug != group_slug:
+        for spec in cards:
+            epic_slug, status, member, entry, project = _card_spec_parts(spec)
+            if (epic_slug, project) != (group_slug, group_project):
                 await _flush()
-                group_slug, group_status, group_cards = epic_slug, status, []
+                group_slug, group_project, group_status, group_cards = (
+                    epic_slug, project, status, [])
             group_cards.append(TaskCard(epic_slug, member, entry, status,
-                                        search_query=self.search_query))
+                                        search_query=self.search_query,
+                                        epic_project=project))
         await _flush()
 
     async def _mount_initiative_groups(self, lane, lane_name, cards):
@@ -4147,15 +4357,22 @@ class BoardApp(App):
         (delivery-dashboard board-standalone-changes spec). Mirrors
         :meth:`_mount_epic_groups`' ``epic-group lane-item`` classing so the
         repaint's ``remove_children(".lane-item")`` clears it while the docked
-        ``.lane-header`` band survives."""
+        ``.lane-header`` band survives.
+
+        A bucket's membership test is on the epic's full ``(slug, project)``
+        identity, so a project universe's epic is kept only by *its own*
+        initiative's bucket — never dragged in by a same-slug sibling in
+        another universe (delivery-dashboard board-aggregation)."""
+        specs = [_card_spec_parts(spec) for spec in cards]
         for group in self.board.get("groups", []):
             initiative = group.get("initiative")
-            group_slugs = {e.get("slug") for e in group.get("epics", [])}
+            group_ids = {(e.get("slug"), e.get("project"))
+                         for e in group.get("epics", [])}
             group_cards = [
                 TaskCard(epic_slug, member, entry, status,
-                         search_query=self.search_query)
-                for epic_slug, status, member, entry in cards
-                if epic_slug in group_slugs]
+                         search_query=self.search_query, epic_project=project)
+                for epic_slug, status, member, entry, project in specs
+                if (epic_slug, project) in group_ids]
             if not group_cards:
                 continue
             slug = initiative.get("slug") if initiative else "workspace"
@@ -4171,8 +4388,8 @@ class BoardApp(App):
                 classes="epic-group lane-item"))
         standalone_cards = [
             TaskCard(epic_slug, member, entry, status,
-                     search_query=self.search_query)
-            for epic_slug, status, member, entry in cards
+                     search_query=self.search_query, epic_project=project)
+            for epic_slug, status, member, entry, project in specs
             if epic_slug == "standalone"]
         if standalone_cards:
             await lane.mount(Collapsible(
@@ -4216,8 +4433,11 @@ class BoardApp(App):
         """Push the epic-detail modal for the header title clicked off the
         collapse arrow (delivery-dashboard board-epic-grouping spec) — the
         header itself opens the epic now; there is no separate menu control
-        to route through."""
-        self.push_screen(EpicDetailScreen(event.epic_slug))
+        to route through. The message carries the header's own universe, so
+        the modal opens that copy of the slug (delivery-dashboard
+        board-aggregation)."""
+        self.push_screen(
+            EpicDetailScreen(event.epic_slug, event.epic_project))
 
     def move_card_focus(self, card, direction):
         """Move focus from ``card`` one step ``"up"``/``"down"`` within its
@@ -4254,20 +4474,41 @@ class BoardApp(App):
         ``actions`` and spawn the launch — the wiring a focused
         :class:`TaskCard`'s RUN/PLAN/OPEN key runs, through the unchanged
         pure launch builders. A ``None`` launch (e.g. ``open`` with no
-        session id) or an action the member isn't eligible for is a no-op."""
+        session id) or an action the member isn't eligible for is a no-op.
+
+        The launch is built against the epic's own universe root — resolved on
+        the card's full ``(slug, project)`` identity, so a project epic's
+        member lands in that project's repo and never in a same-slug sibling
+        universe's (delivery-dashboard board-aggregation)."""
         if action not in (card.member.get("actions") or []):
             return
         builder = _LAUNCH_BUILDERS.get(action)
         if builder is None:
             return
-        launch = builder(self.root, card.epic_slug, card.member)
+        launch = builder(
+            self._epic_root(card.epic_slug, card.epic_project),
+            card.epic_slug, card.member)
         if launch is not None:
             self._spawn_launch(launch)
 
-    def dispatch_epic_run(self, epic_slug):
+    def _epic_root(self, epic_slug, epic_project=_ANY_PROJECT):
+        """The root an epic's board actions launch against: its own universe's
+        root when the board gave it one, else the board root (delivery-dashboard
+        board-aggregation).
+
+        ``epic_project`` picks which universe's copy of ``epic_slug`` is meant;
+        omitted, the first copy in board order wins — the single-universe
+        behaviour."""
+        epic = _find_epic(self.board, epic_slug, epic_project) or {}
+        return epic_universe_root(epic, self.root)
+
+    def dispatch_epic_run(self, epic_slug, epic_project=_ANY_PROJECT):
         """Spawn the epic-level ``run`` — the full autopilot over every
-        unplanned/ready member of ``epic_slug``."""
-        self._spawn_launch(build_epic_run_launch(self.root, epic_slug))
+        unplanned/ready member of ``epic_slug``, rooted at that epic's own
+        universe, identified by ``(epic_slug, epic_project)``."""
+        self._spawn_launch(
+            build_epic_run_launch(self._epic_root(epic_slug, epic_project),
+                                  epic_slug))
 
     def _spawn_launch(self, launch):
         """Spawn a resolved launch spec: a ``detach`` run in the background

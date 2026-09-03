@@ -20,7 +20,12 @@ archives as a ship-date fallback for changes the log missed (the log entry
 wins on both); **outcome events** from the `.shipd/autopilot/<epic>-report.json`
 run reports (shipped / rejected / needs-human / skipped); a live **WIP
 snapshot** from the epic tables and heartbeats via the stdlib spec helpers
-(never by importing the dashboard module); and merge/first-commit **timestamps
+(never by importing the dashboard module) — the epics enumerated through the
+engine's shared worktree-aware epic-discovery seam, the same
+`all_epic_slugs_with_roots` the status CLI and the dashboard consume, each
+epic read from its hosting root, scoped to the invocation root and its own
+worktrees only (never declared project universes: metric semantics stay
+per-repo); and merge/first-commit **timestamps
 from git** (stdlib subprocess), where a change's merge commit is resolved by
 its `<slug>:`-prefixed squash subject on the base branch and lead time is
 computed only over changes where both timestamps resolve. From these it SHALL
@@ -66,6 +71,20 @@ SHALL ever be attributed to an individual.
 - **WHEN** the WIP snapshot is collected
 - **THEN** only the in-flight members are counted, grouped by lifecycle state,
   and a member with no age evidence carries no fabricated age
+
+#### Scenario: A worktree-authored epic counts in the WIP snapshot
+- **GIVEN** an epic whose `epic.md` exists only under a `.worktrees/<name>`
+  content directory
+- **WHEN** the WIP snapshot is collected from the invocation root
+- **THEN** that epic's in-flight members are counted exactly as a root-hosted
+  epic's would be
+
+#### Scenario: Declared project universes never leak into metrics
+- **GIVEN** a workspace root whose declared project repo hosts an epic with
+  in-flight members
+- **WHEN** metrics are derived from the workspace root
+- **THEN** that project's members contribute nothing to the WIP snapshot or
+  any other block
 
 #### Scenario: Outcome distribution folds the autopilot reports
 - **GIVEN** autopilot run reports containing shipped, rejected, and needs-human

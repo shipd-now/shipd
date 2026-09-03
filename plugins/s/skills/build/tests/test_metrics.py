@@ -990,6 +990,64 @@ class DeriveTest(unittest.TestCase):
         self.assertEqual(buf.getvalue(), "")
 
 
+class EpicDiscoveryScopeTest(unittest.TestCase):
+    """Metrics enumerates its epics through the engine's shared worktree-aware
+    discovery seam — the same ``all_epic_slugs_with_roots`` the status CLI and
+    the dashboard consume — so a worktree-authored epic counts exactly as a
+    root-hosted one does (delivery-metrics metrics-engine). The seam it never
+    consumes is the workspace-universe one: metric semantics stay per-repo, so
+    a declared project repo's epics contribute nothing.
+
+    Written test-first; expected to FAIL until the discovery swap lands in
+    ``metrics.py`` (task 5.1)."""
+
+    EPIC = ("# %s\nStatus: active\n\n## Changes\n\n"
+            "| Change | Description | Risk |\n| --- | --- | --- |\n"
+            "| %s | in flight | low |\n")
+
+    def setUp(self):
+        self.fx = _Fixture()
+        self.addCleanup(self.fx.cleanup)
+        self.now = dt.datetime(2030, 1, 1, tzinfo=UTC)
+
+    def test_worktree_hosted_epic_contributes_to_the_wip_snapshot(self):
+        # The epic was authored inside its own worktree and has not merged, so
+        # the invocation root's content directory does not carry it at all.
+        _write(os.path.join(self.fx.root, ".worktrees", "epic-e2",
+                            ".shipd", "epics", "e2", "epic.md"),
+               self.EPIC % ("e2", "m_wt"))
+        _write(self.fx.shipd("planned", "m_wt", "plan.md"),
+               "# m_wt\nStatus: ready\n")
+        wip = metrics.collect_wip(self.fx.root, self.now)
+        self.assertEqual(wip["by_state"].get("ready"), 1)
+        self.assertEqual([item["slug"] for item in wip["items"]], ["m_wt"])
+
+    def test_declared_project_epics_never_leak_into_derive(self):
+        # `self.fx.root` doubles as the workspace root declaring `proj-a`; the
+        # project's repo hosts its own epic with an in-flight member.
+        _write(os.path.join(self.fx.root, ".shipd-config.json"),
+               json.dumps({"workspace": {"projects": {
+                   "proj-a": {"repos": [{"path": "proj-a"}]}}}}))
+        repo = os.path.join(self.fx.root, "proj-a")
+        _write(os.path.join(repo, ".shipd", "epics", "pe1", "epic.md"),
+               self.EPIC % ("pe1", "pm1"))
+        _write(os.path.join(repo, ".shipd", "planned", "pm1", "plan.md"),
+               "# pm1\nStatus: ready\n")
+        # The invocation root's own epic, for contrast.
+        _write(self.fx.shipd("epics", "e1", "epic.md"),
+               self.EPIC % ("e1", "m1"))
+        _write(self.fx.shipd("planned", "m1", "plan.md"),
+               "# m1\nStatus: ready\n")
+        result = metrics.derive(
+            self.fx.root, now=self.now, config=self.fx.config)
+        self.assertEqual(result["wip"]["by_state"].get("ready"), 1)
+        self.assertEqual([item["slug"] for item in result["wip"]["items"]],
+                         ["m1"])
+        # Nothing of the project's universe reaches any block of the result.
+        self.assertNotIn("pm1", json.dumps(result))
+        self.assertNotIn("pe1", json.dumps(result))
+
+
 # ---------------------------------------------------------------------------
 # 3b. Audience-framed rollups (delivery-metrics stakeholder-rollups)
 # ---------------------------------------------------------------------------
