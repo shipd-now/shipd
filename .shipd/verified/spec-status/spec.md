@@ -247,43 +247,46 @@ board-shaped report; `epic-sync <slug>` re-deriving the epic's status from
 member states; and `epic-set-status <status> <slug>` writing a validated
 epic status (`draft`, `ready`, `active`, `complete`), refusing `ready`
 unless the epic lints clean, with refusals printing a `Refused: ` reason
-and exiting 3. `epic-show` SHALL resolve the epic by probing the
-invocation root first, then each `.worktrees/<name>` directory under it in
-sorted name order — resolving each candidate's content directory
-independently and skipping unreadable candidates, the invocation root
-winning a slug hosted in both — and SHALL read the epic's file and status
-from the hosting root; the mutating verbs (`epic-sync`,
-`epic-set-status`) SHALL keep resolving the invocation root only. The
-board-shaped report SHALL print, in order: the
-`<slug>: <status>` line and the epic's header metadata lines (unchanged
-from before this report existed); when the epic resolved from a worktree,
-a `worktree: <name>` line directly after the metadata lines; a
-`shipped <n>/<m>` line where `n` is
-the count of members whose derived state is `archived` and `m` the count
-of all stub members; a blank line; then the four board lanes in board
-order — `UNPLANNED`, `READY`, `BUILDING`, `SHIPPED` — each printed as a
-`<LANE> (<count>)` header even when its count is 0, followed by one
-indented line per member in that lane carrying the member's slug, its
-derived state, its stub-table risk rating as `risk <value>` (`?` when the
-row carries none), and a `[worktree]` marker when its state was derived
-from a worktree rather than the invocation root. A member's lane SHALL be
-derived from its state alone — `archived`→`shipped`, `ready`→`ready`,
-`unplanned`→`unplanned`, every other state→`building`, rendered as the
-uppercase lane headers — and that projection SHALL be a single shared
-function the dashboard's flow-lane mapping also consumes, so the report
-and the board cannot drift. A
-member's state SHALL be derived by probing candidate roots in order — the
-invocation root first, then each `.worktrees/<name>` directory under it in
-sorted name order — resolving each candidate's content directory
-independently and skipping any candidate whose configuration is unreadable.
-For each candidate in turn, the state SHALL be `archived` when a matching
-`completed/*-<slug>/` exists there, else that candidate's plan status when
-`planned/<slug>/` exists there; the first candidate that yields a state wins.
-When no candidate yields one, the state SHALL be `unplanned`.
-`epic-sync` SHALL derive: all members archived →
-`complete`; any member archived or with plan status `active`, `complete`, or
-`verified` → `active`; otherwise `ready` — and SHALL never change an epic
-whose status is `draft`.
+and exiting 3. `epic-show` SHALL resolve the epic across the universes the
+engine's shared universe-discovery seam yields (shipd-workspace
+workspace-universe-discovery), in seam order — the invocation root's own
+universe first, then each declared project universe in slug order — probing
+each universe's root first, then each of its `.worktrees/<name>` directories
+in sorted name order, resolving each candidate's content directory
+independently and skipping unreadable candidates; the first hosting
+universe SHALL win, and the epic's file and status SHALL be read from the
+hosting root. The mutating verbs (`epic-sync`, `epic-set-status`) SHALL
+keep resolving the invocation root only. The board-shaped report SHALL
+print, in order: the `<slug>: <status>` line and the epic's header metadata
+lines (unchanged from before this report existed); when the epic resolved
+from a worktree of its owning universe, a `worktree: <name>` line directly
+after the metadata lines; when the epic resolved from a declared project
+universe, a `project: <slug>` line directly after (after any `worktree:`
+line); a `shipped <n>/<m>` line where `n` is the count of members whose
+derived state is `archived` and `m` the count of all stub members; a blank
+line; then the four board lanes in board order — `UNPLANNED`, `READY`,
+`BUILDING`, `SHIPPED` — each printed as a `<LANE> (<count>)` header even
+when its count is 0, followed by one indented line per member in that lane
+carrying the member's slug, its derived state, its stub-table risk rating
+as `risk <value>` (`?` when the row carries none), and a `[worktree]`
+marker when its state was derived from a worktree rather than the owning
+universe's root. A member's lane SHALL be derived from its state alone —
+`archived`→`shipped`, `ready`→`ready`, `unplanned`→`unplanned`, every other
+state→`building`, rendered as the uppercase lane headers — and that
+projection SHALL be a single shared function the dashboard's flow-lane
+mapping also consumes, so the report and the board cannot drift. A member's
+state SHALL be derived by probing the epic's owning universe's candidate
+roots in order — that universe's root first, then each of its
+`.worktrees/<name>` directories in sorted name order — resolving each
+candidate's content directory independently and skipping any candidate
+whose configuration is unreadable. For each candidate in turn, the state
+SHALL be `archived` when a matching `completed/*-<slug>/` exists there,
+else that candidate's plan status when `planned/<slug>/` exists there; the
+first candidate that yields a state wins. When no candidate yields one, the
+state SHALL be `unplanned`. `epic-sync` SHALL derive: all members
+archived → `complete`; any member archived or with plan status `active`,
+`complete`, or `verified` → `active`; otherwise `ready` — and SHALL never
+change an epic whose status is `draft`.
 
 #### Scenario: Members are grouped into board lanes
 - **GIVEN** an epic whose stub table lists one member with a matching
@@ -334,9 +337,28 @@ whose status is `draft`.
 - **THEN** the report prints with the epic's status on the first line and a
   `worktree: <name>` line after the metadata lines
 
+#### Scenario: Epic-show resolves a project-hosted epic at workspace level
+- **GIVEN** a workspace root whose declared project repo hosts the epic
+- **WHEN** `epic-show <slug>` runs from the workspace root
+- **THEN** the report prints with a `project: <slug>` line after the
+  metadata lines and its member states derived from that project repo
+
+#### Scenario: The invocation root's universe wins over a project's
+- **GIVEN** the same epic slug hosted under the invocation root and under a
+  declared project repo
+- **WHEN** `epic-show <slug>` runs from the workspace root
+- **THEN** the invocation root's epic is the one reported, with no
+  `project:` line
+
 #### Scenario: Mutating verbs stay invocation-root-only
 - **GIVEN** an epic hosted only under a worktree
 - **WHEN** `epic-set-status ready <slug>` runs from the invocation root
+- **THEN** the CLI exits non-zero with the epic-not-found error and writes
+  nothing
+
+#### Scenario: Mutating verbs never reach a project universe
+- **GIVEN** an epic hosted only under a declared project repo
+- **WHEN** `epic-sync <slug>` runs from the workspace root
 - **THEN** the CLI exits non-zero with the epic-not-found error and writes
   nothing
 
@@ -801,18 +823,23 @@ none` (a personal store participates in no chain or base layering).
 id: locate-verb
 
 The status CLI SHALL provide `locate [change]` searching for an installed
-change by probing the invocation root's resolved `planned/` directory and
-then each `.worktrees/<name>` directory under the invocation root in sorted
-name order, resolving the content directory independently for every
-candidate root. Where `change` is omitted, the verb SHALL default to the
-currently selected spec and SHALL exit non-zero with an error when none is
-selected. For each match it SHALL print a keyed block — `change:`, `root:`
-(absolute path), `dir:` (the change directory relative to that root), and
-`status:` (the plan's status value, `?` when missing or invalid) — with
-blocks separated by a blank line and the invocation root's own match always
-first. When at least one match exists the verb SHALL exit 0; when none
-exists it SHALL print an error naming the probed locations and exit
-non-zero. The verb SHALL NOT invoke git, a model, or the network.
+change across the universes the engine's shared universe-discovery seam
+yields (shipd-workspace workspace-universe-discovery), in seam order — the
+invocation root's own universe first, then each declared project universe
+in slug order — probing, within each universe, that universe's resolved
+`planned/` directory and then each `.worktrees/<name>` directory under it
+in sorted name order, resolving the content directory independently for
+every candidate root. Where `change` is omitted, the verb SHALL default to
+the currently selected spec and SHALL exit non-zero with an error when none
+is selected. For each match it SHALL print a keyed block — `change:`,
+`root:` (absolute path), `dir:` (the change directory relative to that
+root), `status:` (the plan's status value, `?` when missing or invalid),
+and, for a match from a declared project universe only, `project:` (the
+owning project's slug) — with blocks separated by a blank line and the
+invocation root's own match always first. When at least one match exists
+the verb SHALL exit 0; when none exists it SHALL print an error naming the
+probed locations and exit non-zero. The verb SHALL NOT invoke git, a
+model, or the network.
 
 #### Scenario: Local change is located
 - **GIVEN** a change installed under the invocation root's `planned/`
@@ -831,6 +858,20 @@ non-zero. The verb SHALL NOT invoke git, a model, or the network.
 - **WHEN** `locate <change>` runs
 - **THEN** the invocation root's block prints first, followed by the
   worktree's block
+
+#### Scenario: A project-hosted change is located at workspace level
+- **GIVEN** a workspace root whose declared project repo holds the change
+  under its `planned/`
+- **WHEN** `locate <change>` runs from the workspace root
+- **THEN** the match block names that repo as `root:` and carries a
+  `project: <slug>` line
+
+#### Scenario: Universe order governs the block order
+- **GIVEN** the change exists under the invocation root and under a declared
+  project repo
+- **WHEN** `locate <change>` runs from the workspace root
+- **THEN** the invocation root's block prints first and the project block
+  after it
 
 #### Scenario: Unknown change exits non-zero
 - **WHEN** `locate no-such-change` runs and no candidate root contains it
@@ -1002,25 +1043,20 @@ counting those whose lane is `shipped`; a blank line; then the four board
 lanes in board order — `UNPLANNED`, `READY`, `BUILDING`, `SHIPPED` — each
 printed as a `<LANE> (<count>)` header even when its count is 0.
 
-The report SHALL aggregate one or more universes. The invocation root's own
-universe is always aggregated: its epics discovered by probing the invocation
-root first, then each `.worktrees/<name>` directory under it in sorted name
-order — resolving each candidate's content directory independently, skipping
-unreadable candidates, the invocation root winning a slug hosted in both —
-each epic read from its hosting root. Where a workspace project registry is
-discoverable from the invocation root AND the invocation root lies inside no
-declared project repo (project resolution yields the implicit default), the
-report SHALL additionally aggregate one universe per declared project repo
-directory present on disk — projects in slug order, a project's repos in
-declaration order — each repo aggregated exactly as an invocation root is
-(its own epics, worktrees, member-state derivation, and standalone-change
-discovery, all relative to that repo). A repo entry whose path is not a
-directory, duplicates an earlier entry's real path, or resolves to the
-invocation root itself SHALL be skipped, never raised. When no registry is
-discoverable, or the invocation root lies inside a declared project repo,
-the report SHALL cover only the invocation root's universe and its output
-SHALL be byte-identical to the single-universe rendering. Epic slugs SHALL
-NOT be deduplicated across universes; totals sum across every universe and
+The report SHALL obtain its universes through the engine's shared
+universe-discovery seam (shipd-workspace workspace-universe-discovery),
+never a private reimplementation: the invocation root's own universe always
+— its epics discovered by probing the invocation root first, then each
+`.worktrees/<name>` directory under it in sorted name order, resolving each
+candidate's content directory independently, skipping unreadable
+candidates, the invocation root winning a slug hosted in both — plus, for a
+workspace-level invocation, one universe per declared project repo the seam
+yields, each aggregated exactly as an invocation root is (its own epics,
+worktrees, member-state derivation, and standalone-change discovery, all
+relative to that repo). When the seam yields no project universes, the
+report SHALL cover only the invocation root's universe and its output SHALL
+be byte-identical to the single-universe rendering. Epic slugs SHALL NOT be
+deduplicated across universes; totals sum across every universe and
 `initiatives` counts distinct slugs across universes.
 
 In the non-shipped lanes each member SHALL print as one indented row
@@ -1118,13 +1154,16 @@ rendering: `status` an object with `name`, `kind` (`change` or `epic`), and
 `tasks` (done/in_progress/total counts, or null when no checklist exists),
 and `metadata`; `show`'s epic fallback and `epic-show` an object with
 `name`, `kind": "epic"`, `status`, `metadata`, `worktree` (the hosting
-worktree name or null), `shipped` counts, and the four board `lanes` with
-member entries carrying `slug`, `state`, `risk`, and a `worktree` boolean;
-the bare `show` workspace report an object with `kind": "workspace"`,
-`totals`, `shipped`, and `lanes` whose rows each carry a `project` field —
-the owning declared project's slug for a row aggregated from a project
-universe, `null` for a row from the invocation root's own universe; `locate`
-an array of objects with `change`, `root`, `dir`, and `status`; and
+worktree name or null), `project` (the owning declared project's slug when
+the epic resolved from a project universe, else null), `shipped` counts,
+and the four board `lanes` with member entries carrying `slug`, `state`,
+`risk`, and a `worktree` boolean; the bare `show` workspace report an
+object with `kind": "workspace"`, `totals`, `shipped`, and `lanes` whose
+rows each carry a `project` field — the owning declared project's slug for
+a row aggregated from a project universe, `null` for a row from the
+invocation root's own universe; `locate` an array of objects with `change`,
+`root`, `dir`, `status`, and `project` (the owning declared project's slug,
+or `null` for a match from the invocation root's own universe); and
 `workspace-show` an object mirroring the text report's fields. Without the
 flag, the text output SHALL stay byte-identical to its pre-flag behavior,
 and error handling (stderr `Error:` lines, exit codes) SHALL be unchanged in
@@ -1140,6 +1179,12 @@ both modes.
 - **THEN** stdout parses as one JSON object with `kind` `epic`, the four
   lanes, and each member's slug, state, risk, and worktree flag
 
+#### Scenario: A project-hosted epic's report carries its project
+- **GIVEN** a workspace root whose declared project repo hosts the epic
+- **WHEN** `epic-show <slug> --json` runs from the workspace root
+- **THEN** the object's `project` is that project's slug, and a root-hosted
+  epic's `project` is null
+
 #### Scenario: Workspace report is machine-readable
 - **WHEN** `show --json` runs with no name and no selection
 - **THEN** stdout parses as one JSON object with `kind` `workspace` and the
@@ -1154,7 +1199,7 @@ both modes.
 #### Scenario: Locate rows are an array
 - **WHEN** `locate <change> --json` runs for a change hosted in a worktree
 - **THEN** stdout parses as a JSON array whose entries carry change, root,
-  dir, and status
+  dir, status, and a null `project`
 
 #### Scenario: Text mode is unchanged without the flag
 - **WHEN** any of the five verbs runs without `--json`

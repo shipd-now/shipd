@@ -102,6 +102,15 @@ to the invocation root exactly as before, with no markers. The same distinction
 shows in `--json`: every workspace-report row carries a `project` field, the
 owning project's slug or `null`.
 
+That reach is not this report's alone — it is one shared discovery seam every
+board-shaped read surface consumes, so they cannot disagree about which epics
+exist or where they live. The **delivery board** (`dashboard.py board` and its
+`tui`) aggregates the same universes in the same order: a project universe's
+epic joins the board with a `[<project>]` marker after the `[worktree]` marker
+position on its header, and its board actions launch in that project's own
+repo — the member worktree, the driver's `--root`, and the session working
+directory all land there, never in the invocation root.
+
 ### When the argument names an epic
 
 `[change]` may name an **epic** rather than a change. You do not detect that
@@ -114,6 +123,25 @@ yourself — the CLI does: when the name matches no change but
 member line naming its state, its risk rating, and a `[worktree]` marker when
 its state was derived from a worktree. Relay that report as the CLI printed it;
 do not re-summarize or re-order the lanes.
+
+**`epic-show` (and `show <epic>`) reaches across the workspace too.** On a
+workspace-level invocation it resolves the slug through the same universe seam
+the board uses — the invocation root's own universe first (its root, then its
+worktrees), then each declared project universe in slug order, the first
+hosting universe winning. A project-hosted epic's report carries a
+`project: <slug>` line directly after the metadata lines (after any `worktree:`
+line), and its member states derive from that project's repo; `--json` gains
+the same value as a `project` field, `null` for a root-hosted epic. The
+**mutating** epic verbs — `epic-sync` and `epic-set-status` — deliberately do
+**not** follow: they resolve the invocation root only, so no verb ever writes
+into another project's repo. Expect their epic-not-found error on a
+project-hosted epic, and do not work around it by re-running elsewhere.
+
+`locate [change]` resolves across the same universes in the same order,
+printing one keyed block per match — `change:`, `root:`, `dir:`, `status:` —
+with the invocation root's own match always first and a `project: <slug>` line
+on a block from a declared project universe. Its `--json` rows always carry a
+`project` field (the slug, or `null` for the invocation root's own universe).
 
 Epic **transitions** never go through `set-status`, which is change-only. Use
 the epic verbs instead — `epic-set-status <status> <slug>` (a guarded write of

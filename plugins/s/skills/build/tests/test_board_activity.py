@@ -440,7 +440,7 @@ class LaneDeadRunTest(unittest.TestCase):
 
     def _entry_in(self, contents, lane):
         self.assertEqual(len(contents[lane]), 1)
-        _epic_slug, _status, _member, entry = contents[lane][0]
+        _epic_slug, _status, _member, entry, _project = contents[lane][0]
         return entry
 
     def test_dead_runs_driving_member_is_stale_in_building(self):
@@ -505,7 +505,7 @@ class LaneLiveBuildTest(unittest.TestCase):
         return _board(epics=[epic])
 
     def _slugs(self, contents, lane):
-        return [member["slug"] for _slug, _status, member, _entry
+        return [member["slug"] for _slug, _status, member, _entry, _project
                 in contents[lane]]
 
     def test_archived_member_mid_review_lands_in_review(self):
@@ -562,7 +562,7 @@ class LaneDraftedTest(unittest.TestCase):
         cls.dashboard = _load_dashboard_stdlib()
 
     def _slugs(self, contents, lane):
-        return [member["slug"] for _slug, _status, member, _entry
+        return [member["slug"] for _slug, _status, member, _entry, _project
                 in contents[lane]]
 
     def test_drafted_entry_over_an_archived_member_lands_in_review(self):

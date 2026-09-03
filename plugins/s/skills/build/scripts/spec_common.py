@@ -1354,6 +1354,83 @@ def project_of(ws_root, path):
 
 
 # ---------------------------------------------------------------------------
+# Workspace universe discovery (shipd-workspace workspace-universe-discovery)
+# ---------------------------------------------------------------------------
+
+
+def workspace_project_roots(root):
+    """The declared workspace project repos a board-shaped read surface
+    additionally aggregates, as ``(project_slug, repo_root)`` pairs
+    (shipd-workspace workspace-universe-discovery).
+
+    This is the single shared seam — bare ``show``'s workspace report, the
+    dashboard's board aggregation, ``epic-show``, and ``locate`` all obtain
+    their universes here, never through a private reimplementation, so they
+    can never disagree about which epics exist or where they live.
+
+    Aggregation is for **workspace-level invocations only**: the pairs are
+    non-empty exactly when a project registry is discoverable from ``root``
+    (:func:`registry_root`) *and* ``root`` lies inside no declared project repo
+    (:func:`project_of` yields the implicit default, ``None``). Run from inside
+    a member repo — or with no registry at all — this returns ``[]`` and every
+    consumer stays the single-universe, per-repo surface it has always been.
+
+    Pairs come out in projects' slug order, each project's repos in declaration
+    order, every path resolved against the registry root.
+
+    Fail-soft throughout — display never crashes on an invalid registry: an
+    unloadable registry, a non-object project or repo entry, an entry whose
+    path is not a directory on this machine, an entry duplicating an earlier
+    one's real path, and an entry resolving to the invocation root itself are
+    all skipped silently, never raised."""
+    try:
+        reg_root = registry_root(root)
+        if reg_root is None or project_of(reg_root, root) is not None:
+            return []
+        registry = load_workspace(reg_root)
+    except ConfigError:
+        return []
+    projects = registry.get("projects")
+    if not isinstance(projects, dict):
+        return []
+    pairs = []
+    seen = {os.path.realpath(root)}
+    for slug in sorted(projects):
+        entry = projects[slug]
+        if not isinstance(entry, dict):
+            continue
+        repos = entry.get("repos")
+        if not isinstance(repos, list):
+            continue
+        for repo in repos:
+            path = repo_entry_path(repo)
+            if path is None:
+                continue
+            repo_root = os.path.join(reg_root, path)
+            if not os.path.isdir(repo_root):
+                continue
+            real = os.path.realpath(repo_root)
+            if real in seen:
+                continue
+            seen.add(real)
+            pairs.append((slug, repo_root))
+    return pairs
+
+
+def aggregation_universes(root):
+    """Every universe a board-shaped read surface aggregates over, as
+    ``(project_slug, universe_root)`` pairs in seam order (shipd-workspace
+    workspace-universe-discovery): the invocation root's own universe first
+    (``project`` ``None``), then each declared project repo
+    :func:`workspace_project_roots` yields, in project slug order.
+
+    A non-workspace-level invocation yields exactly ``[(None, root)]``, so a
+    consumer written against this seam renders identically to its
+    single-universe self."""
+    return [(None, root)] + workspace_project_roots(root)
+
+
+# ---------------------------------------------------------------------------
 # Workspace materialization planning (shipd-workspace sync-materialization-planning,
 # shipd-config clone-sources-key)
 # ---------------------------------------------------------------------------

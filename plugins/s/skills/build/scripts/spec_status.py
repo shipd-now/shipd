@@ -494,14 +494,18 @@ def _plan_metadata(root, change):
 
 def _epic_fallback(root, name):
     """The root hosting the epic ``name`` falls back to, or ``None`` when
-    ``name`` names a change or no candidate hosts such an epic — the
-    ``status``/``show`` epic fallback (spec-status status-cli). Resolution
-    lives here at the CLI rather than in a skill so every caller (the ``shipd``
-    dispatcher included) gains it.
+    ``name`` names a change or no candidate hosts such an epic — the ``status``
+    epic fallback (spec-status status-cli). Resolution lives here at the CLI
+    rather than in a skill so every caller (the ``shipd`` dispatcher included)
+    gains it.
 
     Discovery goes through :func:`_epic_hosting_root`, so an epic authored
     inside a ``.worktrees/<name>`` worktree and not yet merged falls back
-    exactly as a root-hosted one does."""
+    exactly as a root-hosted one does. Scoped to the invocation root's own
+    universe: ``status`` reports a bare status value carrying no project
+    context, so — unlike ``show``'s board-shaped fallback, which resolves
+    through :func:`_epic_hosting_universe` — it never reaches a declared
+    project repo."""
     if _is_change(root, name):
         return None
     return _epic_hosting_root(root, name)
@@ -601,8 +605,14 @@ def cmd_show(root, change, as_json=False):
         data = _workspace_report_data(root)
         return _emit(data, _workspace_report_lines(data), as_json)
     change = _resolve_change(root, change)
-    if _epic_fallback(root, change) is not None:
-        data = _epic_report_data(root, change)
+    # The epic fallback resolves across universes exactly as `epic-show` does,
+    # so the two verbs keep printing byte-identical reports; `_is_change` is
+    # the same guard :func:`_epic_fallback` applies for `status`.
+    hosted = (None if _is_change(root, change)
+              else _epic_hosting_universe(root, change))
+    if hosted is not None:
+        project, universe_root, _hosting_root = hosted
+        data = _epic_report_data(universe_root, change, project=project)
         return _emit(data, _epic_report_lines(data), as_json)
     data = _change_report_data(root, change)
     return _emit(data, _change_report_lines(data), as_json)
@@ -705,40 +715,43 @@ def cmd_sync(root, change):
 
 
 def cmd_locate(root, change, as_json=False):
-    """Probe the invocation root's resolved ``planned/`` first, then each
-    ``.worktrees/<name>`` directory under it in sorted name order, for an
-    installed ``change`` (spec-status locate-verb). Where ``change`` is
-    omitted, falls back to the currently selected spec via
-    ``_resolve_change``, raising when none is selected. The content directory
-    is resolved independently per candidate root, so a worktree may carry its
-    own ``.shipd-config.json``. Print one keyed block per match — ``change:``,
-    ``root:`` (absolute), ``dir:`` (relative to that root), ``status:`` (``?``
-    when missing or invalid) — separated by a blank line, the invocation root's
+    """Search for an installed ``change`` across the universes the engine's
+    shared universe-discovery seam yields (spec-status locate-verb;
+    shipd-workspace workspace-universe-discovery), in seam order — the
+    invocation root's own universe first, then each declared project repo in
+    slug order. Within each universe it probes that universe's resolved
+    ``planned/`` first, then each ``.worktrees/<name>`` directory under it in
+    sorted name order (:func:`_epic_candidate_roots`, the single-level walk
+    every probe in this file shares). Where ``change`` is omitted, falls back
+    to the currently selected spec via ``_resolve_change``, raising when none
+    is selected. The content directory is resolved independently per candidate
+    root, so a worktree may carry its own ``.shipd-config.json``. Print one
+    keyed block per match — ``change:``, ``root:`` (absolute), ``dir:``
+    (relative to that root), ``status:`` (``?`` when missing or invalid), and
+    — for a match from a declared project universe only — ``project:`` (the
+    owning project's slug) — separated by a blank line, the invocation root's
     own match first. Exit 0 on at least one match; raise (exit 1) naming the
     probed locations when none. With ``as_json``, the same rows are emitted as
-    one JSON array instead (spec-status json-output). No git, model, or
-    network calls."""
+    one JSON array instead, every row carrying ``project`` (slug or ``null``)
+    (spec-status json-output). No git, model, or network calls."""
     change = _resolve_change(root, change)
     probed = []
     matches = []
 
-    def _probe(candidate):
+    def _probe(project, candidate):
         probed.append(candidate)
         try:
             cdir = os.path.join(sc.specs_dir(candidate), "planned", change)
         except sc.ConfigError:
             return
         if os.path.isdir(cdir):
-            matches.append(candidate)
+            matches.append((project, candidate))
 
-    # Invocation root first, then each worktree directory in sorted name order.
-    _probe(root)
-    worktrees_dir = os.path.join(root, ".worktrees")
-    if os.path.isdir(worktrees_dir):
-        for name in sorted(os.listdir(worktrees_dir)):
-            wt = os.path.join(worktrees_dir, name)
-            if os.path.isdir(wt):
-                _probe(wt)
+    # Each universe in seam order; within one, its root first, then each of its
+    # worktree directories in sorted name order.
+    for project, universe_root in sc.aggregation_universes(root):
+        for candidate in _epic_candidate_roots(universe_root):
+            _probe(project, candidate)
 
     if not matches:
         raise StatusError(
@@ -746,20 +759,22 @@ def cmd_locate(root, change, as_json=False):
             % (change, ", ".join(probed)))
 
     rows = []
-    for candidate in matches:
+    for project, candidate in matches:
         cdir = os.path.join(sc.specs_dir(candidate), "planned", change)
         rows.append({
             "change": change,
             "root": os.path.abspath(candidate),
             "dir": os.path.relpath(cdir, candidate),
             "status": read_status(candidate, change) or "?",
+            "project": project,
         })
     if as_json:
         print(json.dumps(rows))
         return 0
     print("\n\n".join(
-        "change: %s\nroot: %s\ndir: %s\nstatus: %s"
-        % (row["change"], row["root"], row["dir"], row["status"])
+        "change: %s\nroot: %s\ndir: %s\nstatus: %s%s"
+        % (row["change"], row["root"], row["dir"], row["status"],
+           "\nproject: %s" % row["project"] if row["project"] else "")
         for row in rows))
     return 0
 
@@ -1170,6 +1185,32 @@ def _epic_hosting_root(root, slug):
     return None
 
 
+def _epic_hosting_universe(root, slug):
+    """The universe hosting the epic ``slug``, as
+    ``(project, universe_root, hosting_root)``, or ``None`` when no universe
+    hosts it (spec-status epic-status-verbs; shipd-workspace
+    workspace-universe-discovery).
+
+    Probes the universes the engine's shared universe-discovery seam
+    (``sc.aggregation_universes``) yields, in seam order — the invocation
+    root's own universe first, then each declared project repo in slug order —
+    resolving each with the existing :func:`_epic_hosting_root`, so every
+    universe keeps its own root-then-worktrees precedence and the invocation
+    root's universe wins a slug hosted in more than one. ``project`` is the
+    owning declared project's slug (``None`` for the invocation root's own
+    universe), ``universe_root`` the repo the report derives against, and
+    ``hosting_root`` the candidate whose content directory holds the epic file.
+
+    Read-only resolution: the mutating epic verbs (``epic-sync``,
+    ``epic-set-status``) deliberately keep resolving the invocation root alone,
+    so no verb ever writes into another project's repo."""
+    for project, universe_root in sc.aggregation_universes(root):
+        hosting_root = _epic_hosting_root(universe_root, slug)
+        if hosting_root is not None:
+            return project, universe_root, hosting_root
+    return None
+
+
 def all_epic_slugs_with_roots(root):
     """Every discoverable epic as ``(slug, hosting_root)`` pairs (spec-status
     epic-status-verbs; delivery-dashboard board-aggregation).
@@ -1314,7 +1355,7 @@ def _epic_rows(root, slug):
 _BOARD_LANES = ("unplanned", "ready", "building", "shipped")
 
 
-def _epic_report_data(root, slug):
+def _epic_report_data(root, slug, project=None):
     """The board-shaped epic report as a JSON-ready dict (spec-status
     epic-status-verbs, json-output) — the single computation ``epic-show`` and
     ``show``'s epic fallback both consume, in text and in JSON, so no two of
@@ -1322,19 +1363,23 @@ def _epic_report_data(root, slug):
 
     Carries the epic's ``name``, the ``epic`` kind discriminator, its
     ``status`` and header ``metadata``, the hosting ``worktree`` name (``None``
-    when the invocation root hosts it), ``shipped`` counts over every stub
-    member, and the four board ``lanes``, each a list of
+    when ``root`` itself hosts it), the owning declared ``project``'s slug
+    (``None`` for the invocation root's own universe), ``shipped`` counts over
+    every stub member, and the four board ``lanes``, each a list of
     ``{"slug", "state", "risk", "worktree"}`` members in stub-table order. A
     member's lane comes from :func:`board_lane` — the projection the dashboard
     shares — its risk from the last rating cell of its stub-table row (``?``
     when the row carries none), and its ``worktree`` flag is set when its state
     was derived from a worktree rather than ``root``.
 
-    The epic's file and status are read from the root :func:`_epic_hosting_root`
-    resolves — a worktree's when the epic was authored there and has not
-    merged yet — while member states keep deriving from the invocation
-    ``root``, so a worktree-hosted epic reports the same board the merged one
-    will."""
+    ``root`` is the **owning universe's** root, which the read verbs resolve
+    through :func:`_epic_hosting_universe`: the invocation root's own for a
+    root-hosted epic, a declared project repo's for a project-hosted one. The
+    epic's file and status are read from the root :func:`_epic_hosting_root`
+    resolves within that universe — a worktree's when the epic was authored
+    there and has not merged yet — while member states derive from the
+    universe root itself, whose own worktree probe reaches every checkout, so
+    a worktree-hosted epic reports the same board the merged one will."""
     epic_root = _epic_hosting_root(root, slug) or root
     path = _epic_path(epic_root, slug)
     with open(path, encoding="utf-8") as fh:
@@ -1362,6 +1407,7 @@ def _epic_report_data(root, slug):
         "metadata": _epic_metadata(text),
         "worktree": (os.path.basename(epic_root)
                      if epic_root != root else None),
+        "project": project,
         "shipped": {"done": len(lanes["shipped"]), "total": total},
         "lanes": lanes,
     }
@@ -1374,7 +1420,9 @@ def _epic_report_lines(data):
     In order: the ``<slug>: <status>`` line and the epic's header metadata
     lines (unchanged from before this report existed — the autopilot skill
     reads that status line); a ``worktree: <name>`` line when the epic resolved
-    from a worktree; a ``shipped <n>/<m>`` line counting the members whose
+    from a worktree of its owning universe; a ``project: <slug>`` line — after
+    any ``worktree:`` line — when the epic resolved from a declared project
+    universe; a ``shipped <n>/<m>`` line counting the members whose
     derived state is ``archived`` against every stub member; a blank line; then
     the four board lanes in board order, each as a ``<LANE> (<count>)`` header
     even when empty, followed by one indented row per member in it, carrying a
@@ -1384,6 +1432,8 @@ def _epic_report_lines(data):
         lines.append("%s: %s" % (key, value))
     if data["worktree"] is not None:
         lines.append("worktree: %s" % data["worktree"])
+    if data.get("project") is not None:
+        lines.append("project: %s" % data["project"])
     lines.append("shipped %d/%d"
                  % (data["shipped"]["done"], data["shipped"]["total"]))
     lines.append("")
@@ -1408,50 +1458,6 @@ def _workspace_epic_slugs(root):
     return all_epic_slugs_with_roots(root)
 
 
-def _workspace_project_roots(root):
-    """The declared project repos the workspace board additionally aggregates,
-    as ``(project_slug, repo_root)`` pairs (spec-status
-    workspace-board-report).
-
-    Aggregation is for **workspace-level invocations only**: the pairs are
-    non-empty exactly when a project registry is discoverable from ``root``
-    (``sc.registry_root``) *and* ``root`` lies inside no declared project repo
-    (``sc.project_of`` yields the implicit default, ``None``). Run from inside a
-    member repo — or with no registry at all — this returns ``[]`` and the board
-    stays the single-universe, per-repo report it has always been.
-
-    Pairs come out in projects' slug order, each project's repos in declaration
-    order, every path resolved against the registry root. Deliberately *not* an
-    extension of :func:`_epic_candidate_roots`: that seam feeds
-    ``_epic_hosting_root``, ``epic-sync``, ``locate``, and the dashboard, none
-    of which may silently adopt another project's epics.
-
-    Fail-soft throughout — display never crashes on an invalid registry: an
-    unloadable registry, an entry whose path is not a directory on this machine,
-    an entry duplicating an earlier one's real path, and an entry resolving to
-    the invocation root itself are all skipped silently, never raised."""
-    try:
-        reg_root = sc.registry_root(root)
-        if reg_root is None or sc.project_of(reg_root, root) is not None:
-            return []
-        projects = _load_projects(reg_root)
-    except sc.ConfigError:
-        return []
-    pairs = []
-    seen = {os.path.realpath(root)}
-    for slug in sorted(projects):
-        for repo in _project_repo_entries(reg_root, projects[slug]):
-            repo_root = os.path.join(reg_root, repo["path"])
-            if not os.path.isdir(repo_root):
-                continue
-            real = os.path.realpath(repo_root)
-            if real in seen:
-                continue
-            seen.add(real)
-            pairs.append((slug, repo_root))
-    return pairs
-
-
 def _workspace_report_data(root):
     """The workspace board report as a JSON-ready dict (spec-status
     workspace-board-report, json-output) — what ``show`` reports with no name
@@ -1474,9 +1480,11 @@ def _workspace_report_data(root):
 
     The report aggregates one **universe** per repo: the invocation root's own
     always, plus — for a workspace-level invocation — each declared project
-    repo :func:`_workspace_project_roots` yields, aggregated exactly as a root
-    is (its epics, its worktrees, its member states, its standalone changes,
-    all relative to that repo). Member-slug exclusion sets are per universe, so
+    repo the engine's shared universe-discovery seam
+    (:func:`spec_common.aggregation_universes`, shipd-workspace
+    workspace-universe-discovery) yields, aggregated exactly as a root is (its
+    epics, its worktrees, its member states, its standalone changes, all
+    relative to that repo). Member-slug exclusion sets are per universe, so
     one project's epic never suppresses another's standalone change, and epic
     slugs are never deduplicated across universes — separate repos are separate
     spec universes, told apart by their ``project``. Totals sum across
@@ -1493,7 +1501,7 @@ def _workspace_report_data(root):
     aggregation shares, each read from its hosting root, so a worktree-authored
     epic counts here exactly as it does on the board. An unreadable epic file is
     skipped, never raised."""
-    universes = [(None, root)] + _workspace_project_roots(root)
+    universes = sc.aggregation_universes(root)
     epic_count = 0
     initiatives = set()
     specs = 0
@@ -1613,12 +1621,15 @@ def _workspace_report_lines(data):
 
 
 def cmd_epic_show(root, slug, as_json=False):
-    # Read-only, so it resolves across the invocation root and its worktrees;
+    # Read-only, so it resolves across every universe the shared seam yields —
+    # the invocation root and its worktrees, then each declared project repo;
     # the mutating verbs below deliberately stay invocation-root-only.
-    if _epic_hosting_root(root, slug) is None:
+    hosted = _epic_hosting_universe(root, slug)
+    if hosted is None:
         raise StatusError(
             "epic '%s' not found (%s)" % (slug, _epic_path(root, slug)))
-    data = _epic_report_data(root, slug)
+    project, universe_root, _hosting_root = hosted
+    data = _epic_report_data(universe_root, slug, project=project)
     return _emit(data, _epic_report_lines(data), as_json)
 
 

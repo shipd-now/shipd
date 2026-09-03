@@ -71,34 +71,48 @@ git-ignored as runtime state.
 ### Requirement: Board aggregation
 id: board-aggregation
 
-The dashboard CLI SHALL provide a `board` verb that aggregates, for each epic
-discovered under the invocation root **or any `.worktrees/<name>` directory
-under it** (or only the epic named by `--epic`): the
-epic's status, theme, and initiative context — the initiative's status resolved
-through the workspace brief when a workspace is discoverable, the bare slug
-otherwise, never an error; every stub member's worktree-aware state — derived
-from the invocation root first and, when the root says `unplanned`, from a
-locate-style probe of `.worktrees/<slug>` (planned change or completed archive),
-reporting the state and where it lives; and the run context merged from the live
-heartbeat and the latest run report when either exists. Epic discovery SHALL
-probe the invocation root first, then each `.worktrees/<name>` directory in
-sorted name order, resolving each candidate's content directory independently
-and skipping any candidate whose configuration is unreadable; when the same
-slug exists in more than one candidate, the invocation root's copy SHALL win,
-then the first hosting worktree in sorted order, and the epic SHALL be
-aggregated exactly once. Each aggregated epic SHALL carry its hosting root as
-`location`, and the epic's file, status, heartbeat, and run report SHALL be
-read from that hosting root. The aggregation SHALL
-additionally group its epics under their initiative — a workspace-wide group for
-epics carrying no `Initiative:` — and SHALL annotate each member with the board
-actions eligible for it (`plan` for an `unplanned` member, `run` for a member
-ready to drive, `open` for a parked or shipped member carrying a session id) and
-that member's resumable `session_id` when known. The verb SHALL print an aligned
-human-readable board by default and the full board object as JSON under `--json`;
-the human-readable board and the TUI's epic group header SHALL mark an epic
-whose `location` is not the invocation root with a `[worktree]` marker, and the
-TUI's epic-detail overview SHALL read the epic markdown from the epic's
-hosting root.
+The dashboard CLI SHALL provide a `board` verb that aggregates its epics
+across the universes the engine's shared universe-discovery seam yields
+(shipd-workspace workspace-universe-discovery), in seam order — the
+invocation root's own universe always, plus, for a workspace-level
+invocation, one universe per declared project repo. Within each universe it
+SHALL aggregate, for each epic discovered under that universe's root **or
+any `.worktrees/<name>` directory under it** (or only the epic named by
+`--epic`, resolved against the universes in seam order, the first hosting
+universe winning): the epic's status, theme, and initiative context — the
+initiative's status resolved through the workspace brief when a workspace is
+discoverable, the bare slug otherwise, never an error; every stub member's
+worktree-aware state — derived from that universe's root first and, when it
+says `unplanned`, from a locate-style probe of its `.worktrees/<slug>`
+(planned change or completed archive), reporting the state and where it
+lives; and the run context merged from the live heartbeat and the latest run
+report when either exists, both read from the epic's hosting root. Within a
+universe, epic discovery SHALL probe the universe's root first, then each of
+its `.worktrees/<name>` directories in sorted name order, resolving each
+candidate's content directory independently and skipping any candidate whose
+configuration is unreadable; when the same slug exists in more than one
+candidate of a universe, that universe's root copy SHALL win, then the first
+hosting worktree in sorted order, and the epic SHALL be aggregated exactly
+once per universe — epic slugs are NOT deduplicated across universes. Each
+aggregated epic SHALL carry its hosting root as `location`, its owning
+universe's absolute root as `universe_root`, and its owning declared
+project's slug as `project` (null for the invocation root's own universe);
+standalone changes SHALL be discovered per universe with that universe's own
+member-slug exclusion set and carry the same `project` field. The
+aggregation SHALL additionally group its epics under their initiative — a
+workspace-wide group for epics carrying no `Initiative:` — and SHALL
+annotate each member with the board actions eligible for it (`plan` for an
+`unplanned` member, `run` for a member ready to drive, `open` for a parked
+or shipped member carrying a session id) and that member's resumable
+`session_id` when known; an action's launch SHALL be built against the
+epic's `universe_root` — the member worktree, the driver's `--root`, and the
+session working directory all land in the owning universe's repo. The verb
+SHALL print an aligned human-readable board by default and the full board
+object as JSON under `--json`; the human-readable board and the TUI's epic
+group header SHALL mark an epic whose `location` is not its universe's root
+with a `[worktree]` marker and an epic from a project universe with a
+`[<project>]` marker after it, and the TUI's epic-detail overview SHALL read
+the epic markdown from the epic's hosting root.
 
 #### Scenario: Epics group under their initiative
 - **GIVEN** two epics sharing one `Initiative:` and one epic carrying none
@@ -138,15 +152,31 @@ hosting root.
 - **WHEN** the board is built
 - **THEN** the epic appears exactly once, aggregated from the invocation root
 
-#### Scenario: A worktree-hosted epic is marked on the text board
-- **GIVEN** an epic whose `location` is a worktree root
-- **WHEN** the human-readable board prints
-- **THEN** that epic's header line carries `[worktree]`
+#### Scenario: A declared project's epic joins the board at workspace level
+- **GIVEN** a workspace root whose declared project repo hosts an epic
+- **WHEN** the board is built from the workspace root
+- **THEN** the epic is aggregated with its member states derived from that
+  repo, its `project` is the project's slug, its `universe_root` is that
+  repo, and its board/TUI header carries the `[<project>]` marker
 
-#### Scenario: An unreadable worktree config does not break discovery
-- **GIVEN** a worktree whose content-directory configuration cannot be read
+#### Scenario: Inside a member repo the board stays per-repo
+- **GIVEN** the same workspace, with the board built from inside a declared
+  project repo
 - **WHEN** the board is built
-- **THEN** that worktree is skipped and aggregation completes without raising
+- **THEN** only that repo's universe is aggregated and no epic carries a
+  project slug
+
+#### Scenario: A project epic's actions launch in its own repo
+- **GIVEN** a project universe epic with an unplanned member
+- **WHEN** the member's `plan` action launch is built
+- **THEN** the launch's working directory and worktree path resolve under
+  the project repo, not the invocation root
+
+#### Scenario: Same epic slug in two universes aggregates twice
+- **GIVEN** the same epic slug hosted under the invocation root and under a
+  declared project repo
+- **WHEN** the board is built from the workspace root
+- **THEN** both epics are aggregated, distinguished by their `project`
 
 ### Requirement: Board TUI
 id: board-tui

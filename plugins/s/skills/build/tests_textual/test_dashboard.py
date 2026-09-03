@@ -291,6 +291,302 @@ class WorktreeEpicBoardTest(DashboardTestBase):
         self.assertEqual([e["slug"] for e in board["epics"]], ["ep", "w-a"])
 
 
+class WorkspaceUniverseBoardTest(DashboardTestBase):
+    """The board aggregates one **universe** per repo the shared
+    workspace-universe discovery seam yields (delivery-dashboard
+    board-aggregation; shipd-workspace workspace-universe-discovery): the
+    invocation root's own always, plus — for a workspace-level invocation —
+    each declared project repo. A project universe's epics carry their
+    ``project`` slug and their universe's absolute ``universe_root``, their
+    members and standalone changes derive from that repo, and their board
+    actions launch there.
+
+    Written test-first; expected to FAIL until the universe aggregation lands
+    in ``dashboard.py`` (tasks 4.1/4.2)."""
+
+    def declare_projects(self, *slugs):
+        """Declare one single-repo project per slug at ``self.root``, each
+        repo a workspace-root-relative directory named after its project."""
+        _write(os.path.join(self.root, ".shipd-config.json"),
+               json.dumps({"workspace": {"projects": {
+                   slug: {"repos": [{"path": slug}]} for slug in slugs}}}))
+
+    def make_project_repo(self, slug):
+        """Materialize a declared project's repo directory (with its own
+        content directory) and return its absolute path."""
+        repo = os.path.join(self.root, slug)
+        os.makedirs(os.path.join(repo, ".shipd"), exist_ok=True)
+        return repo
+
+    def epics_by_slug(self, board):
+        return {e["slug"]: e for e in board["epics"]}
+
+    # -- (1) a declared project's epic joins the board ----------------------
+
+    def test_project_epic_carries_its_project_and_universe_root(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        _make_epic(repo, "pe", [("pm1", "a member", "low")], status="active",
+                   theme="observability")
+        board = dashboard.build_board(self.root)
+        epic = self.epics_by_slug(board)["pe"]
+        self.assertEqual(epic["project"], "proj-a")
+        self.assertEqual(epic["universe_root"], os.path.abspath(repo))
+        self.assertEqual(epic["location"], os.path.abspath(repo))
+        self.assertEqual(epic["status"], "active")
+        self.assertEqual(epic["theme"], "observability")
+
+    def test_project_member_state_and_location_derive_from_that_repo(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        _make_epic(repo, "pe", [("pm1", "a member", "low"),
+                                ("pm2", "another", "high")], status="active")
+        _plan(repo, "pm1", "active")
+        _plan(repo, "pm2", "rejected", rel=os.path.join(".worktrees", "pm2"))
+        # A same-named change under the invocation root must never be the one
+        # the project universe reports.
+        _plan(self.root, "pm1", "ready")
+        epic = self.epics_by_slug(dashboard.build_board(self.root))["pe"]
+        members = {m["slug"]: m for m in epic["members"]}
+        self.assertEqual(members["pm1"]["state"], "active")
+        self.assertEqual(members["pm1"]["location"], os.path.abspath(repo))
+        self.assertEqual(members["pm2"]["state"], "rejected")
+        self.assertEqual(
+            members["pm2"]["location"],
+            os.path.abspath(os.path.join(repo, ".worktrees", "pm2")))
+
+    def test_root_universe_epics_carry_a_null_project_and_the_board_root(self):
+        self.declare_projects("proj-a")
+        self.make_project_repo("proj-a")
+        _make_epic(self.root, "ep", [("m1", "a member", "low")])
+        epic = self.epics_by_slug(dashboard.build_board(self.root))["ep"]
+        self.assertIsNone(epic["project"])
+        self.assertEqual(epic["universe_root"], os.path.abspath(self.root))
+
+    def test_root_universe_is_aggregated_before_the_project_universes(self):
+        self.declare_projects("proj-a", "proj-b")
+        repo_a = self.make_project_repo("proj-a")
+        repo_b = self.make_project_repo("proj-b")
+        _make_epic(self.root, "ep", [("m1", "a member", "low")])
+        _make_epic(repo_a, "pa", [("am1", "a member", "low")])
+        _make_epic(repo_b, "pb", [("bm1", "a member", "low")])
+        board = dashboard.build_board(self.root)
+        self.assertEqual([e["slug"] for e in board["epics"]],
+                         ["ep", "pa", "pb"])
+        self.assertEqual([e["project"] for e in board["epics"]],
+                         [None, "proj-a", "proj-b"])
+
+    def test_the_same_slug_in_two_universes_aggregates_twice(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        _make_epic(self.root, "shared", [("m1", "a member", "low")],
+                   status="ready", theme="root-theme")
+        _make_epic(repo, "shared", [("pm1", "a member", "low")],
+                   status="active", theme="project-theme")
+        board = dashboard.build_board(self.root)
+        self.assertEqual([e["slug"] for e in board["epics"]],
+                         ["shared", "shared"])
+        self.assertEqual([e["project"] for e in board["epics"]],
+                         [None, "proj-a"])
+        self.assertEqual([e["theme"] for e in board["epics"]],
+                         ["root-theme", "project-theme"])
+
+    def test_an_absent_project_repo_is_skipped(self):
+        self.declare_projects("proj-a", "proj-b")
+        repo = self.make_project_repo("proj-a")
+        _make_epic(repo, "pe", [("pm1", "a member", "low")])
+        board = dashboard.build_board(self.root)
+        self.assertEqual([e["slug"] for e in board["epics"]], ["pe"])
+        self.assertEqual([e["project"] for e in board["epics"]], ["proj-a"])
+
+    # -- (2) standalone changes are discovered per universe ------------------
+
+    def test_project_standalone_row_carries_its_project(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        _plan(repo, "psolo", "active")
+        board = dashboard.build_board(self.root)
+        by_slug = {row["slug"]: row for row in board["standalone"]}
+        self.assertIn("psolo", by_slug)
+        self.assertEqual(by_slug["psolo"]["project"], "proj-a")
+        self.assertEqual(by_slug["psolo"]["state"], "active")
+        self.assertEqual(by_slug["psolo"]["actions"], [])
+
+    def test_root_standalone_row_carries_a_null_project(self):
+        self.declare_projects("proj-a")
+        self.make_project_repo("proj-a")
+        _plan(self.root, "solo", "active")
+        board = dashboard.build_board(self.root)
+        by_slug = {row["slug"]: row for row in board["standalone"]}
+        self.assertIsNone(by_slug["solo"]["project"])
+
+    def test_exclusion_sets_are_per_universe(self):
+        # proj-a's epic adopts `pm1`, so proj-a's own planned `pm1` is not a
+        # standalone row there — but the invocation root's same-named change
+        # belongs to a different universe and still lists.
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        _make_epic(repo, "pe", [("pm1", "a member", "low")], status="active")
+        _plan(repo, "pm1", "active")
+        _plan(self.root, "pm1", "ready")
+        board = dashboard.build_board(self.root)
+        rows = [(row["slug"], row["project"]) for row in board["standalone"]]
+        self.assertEqual(rows, [("pm1", None)])
+
+    # -- (3) the --epic scope resolves across universes ---------------------
+
+    def test_epic_flag_resolves_a_project_hosted_slug(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        _make_epic(self.root, "ep", [("m1", "a member", "low")])
+        _make_epic(repo, "pe", [("pm1", "a member", "low")], status="active")
+        board = dashboard.build_board(self.root, epic="pe")
+        self.assertEqual([e["slug"] for e in board["epics"]], ["pe"])
+        epic = board["epics"][0]
+        self.assertEqual(epic["project"], "proj-a")
+        self.assertEqual(epic["universe_root"], os.path.abspath(repo))
+
+    def test_epic_flag_lets_the_root_universe_win_a_duplicate(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        _make_epic(self.root, "shared", [("m1", "a member", "low")],
+                   status="ready", theme="root-theme")
+        _make_epic(repo, "shared", [("pm1", "a member", "low")],
+                   status="active", theme="project-theme")
+        board = dashboard.build_board(self.root, epic="shared")
+        self.assertEqual([e["slug"] for e in board["epics"]], ["shared"])
+        self.assertIsNone(board["epics"][0]["project"])
+        self.assertEqual(board["epics"][0]["theme"], "root-theme")
+
+    def test_epic_flag_no_universe_hosts_still_raises(self):
+        self.declare_projects("proj-a")
+        self.make_project_repo("proj-a")
+        with self.assertRaises(ValueError):
+            dashboard.build_board(self.root, epic="no-such-epic")
+
+    # -- (4) inside a member repo the board stays per-repo ------------------
+
+    def test_inside_a_member_repo_the_board_is_per_repo(self):
+        self.declare_projects("proj-a", "proj-b")
+        repo_a = self.make_project_repo("proj-a")
+        repo_b = self.make_project_repo("proj-b")
+        _make_epic(self.root, "ep", [("m1", "a member", "low")])
+        _make_epic(repo_a, "pa", [("am1", "a member", "low")])
+        _make_epic(repo_b, "pb", [("bm1", "a member", "low")])
+        board = dashboard.build_board(repo_a)
+        self.assertEqual([e["slug"] for e in board["epics"]], ["pa"])
+        self.assertIsNone(board["epics"][0]["project"])
+        self.assertEqual(board["epics"][0]["universe_root"],
+                         os.path.abspath(repo_a))
+
+    def test_without_a_registry_every_row_carries_a_null_project(self):
+        _make_epic(self.root, "ep", [("m1", "a member", "low")])
+        _plan(self.root, "solo", "active")
+        board = dashboard.build_board(self.root)
+        self.assertEqual([e["project"] for e in board["epics"]], [None])
+        self.assertEqual([r["project"] for r in board["standalone"]], [None])
+
+    # -- (5) a project epic's actions launch in its own repo ----------------
+
+    def test_plan_launch_uses_the_epics_universe_root(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        _make_epic(repo, "pe", [("pm1", "a member", "low")], status="active")
+        epic = self.epics_by_slug(dashboard.build_board(self.root))["pe"]
+        member = epic["members"][0]
+        self.assertIn("plan", member["actions"])
+        launch = dashboard.build_plan_launch(
+            epic["universe_root"], epic["slug"], member, tmux=False)
+        self.assertEqual(
+            launch["cwd"],
+            os.path.join(os.path.abspath(repo), ".worktrees", "pm1"))
+
+    def test_run_launches_root_at_the_epics_universe_root(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        _make_epic(repo, "pe", [("pm1", "a member", "low")], status="active")
+        epic = self.epics_by_slug(dashboard.build_board(self.root))["pe"]
+        member = epic["members"][0]
+        run = dashboard.build_run_launch(
+            epic["universe_root"], epic["slug"], member)
+        self.assertEqual(run["cwd"], os.path.abspath(repo))
+        self.assertIn("--root", run["argv"])
+        self.assertEqual(run["argv"][run["argv"].index("--root") + 1],
+                         os.path.abspath(repo))
+        epic_run = dashboard.build_epic_run_launch(
+            epic["universe_root"], epic["slug"])
+        self.assertEqual(epic_run["cwd"], os.path.abspath(repo))
+
+
+class ProjectUniverseMarkerTest(unittest.TestCase):
+    """The ``[<project>]`` marker on an epic aggregated from a declared project
+    universe (delivery-dashboard board-aggregation): the human-readable board's
+    epic header and the TUI's epic group header both carry it, directly after
+    the ``[worktree]`` marker position, and a root-universe epic carries none.
+    The ``[worktree]`` marker itself is relative to the epic's own
+    ``universe_root``, so a project epic hosted at its repo's root is not
+    mistaken for a worktree-hosted one. Pure — no terminal.
+
+    Written test-first; expected to FAIL until the markers land in
+    ``dashboard.py`` (task 4.2)."""
+
+    def _project_board(self, location="/w/proj-a"):
+        board = _sample_board()
+        epic = board["epics"][0]
+        epic["project"] = "proj-a"
+        epic["universe_root"] = "/w/proj-a"
+        epic["location"] = location
+        return board
+
+    def _header(self, board):
+        lines = dashboard.render_board_lines(board)
+        headers = [ln for ln in lines if ln.strip().startswith("epic ep")]
+        self.assertEqual(len(headers), 1, lines)
+        return headers[0]
+
+    def test_text_board_marks_a_project_epic_header(self):
+        header = self._header(self._project_board())
+        self.assertIn("[proj-a]", header)
+
+    def test_a_project_epic_at_its_universe_root_is_not_a_worktree(self):
+        header = self._header(self._project_board())
+        self.assertNotIn("[worktree]", header)
+
+    def test_the_project_marker_follows_the_worktree_marker(self):
+        header = self._header(
+            self._project_board(location="/w/proj-a/.worktrees/epic-ep"))
+        self.assertIn("[worktree]", header)
+        self.assertLess(header.index("[worktree]"), header.index("[proj-a]"))
+
+    def test_a_root_universe_epic_carries_no_project_marker(self):
+        board = _sample_board()
+        board["epics"][0]["location"] = board["root"]
+        board["epics"][0]["universe_root"] = board["root"]
+        board["epics"][0]["project"] = None
+        header = self._header(board)
+        self.assertNotIn("[worktree]", header)
+        self.assertNotIn("[proj-a]", header)
+
+    def test_epic_group_title_carries_the_project_marker(self):
+        title = dashboard.epic_group_title("ep", "active", None,
+                                           project="proj-a")
+        self.assertIn("proj-a", title)
+
+    def test_epic_group_title_orders_project_after_worktree(self):
+        title = dashboard.epic_group_title("ep", "active", None,
+                                           worktree=True, project="proj-a")
+        self.assertLess(title.index("worktree"), title.index("proj-a"))
+
+    def test_epic_group_title_is_unchanged_without_a_project(self):
+        self.assertEqual(
+            dashboard.epic_group_title("ep", "active", None, project=None),
+            dashboard.epic_group_title("ep", "active", None))
+        self.assertEqual(
+            dashboard.epic_group_title("ep", "active", None, worktree=True,
+                                       project=None),
+            dashboard.epic_group_title("ep", "active", None, worktree=True))
+
+
 # ---------------------------------------------------------------------------
 # Initiative grouping and per-member action eligibility
 # ---------------------------------------------------------------------------
@@ -4056,12 +4352,16 @@ class StalledEpicDetailTest(DashboardTestBase, unittest.IsolatedAsyncioTestCase)
                 heartbeat=_stalled_detail_hb()))
         async with app.run_test(size=(120, 40)) as pilot:
             calls = []
-            app.dispatch_epic_run = calls.append
+            # The retry dispatches on the epic's full `(slug, project)`
+            # identity (delivery-dashboard board-aggregation) — this
+            # single-universe board's epic carries no project.
+            app.dispatch_epic_run = lambda slug, project=None: calls.append(
+                (slug, project))
             await self._push_detail(app)
             await pilot.pause()
             retry = app.screen.query_one("#epic-retry", Button)
             await pilot.click(retry)
-            self.assertEqual(calls, ["ep1"])
+            self.assertEqual(calls, [("ep1", None)])
             self.assertNotIsInstance(app.screen, dashboard.EpicDetailScreen)
 
     async def test_non_stalled_modal_has_no_warning_or_retry(self):
@@ -4508,17 +4808,19 @@ class LaneContentsTest(unittest.TestCase):
 
     def test_orders_members_into_lanes_and_groups_shipped_by_epic(self):
         contents = dashboard._lane_contents(_shipped_board())
-        ready_slugs = [member["slug"] for _, _, member, _ in contents["ready"]]
+        ready_slugs = [member["slug"]
+                       for _, _, member, _, _ in contents["ready"]]
         self.assertEqual(ready_slugs, ["rdy1"])
         shipped = [(epic_slug, member["slug"])
-                  for epic_slug, _, member, _ in contents["shipped"]]
+                  for epic_slug, _, member, _, _ in contents["shipped"]]
         self.assertEqual(shipped, [("es1", "shipped1"), ("es2", "shipped2")])
 
     def test_kanban_board_lanes_hold_the_right_members(self):
         contents = dashboard._lane_contents(_kanban_board())
         for lane_name, slug in (("building", "driver"), ("ready", "rdy"),
                                 ("unplanned", "fresh")):
-            slugs = [member["slug"] for _, _, member, _ in contents[lane_name]]
+            slugs = [member["slug"]
+                     for _, _, member, _, _ in contents[lane_name]]
             self.assertEqual(slugs, [slug])
         self.assertEqual(contents["review"], [])
         self.assertEqual(contents["shipped"], [])
@@ -4532,11 +4834,12 @@ class LaneSignatureTest(unittest.TestCase):
     group_mode)."""
 
     def _sig(self, board, lane_name, group_mode="epic", search_query=""):
-        # Derive the epic-slug -> initiative-identity map exactly as
-        # `_render_lanes` does, so the signature folds in what the group
-        # headers render.
+        # Derive the epic-identity -> initiative-identity map exactly as
+        # `_render_lanes` does — keyed by the epic's `(slug, project)` pair,
+        # since slugs repeat across universes — so the signature folds in what
+        # the group headers render.
         initiative_by_epic = {
-            epic.get("slug"): (
+            (epic.get("slug"), epic.get("project")): (
                 (epic["initiative"].get("slug"),
                  epic["initiative"].get("status"))
                 if epic.get("initiative") else None)
@@ -5347,6 +5650,199 @@ class StandaloneModalTest(unittest.IsolatedAsyncioTestCase):
             labels = [a["label"] for a in app.screen._artifacts]
             self.assertIn("Plan", labels)
             self.assertIn("Tasks", labels)
+
+
+# ---------------------------------------------------------------------------
+# Duplicate epic slugs across universes: the TUI's epic identity
+# ---------------------------------------------------------------------------
+
+class DuplicateSlugUniverseIdentityTest(unittest.IsolatedAsyncioTestCase):
+    """Epic slugs are **not** deduplicated across universes (delivery-dashboard
+    board-aggregation), so a bare slug is not an epic identity — the identity
+    is ``(slug, project)``. Every TUI lookup must resolve on that pair, or a
+    project epic borrows a same-slug sibling's marker and, worse, launches its
+    members into the wrong repo.
+
+    The fixture is the validator's refutation: slug ``shared`` hosted by the
+    invocation root **and** by ``proj-b``, slug ``twin`` hosted by ``proj-a``
+    **and** ``proj-b``, plus a member slug ``dup`` present under both copies of
+    ``shared`` — so member-hosting alone cannot tell those two apart and only
+    an explicit project discriminator can.
+
+    Written test-first; expected to FAIL until the identity-based lookups land
+    in ``dashboard.py`` (task 8.2)."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="universe-identity-test-")
+        self._base_home = tempfile.mkdtemp(prefix="universe-identity-home-")
+        self._old_home = os.environ.get("HOME")
+        os.environ["HOME"] = self._base_home
+        _write(os.path.join(self.root, ".shipd-config.json"),
+               json.dumps({"workspace": {"projects": {
+                   "proj-a": {"repos": [{"path": "alpha"}]},
+                   "proj-b": {"repos": [{"path": "beta"}]}}}}))
+        self.alpha = os.path.join(self.root, "alpha")
+        self.beta = os.path.join(self.root, "beta")
+        for repo in (self.alpha, self.beta):
+            os.makedirs(os.path.join(repo, ".shipd"), exist_ok=True)
+        _make_epic(self.root, "shared",
+                   [("sh-root", "a member", "low"), ("dup", "a member", "low")],
+                   status="active")
+        _make_epic(self.alpha, "twin", [("tw-a", "a member", "low")],
+                   status="active")
+        _make_epic(self.beta, "shared",
+                   [("sh-b", "a member", "low"), ("dup", "a member", "low")],
+                   status="active")
+        _make_epic(self.beta, "twin", [("tw-b", "a member", "low")],
+                   status="active")
+        self.board = dashboard.build_board(self.root)
+
+    def tearDown(self):
+        if self._old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self._old_home
+        shutil.rmtree(self._base_home, ignore_errors=True)
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _app(self):
+        return dashboard.BoardApp(root=self.root, board_fn=lambda: self.board)
+
+    def _worktree(self, repo, slug):
+        return os.path.join(os.path.abspath(repo), ".worktrees", slug)
+
+    def test_the_fixture_hosts_one_slug_in_several_universes(self):
+        # The premise every assertion below rests on: four epics, two slugs.
+        self.assertEqual(
+            [(e["slug"], e["project"]) for e in self.board["epics"]],
+            [("shared", None), ("twin", "proj-a"),
+             ("shared", "proj-b"), ("twin", "proj-b")])
+
+    # -- (1) each group header carries its OWN universe's marker -------------
+
+    async def test_each_group_header_carries_its_own_universes_marker(self):
+        app = self._app()
+        async with app.run_test(size=(200, 40)) as pilot:
+            await pilot.pause()
+            lane = app.query_one("#lane-unplanned", dashboard.Lane)
+            groups = list(lane.query(Collapsible))
+            markers = [re.findall(r"\\\[([^\]]+)\]", g.title) for g in groups]
+            # Board order: the root's `shared`, proj-a's `twin`, proj-b's
+            # `shared`, proj-b's `twin` — the root copy unmarked, each project
+            # copy marked with its own project, never a sibling's.
+            self.assertEqual(markers,
+                             [[], ["proj-a"], ["proj-b"], ["proj-b"]])
+
+    async def test_same_slug_groups_get_distinct_dom_ids(self):
+        app = self._app()
+        async with app.run_test(size=(200, 40)) as pilot:
+            await pilot.pause()
+            lane = app.query_one("#lane-unplanned", dashboard.Lane)
+            ids = [g.id for g in lane.query(Collapsible)]
+            self.assertEqual(len(ids), 4, ids)
+            self.assertEqual(len(set(ids)), 4, ids)
+
+    # -- (2) resolve_action_launch lands in the hosting universe -------------
+
+    def _plan_cwd(self, epic_slug, member_slug, **extra):
+        region = {"kind": "card_button", "epic": epic_slug,
+                  "member": member_slug, "action": "plan"}
+        region.update(extra)
+        launch = dashboard.resolve_action_launch(self.board, self.root, region)
+        self.assertIsNotNone(launch)
+        return launch["cwd"]
+
+    def test_resolve_action_launch_uses_the_hosting_universe(self):
+        self.assertEqual(self._plan_cwd("twin", "tw-b"),
+                         self._worktree(self.beta, "tw-b"))
+        self.assertEqual(self._plan_cwd("twin", "tw-a"),
+                         self._worktree(self.alpha, "tw-a"))
+        self.assertEqual(self._plan_cwd("shared", "sh-b"),
+                         self._worktree(self.beta, "sh-b"))
+        self.assertEqual(self._plan_cwd("shared", "sh-root"),
+                         self._worktree(self.root, "sh-root"))
+
+    def test_resolve_action_launch_honours_the_project_discriminator(self):
+        # `dup` sits under `shared` in both the root universe and proj-b, so
+        # the region's project is the only thing that tells them apart.
+        self.assertEqual(self._plan_cwd("shared", "dup", project="proj-b"),
+                         self._worktree(self.beta, "dup"))
+        self.assertEqual(self._plan_cwd("shared", "dup", project=None),
+                         self._worktree(self.root, "dup"))
+
+    def test_a_region_without_a_project_still_resolves_unambiguously(self):
+        # Single-universe boards carry no project on their regions; slug-alone
+        # resolution must keep working there.
+        board = {"root": "/repo", "epics": [
+            {"slug": "ep", "members": [
+                {"slug": "m", "state": "unplanned", "location": "/repo",
+                 "risk": "low", "actions": ["plan"], "session_id": None}]}]}
+        region = {"kind": "card_button", "epic": "ep", "member": "m",
+                  "action": "plan"}
+        launch = dashboard.resolve_action_launch(board, "/repo", region)
+        self.assertEqual(launch["cwd"],
+                         os.path.join("/repo", ".worktrees", "m"))
+
+    # -- (3) the App's epic-rooted launches ---------------------------------
+
+    async def test_epic_root_resolves_on_slug_and_project(self):
+        app = self._app()
+        async with app.run_test(size=(200, 40)) as pilot:
+            await pilot.pause()
+            self.assertEqual(app._epic_root("twin", "proj-b"),
+                             os.path.abspath(self.beta))
+            self.assertEqual(app._epic_root("twin", "proj-a"),
+                             os.path.abspath(self.alpha))
+            self.assertEqual(app._epic_root("shared", "proj-b"),
+                             os.path.abspath(self.beta))
+            self.assertEqual(app._epic_root("shared", None),
+                             os.path.abspath(self.root))
+
+    async def test_dispatch_epic_run_roots_the_driver_in_its_universe(self):
+        app = self._app()
+        async with app.run_test(size=(200, 40)) as pilot:
+            await pilot.pause()
+            launches = []
+            app._spawn_launch = launches.append
+            app.dispatch_epic_run("twin", "proj-b")
+            self.assertEqual(len(launches), 1)
+            launch = launches[0]
+            self.assertEqual(launch["cwd"], os.path.abspath(self.beta))
+            argv = launch["argv"]
+            self.assertEqual(argv[argv.index("--root") + 1],
+                             os.path.abspath(self.beta))
+
+    async def test_a_project_cards_plan_action_launches_in_its_own_repo(self):
+        app = self._app()
+        async with app.run_test(size=(200, 40)) as pilot:
+            await pilot.pause()
+            launches = []
+            app._spawn_launch = launches.append
+            card = next(c for c in app.query(dashboard.TaskCard)
+                        if c.member["slug"] == "tw-b")
+            card.focus()
+            await pilot.pause()
+            await pilot.press("l")
+            self.assertEqual(len(launches), 1)
+            self.assertEqual(launches[0]["cwd"],
+                             self._worktree(self.beta, "tw-b"))
+
+    async def test_duplicate_member_cards_launch_into_their_own_universes(self):
+        app = self._app()
+        async with app.run_test(size=(200, 40)) as pilot:
+            await pilot.pause()
+            launches = []
+            app._spawn_launch = launches.append
+            cards = [c for c in app.query(dashboard.TaskCard)
+                     if c.member["slug"] == "dup"]
+            self.assertEqual(len(cards), 2)
+            for card in cards:
+                card.focus()
+                await pilot.pause()
+                await pilot.press("l")
+            self.assertEqual([lc["cwd"] for lc in launches],
+                             [self._worktree(self.root, "dup"),
+                              self._worktree(self.beta, "dup")])
 
 
 if __name__ == "__main__":
