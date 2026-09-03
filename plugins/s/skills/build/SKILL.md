@@ -364,7 +364,11 @@ it, and `claim` only ever hands out tasks whose group is ready. So:
   one task at a time.
 - Each sub-agent loops: `claim` → implement → `complete` → re-`claim`; when
   `claim` returns nothing it may mean "wait for the current group/barrier," so a
-  sub-agent only stops when `status` shows no pending tasks.
+  sub-agent only stops when `status` shows no pending tasks. An idle worker
+  waits out that barrier with `claim <change> --as <label> --wait`, which
+  blocks in-shell and returns the task the moment it frees up — never a poll
+  loop, and never a backgrounded claim, whose `[~]` mark would outlive the
+  agent's awareness of it.
 - Run sub-agents in the background so you stay responsive to their questions.
 
 ## Phase 4 — Q&A loop (you answer, definitively)
@@ -808,16 +812,45 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
 Task IDs are stable ordinals (1-based, counting checkbox lines top-to-bottom):
 
 ```
-claim_task.sh next     <change>          # peek next ready pending task -> "ID\tTEXT"
-claim_task.sh claim    <change>          # atomically take next ready pending -> [~], print "ID\tTEXT"
-claim_task.sh complete <change> [id]     # mark task done -> [x]; id optional if exactly one task is in progress
-claim_task.sh release  <change> [id]     # return a task -> [ ]; id optional if exactly one task is in progress
-claim_task.sh status   <change>          # pending / in_progress / done counts
+claim_task.sh next     <change>                        # peek next ready pending task -> "ID\tTEXT"
+claim_task.sh claim    <change> [--as <label>]         # atomically take next ready pending -> [~], print "ID\tTEXT"
+                                [--wait [--timeout <secs>]]
+claim_task.sh complete <change> [id] [--as <label>]    # mark task done -> [x]; id optional if exactly one task is in progress
+claim_task.sh release  <change> [id] [--as <label>]    # return a task -> [ ]; id optional if exactly one task is in progress
+claim_task.sh release  <change> --stale <mins>         # reclaim every claim older than <mins> (and every record-less [~])
+claim_task.sh status   <change> [--stale-after <mins>] # counts, then one `claimed:` line per in-progress task
 ```
 
 `complete`/`release` require an explicit `id` when zero or more than one task is
 in progress (parallel sub-agents) — they refuse to guess and exit non-zero with a
 message telling the caller to pass one.
+
+**Claim liveness.** Every claim is stamped with a holder and a timestamp in a
+sidecar `.shipd/planned/<change>/.tasks.claims` (TSV `id`/`holder`/`epoch`),
+written under the same lock that flips the checkbox; `tasks.md`'s own grammar is
+untouched:
+
+- `--as <label>` names the holder on `claim`, `complete`, and `release`
+  (default `$CLAUDE_CODE_SESSION_ID`, else `anon`). Verification is *soft*:
+  `complete`/`release` refuse only when the record names a holder **and** the
+  caller passed a *different* `--as`; a bare call acts regardless, so your own
+  takeover moves still work.
+- `claim --wait` blocks **inside the single invocation**, retrying every few
+  seconds without holding the lock, until it wins a task, nothing is pending
+  (returns at once with `No pending tasks.`), or `--timeout <secs>` (default
+  600) passes — a timeout prints to stderr, nothing to stdout, and exits 0.
+  This is how an idle worker waits out a barrier: one tool call, not a poll
+  loop.
+- `complete`/`release` refuse any task whose box is not `[~]`, naming its
+  current state — a done task can never be flipped back to pending.
+- `status` keeps its counts line unchanged and appends
+  `claimed: <id> by <holder> age <age>` per in-progress task, with ` [stale]`
+  past the threshold (default 30 minutes, `--stale-after <mins>`). An
+  in-progress task with no record prints `by unknown age unknown [stale]`.
+- `release --stale <mins>` returns every claim older than `<mins>` — and every
+  record-less `[~]` — to pending, one line each naming holder and age, or
+  `No stale claims.` It never accepts an explicit `id`, and `claim` never
+  reclaims a stale task on its own: a slow-but-alive agent is never robbed.
 
 ## Operating rules
 

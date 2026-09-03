@@ -68,7 +68,7 @@ wrong tree.)
      its content-directory `research/` path, read it as a **read-only**
      reference; never edit it. Where no report is named, this step is a no-op.
 2. Claim the next task atomically:
-   `bash <CLAIM_SCRIPT> claim <change-name>`
+   `bash <CLAIM_SCRIPT> claim <change-name> --as <label>`
    It prints `ID<TAB>TASK_TEXT`, or **nothing** if no task is currently ready.
    Empty output does **not** always mean you are finished: tasks carry parallel
    group tags (`[P<n>]`), and `claim` withholds a task until its group/barrier is
@@ -79,15 +79,38 @@ wrong tree.)
    Note the printed `TASK_TEXT` is only the first physical line of the task —
    multi-line (wrapped) tasks are truncated — so always locate the task by its
    `ID` in `tasks.md` and read its full text there before implementing.
+
+   Three rules govern how you claim:
+
+   - **Identify yourself.** Pass a stable personal `--as <label>` on **every**
+     `claim`, `complete`, and `release` — your spawn description's role (e.g.
+     `builder-2`), or one short label you invent once and reuse for the whole
+     build. The coordinator stamps it on the claim, so `status` can name who
+     holds each in-progress task and the Orchestrator can tell a working agent
+     from an abandoned claim.
+   - **Wait in the foreground.** When you are blocked on a group or barrier,
+     wait with `bash <CLAIM_SCRIPT> claim <change-name> --as <label> --wait`
+     (optionally `--timeout <secs>`, default 600). It blocks *inside that one
+     tool call* and returns the task the moment it frees up — one tool call
+     instead of dozens of polls. It returns immediately when nothing is
+     pending; on timeout it prints a note to stderr, nothing to stdout, and
+     exits 0, so you simply call it again.
+   - **Never claim in the background.** Do not run `claim` or `status` in a
+     backgrounded shell, a `&`-detached command, or any poll loop that outlives
+     the tool call. A detached claim marks a task `[~]` after you have stopped
+     watching for it, leaving work held by nobody. Every coordinator call you
+     make is a synchronous, foreground call whose output you read.
 3. Implement exactly that one task. Follow the spec deltas and `plan.md`'s
    `## Implementation` decisions precisely. Match the surrounding code's style.
    Do not scope-creep into other tasks.
 4. When the task is genuinely complete and self-consistent, mark it done:
-   `bash <CLAIM_SCRIPT> complete <change-name> <ID>`
+   `bash <CLAIM_SCRIPT> complete <change-name> <ID> --as <label>`
    (If you are working strictly sequentially — one task claimed and completed at
    a time, never two in progress at once — the `<ID>` may be omitted; the
    coordinator then acts on the single in-progress task. When in doubt, pass the
-   `ID` you captured in step 2.)
+   `ID` you captured in step 2.) `complete` refuses any task that is not
+   in-progress, and refuses a task another label holds — so a refusal means you
+   are aiming at the wrong task, not that you should retry harder.
    Then go back to step 2 for the next task.
 
 ## The no-guessing rule (critical)
@@ -97,7 +120,7 @@ interface shape, an ambiguous requirement — **DO NOT GUESS and do not invent i
 Instead:
 
 - Release the task so it isn't left dangling:
-  `bash <CLAIM_SCRIPT> release <change-name> <ID>`
+  `bash <CLAIM_SCRIPT> release <change-name> <ID> --as <label>`
 - **Stop your turn and return a message that begins with `QUESTION:`** stating
   exactly what you need and which task it blocks. The Orchestrator will
   resume you (via SendMessage) with a definitive answer, and you continue from
