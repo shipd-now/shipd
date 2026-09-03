@@ -17,6 +17,14 @@
 # (`- [ ]`, `- [~]`, `- [x]`) top-to-bottom, the Nth such line is task ID N.
 # IDs stay stable within a run because tasks are not added/removed mid-run.
 #
+# The checkbox grammar is **anchored**: a checkbox line's content begins —
+# after optional leading blanks — with the marker. A marker-shaped substring
+# further along a line is prose, so a backticked literal quoted in a wrapped
+# task description is never counted as a task by any verb here (ordinal
+# enumeration, readiness, in-progress resolution, status counts, the box
+# rewrite, the marker strip). This matches `spec_lint.py` and `spec_status.py`,
+# so the linter's ordinals, these IDs, and the status CLI's counts agree.
+#
 # Task line conventions (.shipd/planned tasks.md checklists):
 #   - [ ] pending      - [~] in progress      - [x] done
 # A task's text may carry a parallel group tag `[P<n>]` (see first_ready_line).
@@ -140,10 +148,10 @@ HOLDER="${HOLDER_ARG:-${CLAUDE_CODE_SESSION_ID:-anon}}"
 HOLDER="$(printf '%s' "$HOLDER" | tr '\t\n' '  ')"
 
 # All checkbox lines, in order, one per line as "LINE:REST".
-all_checkboxes() { grep -n -- '- \[[ ~x]\]' "$TASKS" || true; }
+all_checkboxes() { grep -n -- '^[[:blank:]]*- \[[ ~x]\]' "$TASKS" || true; }
 
 # First pending line as "LINE:REST" or empty.
-first_pending() { grep -nm1 -- '- \[ \]' "$TASKS" || true; }
+first_pending() { grep -nm1 -- '^[[:blank:]]*- \[ \]' "$TASKS" || true; }
 
 # Parallel group tags: a task's text may carry an optional `[P<n>]` tag (e.g.
 # `- [ ] 2.1 [P2] Add CLI flag`). Tasks sharing a `P` number are mutually
@@ -161,8 +169,10 @@ first_pending() { grep -nm1 -- '- \[ \]' "$TASKS" || true; }
 # Print the file line number of the first *ready* pending task, or nothing.
 first_ready_line() {
   awk '
-    /- \[[ ~x]\]/ {
+    /^[[:blank:]]*- \[[ ~x]\]/ {
       ord++
+      # Safe unanchored: the filter above makes the anchored marker the first
+      # marker-shaped substring on the line, so this finds that same marker.
       match($0, /- \[[ ~x]\]/)
       state[ord] = substr($0, RSTART + 3, 1)   # box char: " ", "~", or "x"
       line[ord] = NR
@@ -216,7 +226,7 @@ id_for_line() { # <line>
 
 # The checkbox character (" ", "~" or "x") on a given file line.
 box_at_line() { # <line>
-  awk -v ln="$1" 'NR==ln && match($0, /- \[[ ~x]\]/) {
+  awk -v ln="$1" 'NR==ln && /^[[:blank:]]*- \[[ ~x]\]/ && match($0, /- \[[ ~x]\]/) {
     print substr($0, RSTART + 3, 1); exit
   }' "$TASKS"
 }
@@ -231,18 +241,23 @@ state_name() { # <box-char>
   esac
 }
 
-# In-progress tasks as "ID<TAB>LINE", in ordinal order.
+# In-progress tasks as "ID<TAB>LINE", in ordinal order. The records arriving
+# from all_checkboxes are "LINE:REST", so the anchor sits after that prefix.
 in_progress_pairs() {
-  all_checkboxes | awk -F: -v tab="$TAB" '/- \[~\]/ { print NR tab $1 }'
+  all_checkboxes | awk -F: -v tab="$TAB" \
+    '/^[0-9]+:[[:blank:]]*- \[~\]/ { print NR tab $1 }'
 }
 
-# Bare task text: strip the leading "- [ ] " / "- [~] " / "- [x] " marker.
-strip_marker() { sed 's/^- \[[ ~x]\] *//'; }
+# Bare task text: strip any leading blanks and the "- [ ] " / "- [~] " /
+# "- [x] " marker.
+strip_marker() { sed 's/^[[:blank:]]*- \[[ ~x]\] *//'; }
 
-# Portable checkbox rewrite: set LINE's bracket to TO ('x', '~', or ' ').
+# Portable checkbox rewrite: set LINE's bracket to TO ('x', '~', or ' '),
+# preserving the line's leading blanks.
 set_box() { # <line> <to-char>
   local ln="$1" to="$2"
-  sed "${ln}s/- \[[ ~x]\]/- [${to}]/" "$TASKS" > "$TASKS.tmp" && mv "$TASKS.tmp" "$TASKS"
+  sed "${ln}s/^\\([[:blank:]]*\\)- \\[[ ~x]\\]/\\1- [${to}]/" "$TASKS" > "$TASKS.tmp" \
+    && mv "$TASKS.tmp" "$TASKS"
 }
 
 # ---------------------------------------------------------------------------
@@ -341,7 +356,7 @@ resolve_line() { # <id-or-empty>
     return
   fi
   local hits count
-  hits="$(grep -n -- '- \[~\]' "$TASKS" || true)"
+  hits="$(grep -n -- '^[[:blank:]]*- \[~\]' "$TASKS" || true)"
   count="$(printf '%s\n' "$hits" | grep -c . || true)"
   if [ "$count" -eq 1 ]; then
     printf '%s\n' "$hits" | head -1 | cut -d: -f1
@@ -498,9 +513,9 @@ EOF
     echo "Task $id released."
     ;;
   status)
-    p="$(grep -c -- '- \[ \]' "$TASKS" || true)"
-    w="$(grep -c -- '- \[~\]' "$TASKS" || true)"
-    d="$(grep -c -- '- \[x\]' "$TASKS" || true)"
+    p="$(grep -c -- '^[[:blank:]]*- \[ \]' "$TASKS" || true)"
+    w="$(grep -c -- '^[[:blank:]]*- \[~\]' "$TASKS" || true)"
+    d="$(grep -c -- '^[[:blank:]]*- \[x\]' "$TASKS" || true)"
     echo "pending=$p in_progress=$w done=$d"
     now="$(now_epoch)"
     threshold=$((STALE_AFTER * 60))
