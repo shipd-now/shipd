@@ -1582,6 +1582,316 @@ class WorkspaceReportTest(EpicVerbTest):
         self.assertIn("no change given and no spec selected", r.stderr)
 
 
+class WorkspaceBoardAggregationTest(WorkspaceReportTest):
+    """Workspace-level aggregation of the board report (spec-status
+    workspace-board-report, json-output): run from a root that lies inside no
+    declared project repo, bare ``show`` additionally aggregates one universe
+    per declared ``workspace.projects`` repo present on disk, labelling those
+    rows with the owning project's slug. Run from inside a declared project
+    repo — or with no registry at all — the board stays exactly what it is
+    today.
+
+    Written test-first; expected to FAIL until the aggregation lands in
+    ``spec_status.py`` (tasks 2.1-2.3)."""
+
+    def declare_projects(self, *slugs):
+        """Declare one single-repo project per slug, each repo a workspace-root
+        relative directory named after its project."""
+        self.declare_workspace({"projects": {
+            slug: {"repos": [{"path": slug}]} for slug in slugs}})
+
+    def make_project_repo(self, slug):
+        """Materialize a declared project's repo directory (with its content
+        directory) and return its absolute path."""
+        repo = os.path.join(self.root, slug)
+        os.makedirs(os.path.join(repo, ".shipd"), exist_ok=True)
+        return repo
+
+    def make_repo_change(self, repo, change, status):
+        """Plan ``change`` under a project repo's own content directory."""
+        cdir = os.path.join(repo, ".shipd", "planned", change)
+        os.makedirs(cdir)
+        with open(os.path.join(cdir, "plan.md"), "w", encoding="utf-8") as fh:
+            fh.write("# %s\nStatus: %s\n\n## Idea\nA summary.\n"
+                     % (change, status))
+
+    def make_repo_completed(self, repo, change, date="2026-01-01"):
+        """Archive ``change`` under a project repo's own content directory."""
+        os.makedirs(os.path.join(
+            repo, ".shipd", "completed", "%s-%s" % (date, change)))
+
+    def cli_at(self, root, *args):
+        """Drive the CLI against an arbitrary root — the workspace's member
+        repos, not just ``self.root``."""
+        return subprocess.run(
+            ["python3", SCRIPT, "--root", root, *args],
+            capture_output=True, text=True)
+
+    def report_at(self, root):
+        r = self.cli_at(root, "show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def json_report(self, root=None):
+        r = self.cli_at(root if root is not None else self.root,
+                        "show", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def all_rows(self, data):
+        """Every row of a ``--json`` workspace report, lane by lane."""
+        return [row for lane in ("unplanned", "ready", "building", "shipped")
+                for row in data["lanes"][lane]]
+
+    # -- (1) a declared project's epic aggregates at workspace level ---------
+
+    def test_declared_project_epic_counts_and_rows_carry_its_marker(self):
+        self.declare_projects("proj-a", "proj-b")
+        repo = self.make_project_repo("proj-a")
+        self.make_epic("pe1", status="ready",
+                       metadata=["Initiative: proj-a-mvp"],
+                       rows=[("pm1", "A", ("low",) * 4),
+                             ("pm2", "B", ("high",) * 4)],
+                       root=repo)
+        out = self.report()
+        self.assertEqual(out.splitlines()[0],
+                         "2 specs · 1 epics · 1 initiatives")
+        self.assertEqual(out.splitlines()[1], "shipped 0/2")
+        lane, row = self.row_for(out, "pm1")
+        self.assertEqual(lane, "UNPLANNED")
+        self.assertEqual(
+            row.split(),
+            ["pe1", "pm1", "unplanned", "risk", "low", "[proj-a]"])
+
+    def test_root_and_project_universes_both_render(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])
+        self.make_epic("pe1", status="ready",
+                       rows=[("pm1", "A", ("low",) * 4)], root=repo)
+        out = self.report()
+        self.assertEqual(out.splitlines()[0],
+                         "2 specs · 2 epics · 0 initiatives")
+        # The invocation root's own rows stay unmarked; the project's carry it,
+        # and the root universe is collected first.
+        self.assertEqual(
+            self.row_for(out, "m1")[1].split(),
+            ["e1", "m1", "unplanned", "risk", "low"])
+        self.assertEqual(
+            self.row_for(out, "pm1")[1].split(),
+            ["pe1", "pm1", "unplanned", "risk", "low", "[proj-a]"])
+        self.assertEqual(
+            [r.split()[1] for r in self.rows_in(out, "UNPLANNED")],
+            ["m1", "pm1"])
+
+    # -- (2) member states derive from the owning project repo --------------
+
+    def test_member_state_derives_from_the_project_repo(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        self.make_epic("pe1", status="active",
+                       rows=[("pm1", "A", ("low",) * 4),
+                             ("pm2", "B", ("low",) * 4)],
+                       root=repo)
+        self.make_repo_completed(repo, "pm1")
+        self.make_repo_change(repo, "pm2", "active")
+        out = self.report()
+        self.assertEqual(out.splitlines()[1], "shipped 1/2")
+        self.assertEqual([r.strip() for r in self.rows_in(out, "SHIPPED")],
+                         ["pe1 [proj-a] (1)"])
+        self.assertEqual(
+            self.row_for(out, "pm2")[1].split(),
+            ["pe1", "pm2", "active", "risk", "low", "[proj-a]"])
+
+    def test_shipped_rollups_keep_root_and_project_epics_apart(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        self.make_epic("e1", status="active", rows=[("m1", "A", ("low",) * 4)])
+        self.make_completed("m1")
+        self.make_epic("pe1", status="active",
+                       rows=[("pm1", "A", ("low",) * 4)], root=repo)
+        self.make_repo_completed(repo, "pm1")
+        out = self.report()
+        self.assertEqual([r.strip() for r in self.rows_in(out, "SHIPPED")],
+                         ["e1 (1)", "pe1 [proj-a] (1)"])
+
+    # -- (3) a project's standalone change folds in -------------------------
+
+    def test_project_standalone_change_folds_in_with_its_marker(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        self.make_repo_change(repo, "psolo", "active")
+        out = self.report()
+        lane, row = self.row_for(out, "psolo")
+        self.assertEqual(lane, "BUILDING")
+        self.assertEqual(
+            row.split(),
+            ["standalone", "psolo", "active", "risk", "?", "[proj-a]"])
+
+    def test_a_project_epic_member_is_not_also_a_standalone_row(self):
+        # Exclusion sets are per universe: proj-a's epic member is excluded
+        # from proj-a's standalone discovery, and the root's `pm1` change —
+        # a different universe — is not suppressed by proj-a's epic.
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        self.make_epic("pe1", status="active",
+                       rows=[("pm1", "A", ("low",) * 4)], root=repo)
+        self.make_repo_change(repo, "pm1", "active")
+        self.make_change("pm1", status="ready")
+        out = self.report()
+        rows = [r.split()[:2] for r in self.rows_in(out, "BUILDING")]
+        self.assertEqual(rows, [["pe1", "pm1"]])
+        # The root's own same-named change still renders, as a standalone row.
+        self.assertEqual(
+            [r.split()[:2] for r in self.rows_in(out, "READY")],
+            [["standalone", "pm1"]])
+
+    # -- (4) an absent project repo is skipped ------------------------------
+
+    def test_absent_project_repo_is_skipped_without_error(self):
+        self.declare_projects("proj-a", "proj-b")
+        repo = self.make_project_repo("proj-a")
+        self.make_epic("pe1", status="ready",
+                       rows=[("pm1", "A", ("low",) * 4)], root=repo)
+        out = self.report()
+        self.assertEqual(out.splitlines()[0],
+                         "1 specs · 1 epics · 0 initiatives")
+        self.assertNotIn("[proj-b]", out)
+
+    def test_an_unloadable_registry_leaves_the_board_alone(self):
+        # A `workspace` value that is not an object: the chain sees the marker
+        # but `load_workspace` refuses it, so registry resolution raises —
+        # display must fall back to the invocation root's own universe.
+        self.declare_workspace("not-an-object")
+        self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])
+        out = self.report()
+        self.assertEqual(out.splitlines()[0],
+                         "1 specs · 1 epics · 0 initiatives")
+        self.assertNotIn("[", out)
+
+    # -- (5) inside a declared project repo the board stays per-repo --------
+
+    def test_inside_a_declared_project_repo_the_board_is_per_repo(self):
+        self.declare_projects("proj-a", "proj-b")
+        repo_a = self.make_project_repo("proj-a")
+        repo_b = self.make_project_repo("proj-b")
+        self.make_epic("pe1", status="ready",
+                       rows=[("pm1", "A", ("low",) * 4)], root=repo_a)
+        self.make_epic("pe2", status="ready",
+                       rows=[("pm2", "B", ("low",) * 4)], root=repo_b)
+        self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])
+        out = self.report_at(repo_a)
+        self.assertEqual(out.splitlines()[0],
+                         "1 specs · 1 epics · 0 initiatives")
+        self.assertNotIn("[proj-a]", out)
+        self.assertNotIn("[proj-b]", out)
+        self.assertIsNone(self.row_for(out, "pm2")[1])
+        self.assertIsNone(self.row_for(out, "m1")[1])
+        self.assertEqual(
+            self.row_for(out, "pm1")[1].split(),
+            ["pe1", "pm1", "unplanned", "risk", "low"])
+
+    def test_the_workspace_root_itself_is_never_a_project_universe(self):
+        # A registry declaring `.` as a repo path would otherwise aggregate the
+        # invocation root twice; the entry resolving to the root is skipped.
+        self.declare_workspace(
+            {"projects": {"proj-a": {"repos": [{"path": "."}]}}})
+        self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])
+        out = self.report()
+        self.assertEqual(out.splitlines()[0],
+                         "1 specs · 1 epics · 0 initiatives")
+
+    # -- (6) the JSON rows carry their project ------------------------------
+
+    def test_json_rows_carry_the_owning_project(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])
+        self.make_epic("pe1", status="ready",
+                       rows=[("pm1", "A", ("low",) * 4)], root=repo)
+        data = self.json_report()
+        self.assertEqual(data["totals"],
+                         {"specs": 2, "epics": 2, "initiatives": 0})
+        self.assertEqual(
+            data["lanes"]["unplanned"],
+            [{"epic": "e1", "slug": "m1", "state": "unplanned",
+              "risk": "low", "worktree": False, "project": None},
+             {"epic": "pe1", "slug": "pm1", "state": "unplanned",
+              "risk": "low", "worktree": False, "project": "proj-a"}])
+
+    def test_json_project_standalone_row_carries_its_project(self):
+        self.declare_projects("proj-a")
+        repo = self.make_project_repo("proj-a")
+        self.make_repo_change(repo, "psolo", "active")
+        data = self.json_report()
+        self.assertEqual(
+            data["lanes"]["building"],
+            [{"epic": "standalone", "slug": "psolo", "state": "active",
+              "risk": "?", "worktree": False, "project": "proj-a"}])
+
+    # -- (7) no registry: byte-identical to today ---------------------------
+
+    def test_without_a_registry_the_text_report_is_unchanged(self):
+        self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])
+        self.make_change("solo", status="active")
+        out = self.report()
+        self.assertEqual(
+            out,
+            "1 specs · 1 epics · 0 initiatives\n"
+            "shipped 0/2\n"
+            "\n"
+            "UNPLANNED (1)\n"
+            "  %-20s %-22s %-12s risk %s\n"
+            "READY (0)\n"
+            "BUILDING (1)\n"
+            "  %-20s %-22s %-12s risk %s\n"
+            "SHIPPED (0)\n"
+            % ("e1", "m1", "unplanned", "low",
+               "standalone", "solo", "active", "?"))
+
+    def test_without_a_registry_every_json_row_carries_a_null_project(self):
+        self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])
+        self.make_change("solo", status="active")
+        data = self.json_report()
+        self.assertEqual([row["project"] for row in self.all_rows(data)],
+                         [None, None])
+
+    # -- (8) the same slug in two projects stays distinct -------------------
+
+    def test_the_same_epic_slug_in_two_projects_stays_distinct(self):
+        self.declare_projects("proj-a", "proj-b")
+        repo_a = self.make_project_repo("proj-a")
+        repo_b = self.make_project_repo("proj-b")
+        self.make_epic("shared", status="ready",
+                       rows=[("am1", "A", ("low",) * 4)], root=repo_a)
+        self.make_epic("shared", status="ready",
+                       rows=[("bm1", "B", ("low",) * 4)], root=repo_b)
+        out = self.report()
+        # Two epics, not one deduped slug.
+        self.assertEqual(out.splitlines()[0],
+                         "2 specs · 2 epics · 0 initiatives")
+        self.assertEqual(
+            self.row_for(out, "am1")[1].split(),
+            ["shared", "am1", "unplanned", "risk", "low", "[proj-a]"])
+        self.assertEqual(
+            self.row_for(out, "bm1")[1].split(),
+            ["shared", "bm1", "unplanned", "risk", "low", "[proj-b]"])
+
+    def test_the_same_shipped_epic_slug_rolls_up_once_per_project(self):
+        self.declare_projects("proj-a", "proj-b")
+        repo_a = self.make_project_repo("proj-a")
+        repo_b = self.make_project_repo("proj-b")
+        self.make_epic("shared", status="active",
+                       rows=[("am1", "A", ("low",) * 4)], root=repo_a)
+        self.make_repo_completed(repo_a, "am1")
+        self.make_epic("shared", status="active",
+                       rows=[("bm1", "B", ("low",) * 4)], root=repo_b)
+        self.make_repo_completed(repo_b, "bm1")
+        self.assertEqual(
+            [r.strip() for r in self.rows_in(self.report(), "SHIPPED")],
+            ["shared [proj-a] (1)", "shared [proj-b] (1)"])
+
+
 class InitiativeVerbTest(SpecStatusTestBase):
     """The three initiative status verbs (spec-status initiative-status-verbs):
     ``initiative-show``, ``initiative-sync``, ``initiative-set-status``.
@@ -4297,7 +4607,7 @@ class JsonOutputTest(WorkspaceReportTest):
         self.assertEqual(
             data["lanes"]["building"],
             [{"epic": "standalone", "slug": "solo", "state": "active",
-              "risk": "?", "worktree": False}])
+              "risk": "?", "worktree": False, "project": None}])
         self.assertEqual([row["slug"] for row in data["lanes"]["unplanned"]],
                          ["m1", "m2", "m3"])
         self.assertEqual([row["epic"] for row in data["lanes"]["unplanned"]],
@@ -4321,7 +4631,7 @@ class JsonOutputTest(WorkspaceReportTest):
         self.assertEqual(
             data["lanes"]["shipped"],
             [{"epic": "e1", "slug": "m1", "state": "archived",
-              "risk": "low", "worktree": False}])
+              "risk": "low", "worktree": False, "project": None}])
 
     def test_bare_show_json_marks_a_worktree_hosted_row(self):
         self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])
@@ -4330,7 +4640,7 @@ class JsonOutputTest(WorkspaceReportTest):
         self.assertEqual(
             data["lanes"]["ready"],
             [{"epic": "e1", "slug": "m1", "state": "ready",
-              "risk": "low", "worktree": True}])
+              "risk": "low", "worktree": True, "project": None}])
 
     def test_bare_show_text_is_unchanged_without_the_flag(self):
         self.make_epic("e1", status="ready", rows=[("m1", "A", ("low",) * 4)])

@@ -24,7 +24,12 @@ Verbs (see the spec-status + statusline capabilities for the contract):
                      change given and none selected, print the workspace board
                      report instead — totals, shipped progress, and the four
                      board lanes over every epic's members plus the standalone
-                     changes
+                     changes. Run from a root inside no declared project repo,
+                     that board additionally aggregates every declared
+                     `workspace.projects` repo present on disk, each exactly as
+                     a root is, its rows carrying a `[<project>]` marker; run
+                     from inside a declared project repo (or with no registry
+                     discoverable) it stays scoped to the invocation root
   status [change]    print the bare status value ("?" when missing/invalid)
   validate [change]  structurally validate the change; non-zero on errors
   set-status <status> [change] [--force]
@@ -123,8 +128,10 @@ The initiative, workspace, and project verbs resolve the workspace from
 
 Where ``[change]`` is omitted it defaults to the currently-selected spec; the
 CLI exits non-zero with an error when none is selected — except ``show``, which
-reports the workspace board instead. All paths are resolved
-under ``--root`` (default: the current working directory), matching spec_lint.
+reports the workspace board instead (aggregating the declared workspace
+projects when the invocation root lies inside none of them). All paths are
+resolved under ``--root`` (default: the current working directory), matching
+spec_lint.
 
 Exit codes: 0 success, 1 error (unknown change/status, missing plan, no
 selection), 2 usage, 3 refusal (a guard blocked a ``set-status`` transition),
@@ -1401,6 +1408,50 @@ def _workspace_epic_slugs(root):
     return all_epic_slugs_with_roots(root)
 
 
+def _workspace_project_roots(root):
+    """The declared project repos the workspace board additionally aggregates,
+    as ``(project_slug, repo_root)`` pairs (spec-status
+    workspace-board-report).
+
+    Aggregation is for **workspace-level invocations only**: the pairs are
+    non-empty exactly when a project registry is discoverable from ``root``
+    (``sc.registry_root``) *and* ``root`` lies inside no declared project repo
+    (``sc.project_of`` yields the implicit default, ``None``). Run from inside a
+    member repo — or with no registry at all — this returns ``[]`` and the board
+    stays the single-universe, per-repo report it has always been.
+
+    Pairs come out in projects' slug order, each project's repos in declaration
+    order, every path resolved against the registry root. Deliberately *not* an
+    extension of :func:`_epic_candidate_roots`: that seam feeds
+    ``_epic_hosting_root``, ``epic-sync``, ``locate``, and the dashboard, none
+    of which may silently adopt another project's epics.
+
+    Fail-soft throughout — display never crashes on an invalid registry: an
+    unloadable registry, an entry whose path is not a directory on this machine,
+    an entry duplicating an earlier one's real path, and an entry resolving to
+    the invocation root itself are all skipped silently, never raised."""
+    try:
+        reg_root = sc.registry_root(root)
+        if reg_root is None or sc.project_of(reg_root, root) is not None:
+            return []
+        projects = _load_projects(reg_root)
+    except sc.ConfigError:
+        return []
+    pairs = []
+    seen = {os.path.realpath(root)}
+    for slug in sorted(projects):
+        for repo in _project_repo_entries(reg_root, projects[slug]):
+            repo_root = os.path.join(reg_root, repo["path"])
+            if not os.path.isdir(repo_root):
+                continue
+            real = os.path.realpath(repo_root)
+            if real in seen:
+                continue
+            seen.add(real)
+            pairs.append((slug, repo_root))
+    return pairs
+
+
 def _workspace_report_data(root):
     """The workspace board report as a JSON-ready dict (spec-status
     workspace-board-report, json-output) — what ``show`` reports with no name
@@ -1413,62 +1464,84 @@ def _workspace_report_data(root):
     the epic count, and the distinct ``Initiative:`` slugs; ``shipped`` counts
     over every rendered row (epic members plus standalone changes); and the
     four board ``lanes``, each a list of ``{"epic", "slug", "state", "risk",
-    "worktree"}`` rows. A row's ``epic`` is its epic's slug, or ``standalone``
-    for a change planned outside any epic; its risk is the stub-table row's
-    last rating cell (``?`` when absent — always ``?`` for a standalone change,
-    which has no stub row); and its ``worktree`` flag is set when the state came
-    from a worktree rather than ``root``.
+    "worktree", "project"}`` rows. A row's ``epic`` is its epic's slug, or
+    ``standalone`` for a change planned outside any epic; its risk is the
+    stub-table row's last rating cell (``?`` when absent — always ``?`` for a
+    standalone change, which has no stub row); its ``worktree`` flag is set
+    when the state came from a worktree of its own universe; and its
+    ``project`` is the declared project owning that universe (``None`` for the
+    invocation root's own).
+
+    The report aggregates one **universe** per repo: the invocation root's own
+    always, plus — for a workspace-level invocation — each declared project
+    repo :func:`_workspace_project_roots` yields, aggregated exactly as a root
+    is (its epics, its worktrees, its member states, its standalone changes,
+    all relative to that repo). Member-slug exclusion sets are per universe, so
+    one project's epic never suppresses another's standalone change, and epic
+    slugs are never deduplicated across universes — separate repos are separate
+    spec universes, told apart by their ``project``. Totals sum across
+    universes; ``initiatives`` counts distinct slugs across them.
 
     Rows are collected epic by epic in epic order and the standalone changes
-    last, a grouping the text renderer's ``SHIPPED`` rollups rely on. Lanes come
-    from :func:`board_lane`, the shared projection the epic report and the
+    last — all universes' epic rows first (the invocation root's, then each
+    project's in slug order), then all universes' standalone rows in the same
+    order — a grouping the text renderer's ``SHIPPED`` rollups rely on. Lanes
+    come from :func:`board_lane`, the shared projection the epic report and the
     dashboard use, and standalone changes from :func:`standalone_changes`, the
     discovery the board consumes. The epics themselves come from
     :func:`_workspace_epic_slugs`, the worktree-aware seam the board's
     aggregation shares, each read from its hosting root, so a worktree-authored
     epic counts here exactly as it does on the board. An unreadable epic file is
     skipped, never raised."""
+    universes = [(None, root)] + _workspace_project_roots(root)
     epic_count = 0
     initiatives = set()
-    member_slugs = set()
     specs = 0
-    all_rows = []
-    for eslug, epic_root in _workspace_epic_slugs(root):
-        try:
-            with open(_epic_path(epic_root, eslug), encoding="utf-8") as fh:
-                text = fh.read()
-        except (OSError, sc.ConfigError):
-            continue
-        meta = dict(_epic_metadata(text))
-        if meta.get("Initiative"):
-            initiatives.add(meta["Initiative"])
-        _header, stub_rows = sc.parse_epic_changes(text)
-        for mslug, _desc, ratings in stub_rows:
-            member_slugs.add(mslug)
-            state, hosting_root = _member_state_with_root(root, mslug)
-            all_rows.append({
-                "epic": eslug,
-                "slug": mslug,
-                "state": state,
-                "risk": (ratings[-1].strip()
-                         if ratings and ratings[-1].strip() else "?"),
-                "worktree": hosting_root != root,
+    epic_rows = []
+    standalone_rows = []
+    for project, universe_root in universes:
+        member_slugs = set()
+        for eslug, epic_root in _workspace_epic_slugs(universe_root):
+            try:
+                with open(_epic_path(epic_root, eslug), encoding="utf-8") as fh:
+                    text = fh.read()
+            except (OSError, sc.ConfigError):
+                continue
+            meta = dict(_epic_metadata(text))
+            if meta.get("Initiative"):
+                initiatives.add(meta["Initiative"])
+            _header, stub_rows = sc.parse_epic_changes(text)
+            for mslug, _desc, ratings in stub_rows:
+                member_slugs.add(mslug)
+                state, hosting_root = _member_state_with_root(
+                    universe_root, mslug)
+                epic_rows.append({
+                    "epic": eslug,
+                    "slug": mslug,
+                    "state": state,
+                    "risk": (ratings[-1].strip()
+                             if ratings and ratings[-1].strip() else "?"),
+                    "worktree": hosting_root != universe_root,
+                    "project": project,
+                })
+                specs += 1
+            epic_count += 1
+
+        # Changes planned outside any epic fold in under the epic column
+        # `standalone`; their hosting location, not a stub table, marks a
+        # worktree — of their own universe, not of the invocation root.
+        universe_abs = os.path.abspath(universe_root)
+        for entry in standalone_changes(universe_root, member_slugs):
+            standalone_rows.append({
+                "epic": "standalone",
+                "slug": entry["slug"],
+                "state": entry["state"],
+                "risk": entry.get("risk") or "?",
+                "worktree": entry.get("location") != universe_abs,
+                "project": project,
             })
-            specs += 1
-        epic_count += 1
 
-    # Changes planned outside any epic fold in under the epic column
-    # `standalone`; their hosting location, not a stub table, marks a worktree.
-    root_abs = os.path.abspath(root)
-    for entry in standalone_changes(root, member_slugs):
-        all_rows.append({
-            "epic": "standalone",
-            "slug": entry["slug"],
-            "state": entry["state"],
-            "risk": entry.get("risk") or "?",
-            "worktree": entry.get("location") != root_abs,
-        })
-
+    all_rows = epic_rows + standalone_rows
     lanes = {lane: [] for lane in _BOARD_LANES}
     for row in all_rows:
         lanes[board_lane(row["state"])].append(row)
@@ -1481,6 +1554,13 @@ def _workspace_report_data(root):
     }
 
 
+def _project_marker(project):
+    """The `` [<project>]`` display marker for a workspace-report row's owning
+    project — the empty string for the invocation root's own rows (``None``),
+    so a single-universe board renders exactly as it always has."""
+    return " [%s]" % project if project else ""
+
+
 def _workspace_report_lines(data):
     """The workspace board report as a list of lines, rendered from
     :func:`_workspace_report_data` (spec-status workspace-board-report).
@@ -1490,13 +1570,19 @@ def _workspace_report_lines(data):
     order, each as a ``<LANE> (<count>)`` header even when empty.
 
     A non-shipped lane prints one indented row per entry carrying its epic
-    column, the member slug, its derived state, its risk, and a ``[worktree]``
-    marker when the state came from a worktree. ``SHIPPED`` instead prints
-    per-epic rollup rows ``<epic-slug> (<n>)`` in epic order, plus
-    ``standalone (<n>)`` last when any standalone change is archived —
-    mirroring the board's collapsed per-epic shipped groups. The rollups read
-    straight off the shipped rows, whose epic-then-standalone grouping the data
-    preserves."""
+    column, the member slug, its derived state, its risk, a ``[worktree]``
+    marker when the state came from a worktree, and — for a row aggregated from
+    a declared project's repo — a ``[<project>]`` marker after it. ``SHIPPED``
+    instead prints rollup rows counted per epic *per owning project* —
+    ``<epic-slug> (<n>)`` for the invocation root's own rows,
+    ``<epic-slug> [<project>] (<n>)`` for a project's — in row order, plus
+    ``standalone (<n>)`` last within each universe's grouping when any
+    standalone change is archived, mirroring the board's collapsed per-epic
+    shipped groups. The rollups read straight off the shipped rows, whose
+    epic-then-standalone grouping the data preserves.
+
+    With no project universes every row carries ``project`` ``None``, no marker
+    prints, and the rendering is byte-identical to the single-universe board."""
     totals = data["totals"]
     lines = ["%d specs · %d epics · %d initiatives"
              % (totals["specs"], totals["epics"], totals["initiatives"]),
@@ -1507,17 +1593,22 @@ def _workspace_report_lines(data):
         in_lane = data["lanes"][lane]
         lines.append("%s (%d)" % (lane.upper(), len(in_lane)))
         if lane == "shipped":
-            counts = {}          # epic column -> shipped row count, in order
+            # (epic column, owning project) -> shipped row count, in order: a
+            # slug hosted by two projects rolls up once per project.
+            counts = {}
             for row in in_lane:
-                counts[row["epic"]] = counts.get(row["epic"], 0) + 1
-            for ecol, count in counts.items():
-                lines.append("  %s (%d)" % (ecol, count))
+                key = (row["epic"], row.get("project"))
+                counts[key] = counts.get(key, 0) + 1
+            for (ecol, project), count in counts.items():
+                lines.append("  %s%s (%d)"
+                             % (ecol, _project_marker(project), count))
             continue
         for row in in_lane:
             lines.append(
-                "  %-20s %-22s %-12s risk %s%s"
+                "  %-20s %-22s %-12s risk %s%s%s"
                 % (row["epic"], row["slug"], row["state"], row["risk"],
-                   " [worktree]" if row["worktree"] else ""))
+                   " [worktree]" if row["worktree"] else "",
+                   _project_marker(row.get("project"))))
     return lines
 
 
@@ -3007,7 +3098,9 @@ def main(argv=None):
     p_show = sub.add_parser(
         "show",
         help="print a change's status and progress (the workspace board "
-             "report with no change given and none selected)")
+             "report with no change given and none selected — aggregating the "
+             "declared workspace projects when the invocation root lies "
+             "inside none of them)")
     p_show.add_argument("change", nargs="?", default=None)
     _add_json_flag(p_show)
 

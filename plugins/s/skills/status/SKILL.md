@@ -89,6 +89,19 @@ any epic), its slug, its state, its risk, and a `[worktree]` marker; `SHIPPED`
 collapses into one `<epic-slug> (<n>)` rollup row per epic. Relay it as the CLI
 printed it — do not re-summarize, re-order, or re-count the lanes.
 
+**How wide the board reaches depends on where it runs.** From a
+**workspace-level** invocation — a root that lies inside no declared project
+repo — the board also aggregates every repo declared in the workspace's
+`workspace.projects` registry and present on disk, each exactly as a root is
+(its epics, its worktrees, its member states, its standalone changes). Those
+rows carry a `[<project>]` marker after the `[worktree]` position, and their
+`SHIPPED` rollups read `<epic-slug> [<project>] (<n>)`, so a workspace root
+shows the whole portfolio rather than an empty board. From **inside a declared
+project repo** — or where no registry is discoverable — the board stays scoped
+to the invocation root exactly as before, with no markers. The same distinction
+shows in `--json`: every workspace-report row carries a `project` field, the
+owning project's slug or `null`.
+
 ### When the argument names an epic
 
 `[change]` may name an **epic** rather than a change. You do not detect that
