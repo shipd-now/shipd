@@ -22,6 +22,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.normpath(os.path.join(HERE, "..", "scripts", "claim_task.sh"))
 CHANGE = "demo"
 
+# The three checkbox markers, assembled by concatenation so no checkbox-shaped
+# marker ever lands at the start of a line in this file.
+PENDING = "- " + "[ ]"
+WIP = "- " + "[~]"
+DONE = "- " + "[x]"
+
 
 class ClaimScriptTestBase(unittest.TestCase):
     def setUp(self):
@@ -619,6 +625,102 @@ class StaleReleaseTest(ClaimScriptTestBase):
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(self.boxes(), "~ ~")
         self.assertEqual(sorted(self.read_claims()), ["1"])
+
+
+class AnchoredGrammarTest(ClaimScriptTestBase):
+    """The anchored checkbox grammar (build-task-coordination
+    ``atomic-task-claiming-with-stable-ids``): a checkbox line's content begins
+    — after optional leading blanks — with the marker, so a checkbox-shaped
+    literal quoted inside a task's wrapped prose is prose, never a task, for
+    every verb: ordinals, readiness, status counts, the box rewrite, and the
+    marker strip.
+
+    Written test-first; expected to FAIL until ``claim_task.sh`` anchors its
+    matchers (task 2.2)."""
+
+    # Indices (0-based, over the fixture's split lines) of the continuation
+    # lines that carry the quoted literals. They must never be rewritten.
+    PROSE_IDX = (2, 5)
+
+    REAL_BOX_RE = re.compile(r"^[ \t]*- \[([ ~x])\]")
+
+    def setUp(self):
+        super().setUp()
+        # Two grouped tasks, a barrier, then a later group — with quoted
+        # checkbox literals on the continuation lines of two of them.
+        self.write_tasks(
+            "## 1. Work\n"
+            + PENDING + " 1.1 [P1] first task, whose wrapped prose quotes\n"
+            + "      a `" + PENDING + "` marker and a `" + DONE + "` marker.\n"
+            + PENDING + " 1.2 [P1] second task\n"
+            + PENDING + " 2.1 barrier task, whose prose quotes the\n"
+            + "      `" + WIP + "` marker inline.\n"
+            + PENDING + " 3.1 [P2] after the barrier\n")
+        self.prose_before = [self.lines()[i] for i in self.PROSE_IDX]
+
+    def lines(self):
+        with open(self.tasks, encoding="utf-8") as fh:
+            return fh.read().split("\n")
+
+    def real_boxes(self):
+        """Checkbox chars of the *real* task lines only, in file order."""
+        hits = [self.REAL_BOX_RE.match(ln) for ln in self.lines()]
+        return "".join(m.group(1) for m in hits if m)
+
+    def assert_prose_unchanged(self):
+        after = [self.lines()[i] for i in self.PROSE_IDX]
+        self.assertEqual(after, self.prose_before)
+
+    def test_status_counts_only_real_tasks(self):
+        r = self.cmd("status")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout.rstrip("\n").split("\n")[0],
+                         "pending=4 in_progress=0 done=0")
+
+    def test_claim_ordinals_map_to_the_real_task_lines(self):
+        self.assertEqual(self.id_of(self.claim()), "1")
+        self.assertEqual(self.id_of(self.claim()), "2")
+        # Both P1 tasks are in progress; the barrier and P2 are untouched.
+        self.assertEqual(self.real_boxes(), "~~  ")
+        self.assert_prose_unchanged()
+
+    def test_complete_marks_the_line_the_claim_marked(self):
+        self.assertEqual(self.id_of(self.claim()), "1")
+        self.assertEqual(self.id_of(self.claim()), "2")
+        r = self.cmd("complete", "2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.real_boxes(), "~x  ")
+        self.assert_prose_unchanged()
+
+    def test_readiness_ignores_literals_between_a_barrier_and_a_group(self):
+        self.assertEqual(self.id_of(self.claim()), "1")
+        self.assertEqual(self.id_of(self.claim()), "2")
+        # The barrier waits on the whole P1 group, not on any literal.
+        self.assertEqual(self.claim().stdout.strip(), "")
+        self.cmd("complete", "1")
+        self.cmd("complete", "2")
+        self.assertEqual(self.id_of(self.claim()), "3")
+        # P2 waits on the in-progress barrier.
+        self.assertEqual(self.claim().stdout.strip(), "")
+        self.cmd("complete", "3")
+        self.assertEqual(self.id_of(self.claim()), "4")
+        self.assertEqual(self.real_boxes(), "xxx~")
+        self.assert_prose_unchanged()
+
+    def test_indented_checkbox_participates_and_keeps_its_indent(self):
+        self.write_tasks(
+            "## 1. Work\n"
+            + PENDING + " 1.1 first\n"
+            + "  " + PENDING + " 1.2 indented second\n")
+        self.assertEqual(self.id_of(self.claim()), "1")
+        self.cmd("complete", "1")
+        r = self.claim()
+        # The indented line is ordinal 2 and its text strips indent + marker.
+        self.assertEqual(self.id_of(r), "2")
+        self.assertEqual(r.stdout.rstrip("\n").split("\t", 1)[1],
+                         "1.2 indented second")
+        # The rewrite lands on that line and preserves its leading blanks.
+        self.assertEqual(self.lines()[2], "  " + WIP + " 1.2 indented second")
 
 
 if __name__ == "__main__":

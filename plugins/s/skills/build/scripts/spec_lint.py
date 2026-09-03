@@ -88,7 +88,16 @@ CHARS_PER_TOKEN = 4
 # the requirement ids the change's own delta specs declare. The tag sits after
 # the optional `[P<n>]` group tag, which it never overlaps, so task
 # coordination is untouched.
-CHECKBOX_RE = re.compile(r"- \[[ ~x]\]")
+#
+# The grammar is **anchored**: a checkbox line's content begins — after
+# optional leading blanks — with the `- [<state>]` marker, and the marker alone
+# is the whole of it, so even a degenerate text-free marker line is a task. A
+# marker-shaped substring further along a line is prose, so a backticked
+# literal quoted in a wrapped task description is neither counted as a task nor
+# required to carry a tag. This is the same grammar `claim_task.sh` counts
+# ordinals with and `spec_status.py` counts boxes with, so the three surfaces
+# never disagree about which lines are tasks.
+CHECKBOX_RE = re.compile(r"^[ \t]*- \[[ ~x]\]")
 REQ_TAG_RE = re.compile(r"\[req:([^\]]*)\]")
 
 # An epic's context sections (`## Research`, `## Video`; shipd-spec-format

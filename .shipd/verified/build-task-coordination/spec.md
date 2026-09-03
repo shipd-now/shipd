@@ -4,8 +4,14 @@
 id: atomic-task-claiming-with-stable-ids
 
 The coordinator script SHALL assign each task in a change's `tasks.md` a stable
-ordinal ID equal to its 1-based position among all checkbox lines
-(`- [ ]`, `- [~]`, `- [x]`), independent of blank lines, headings, or prose. The
+ordinal ID equal to its 1-based position among all checkbox lines,
+independent of blank lines, headings, or prose. A checkbox line is one whose
+content begins — after optional leading blanks — with the `- [<state>]`
+marker (state space, `~`, or `x`); a checkbox-shaped literal appearing
+mid-line inside a task's prose SHALL never be counted, and every coordinator
+verb — ordinal enumeration, readiness evaluation, in-progress resolution,
+status counts, the box rewrite, and the marker strip — SHALL apply this same
+anchored grammar. The
 `claim` command SHALL atomically transition the next **ready** pending task
 (`- [ ]`) to in-progress (`- [~]`) and print its ID and text. A pending task is
 ready when every earlier group and barrier before its group is done, per the
@@ -43,6 +49,14 @@ established empty-stdout contract for "nothing claimed".
 #### Scenario: Nothing left to claim
 - **WHEN** `claim <change>` runs and no `- [ ]` task remains
 - **THEN** the script prints nothing to stdout and exits without error
+
+#### Scenario: A checkbox literal in task prose is not a task
+- **GIVEN** a tasks file whose wrapped task descriptions carry backticked
+  checkbox-marker literals on continuation lines
+- **WHEN** `status`, `claim`, and `complete <id>` run
+- **THEN** the counts reflect only the real tasks, the claimed ordinal maps
+  to the real task's line, and the box rewrite lands on that line — never on
+  a literal's line
 
 #### Scenario: A claim is stamped with holder and time
 - **WHEN** `claim <change> --as builder-2` wins a task

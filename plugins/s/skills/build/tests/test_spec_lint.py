@@ -583,6 +583,11 @@ class TaskTraceabilityTest(unittest.TestCase):
 
     IDS = ("export-report-csv", "wire-up-flag")
 
+    # The pending checkbox marker, assembled by concatenation so no
+    # checkbox-shaped marker ever lands at the start of a line in this file.
+    BOX = "- " + "[ ]"
+    DONE_BOX = "- " + "[x]"
+
     def setUp(self):
         self.root = tempfile.mkdtemp()
 
@@ -669,6 +674,56 @@ class TaskTraceabilityTest(unittest.TestCase):
             "- [ ] 1.2 Missing the tag",
         ])
         self.assertTrue(any("2" in e for e in errors))
+
+    # The anchored checkbox grammar (shipd-spec-lint
+    # traceability-tag-enforcement): a checkbox line's content begins, after
+    # optional leading blanks, with the marker; a marker-shaped substring
+    # further along the line is prose.
+
+    def test_prose_literal_on_a_continuation_line_is_not_a_task(self):
+        # One real, correctly tagged task whose wrapped description quotes
+        # checkbox markers on its continuation lines: the literals are prose,
+        # so they neither count as tasks nor need a tag of their own.
+        errors = self._errors([
+            self.BOX + " 1.1 [req: export-report-csv] Add the exporter and",
+            "      document that a pending task reads `" + self.BOX + "` while",
+            "      a finished one reads `" + self.DONE_BOX + "`.",
+        ])
+        self.assertEqual(errors, [])
+
+    def test_ordinal_is_not_shifted_by_a_preceding_prose_literal(self):
+        # The second real task is genuinely untagged. Its ordinal is 2 — the
+        # literals on task 1's continuation lines must not shift it.
+        errors = self._errors([
+            self.BOX + " 1.1 [req: export-report-csv] Add the exporter and",
+            "      document the `" + self.BOX + "` marker plus the",
+            "      `" + self.DONE_BOX + "` marker.",
+            self.BOX + " 1.2 Missing the tag",
+        ])
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(has(errors, "task 2 has no"))
+
+    def test_bare_marker_line_counts_as_a_task_like_the_coordinator(self):
+        # A degenerate marker-only line (no text after the box) is still a
+        # checkbox line for `claim_task.sh` and `spec_status.py`, so the linter
+        # must count it too — otherwise its ordinals drift out of step with the
+        # coordinator's ids. It is ordinal 1 (and untagged, so an error); the
+        # real tagged task after it is ordinal 2 and lints clean.
+        errors = self._errors([
+            self.BOX,
+            self.BOX + " 1.1 [req: export-report-csv] Add the exporter",
+        ])
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(has(errors, "task 1 has no"))
+
+    def test_indented_checkbox_line_still_counts_as_a_task(self):
+        # Leading blanks before the marker are tolerated: the indented line is
+        # a real task, so it is ordinal 2 and its missing tag is an error.
+        errors = self._errors([
+            self.BOX + " 1.1 [req: export-report-csv] Add the exporter",
+            "  " + self.BOX + " 1.2 Missing the tag",
+        ])
+        self.assertTrue(has(errors, "task 2 has no"))
 
     def test_bad_tag_gates_lint_change(self):
         # The rule must participate in lint_change so it gates the build: a
