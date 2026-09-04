@@ -398,7 +398,8 @@ class ListJsonTest(ShipdCliTestBase):
         self.make_worktree_change("foo", "foo", status="ready")
         self.assertEqual(
             self.json_rows("--json"),
-            [{"name": "foo", "location": "worktree:foo", "status": "ready"}])
+            [{"name": "foo", "location": "worktree:foo", "status": "ready",
+              "project": None}])
 
     def test_list_json_rows_match_the_text_rows_and_order(self):
         self.make_change(self.root, "alpha", status="active")
@@ -415,8 +416,10 @@ class ListJsonTest(ShipdCliTestBase):
         self.make_archive("bar")
         self.assertEqual(
             self.json_rows("--json", "--all"),
-            [{"name": "live", "location": "root", "status": "active"},
-             {"name": "bar", "location": "root", "status": "archived"}])
+            [{"name": "live", "location": "root", "status": "active",
+              "project": None},
+             {"name": "bar", "location": "root", "status": "archived",
+              "project": None}])
 
     def test_list_json_omits_archived_rows_without_all(self):
         self.make_archive("bar")
@@ -454,6 +457,87 @@ class ListJsonTest(ShipdCliTestBase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout, direct.stdout)
         self.assertEqual(json.loads(r.stdout)["kind"], "change")
+
+
+class ListKindsTest(ShipdCliTestBase):
+    """``shipd list [kind]`` enumerates a kind other than ``changes``
+    (shipd-cli cli-list, list-json): epics with their status, and the
+    status-less directory kinds ``verified``/``research``/``video``, every row
+    obtained from the engine's shared discovery seam.
+
+    Written test-first; expected to FAIL until the kind positional lands in
+    ``bin/shipd`` (tasks 3.2-3.3)."""
+
+    def make_epic_at(self, root, slug, status="ready"):
+        """Plant ``<root>/.shipd/epics/<slug>/epic.md`` at ``status`` — pass a
+        worktree root to author an epic that only a candidate walk finds."""
+        self.write(
+            os.path.join(root, ".shipd", "epics", slug, "epic.md"),
+            "# %s\nStatus: %s\n\n## Changes\n\n%s"
+            "| m1 | a member | low | low | low | low |\n"
+            % (slug, status, EPIC_HEADER))
+
+    def make_verified(self, slug):
+        self.write(
+            os.path.join(self.root, ".shipd", "verified", slug, "spec.md"),
+            "# %s\n\n### Requirement: A thing\nid: a-thing\n\n"
+            "The system SHALL do it.\n" % slug)
+
+    def rows(self, *args):
+        r = self.cli("list", *args, "--root", self.root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return [line.split() for line in r.stdout.splitlines()
+                if line.strip()]
+
+    def test_worktree_hosted_epic_is_listed(self):
+        self.make_epic_at(
+            os.path.join(self.root, ".worktrees", "wt"), "foo", status="active")
+        self.assertEqual(self.rows("epics"), [["foo", "worktree:wt", "active"]])
+
+    def test_contested_epic_slug_is_listed_once_root_winning(self):
+        self.make_epic_at(self.root, "foo", status="active")
+        self.make_epic_at(
+            os.path.join(self.root, ".worktrees", "wt"), "foo", status="draft")
+        self.assertEqual(self.rows("epics"), [["foo", "root", "active"]])
+
+    def test_verified_capabilities_list_without_status(self):
+        self.make_verified("spec-io")
+        self.make_verified("shipd-cli")
+        self.assertEqual(
+            self.rows("verified"),
+            [["shipd-cli", "root", "-"], ["spec-io", "root", "-"]])
+
+    def test_changes_is_the_default_kind(self):
+        self.make_change(self.root, "foo", status="active")
+        self.assertEqual(self.rows("changes"), self.rows())
+
+    def test_all_refuses_a_non_changes_kind(self):
+        r = self.cli("list", "epics", "--all", "--root", self.root)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Error:", r.stderr)
+        self.assertIn("--all", r.stderr)
+
+    def test_epics_json_rows_carry_every_key(self):
+        self.make_epic_at(self.root, "foo", status="ready")
+        r = self.cli("list", "epics", "--json", "--root", self.root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            json.loads(r.stdout),
+            [{"name": "foo", "location": "root", "status": "ready",
+              "project": None}])
+
+    def test_verified_json_status_is_null(self):
+        self.make_verified("spec-io")
+        r = self.cli("list", "verified", "--json", "--root", self.root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            json.loads(r.stdout),
+            [{"name": "spec-io", "location": "root", "status": None,
+              "project": None}])
+
+    def test_an_unknown_kind_is_refused(self):
+        r = self.cli("list", "nonsense", "--root", self.root)
+        self.assertNotEqual(r.returncode, 0)
 
 
 class VersionTest(ShipdCliTestBase):

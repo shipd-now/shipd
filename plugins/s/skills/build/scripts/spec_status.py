@@ -721,7 +721,7 @@ def cmd_locate(root, change, as_json=False):
     invocation root's own universe first, then each declared project repo in
     slug order. Within each universe it probes that universe's resolved
     ``planned/`` first, then each ``.worktrees/<name>`` directory under it in
-    sorted name order (:func:`_epic_candidate_roots`, the single-level walk
+    sorted name order (:func:`candidate_roots`, the single-level walk
     every probe in this file shares). Where ``change`` is omitted, falls back
     to the currently selected spec via ``_resolve_change``, raising when none
     is selected. The content directory is resolved independently per candidate
@@ -750,7 +750,7 @@ def cmd_locate(root, change, as_json=False):
     # Each universe in seam order; within one, its root first, then each of its
     # worktree directories in sorted name order.
     for project, universe_root in sc.aggregation_universes(root):
-        for candidate in _epic_candidate_roots(universe_root):
+        for candidate in candidate_roots(universe_root):
             _probe(project, candidate)
 
     if not matches:
@@ -837,14 +837,14 @@ def _related_wiki_artifacts(root):
     return artifacts
 
 
-def _related_corpus(root):
-    """One ``(kind, slug, path, files)`` record per searchable artifact: the
-    resolved content directory's verified capabilities, planned changes,
-    completed archives (slug date-stripped), research reports, and epics, plus
-    the workspace wiki's pages where one is discoverable. ``path`` identifies
-    the artifact — its single file for the one-file kinds, its directory for a
-    change — while ``files`` is everything the score sums over."""
-    specs = sc.specs_dir(root)
+def _related_candidate_artifacts(candidate):
+    """One ``(kind, slug, path, files)`` record per searchable artifact under
+    a single candidate root's resolved content directory: its verified
+    capabilities, planned changes, completed archives (slug date-stripped),
+    research reports, and epics. ``path`` identifies the artifact — its single
+    file for the one-file kinds, its directory for a change — while ``files``
+    is everything the score sums over."""
+    specs = sc.specs_dir(candidate)
     artifacts = []
 
     for slug in _dir_names(os.path.join(specs, "verified")):
@@ -876,6 +876,39 @@ def _related_corpus(root):
         path = os.path.join(specs, "epics", slug, "epic.md")
         if os.path.isfile(path):
             artifacts.append(("epic", slug, path, [path]))
+
+    return artifacts
+
+
+def _related_corpus(root):
+    """Every searchable artifact as a ``(kind, slug, path, files)`` record
+    (spec-status related-verb).
+
+    The corpus spans the invocation root's own universe — the root first, then
+    each ``.worktrees/<name>`` under it in sorted name order
+    (:func:`candidate_roots`) — so an artifact authored in a worktree is
+    searchable from the main checkout, exactly as ``cat`` and ``locate``
+    resolve one. Each candidate's content directory resolves independently and
+    a candidate whose configuration is unreadable is skipped silently. A
+    ``(kind, slug)`` pair hosted by more than one candidate is collected once,
+    the first candidate in that order — the invocation root — winning.
+
+    The corpus deliberately stops at that universe: it never spans declared
+    project repos, because the verb searches the repository it runs in, and
+    workspace-level knowledge is the wiki surface appended last (unchanged,
+    resolved from the invocation root's workspace chain)."""
+    artifacts = []
+    seen = set()
+    for candidate in candidate_roots(root):
+        try:
+            found = _related_candidate_artifacts(candidate)
+        except sc.ConfigError:
+            continue
+        for record in found:
+            key = (record[0], record[1])
+            if key not in seen:
+                seen.add(key)
+                artifacts.append(record)
 
     artifacts.extend(_related_wiki_artifacts(root))
     return artifacts
@@ -1144,12 +1177,13 @@ def _member_state(root, slug):
     return state
 
 
-def _epic_candidate_roots(root):
-    """The candidate roots epic discovery probes, in order: ``root`` itself,
-    then each ``.worktrees/<name>`` directory under it in sorted name order —
-    the same single-level walk :func:`_member_state_with_root` and
-    :func:`cmd_locate` use, so every probe in this file agrees on where a
-    change or epic may live."""
+def candidate_roots(root):
+    """The candidate roots a read-side probe walks within one universe, in
+    order: ``root`` itself, then each ``.worktrees/<name>`` directory under it
+    in sorted name order — the same single-level walk
+    :func:`_member_state_with_root`, :func:`cmd_locate`, :func:`cmd_cat` and
+    :func:`_related_corpus` use, so every probe in this file agrees on where a
+    change, an epic, or any other spec artifact may live."""
     candidates = [root]
     worktrees_dir = os.path.join(root, ".worktrees")
     if os.path.isdir(worktrees_dir):
@@ -1160,12 +1194,44 @@ def _epic_candidate_roots(root):
     return candidates
 
 
+def _probe_universes(root, probe):
+    """Walk every candidate root a read verb may resolve an artifact from and
+    return ``(hit, probed)`` (spec-io mediated-read-verb).
+
+    The walk is the engine's shared universe-discovery seam
+    (``sc.aggregation_universes``, shipd-workspace
+    workspace-universe-discovery) crossed with :func:`candidate_roots`: the
+    invocation root's own universe first, then each declared project universe
+    in slug order, and within each universe its root first, then that root's
+    worktrees in sorted name order. ``probe`` is called with one candidate root
+    and returns the artifact's path there, or ``None``. A candidate whose
+    configuration is unreadable (``sc.ConfigError``) is skipped rather than
+    raised, so a foreign directory under ``.worktrees/`` never fails a read.
+
+    ``hit`` is the first ``(candidate_root, path)`` a probe returned — the
+    invocation root therefore always shadows a worktree's copy of the same slug
+    — or ``None`` when no candidate held the artifact. ``probed`` is every
+    candidate root visited, in order, so a caller's not-found error can name
+    them the way :func:`cmd_locate` does."""
+    probed = []
+    for _project, universe_root in sc.aggregation_universes(root):
+        for candidate in candidate_roots(universe_root):
+            probed.append(candidate)
+            try:
+                path = probe(candidate)
+            except sc.ConfigError:
+                continue
+            if path is not None:
+                return (candidate, path), probed
+    return None, probed
+
+
 def _epic_hosting_root(root, slug):
     """The first candidate root whose content directory holds
     ``epics/<slug>/epic.md``, or ``None`` when no candidate does (spec-status
     epic-status-verbs; delivery-dashboard board-aggregation).
 
-    Probes :func:`_epic_candidate_roots` in order — the invocation root first,
+    Probes :func:`candidate_roots` in order — the invocation root first,
     then each worktree in sorted name order — resolving each candidate's
     content directory independently (``sc.specs_dir(candidate)``) and skipping
     any candidate whose configuration is unreadable (``sc.ConfigError``). The
@@ -1175,7 +1241,7 @@ def _epic_hosting_root(root, slug):
     The shared read-side seam: the status CLI's epic surfaces and the
     dashboard's board aggregation both resolve epics through it, so the two
     can never disagree about where an epic lives."""
-    for candidate in _epic_candidate_roots(root):
+    for candidate in candidate_roots(root):
         try:
             specs_dir = sc.specs_dir(candidate)
         except sc.ConfigError:
@@ -1229,7 +1295,7 @@ def all_epic_slugs_with_roots(root):
         return sorted(os.path.basename(os.path.dirname(path))
                       for path in glob.glob(pattern))
 
-    candidates = _epic_candidate_roots(root)
+    candidates = candidate_roots(root)
     pairs = [(slug, root) for slug in _slugs(root)]
     seen = {slug for slug, _r in pairs}
     worktree_pairs = {}
@@ -1239,6 +1305,155 @@ def all_epic_slugs_with_roots(root):
                 worktree_pairs[slug] = candidate
     pairs.extend((slug, worktree_pairs[slug]) for slug in sorted(worktree_pairs))
     return pairs
+
+
+# ---------------------------------------------------------------------------
+# Spec-library listing seam (shipd-cli cli-list)
+# ---------------------------------------------------------------------------
+
+# The kinds ``shipd list`` enumerates, ``changes`` first: it is the verb's
+# default and the only kind carrying lifecycle status and archives.
+LIST_KINDS = ("changes", "epics", "verified", "research", "video")
+
+# The content-directory subdirectory each status-less kind lists slug
+# directories from.
+_LIST_KIND_DIRS = {
+    "verified": "verified",
+    "research": "research",
+    "video": "video",
+}
+
+
+def _list_location(universe_root, candidate):
+    """A row's location label: ``root`` for the universe's own root,
+    ``worktree:<name>`` for one of its ``.worktrees/<name>`` candidates."""
+    if os.path.abspath(candidate) == os.path.abspath(universe_root):
+        return "root"
+    return "worktree:" + os.path.basename(os.path.abspath(candidate))
+
+
+def _list_change_rows(universe_root, project, include_archived):
+    """One universe's ``changes`` rows: every candidate root's planned changes
+    deduped by change name with the worktree occurrence winning, in name order,
+    followed — only under ``include_archived`` — by that universe's archived
+    changes whose name is not still in flight."""
+    def _names(candidate, subdir):
+        """``subdir``'s slug directories under ``candidate``'s content
+        directory; a candidate whose configuration is unreadable — a foreign
+        directory under ``.worktrees/`` — contributes none rather than
+        failing the listing."""
+        try:
+            specs = sc.specs_dir(candidate)
+        except sc.ConfigError:
+            return []
+        return _dir_names(os.path.join(specs, subdir))
+
+    in_flight = {}
+    for candidate in candidate_roots(universe_root):
+        location = _list_location(universe_root, candidate)
+        for name in _names(candidate, "planned"):
+            # Root-first probe order with later occurrences overwriting, so a
+            # worktree's copy of a contested change name wins — for an
+            # in-flight change the worktree copy is the live one.
+            in_flight[name] = {
+                "name": name, "location": location, "project": project,
+                "status": read_status(candidate, name) or "?"}
+    rows = [in_flight[name] for name in sorted(in_flight)]
+    if not include_archived:
+        return rows
+
+    archived = {}
+    for candidate in candidate_roots(universe_root):
+        location = _list_location(universe_root, candidate)
+        for dirname in _names(candidate, "completed"):
+            match = ARCHIVE_DIR_RE.match(dirname)
+            name = match.group(1) if match else dirname
+            archived[name] = {
+                "name": name, "location": location, "project": project,
+                "status": "archived"}
+    rows.extend(archived[name] for name in sorted(archived)
+                if name not in in_flight)
+    return rows
+
+
+def _list_epic_rows(universe_root, project):
+    """One universe's ``epics`` rows, in :func:`all_epic_slugs_with_roots`
+    order — the universe root's own epics in slug order, then the epics only a
+    worktree hosts — each status read from its hosting root."""
+    return [{"name": slug,
+             "location": _list_location(universe_root, hosting_root),
+             "project": project,
+             "status": read_epic_status(hosting_root, slug)}
+            for slug, hosting_root in all_epic_slugs_with_roots(universe_root)]
+
+
+def _list_directory_rows(universe_root, project, subdir):
+    """One universe's rows for a status-less directory kind: every candidate
+    root's slug directories under ``subdir``, root-first, a slug hosted by more
+    than one candidate appearing once with the earlier candidate winning."""
+    rows = []
+    seen = set()
+    for candidate in candidate_roots(universe_root):
+        try:
+            specs = sc.specs_dir(candidate)
+        except sc.ConfigError:
+            continue
+        location = _list_location(universe_root, candidate)
+        for slug in _dir_names(os.path.join(specs, subdir)):
+            if slug in seen:
+                continue
+            seen.add(slug)
+            rows.append({"name": slug, "location": location,
+                         "project": project, "status": None})
+    return rows
+
+
+def list_rows(root, kind, span_workspace, include_archived=False):
+    """Every row ``shipd list [kind]`` renders, as ordered
+    ``{name, location, project, status}`` dicts (shipd-cli cli-list).
+
+    The engine's shared discovery seam for the listing surface: the binary
+    renders these rows rather than re-walking the tree privately, so ``list``
+    can never disagree with ``cat``, ``locate``, or the board about which
+    artifacts exist.
+
+    ``kind`` is one of :data:`LIST_KINDS`. ``changes`` reproduces the
+    planned-directory walk with worktree-wins dedup, and appends the archived
+    changes — status ``archived`` — only under ``include_archived`` and only
+    for a name not still in flight. ``epics`` walks
+    :func:`all_epic_slugs_with_roots`, reading each status with
+    :func:`read_epic_status` on the hosting root (``None`` when the epic
+    carries no valid ``Status:`` line). ``verified``, ``research`` and
+    ``video`` list slug directories per candidate root, root-first, with no
+    status value.
+
+    With ``span_workspace``, the listing spans every universe
+    ``sc.aggregation_universes`` yields — the invocation root's own first, then
+    each declared project in slug order — a foreign universe's rows carrying
+    that project's slug as ``project`` (``None`` for the own universe). Rows
+    are never deduplicated *across* universes: separate repos are separate spec
+    universes, told apart by their ``project``, exactly as the workspace board
+    aggregates them. Without it, only ``root``'s own universe is listed, which
+    is also what spanning collapses to inside a member repo — so the historical
+    single-universe output is unchanged either way.
+
+    Read-only: no git, model, or network calls."""
+    if kind not in LIST_KINDS:
+        raise StatusError("unknown list kind '%s' (expected: %s)"
+                          % (kind, ", ".join(LIST_KINDS)))
+    universes = (sc.aggregation_universes(root) if span_workspace
+                 else [(None, root)])
+    rows = []
+    for project, universe_root in universes:
+        if kind == "changes":
+            rows.extend(_list_change_rows(
+                universe_root, project, include_archived))
+        elif kind == "epics":
+            rows.extend(_list_epic_rows(universe_root, project))
+        else:
+            rows.extend(_list_directory_rows(
+                universe_root, project, _LIST_KIND_DIRS[kind]))
+    return rows
 
 
 def _standalone_plan_path(content_dir, slug):
@@ -2062,10 +2277,18 @@ def cmd_pipeline_show(root, expand=None, as_json=False):
     return 0
 
 
-def _cat_files(root, paths, provenance=None):
+def _cat_files(root, paths, provenance=None, absolute_outside=False):
     """Print each path in ``paths`` preceded by a ``--- <relpath>`` separator
     line (relpath relative to ``root``), resolving nothing itself — callers pass
     the engine-resolved locations (spec-io mediated-read-verb).
+
+    With ``absolute_outside``, a path that does not live under ``root`` is
+    named absolutely instead (:func:`_related_path`) — the cross-universe
+    ``cat`` kinds pass it, so an artifact resolved from a declared project
+    universe names a usable path rather than a ``../..`` climb. The wiki and
+    initiative kinds leave it off: a chain store's file keeps the root-relative
+    separator its ``(inherited <ws-root>)`` annotation is defined against
+    (spec-status wiki-status-verbs).
 
     ``provenance``, when given, maps a path to the workspace root of the
     inherited chain store that supplied it; that path's separator line carries
@@ -2076,7 +2299,8 @@ def _cat_files(root, paths, provenance=None):
     unannotated separator — this is how the nearest store's own files, and
     every non-wiki ``cat`` kind, are printed."""
     for path in paths:
-        rel = os.path.relpath(path, root)
+        rel = (_related_path(root, path) if absolute_outside
+               else os.path.relpath(path, root))
         ws_root = provenance.get(path) if provenance else None
         if ws_root:
             print("--- %s  (inherited %s)" % (rel, ws_root))
@@ -2117,19 +2341,61 @@ def _cat_artefacts_listing(root, cdir):
         print(line)
 
 
+def _existing_file(path):
+    """``path`` when it is a readable regular file, else ``None`` — the shape
+    :data:`_CAT_PROBES`' single-file probes return."""
+    return path if os.path.isfile(path) else None
+
+
+# The per-candidate probes the cross-universe ``cat`` kinds resolve through
+# (spec-io mediated-read-verb): the noun a not-found error names, and the
+# artifact a single candidate root either holds or does not. ``change`` probes
+# the read-side planned-then-archived resolution, so a candidate's archive is
+# found before the next candidate is tried. ``initiative`` and ``wiki`` are
+# absent deliberately — they resolve through the workspace chain instead.
+_CAT_PROBES = {
+    "change": ("change", _readable_change_dir),
+    "verified": ("capability", lambda candidate, slug: _existing_file(
+        os.path.join(sc.specs_dir(candidate), "verified", slug, "spec.md"))),
+    "epic": ("epic", lambda candidate, slug: _existing_file(
+        _epic_path(candidate, slug))),
+    "research": ("research", lambda candidate, slug: _existing_file(
+        os.path.join(sc.specs_dir(candidate), "research", slug, "report.md"))),
+    "video": ("video", lambda candidate, slug: _existing_file(
+        os.path.join(sc.specs_dir(candidate), "video", slug, "brief.md"))),
+}
+
+
+def _cat_resolve(root, kind, slug):
+    """Resolve ``kind``/``slug`` across the universes and candidate roots
+    :func:`_probe_universes` walks, returning the artifact's path — its
+    directory for a change, its file for every other kind (spec-io
+    mediated-read-verb). Raises :class:`StatusError` naming the slug and every
+    probed candidate root when no candidate holds it, the way ``locate``
+    reports a miss."""
+    noun, probe = _CAT_PROBES[kind]
+    hit, probed = _probe_universes(root, lambda c: probe(c, slug))
+    if hit is None:
+        raise StatusError("%s '%s' not found; probed: %s"
+                          % (noun, slug, ", ".join(probed)))
+    return hit[1]
+
+
 def cmd_cat(root, kind, slug, personal=False):
     """Print a named artifact's content through the engine's resolved locations
-    (spec-io mediated-read-verb). For a change: its ``plan.md``, every delta
-    spec, and ``tasks.md``, resolved from ``planned/<slug>/`` and falling back
-    to the newest archived ``completed/*-<slug>/`` so a reference survives the
-    merge/archive. For a ``wiki`` page, ``personal`` selects the personal
-    memory store instead of the workspace store. An unknown name exits
-    non-zero."""
+    (spec-io mediated-read-verb). The kinds ``change``, ``verified``, ``epic``,
+    ``research`` and ``video`` resolve across the universes and candidate roots
+    :func:`_cat_resolve` walks — the invocation root first, so it shadows a
+    worktree's copy of the same slug — while ``initiative`` and ``wiki``
+    resolve through the workspace chain. For a change: its ``plan.md``, every
+    delta spec, and ``tasks.md``, resolved from the hosting candidate's
+    ``planned/<slug>/`` and falling back to that candidate's newest archived
+    ``completed/*-<slug>/`` so a reference survives the merge/archive. For a
+    ``wiki`` page, ``personal`` selects the personal memory store instead of
+    the workspace store. An unknown name exits non-zero. Read-only: the
+    mutating verbs keep resolving the invocation root alone."""
     if kind == "change":
-        cdir = _readable_change_dir(root, slug)
-        if cdir is None:
-            raise StatusError("change '%s' not found (%s)"
-                              % (slug, _change_dir(root, slug)))
+        cdir = _cat_resolve(root, kind, slug)
         paths = []
         plan = os.path.join(cdir, "plan.md")
         if os.path.isfile(plan):
@@ -2145,21 +2411,12 @@ def cmd_cat(root, kind, slug, personal=False):
             paths.append(tasks)
         if not paths:
             raise StatusError("change '%s' has no artifacts (%s)" % (slug, cdir))
-        _cat_files(root, paths)
+        _cat_files(root, paths, absolute_outside=True)
         _cat_artefacts_listing(root, cdir)
         return 0
-    if kind == "verified":
-        path = os.path.join(sc.specs_dir(root), "verified", slug, "spec.md")
-        if not os.path.isfile(path):
-            raise StatusError(
-                "capability '%s' not found (%s)" % (slug, path))
-        _cat_files(root, [path])
-        return 0
-    if kind == "epic":
-        path = _epic_path(root, slug)
-        if not os.path.isfile(path):
-            raise StatusError("epic '%s' not found (%s)" % (slug, path))
-        _cat_files(root, [path])
+    if kind in ("verified", "epic", "research", "video"):
+        _cat_files(root, [_cat_resolve(root, kind, slug)],
+                   absolute_outside=True)
         return 0
     if kind == "initiative":
         ws_root = _resolve_workspace(root)
@@ -2171,19 +2428,6 @@ def cmd_cat(root, kind, slug, personal=False):
             expected = sc.initiative_brief_path(ws_root, slug)
             raise StatusError(
                 "initiative '%s' not found (%s)" % (slug, expected))
-        _cat_files(root, [path])
-        return 0
-    if kind == "research":
-        path = os.path.join(
-            sc.specs_dir(root), "research", slug, "report.md")
-        if not os.path.isfile(path):
-            raise StatusError("research '%s' not found (%s)" % (slug, path))
-        _cat_files(root, [path])
-        return 0
-    if kind == "video":
-        path = os.path.join(sc.specs_dir(root), "video", slug, "brief.md")
-        if not os.path.isfile(path):
-            raise StatusError("video '%s' not found (%s)" % (slug, path))
         _cat_files(root, [path])
         return 0
     if kind == "wiki":

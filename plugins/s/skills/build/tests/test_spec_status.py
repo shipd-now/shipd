@@ -3258,6 +3258,94 @@ class CatTest(SpecStatusTestBase):
         self.assertIn("no-such-epic", r.stderr)
 
 
+class CatCrossUniverseTest(CatTest):
+    """`cat` resolves `change|verified|epic|research|video` across the shared
+    universe-discovery seam — the invocation root first, then each
+    `.worktrees/<name>` in sorted name order (spec-io mediated-read-verb).
+
+    Written test-first; expected to FAIL until the probe walk lands in
+    ``spec_status.py`` (tasks 1.2–1.3)."""
+
+    def worktree(self, name):
+        wt = os.path.join(self.root, ".worktrees", name)
+        os.makedirs(wt, exist_ok=True)
+        return wt
+
+    def write_artifact(self, root, relparts, text):
+        path = os.path.join(root, ".shipd", *relparts)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def test_cat_epic_reads_a_worktree_hosted_epic(self):
+        self.write_artifact(
+            self.worktree("epic-wt"), ("epics", "shipd-port", "epic.md"),
+            "# shipd-port\nStatus: active\n\n## Introduction\n\nPorting.\n")
+        r = self.cli("cat", "epic", "shipd-port")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(
+            "--- " + os.path.join(
+                ".worktrees", "epic-wt", ".shipd", "epics", "shipd-port",
+                "epic.md"),
+            r.stdout)
+        self.assertIn("Porting.", r.stdout)
+
+    def test_cat_epic_invocation_root_shadows_a_worktree_copy(self):
+        self.write_artifact(
+            self.root, ("epics", "shipd-port", "epic.md"),
+            "# shipd-port\nStatus: active\n\n## Introduction\n\nRoot copy.\n")
+        self.write_artifact(
+            self.worktree("epic-wt"), ("epics", "shipd-port", "epic.md"),
+            "# shipd-port\nStatus: draft\n\n## Introduction\n\nWorktree copy.\n")
+        r = self.cli("cat", "epic", "shipd-port")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Root copy.", r.stdout)
+        self.assertNotIn("Worktree copy.", r.stdout)
+        self.assertEqual(
+            len([ln for ln in r.stdout.splitlines()
+                 if ln.startswith("--- ")]), 1)
+
+    def test_cat_change_reads_a_worktree_hosted_change(self):
+        wt = self.worktree("my-change")
+        self.write_artifact(
+            wt, ("planned", "my-change", "plan.md"),
+            "# my-change\nStatus: active\n\n## Idea\n\nWorktree idea.\n")
+        self.write_artifact(
+            wt, ("planned", "my-change", "tasks.md"),
+            "# Tasks\n\n- [ ] 1.1 [req: *] Do the worktree thing.\n")
+        r = self.cli("cat", "change", "my-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        base = os.path.join(
+            ".worktrees", "my-change", ".shipd", "planned", "my-change")
+        self.assertIn("--- " + os.path.join(base, "plan.md"), r.stdout)
+        self.assertIn("--- " + os.path.join(base, "tasks.md"), r.stdout)
+        self.assertIn("Worktree idea.", r.stdout)
+        self.assertIn("Do the worktree thing.", r.stdout)
+
+    def test_cat_research_reads_a_worktree_hosted_report(self):
+        self.write_artifact(
+            self.worktree("research-wt"),
+            ("research", "payment-apis", "report.md"),
+            "# Payment API landscape\n\nStripe leads [1].\n")
+        r = self.cli("cat", "research", "payment-apis")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(
+            "--- " + os.path.join(
+                ".worktrees", "research-wt", ".shipd", "research",
+                "payment-apis", "report.md"),
+            r.stdout)
+        self.assertIn("Payment API landscape", r.stdout)
+
+    def test_cat_unknown_epic_names_the_probed_roots(self):
+        wt = self.worktree("epic-wt")
+        r = self.cli("cat", "epic", "no-such")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no-such", r.stderr)
+        self.assertIn(self.root, r.stderr)
+        self.assertIn(wt, r.stderr)
+
+
 class WikiVerbTest(SpecStatusTestBase):
     """The wiki status verbs (spec-status wiki-status-verbs): ``wiki-init``,
     ``wiki-show``, and ``cat wiki``.
@@ -4543,6 +4631,189 @@ class RelatedTest(SpecStatusTestBase):
         r = self.cli("related", "export")
         self.assertEqual(r.returncode, 1)
         self.assertIn("Error:", r.stderr)
+
+
+class RelatedWorktreeCorpusTest(RelatedTest):
+    """``related``'s corpus spans the invocation root's own universe — the root
+    first, then each ``.worktrees/<name>`` in sorted name order — deduped by
+    ``(kind, slug)`` with the root winning (spec-status related-verb).
+
+    Written test-first; expected to FAIL until the candidate walk lands in
+    ``_related_corpus`` (task 2.2)."""
+
+    def make_worktree_epic(self, worktree, slug, text):
+        edir = os.path.join(
+            self.root, ".worktrees", worktree, ".shipd", "epics", slug)
+        os.makedirs(edir, exist_ok=True)
+        with open(os.path.join(edir, "epic.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return os.path.join(
+            ".worktrees", worktree, ".shipd", "epics", slug, "epic.md")
+
+    def test_worktree_hosted_epic_is_searched(self):
+        epath = self.make_worktree_epic(
+            "epic-wt", "reporting-overhaul",
+            "# reporting-overhaul\nStatus: active\n\n## Introduction\n\n"
+            "One export here.\n")
+        r = self.cli("related", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["kind"], "epic")
+        self.assertEqual(blocks[0]["slug"], "reporting-overhaul")
+        self.assertEqual(blocks[0]["path"], epath)
+
+    def test_contested_slug_dedupes_root_first(self):
+        epath = self.make_epic(
+            "reporting-overhaul",
+            "# reporting-overhaul\nStatus: active\n\n## Introduction\n\n"
+            "Root export, export again.\n")
+        self.make_worktree_epic(
+            "epic-wt", "reporting-overhaul",
+            "# reporting-overhaul\nStatus: draft\n\n## Introduction\n\n"
+            "One export.\n")
+        r = self.cli("related", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["path"], epath)
+        # The invocation root's copy is the one scored: two hits, not one.
+        self.assertEqual(blocks[0]["score"], "2")
+
+
+class ListRowsTest(SpecStatusTestBase):
+    """``spec_status.list_rows`` — the shared discovery seam ``shipd list``
+    renders (shipd-cli cli-list). Called in-process: the rows, not their
+    rendering, are what this covers.
+
+    Written test-first; expected to FAIL until the seam lands in
+    ``spec_status.py`` (task 3.2)."""
+
+    def make_epic_at(self, root, slug, status="ready"):
+        edir = os.path.join(root, ".shipd", "epics", slug)
+        os.makedirs(edir, exist_ok=True)
+        with open(os.path.join(edir, "epic.md"), "w", encoding="utf-8") as fh:
+            fh.write("# %s\nStatus: %s\n\n## Changes\n" % (slug, status))
+
+    def make_verified(self, root, slug):
+        vdir = os.path.join(root, ".shipd", "verified", slug)
+        os.makedirs(vdir, exist_ok=True)
+        with open(os.path.join(vdir, "spec.md"), "w", encoding="utf-8") as fh:
+            fh.write("# %s\n" % slug)
+
+    def worktree(self, name):
+        wt = os.path.join(self.root, ".worktrees", name)
+        os.makedirs(wt, exist_ok=True)
+        return wt
+
+    # -- epics -------------------------------------------------------------
+
+    def test_epic_rows_carry_location_status_and_project(self):
+        self.make_epic_at(self.root, "alpha", status="active")
+        self.assertEqual(
+            ss.list_rows(self.root, "epics", False),
+            [{"name": "alpha", "location": "root", "project": None,
+              "status": "active"}])
+
+    def test_worktree_hosted_epic_is_a_row(self):
+        self.make_epic_at(self.worktree("wt"), "alpha", status="draft")
+        self.assertEqual(
+            ss.list_rows(self.root, "epics", False),
+            [{"name": "alpha", "location": "worktree:wt", "project": None,
+              "status": "draft"}])
+
+    def test_contested_epic_slug_appears_once_root_winning(self):
+        self.make_epic_at(self.root, "alpha", status="active")
+        self.make_epic_at(self.worktree("wt"), "alpha", status="draft")
+        rows = ss.list_rows(self.root, "epics", False)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["location"], "root")
+        self.assertEqual(rows[0]["status"], "active")
+
+    def test_epic_without_a_valid_status_has_no_status_value(self):
+        self.make_epic_at(self.root, "alpha", status="nonsense")
+        self.assertIsNone(ss.list_rows(self.root, "epics", False)[0]["status"])
+
+    # -- verified ----------------------------------------------------------
+
+    def test_verified_rows_have_no_status(self):
+        self.make_verified(self.root, "spec-io")
+        self.make_verified(self.root, "shipd-cli")
+        self.assertEqual(
+            ss.list_rows(self.root, "verified", False),
+            [{"name": "shipd-cli", "location": "root", "project": None,
+              "status": None},
+             {"name": "spec-io", "location": "root", "project": None,
+              "status": None}])
+
+    def test_verified_spans_the_worktrees_root_first(self):
+        self.make_verified(self.root, "spec-io")
+        self.make_verified(self.worktree("wt"), "spec-io")
+        self.make_verified(self.worktree("wt"), "shipd-cli")
+        self.assertEqual(
+            [(row["name"], row["location"])
+             for row in ss.list_rows(self.root, "verified", False)],
+            [("spec-io", "root"), ("shipd-cli", "worktree:wt")])
+
+    def test_unreadable_candidate_config_is_skipped(self):
+        self.make_verified(self.root, "spec-io")
+        broken = self.worktree("broken")
+        with open(os.path.join(broken, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("{not valid json")
+        self.assertEqual(
+            [row["name"] for row in ss.list_rows(self.root, "verified", False)],
+            ["spec-io"])
+
+    # -- changes and guards ------------------------------------------------
+
+    def test_changes_dedupe_worktree_winning(self):
+        self.make_change("foo", status="active")
+        wt = self.worktree("foo")
+        cdir = os.path.join(wt, ".shipd", "planned", "foo")
+        os.makedirs(cdir)
+        with open(os.path.join(cdir, "plan.md"), "w", encoding="utf-8") as fh:
+            fh.write("# foo\nStatus: ready\n")
+        rows = ss.list_rows(self.root, "changes", False)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["location"], "worktree:foo")
+        self.assertEqual(rows[0]["status"], "ready")
+
+    def test_archived_rows_only_under_include_archived(self):
+        adir = os.path.join(
+            self.root, ".shipd", "completed", "2026-08-14-old")
+        os.makedirs(adir)
+        with open(os.path.join(adir, "plan.md"), "w", encoding="utf-8") as fh:
+            fh.write("# old\nStatus: verified\n")
+        self.assertEqual(ss.list_rows(self.root, "changes", False), [])
+        self.assertEqual(
+            ss.list_rows(self.root, "changes", False, include_archived=True),
+            [{"name": "old", "location": "root", "project": None,
+              "status": "archived"}])
+
+    def test_unknown_kind_raises(self):
+        with self.assertRaises(ss.StatusError):
+            ss.list_rows(self.root, "nonsense", False)
+
+    # -- workspace spanning ------------------------------------------------
+
+    def test_spanning_adds_a_declared_project_universe(self):
+        """At a workspace-level invocation the listing additionally spans each
+        declared project repo, its rows carrying that project's slug; without
+        spanning, only the invocation root's own universe is listed."""
+        self.declare_workspace({"projects": {
+            "beta": {"repos": [{"path": "beta"}]}}})
+        repo = os.path.join(self.root, "beta")
+        os.makedirs(os.path.join(repo, ".shipd"))
+        self.make_epic_at(self.root, "alpha", status="active")
+        self.make_epic_at(repo, "gamma", status="ready")
+        self.assertEqual(
+            [(row["name"], row["location"], row["project"])
+             for row in ss.list_rows(self.root, "epics", True)],
+            [("alpha", "root", None), ("gamma", "root", "beta")])
+        self.assertEqual(
+            [row["name"] for row in ss.list_rows(self.root, "epics", False)],
+            ["alpha"])
 
 
 class WorkspaceSyncTest(SpecStatusTestBase):
