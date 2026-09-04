@@ -113,3 +113,16 @@
       `beautiful_mermaid.py` stays stdlib-only; update `AGENTS.md`'s
       third-party-dependency section with the same two facts; bump
       `plugins/s/.claude-plugin/plugin.json` to `0.6.176`.
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 139 | 34.5k |
+| Edit | 24 | 5.7k |
+| Write | 3 | 2.7k |
+| Read | 29 | 1.6k |
+| Agent | 2 | 1.3k |
+| (no tool) | 0 | 303 |
+| ToolSearch | 2 | 48 |
+| **Total** | 199 | 46.3k |
