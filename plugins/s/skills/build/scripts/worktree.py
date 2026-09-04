@@ -13,7 +13,7 @@ Dispatch mirrors ``worktree.sh``'s, so the two are invoked identically:
     no behavior of the battle-tested guarded teardown is reimplemented here.
   * ``hooks`` selects the hook-management verb family, which edits the
     ``post-worktree-scripts`` declaration so no flow ever hand-edits
-    ``.shipd-config.json``.
+    ``.shipd-config.json``, and records this machine's trust in it.
   * any other first argument is a change name for the create path.
 
 The create path resolves and validates ``post-worktree-scripts`` *before* any
@@ -24,8 +24,15 @@ beforehand, runs the configured scripts in order against the new worktree. A
 *reused* worktree was already set up when it was created, so its scripts are
 skipped; ``hooks run`` covers a manual re-run.
 
+Every execution passes through the consent gate first: a resolved list runs
+only while a machine-local ledger records this machine's user as trusting
+exactly that list of commands, wherever it was declared. An untrusted list
+prompts on a terminal and refuses without one, so a cloned repo's — or an
+enclosing workspace's — tracked shell commands never execute unannounced.
+
 Exit codes: ``0`` success, ``1`` usage/error, ``2`` a guard refusal passed
-through from ``worktree.sh``, ``3`` a post-worktree script failed.
+through from ``worktree.sh``, ``3`` a post-worktree script failed or its
+consent gate refused.
 
 Usage (run from the repository root):
   worktree.py <change-name> [--fresh] [--root DIR]
@@ -35,8 +42,10 @@ Usage (run from the repository root):
   worktree.py hooks add <item> [--root DIR]
   worktree.py hooks remove <item-or-index> [--root DIR]
   worktree.py hooks run [--root DIR]
+  worktree.py hooks trust [--root DIR]
 """
 
+import hashlib
 import json
 import os
 import subprocess
@@ -57,6 +66,13 @@ WORKTREE_SH = os.path.join(SCRIPTS_DIR, "worktree.sh")
 # post-worktree-scripts-key).
 HOOKS_KEY = "post-worktree-scripts"
 
+# The machine-local trust ledger, in the user's home directory: a JSON object
+# mapping the fingerprint of each `post-worktree-scripts` list this machine's
+# user has consented to run to the config file that declared it when consent
+# was granted — the path is informational, the fingerprint is the key
+# (worktree-hooks hook-trust-ledger).
+TRUST_FILENAME = ".shipd-trust.json"
+
 # The verbs that are not change names.
 PASSTHROUGH_VERBS = ("remove", "prune-branches")
 
@@ -72,6 +88,7 @@ USAGE = """usage: worktree.py <change-name> [--fresh] [--root DIR]
        worktree.py hooks add <item> [--root DIR]
        worktree.py hooks remove <item-or-index> [--root DIR]
        worktree.py hooks run [--root DIR]
+       worktree.py hooks trust [--root DIR]
   <change-name> must be kebab-case (lowercase letters, digits, hyphens)
   --fresh: never adopt an existing worktree or unmerged branch
   --root:  repository root the verb operates on (default: cwd)"""
@@ -114,8 +131,131 @@ def resolve_hooks(root):
 
 
 # ---------------------------------------------------------------------------
+# The trust ledger (worktree-hooks hook-trust-ledger)
+# ---------------------------------------------------------------------------
+
+def trust_ledger_path():
+    """The machine-local ledger file. It lives beside the user's own config in
+    ``$HOME`` rather than *inside* it: config is user-authored intent, this is
+    engine state, and a tracked or git-dir marker would be attacker-controlled
+    or lost per-clone."""
+    return os.path.expanduser(os.path.join("~", TRUST_FILENAME))
+
+
+def hooks_fingerprint(items):
+    """The SHA-256 of the list's canonical JSON. Exact-list, so any edit —
+    an added item, a reorder, a one-character change — re-prompts."""
+    return hashlib.sha256(
+        json.dumps(items, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def load_trust_ledger():
+    """The ledger as a ``{fingerprint: declaring config path}`` dict. A
+    missing, unreadable, malformed, or non-object file reads as no entries — an
+    unreadable ledger must never be a reason to *skip* the gate, and never a
+    crash."""
+    try:
+        with open(trust_ledger_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def hooks_trusted(items):
+    """True when the ledger holds ``items``' fingerprint, whatever config file
+    declares the list today. Consent is to the exact commands, not to the file
+    that carries them, so trust granted at a repo root also covers the
+    worktree's own checked-out copy of the same tracked declaration. An empty
+    list needs no trust: there is nothing to execute."""
+    if not items:
+        return True
+    return hooks_fingerprint(items) in load_trust_ledger()
+
+
+def record_trust(items, source):
+    """Record trust for exactly ``items``, preserving every other entry, with
+    ``source`` stored as the informational record of where the consented list
+    was declared. A write failure warns on stderr and returns: the consent was
+    already given, so the verb that obtained it must not fail — the only cost
+    is another prompt next time."""
+    if not items:
+        return
+    ledger = load_trust_ledger()
+    ledger[hooks_fingerprint(items)] = \
+        os.path.realpath(source) if source else ""
+    path = trust_ledger_path()
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(ledger, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+    except OSError as exc:
+        cc.warn("could not record hook trust in %s: %s" % (path, exc))
+
+
+# ---------------------------------------------------------------------------
 # Hook execution (worktree-hooks post-worktree-execution)
 # ---------------------------------------------------------------------------
+
+def describe_hooks(items, source, stream):
+    """Write the declaring config file and every item to ``stream`` — what the
+    user is being asked to grant, in full, before they answer."""
+    stream.write("%s declared in %s:\n" % (HOOKS_KEY, source))
+    for item in items:
+        stream.write("  %s\n" % item)
+
+
+def describe_resume(worktree, stream):
+    """Write the two-step resume path a refusal leaves behind: consent, then
+    run the hooks *from the worktree the create path already made*. Naming the
+    worktree matters — ``hooks run`` sets up the directory it is invoked in, so
+    re-running it at the parked root would set the root's own checkout up
+    instead of the new one (worktree-hooks hook-consent-gate)."""
+    stream.write("  to consent:  worktree.py hooks trust\n")
+    if worktree:
+        stream.write("  then, from %s:  worktree.py hooks run\n" % worktree)
+    else:
+        stream.write("  then, from the worktree:  worktree.py hooks run\n")
+
+
+def ensure_hooks_trusted(items, source, worktree=None):
+    """The consent gate in front of every hook execution (worktree-hooks
+    hook-consent-gate).
+
+    Returns True when ``items`` may run: an empty list or one this machine has
+    already trusted returns immediately, so a trusted list behaves exactly as
+    it did before the gate existed. Otherwise the list is shown in full and,
+    on a TTY, consent is asked for — an affirmative answer records the trust
+    entry and returns True. A declined prompt, and any non-interactive
+    invocation, returns False after naming the resume path (rooted at
+    ``worktree`` when the create path has already made one); the caller turns
+    that into :data:`HOOK_FAILURE_EXIT` with the worktree left in place,
+    exactly like a failing hook, so an unattended run parks for a human instead
+    of silently dropping the gate."""
+    if hooks_trusted(items):
+        return True
+    if not sys.stdin.isatty():
+        cc.err("refusing to run untrusted %s without consent" % HOOKS_KEY)
+        describe_hooks(items, source, sys.stderr)
+        describe_resume(worktree, sys.stderr)
+        return False
+    describe_hooks(items, source, sys.stdout)
+    sys.stdout.write(
+        "These shell commands have not been trusted on this machine.\n")
+    sys.stdout.flush()
+    try:
+        answer = input("Run them and remember this list? [y/N] ")
+    except EOFError:
+        answer = ""
+    if answer.strip().lower() not in ("y", "yes"):
+        cc.err("%s not run: consent declined" % HOOKS_KEY)
+        describe_resume(worktree, sys.stderr)
+        return False
+    record_trust(items, source)
+    return True
+
 
 def hook_env(worktree, root, change):
     """The environment a post-worktree script runs under: the parent
@@ -207,7 +347,7 @@ def cmd_create(argv):
 
     # Validate before any git mutation, so an invalid declaration never leaves
     # a worktree behind (worktree-hooks post-worktree-execution).
-    items, _source = resolve_hooks(root)
+    items, source = resolve_hooks(root)
 
     worktree = os.path.join(root, ".worktrees", name)
     pre_existed = os.path.exists(worktree)
@@ -220,6 +360,8 @@ def cmd_create(argv):
     # a branch attach is a new checkout needing setup.
     if pre_existed or not items:
         return 0
+    if not ensure_hooks_trusted(items, source, worktree=worktree):
+        return HOOK_FAILURE_EXIT
     return run_hooks(items, worktree, root, name)
 
 
@@ -278,6 +420,24 @@ def _root_declared_list(root, data):
     return list(raw)
 
 
+def _trust_after_write(root, prior_items):
+    """Record trust for whatever ``root`` now resolves to, after a successful
+    ``add``/``remove`` write — but only when ``prior_items``, the effective
+    list *before* the write, was itself trusted or empty.
+
+    The user just typed the registration, so re-asking for consent to their own
+    item at the next create would be theater. But an item that was already
+    declared and never consented to must not be blanket-trusted by an unrelated
+    registration: a hostile tracked list has to reach the consent gate, where
+    the user actually sees it. Re-resolving (rather than trusting the written
+    list blind) keeps the recorded entry matching the list that actually wins
+    the key (worktree-hooks hook-trust-ledger)."""
+    if not hooks_trusted(prior_items):
+        return
+    items, source = resolve_hooks(root)
+    record_trust(items, source)
+
+
 def hooks_list(root, as_json):
     """Print the effective list with each item's index and the config file that
     declared it, or the same payload as JSON under ``--json``."""
@@ -311,19 +471,22 @@ def hooks_add(root, item):
         cc.err("%s already registered in %s: %s"
                % (HOOKS_KEY, _config_path(root), item))
         return 1
+    # The effective list before the write decides whether the result inherits
+    # trust (worktree-hooks hook-trust-ledger), so capture it first.
+    prior_items, prior_source = resolve_hooks(root)
     if current is None:
         # The key is about to appear at the root. When an outer layer already
         # declares it, the merge is nearest-wins-*wholesale*, so this new list
         # replaces that one rather than extending it — say so out loud.
-        _outer, outer_source = resolve_hooks(root)
-        if outer_source is not None and outer_source != _config_path(root):
+        if prior_source is not None and prior_source != _config_path(root):
             cc.warn(
                 "%s is declared in %s; a list at %s now wins the key "
                 "wholesale, shadowing it"
-                % (HOOKS_KEY, outer_source, _config_path(root)))
+                % (HOOKS_KEY, prior_source, _config_path(root)))
         current = []
     data[HOOKS_KEY] = current + [item]
     path = _write_root_config(root, data)
+    _trust_after_write(root, prior_items)
     sys.stdout.write("%s: added %s (%s)\n" % (HOOKS_KEY, item, path))
     return 0
 
@@ -351,9 +514,29 @@ def hooks_remove(root, target):
         cc.err("no %s entry matching %r in %s" % (HOOKS_KEY, target, path))
         return 1
     removed = current.pop(index)
+    prior_items, _prior_source = resolve_hooks(root)
     data[HOOKS_KEY] = current
     _write_root_config(root, data)
+    _trust_after_write(root, prior_items)
     sys.stdout.write("%s: removed %s (%s)\n" % (HOOKS_KEY, removed, path))
+    return 0
+
+
+def hooks_trust(root):
+    """Record consent for ``root``'s effective list without running it — the
+    resume path a refused create names, and the only way to grant consent in
+    a session that has no terminal to prompt on (worktree-hooks
+    worktree-hooks-trust-verb). Nothing configured is an error: there is no
+    such thing as trusting an absent list, and silently exiting ``0`` would
+    read as consent granted."""
+    items, source = resolve_hooks(root)
+    if not items:
+        cc.err("no %s configured for %s" % (HOOKS_KEY, root))
+        return 1
+    describe_hooks(items, source, sys.stdout)
+    record_trust(items, source)
+    sys.stdout.write("%s: trusted on this machine (%s)\n"
+                     % (HOOKS_KEY, trust_ledger_path()))
     return 0
 
 
@@ -361,9 +544,11 @@ def hooks_run(root):
     """Execute the effective list against ``root`` itself — the create path's
     execution semantics applied in place, for re-running setup inside a
     worktree that already exists."""
-    items, _source = resolve_hooks(root)
+    items, source = resolve_hooks(root)
     if not items:
         return 0
+    if not ensure_hooks_trusted(items, source):
+        return HOOK_FAILURE_EXIT
     return run_hooks(items, root, _main_checkout(root),
                      os.path.basename(os.path.abspath(root)))
 
@@ -387,7 +572,8 @@ def _main_checkout(root):
 
 
 def cmd_hooks(argv):
-    """The ``hooks`` verb family: ``list``, ``add``, ``remove``, ``run``."""
+    """The ``hooks`` verb family: ``list``, ``add``, ``remove``, ``run``,
+    ``trust``."""
     try:
         root, rest = _take_root(argv)
     except ValueError as exc:
@@ -410,12 +596,12 @@ def cmd_hooks(argv):
                 return 1
         return hooks_list(root, as_json)
 
-    if verb == "run":
+    if verb in ("run", "trust"):
         if args:
             cc.err("unknown argument '%s'" % args[0])
             usage()
             return 1
-        return hooks_run(root)
+        return hooks_run(root) if verb == "run" else hooks_trust(root)
 
     if verb in ("add", "remove"):
         if len(args) != 1:
