@@ -2705,7 +2705,8 @@ def _scaffold_wiki_store(wiki):
     ``queue.md``, a first dated ``log.md`` entry, and empty ``sources/`` and
     ``wiki/`` directories. Shared by ``wiki-init`` and every write verb that
     scaffolds the nearest workspace's store on demand (``wiki-queue-add``,
-    ``wiki-queue-answer``) rather than erroring when it does not yet exist."""
+    ``wiki-queue-answer``, ``wiki-queue-discard``) rather than erroring when it
+    does not yet exist."""
     os.makedirs(os.path.join(wiki, "wiki"))
     os.makedirs(os.path.join(wiki, "sources"))
     today = datetime.date.today().isoformat()
@@ -2904,21 +2905,27 @@ def cmd_wiki_queue_add(root, slug, question, options, recommendation, origin):
     return 0
 
 
-def cmd_wiki_queue_answer(root, slug, answer):
+def cmd_wiki_queue_answer(root, slug, answer, advisory=False):
     """Write a user's answer into a still-pending queue block (shipd-wiki
     wiki-queue-answer-verb, wiki-store-layout). Resolves the workspace store
     exactly as ``wiki-queue-add`` does — scaffolding the nearest workspace's
     store on demand when it does not yet exist, rather than erroring — accepts
     the bare slug (prefixing ``q-`` itself), and replaces the ``## q-<slug>``
     block's ``- Answer: pending`` line with ``- Answer: <answer>``, printing
-    the block id. A missing block, or a block whose answer is no longer
-    ``pending``, writes nothing and exits non-zero — an answered block belongs
-    to the `/s:teach` drain and is never overwritten."""
+    the block id. Under ``advisory`` the answer is stored with an
+    ``advisory: `` prefix — ``- Answer: advisory: <answer>`` — marking the
+    captured knowledge as a recommendation the oracle relays rather than a
+    binding position; without the flag it is stored unprefixed. A missing
+    block, or a block whose answer is no longer ``pending``, writes nothing and
+    exits non-zero — an answered block belongs to the `/s:teach` drain and is
+    never overwritten."""
     if not sc.KEBAB_RE.match(slug):
         raise StatusError("queue slug '%s' is not a kebab-case slug" % slug)
     answer = answer.strip()
     if not answer:
         raise StatusError("--answer must not be empty")
+    if advisory:
+        answer = "advisory: %s" % answer
     ws_root = _resolve_workspace(root)
     wiki = sc.wiki_dir(ws_root)
     queue_path = os.path.join(wiki, "queue.md")
@@ -2972,6 +2979,80 @@ def cmd_wiki_queue_answer(root, slug, answer):
     # work tree (shipd-wiki wiki-autocommit); a no-op outside git, and a commit
     # failure never fails the write.
     sc.wiki_autocommit(wiki, [queue_path], "shipd-wiki: queue-answer %s" % qid)
+    print(qid)
+    return 0
+
+
+def cmd_wiki_queue_discard(root, slug, reason):
+    """Remove a still-pending queue block (shipd-wiki wiki-queue-discard-verb,
+    wiki-store-layout). Resolves the workspace store exactly as
+    ``wiki-queue-add`` does — scaffolding the nearest workspace's store on
+    demand when it does not yet exist, rather than erroring — accepts the bare
+    slug (prefixing ``q-`` itself), and deletes the whole ``## q-<slug>``
+    block, printing the block id. The ``--reason`` text is required and
+    non-empty; it is echoed to the caller on stderr, never stored. A missing
+    block, or a block whose answer is no longer ``pending``, writes nothing and
+    exits non-zero — an answered block belongs to the `/s:teach` drain and is
+    never discarded. Every other queue block is preserved verbatim."""
+    if not sc.KEBAB_RE.match(slug):
+        raise StatusError("queue slug '%s' is not a kebab-case slug" % slug)
+    reason = (reason or "").strip()
+    if not reason:
+        raise StatusError("--reason must not be empty")
+    ws_root = _resolve_workspace(root)
+    wiki = sc.wiki_dir(ws_root)
+    queue_path = os.path.join(wiki, "queue.md")
+    if not os.path.isfile(queue_path):
+        _scaffold_wiki_store(wiki)
+    with open(queue_path, encoding="utf-8") as fh:
+        before = fh.read()
+
+    qid = "q-%s" % slug
+    fields = dict(sc.parse_queue_blocks(before)).get(qid)
+    if fields is None:
+        raise StatusError("queue has no block '%s'" % qid)
+    if fields.get("Answer", "").strip() != "pending":
+        raise StatusError(
+            "block '%s' is already answered ('%s'); discarding an answered "
+            "block is never right — it belongs to the `/s:teach` drain"
+            % (qid, fields.get("Answer", "")))
+
+    # Cut the block's own lines out; every other line is preserved verbatim.
+    # The block runs from its header to the next `## ` header (or EOF), so its
+    # trailing blank separator travels with it — except for a trailing block,
+    # whose *preceding* blank separator is consumed instead, leaving the file
+    # exactly as it read before that block was appended.
+    lines = before.splitlines(keepends=True)
+    start = None
+    end = len(lines)
+    for i, line in enumerate(lines):
+        header = sc.WIKI_QUEUE_HEADER_RE.match(line.rstrip("\n"))
+        if start is None:
+            if header and header.group(1) == qid:
+                start = i
+            continue
+        if line.startswith("## "):
+            end = i
+            break
+    if start is None:  # defensive: the parser found the block, so this is a bug
+        raise StatusError("queue has no block '%s'" % qid)
+    if end == len(lines):
+        while start > 0 and lines[start - 1].strip() == "":
+            start -= 1
+    new_text = "".join(lines[:start] + lines[end:])
+
+    _write_text(queue_path, new_text)
+    errors = _validate_queue_text(new_text)
+    if errors:
+        _write_text(queue_path, before)  # restore prior content
+        raise StatusError(
+            "queue would become invalid; nothing discarded (%s)"
+            % "; ".join(errors))
+    # A successful discard auto-commits queue.md when the store sits inside a
+    # git work tree (shipd-wiki wiki-autocommit); a no-op outside git, and a
+    # commit failure never fails the write.
+    sc.wiki_autocommit(wiki, [queue_path], "shipd-wiki: queue-discard %s" % qid)
+    print("discarded %s: %s" % (qid, reason), file=sys.stderr)
     print(qid)
     return 0
 
@@ -3294,6 +3375,18 @@ def main(argv=None):
         help="write an answer into a still-pending wiki queue block")
     p_wiki_qanswer.add_argument("slug")
     p_wiki_qanswer.add_argument("--answer", required=True)
+    p_wiki_qanswer.add_argument(
+        "--advisory", action="store_true",
+        help="store the answer as advisory (`advisory: <text>`) rather than "
+             "binding knowledge")
+
+    p_wiki_qdiscard = sub.add_parser(
+        "wiki-queue-discard",
+        help="remove a still-pending wiki queue block")
+    p_wiki_qdiscard.add_argument("slug")
+    p_wiki_qdiscard.add_argument(
+        "--reason", required=True,
+        help="why the answer is not worth capturing; echoed, not stored")
 
     args = parser.parse_args(argv)
     root = os.path.abspath(args.root)
@@ -3367,7 +3460,10 @@ def main(argv=None):
                 root, args.slug, args.question, args.options,
                 args.recommendation, args.origin)
         if args.verb == "wiki-queue-answer":
-            return cmd_wiki_queue_answer(root, args.slug, args.answer)
+            return cmd_wiki_queue_answer(root, args.slug, args.answer,
+                                         args.advisory)
+        if args.verb == "wiki-queue-discard":
+            return cmd_wiki_queue_discard(root, args.slug, args.reason)
     except RefusalError as exc:
         print("Refused: %s" % exc.reason, file=sys.stderr)
         for detail in exc.details:
