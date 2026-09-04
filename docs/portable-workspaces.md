@@ -42,6 +42,11 @@ cheap) and where your durable base wiki is. In `~/.shipd-config.json`:
   [§6 Nesting job workspaces](#6-nesting-job-workspaces) for a base reached by
   nesting instead.
 
+Both keys tune *materialization* and *wiki fallback* — neither is needed to
+read a workspace, so a machine with no `~/.shipd-config.json` at all still
+resolves every read verb (see
+[§9 Headless consumers](#9-headless-consumers)).
+
 ## 2. Create a job workspace
 
 ```sh
@@ -104,8 +109,11 @@ Notes:
   etc. from being committed into the workspace repo (no submodules, ever).
 - Wiki writes (`/s:teach`, queued oracle questions) **auto-commit locally**
   in the workspace repo. They do not push — end a work session with
-  `git push`, start one with `git pull`, and the wiki travels between
-  machines like any repo.
+  `git push`, start one with `git pull`, and the wiki travels between your
+  machines — and between everyone sharing the repo — like any repo.
+- Sharing the workspace repo across **several engineers** works the same way,
+  with a few conflict surfaces to know about — see
+  [§8 Sharing a workspace with a team](#8-sharing-a-workspace-with-a-team).
 
 ## 4. Load it on another machine
 
@@ -123,7 +131,8 @@ engine's plan member by member — cheapest rung first:
 3. **full clone** from the manifest `url` (only when the machine has nothing).
 
 The manifest never records how a member landed — materialization is always a
-per-machine decision, so the same workspace repo works on every machine.
+per-machine decision, so the same workspace repo works on every machine, and
+in every teammate's clone of it.
 
 ## 5. Day to day
 
@@ -136,7 +145,8 @@ per-machine decision, so the same workspace repo works on every machine.
   (e.g. a new member repo was added to the job).
 - `/s:ask` — the oracle answers from the **job wiki, then any enclosing
   workspace's wiki (nearest first), then `wiki_base`**, then the repo's spec
-  surfaces; unanswerable questions queue in the job's own wiki for you.
+  surfaces; unanswerable questions queue in the job's own wiki, for you or
+  whichever teammate gets to them first.
 - `/s:teach` — distill decisions into the job wiki; promote answers that are
   job-independent to the base wiki so every future job inherits them.
 - Per-change work inside a member repo is unchanged: each member still uses
@@ -281,3 +291,122 @@ whenever the key is declared.
   so an in-repo spec-lint CI step simply has nothing to lint.
 - **shipd itself does not opt in.** This repo keeps its artifacts in-repo, so
   every change's specs and implementation still travel in one PR.
+
+## 8. Sharing a workspace with a team
+
+Nothing about a workspace repo is single-user. Any number of engineers can
+clone the same one — the load flow of
+[§4](#4-load-it-on-another-machine) is the same whether the second clone is
+your own laptop or a teammate's:
+
+```
+/s:workspace clone git@github.com:acme/ws-documents-linking.git ~/jobs/documents-linking
+```
+
+**Members are machine-local, always.** Each clone runs its own sync ladder and
+picks its own rung per member — a worktree of a clone that machine already
+has, a `--reference` clone, or a full clone — because the manifest records only
+*where a member comes from* (`url`), never *how it landed*. So one engineer
+worktree-ing `documents` off an existing checkout and another full-cloning it
+produce the same workspace, and neither choice is committed or shared.
+
+**The shared surfaces are the knowledge, not the code.** What travels between
+engineers is exactly what the workspace repo tracks:
+
+- the **manifest** (`.shipd-config.json`) — the job's members, focus, and any
+  `store_root`,
+- the **wiki** (`.shipd/wiki/`) — pages plus the `index.md` catalog,
+- the **queue** (`.shipd/wiki/queue.md`) — pending oracle questions, so a
+  question one engineer's session queued is a question anyone on the team can
+  answer,
+- the **initiatives and project context** (`.shipd/initiatives/`,
+  `.shipd/projects/`).
+
+The transport is ordinary git: `git pull` brings a teammate's pages, answers,
+and briefs into your clone; `git push` publishes yours. There is no shipd
+server, no sync service, and no workspace-level daemon.
+
+**The ignore block does not churn.** The managed members block in `.gitignore`
+(`# >>> shipd-workspace members` … `# <<< shipd-workspace members`) is derived
+deterministically from the manifest's member paths, so every clone with the
+same manifest reconciles to the same block. Running
+`workspace-sync --write-gitignore` on two machines produces no diff to fight
+over — the block only changes when the manifest's members do.
+
+**Concurrency expectations.** The engine takes no locks and runs no networked
+git — it never pushes, pulls, or fetches on your behalf. Every wiki write
+(`/s:teach`, a queued oracle question, an answer, a discard) auto-commits
+**locally**, scoped to exactly the files that write touched and sweeping in
+nothing else you had staged. Two engineers working at once therefore produce
+two independent local histories, and git — not shipd — reconciles them:
+
+- **Per-page files merge cleanly.** Different `wiki/*.md` pages are different
+  files; concurrent edits to distinct pages never conflict.
+- **`queue.md` is a conflict surface.** New questions are appended at EOF, so
+  two engineers queueing questions in parallel both land at the same place and
+  git reports a conflict. Keep both blocks when resolving.
+- **`index.md` is a conflict surface.** The catalog is rewritten wholesale on
+  every wiki emission, so parallel page installs collide there even when the
+  pages themselves do not. Resolve by keeping every entry from both sides.
+- **Duplicate `q-<slug>` blocks leave the queue invalid.** Slugs must be
+  unique across `queue.md`. A merge that keeps two blocks with the same slug
+  — the usual result of two engineers naming a question the same thing —
+  makes the store invalid, and later queue writes fail until you remove or
+  rename one of them. Check the merged `queue.md` for repeated `## q-`
+  headings before committing.
+
+The practical protocol is the one [§3](#3-check-it-into-git) already
+recommends for a single engineer, and it is what keeps the surfaces above from
+colliding in the first place: **`git pull` at the start of a session,
+`git push` at the end of it.** The engine is agnostic about anything beyond
+that — branch the workspace repo, or don't, exactly as your team prefers.
+
+## 9. Headless consumers
+
+A workspace repo is readable by things that are not a Claude session — a CI
+job, a chat bot, a cloud agent. The footprint is deliberately small:
+
+- a **bare `git clone`** of the workspace repo — no members materialized, no
+  sync run,
+- **Python 3** — `spec_status.py` is stdlib-only, so nothing to install, and
+- the plugin's **`plugins/s/skills/build/scripts/spec_status.py`**, run in
+  place inside a plugin checkout — it imports its sibling modules from that
+  directory, so copying the one file out on its own does not work.
+
+That is the whole list. Run the verbs from inside the clone, or point at it
+from anywhere with the top-level `--root`:
+
+```sh
+git clone git@github.com:acme/ws-documents-linking.git /tmp/ws
+python3 <plugin>/skills/build/scripts/spec_status.py --root /tmp/ws workspace-show
+```
+
+**Discovery needs nothing but the config file.** The engine finds the
+workspace by walking upward for a `.shipd-config.json` that declares
+`workspace` — it consults no git metadata and no `.shipd/` marker, so a
+checkout with the git history stripped, or an unpacked tarball, resolves
+exactly like a clone.
+
+**Reads succeed with every member absent.** Nothing about reading a workspace
+requires its member repos to exist:
+
+- `workspace-show` exits 0 and reports the roster with each unmaterialized
+  member marked `(absent) [url]`,
+- `cat wiki <slug>`, `wiki-show`, and the initiative reads
+  (`cat initiative <slug>`, `initiative-show`) all resolve from the tracked
+  `.shipd/` content alone,
+- `workspace-sync` only *prints* the materialization plan — it probes local
+  disk and never touches the network, so it is safe to run in CI as an
+  inspection.
+
+**No machine-level configuration is needed.** A missing
+`~/.shipd-config.json` changes nothing for a reader: `clone_sources` only
+picks a cheaper rung during materialization, and `wiki_base` only adds a
+fallback store after the workspace chain. Neither affects what a read verb
+returns from the clone in front of it.
+
+**Git matters only for writes.** A headless consumer that also *writes* — a
+bot queueing a question with `wiki-queue-add`, say — still works without a
+git binary or a configured identity: the write installs, the auto-commit is
+skipped or fails soft to a single stderr warning, and the verb exits 0. Push
+the result yourself if you want it shared; the engine will not.
