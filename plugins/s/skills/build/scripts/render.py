@@ -176,7 +176,7 @@ def _rich_renderer():
     return Console, Markdown
 
 
-def _styled(text):
+def _styled(text, provision=True):
     """Print ``text`` through rich's markdown renderer, provisioning rich if it
     is missing. ``True`` when it was printed styled, ``False`` when the caller
     should degrade to the plain rendering.
@@ -185,10 +185,15 @@ def _styled(text):
     self-provisioning path supplies it. That path re-execs on success and
     raises ``SystemExit`` when it cannot provision at all; neither may take the
     document down with it, so the failure is caught and reported as a
-    degradation.
+    degradation. ``provision`` is ``False`` for a document read from standard
+    input: the pipe was consumed by this process, so the bootstrap's re-exec
+    would re-read an empty stream and style an empty document — a stdin
+    document degrades to the plain rendering instead.
     """
     renderer = _rich_renderer()
     if renderer is None:
+        if not provision:
+            return False
         try:
             tui_bootstrap.ensure_textual(sys.argv, __file__)
         except SystemExit:
@@ -210,7 +215,7 @@ def cmd_output(opts):
         cc.err(str(exc))
         return 1
     text = substitute_mermaid_fences(text, use_ascii=opts.ascii)
-    if not opts.plain and _styled(text):
+    if not opts.plain and _styled(text, provision=opts.file != STDIN):
         return 0
     if not opts.plain:
         cc.warn(_UNSTYLED)

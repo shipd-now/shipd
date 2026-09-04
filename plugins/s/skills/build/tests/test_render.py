@@ -159,6 +159,33 @@ class OutputModeTest(unittest.TestCase):
         # Nothing but the fence is reformatted: the prose is verbatim.
         self.assertIn("# Title\n\nBefore.\n", proc.stdout)
 
+    def test_styled_stdin_without_rich_degrades_to_plain(self):
+        # A stdin document must never reach the provisioning bootstrap: its
+        # re-exec would re-read the already-drained pipe and style an empty
+        # document. With rich unimportable, the styled path on `-` degrades to
+        # the plain rendering — document intact, one warning, exit 0.
+        blocker = tempfile.mkdtemp(prefix="shipd-render-blocker-")
+        self.addCleanup(lambda: __import__("shutil").rmtree(blocker, True))
+        with open(os.path.join(blocker, "sitecustomize.py"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(
+                "import sys\n"
+                "class Block:\n"
+                "    def find_module(self, name, path=None):\n"
+                "        base = name.split('.')[0]\n"
+                "        return self if base in ('rich', 'textual') else None\n"
+                "    def load_module(self, name):\n"
+                "        raise ImportError(name + ' is blocked')\n"
+                "sys.meta_path.insert(0, Block())\n")
+        env = dict(os.environ, PYTHONPATH=blocker)
+        text = document(GRAPH)
+        proc = subprocess.run([sys.executable, RENDER, "output", "-"],
+                              input=text, capture_output=True, text=True,
+                              env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, render.substitute_mermaid_fences(text))
+        self.assertIn("styled renderer", proc.stderr)
+
     def test_plain_reads_a_file_argument(self):
         path = self.write(document(GRAPH))
         proc = self.run_output("--plain", path)
