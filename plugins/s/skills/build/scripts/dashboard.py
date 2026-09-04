@@ -42,6 +42,11 @@ import build_report as br  # noqa: E402
 import metrics as mtr  # noqa: E402
 from heartbeat import heartbeat_path, build_heartbeat_path  # noqa: E402
 import tui_bootstrap  # noqa: E402
+# The board's markdown panes and `shipd render` share one substitution, so a
+# mermaid fence reads identically in both (delivery-dashboard
+# board-markdown-diagrams). Stdlib-safe: `render` imports only the standard
+# library and the vendored renderer at module scope.
+from render import substitute_mermaid_fences  # noqa: E402
 
 
 def change_artifacts(root, slug):
@@ -2084,7 +2089,8 @@ class MemberDetailScreen(ModalScreen):
         for artifact in artifacts:
             tabs._tab_content.append(
                 TabPane(artifact["label"],
-                        VerticalScroll(Markdown(artifact["text"]))))
+                        VerticalScroll(Markdown(
+                            substitute_mermaid_fences(artifact["text"])))))
         return tabs
 
     def on_mount(self) -> None:
@@ -2596,7 +2602,7 @@ class EpicDetailScreen(ModalScreen):
                                  self.epic_slug)
             if text is not None:
                 with VerticalScroll():
-                    yield Markdown(text)
+                    yield Markdown(substitute_mermaid_fences(text))
             else:
                 yield Static("epic file not found")
             yield Static(_EPIC_MODAL_HINTS, classes="modal-footer-hints",

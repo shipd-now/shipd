@@ -134,11 +134,23 @@ user consents to.
 The spec engine is stdlib-only Python 3 (`.shipd/constitution.md`), with one
 scoped exception, pinned in the repo-root `requirements.txt`:
 
-- **`textual` — the delivery board's `tui`.**
+- **`textual` — the engine's display surfaces.**
   `plugins/s/skills/build/scripts/dashboard.py`'s `tui` verb renders the board
-  as a `textual` application. Run `pip install -r requirements.txt` before
-  using `dashboard.py tui` or running its test suite,
-  `plugins/s/skills/build/tests_textual/`.
+  as a `textual` application, and `render.py`'s `screen` mode is a `textual`
+  viewer whose styled `output` mode prints through the `rich` that ships as a
+  `textual` dependency. Run `pip install -r requirements.txt` before using
+  `dashboard.py tui`, `render.py screen`, or the styled `render.py output`, or
+  before running the display test suite,
+  `plugins/s/skills/build/tests_textual/`. `render.py` keeps those imports
+  inside its display code paths, so importing it needs nothing installed;
+  `dashboard.py` imports `textual` at module scope behind its script-entry
+  bootstrap, as it always has.
+
+The mermaid renderer behind `render.py` is **vendored, not a dependency**:
+`plugins/s/skills/build/scripts/beautiful_mermaid.py` is a checked-in,
+stdlib-only copy of the MIT-licensed upstream, pinned to the reviewed snapshot
+its provenance header names. Nothing installs it, and `render.py`'s
+substitution function is importable with no third-party package present at all.
 
 Every other engine script, including the rest of `dashboard.py` and the
 delivery engine `autopilot.py` depends on (via the stdlib-only

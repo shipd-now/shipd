@@ -40,10 +40,12 @@ v<version>` in your first user-visible status sentence (e.g. "shipd:explain
 v0.6.175 — explaining the `personal-memory` epic"), so the user can always see
 which plugin snapshot the session is running.
 
-The engine script is:
+The engine scripts are:
 
 - **STATUS_CLI** — `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py`
   (all reads).
+- **RENDER_CLI** — `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/render.py`
+  (section 3's diagram rendering; reads stdin and writes stdout, never a file).
 
 Run every verb from the repo root, so `--root` may be omitted — the same
 convention `/s:duck`, `/s:fix`, and `/s:status` use.
@@ -135,6 +137,36 @@ say in words. Draw only relationships the epic's `## Design`, `## Decisions`, or
 member table actually state; never invent an ordering the artifact does not
 assert. Every node in the diagram is a member change, actor, or stage named in
 those sections.
+
+### Mermaid diagrams are delivered rendered
+
+A reader sees your explanation as terminal text, where a mermaid block is
+source code, not a picture. So when the earned diagram is mermaid, **render it
+to characters and embed the rendering**, never the source.
+
+**Write edges with spaced arrows — `A --> B`, never `A-->B`.** The renderer
+reads an unspaced arrow as part of a node label and silently draws a single
+label box instead of an edge, exiting `0` while doing it, so a tight arrow
+costs you the diagram without an error to notice.
+
+Pipe the fenced mermaid block — the fences included — through the render verb
+and embed what comes back:
+
+```
+python3 RENDER_CLI output --plain -
+```
+
+It returns the same markdown with the ```` ```mermaid ```` fence replaced by a
+```` ```text ```` block holding the drawn diagram. Embed that block in the
+explanation in place of the mermaid source.
+
+**Fall back to the mermaid fence** when the command exits non-zero, or when it
+returns the block still fenced as ```` ```mermaid ```` — the renderer leaves a
+diagram it cannot parse untouched rather than failing, and an unrendered fence
+is still better than none.
+
+This pipe reads stdin and writes stdout; it creates no file and edits nothing,
+so the read-only contract at the top of this skill holds.
 
 ## 4. No slug, or a slug the engine cannot resolve
 
