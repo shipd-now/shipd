@@ -46,12 +46,6 @@ PLUGIN_ROOT = HERE.parent
 SCRIPTS = PLUGIN_ROOT / "skills" / "build" / "scripts"
 MANIFEST = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
 
-# An applied change is archived as ``completed/<YYYY-MM-DD>-<slug>/``; the slug
-# is the change's name. Mirrors the engine's own archive-directory convention
-# (``metrics.py``'s ship-date walk, ``dashboard.py``'s ``completed/*-<slug>``
-# resolution) rather than importing a private helper.
-ARCHIVE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-(.+)$")
-
 # The engine modules the in-binary ``list`` verb reads, imported on demand by
 # :func:`_load_engine` — every other verb replaces this process before it needs
 # them, so dispatch pays no import cost.
@@ -115,7 +109,10 @@ through to the engine verbatim.
 
 verbs:
   init [--root DIR]          create the content directory layout (safe to re-run)
-  list [--root DIR] [--all]  in-flight changes across the root and its worktrees
+  list [kind] [--root DIR] [--all]
+                             spec artifacts across the root and its worktrees —
+                             kind is changes (default), epics, verified,
+                             research, or video; --all applies to changes only
   status [change]            a change's status and progress
   locate [change]            where an installed change lives
   related <term> [term...]   spec artifacts ranked by term-hit count
@@ -230,16 +227,6 @@ def _load_install_tui():
     iu = install_tui
 
 
-def _content_dir(root):
-    """``root``'s content directory as its layered config resolves it, or
-    ``None`` when that config is unusable — a foreign directory under
-    ``.worktrees/`` must never fail the listing."""
-    try:
-        return sc.specs_dir(root)
-    except sc.ConfigError:
-        return None
-
-
 def _subdirs(path):
     """Sorted directory entries under ``path`` that are themselves
     directories; empty when ``path`` is missing or unreadable."""
@@ -250,90 +237,84 @@ def _subdirs(path):
     return [n for n in names if os.path.isdir(os.path.join(path, n))]
 
 
-def _planned_rows(root, location):
-    """``(name, location, status)`` for every change under ``root``'s
-    ``planned/``, status read by the engine (``?`` when missing or invalid,
-    as ``spec_status.py locate`` prints it)."""
-    content = _content_dir(root)
-    if content is None:
-        return []
-    return [(name, location, ss.read_status(root, name) or "?")
-            for name in _subdirs(os.path.join(content, "planned"))]
+# The text placeholder each kind prints when its listing is empty. ``changes``
+# keeps the wording the verb has always printed (shipd-cli cli-list).
+LIST_EMPTY_TEXT = {
+    "changes": "no changes in flight",
+    "epics": "no epics",
+    "verified": "no verified capabilities",
+    "research": "no research reports",
+    "video": "no video briefs",
+}
 
 
-def _archived_rows(root, location):
-    """``(name, location, "archived")`` for every applied change under
-    ``root``'s ``completed/``, named by the archive directory's slug."""
-    content = _content_dir(root)
-    if content is None:
-        return []
-    rows = []
-    for name in _subdirs(os.path.join(content, "completed")):
-        m = ARCHIVE_DIR_RE.match(name)
-        rows.append((m.group(1) if m else name, location, "archived"))
-    return rows
-
-
-def _probes(root):
-    """``(directory, location-label)`` pairs to probe, the invocation root
-    first and then each ``.worktrees/<name>`` in sorted order — the probe
-    order and precedence of ``spec_status.py locate``."""
-    probes = [(root, "root")]
-    worktrees = os.path.join(root, ".worktrees")
-    for name in _subdirs(worktrees):
-        probes.append((os.path.join(worktrees, name), "worktree:" + name))
-    return probes
-
-
-def _collect(root, reader):
-    """Apply ``reader`` over every probe, keyed by change name. Probes run
-    root-first, so a worktree occurrence wins a contested name."""
-    found = {}
-    for candidate, location in _probes(root):
-        for row in reader(candidate, location):
-            found[row[0]] = row
-    return found
+def _list_location_text(row):
+    """A row's rendered location: its own universe's ``root`` or
+    ``worktree:<name>`` as-is, a declared project's prefixed with that
+    project's slug (``<project>:<location>``)."""
+    if row["project"]:
+        return "%s:%s" % (row["project"], row["location"])
+    return row["location"]
 
 
 def cmd_list(args):
-    """List in-flight changes across the invocation root and its worktrees."""
+    """List a kind of spec-library artifact across the invocation root's
+    universe — and, at a workspace-level invocation, each declared project's.
+
+    Row discovery is the engine's shared seam (``spec_status.list_rows``), so
+    this verb can never disagree with ``cat``, ``locate``, or the board about
+    which artifacts exist; the binary only parses and renders."""
+    # Loaded before parsing: the engine owns the kind vocabulary the positional
+    # validates against, so the binary never keeps a second copy of it.
+    _load_engine()
     parser = argparse.ArgumentParser(
         prog="shipd list",
-        description="In-flight changes across the root and its worktrees.")
-    parser.add_argument("--root", default=os.getcwd(),
-                        help="repository root (default: cwd)")
+        description="Spec-library artifacts across the root and its worktrees.")
+    parser.add_argument("kind", nargs="?", default="changes",
+                        choices=list(ss.LIST_KINDS),
+                        help="what to list (default: changes)")
+    parser.add_argument("--root", default=None,
+                        help="repository root (default: cwd, spanning the "
+                             "workspace's declared projects)")
     parser.add_argument("--all", action="store_true",
                         help="also list applied changes from completed/")
     parser.add_argument("--json", action="store_true", dest="json",
                         help="emit the rows as a JSON array on stdout")
     opts = parser.parse_args(args)
-    root = os.path.abspath(opts.root)
-    _load_engine()
+    # An explicit --root scopes the listing to that root's own universe (list
+    # what is there); the cwd default spans the workspace, which collapses to
+    # the single own universe inside a member repo.
+    span_workspace = opts.root is None
+    root = os.path.abspath(opts.root if opts.root is not None else os.getcwd())
 
-    in_flight = _collect(root, _planned_rows)
-    rows = [in_flight[name] for name in sorted(in_flight)]
-    if opts.all:
-        # Appended after the in-flight rows; a name still in flight keeps its
-        # live row rather than an older archive of the same change.
-        archived = _collect(root, _archived_rows)
-        rows.extend(archived[name] for name in sorted(archived)
-                    if name not in in_flight)
+    if opts.all and opts.kind != "changes":
+        _err("--all applies to changes only, not '%s'" % opts.kind)
+        return 1
+
+    rows = ss.list_rows(root, opts.kind, span_workspace,
+                        include_archived=opts.all)
 
     # The machine rendering of the very same rows, in the very same order — an
     # empty listing is an empty array, never the text placeholder (shipd-cli
-    # list-json).
+    # list-json). ``location`` stays the bare ``root``/``worktree:<name>`` and
+    # ``project`` carries the owning universe on its own key, as ``locate
+    # --json`` reports a match; only the text mode folds the two together.
     if opts.json:
-        print(json.dumps([{"name": name, "location": location,
-                           "status": status}
-                          for name, location, status in rows]))
+        print(json.dumps([{"name": row["name"], "location": row["location"],
+                           "status": row["status"],
+                           "project": row["project"]}
+                          for row in rows]))
         return 0
 
     if not rows:
-        print("no changes in flight")
+        print(LIST_EMPTY_TEXT[opts.kind])
         return 0
-    name_width = max(len(row[0]) for row in rows)
-    location_width = max(len(row[1]) for row in rows)
-    for name, location, status in rows:
+    cells = [(row["name"], _list_location_text(row),
+              row["status"] if row["status"] is not None else "-")
+             for row in rows]
+    name_width = max(len(cell[0]) for cell in cells)
+    location_width = max(len(cell[1]) for cell in cells)
+    for name, location, status in cells:
         print("%-*s  %-*s  %s"
               % (name_width, name, location_width, location, status))
     return 0
