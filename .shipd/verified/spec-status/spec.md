@@ -1263,17 +1263,27 @@ searching the resolved content directory's `verified/<slug>/spec.md` (kind
 `completed`, the slug printed with its `YYYY-MM-DD-` prefix stripped),
 `research/<slug>/report.md` (kind `research`), and `epics/<slug>/epic.md`
 (kind `epic`), and — where a workspace is discoverable — the workspace wiki
-store's `wiki/<slug>.md` pages (kind `wiki`). The CLI SHALL print one keyed
-block per matching artifact (`kind:`, `slug:`, `score:`, `path:`, the path
-relative to the root when inside it and absolute otherwise) in descending
-score order with ties broken by kind then slug, SHALL omit artifacts with no
-hits, SHALL cap the printed blocks at ten followed by a single line naming the
-count of remaining matches when more matched, and SHALL accept a `--json`
-flag emitting exactly one JSON array of objects with those four keys instead.
-If no artifact matches, then the CLI SHALL exit non-zero with a single
-`Error:` line. Where no workspace or wiki store is discoverable, the CLI
-SHALL skip the wiki surface silently and still search every other surface;
-a missing corpus directory SHALL likewise be skipped without error.
+store's `wiki/<slug>.md` pages (kind `wiki`).
+
+The corpus SHALL span the invocation root's own universe: the invocation root
+first, then each `.worktrees/<name>` directory under it in sorted name order,
+each candidate's content directory resolved independently and a candidate with
+an unreadable configuration skipped silently. A `(kind, slug)` pair hosted by
+more than one candidate SHALL appear exactly once, the first candidate in that
+order (the invocation root first) winning. The corpus SHALL NOT span declared
+project universes — the verb searches the repository it runs in, plus the
+workspace wiki surface above.
+
+The CLI SHALL print one keyed block per matching artifact (`kind:`, `slug:`,
+`score:`, `path:`, the path relative to the root when inside it and absolute
+otherwise) in descending score order with ties broken by kind then slug, SHALL
+omit artifacts with no hits, SHALL cap the printed blocks at ten followed by a
+single line naming the count of remaining matches when more matched, and SHALL
+accept a `--json` flag emitting exactly one JSON array of objects with those
+four keys instead. If no artifact matches, then the CLI SHALL exit non-zero
+with a single `Error:` line. Where no workspace or wiki store is discoverable,
+the CLI SHALL skip the wiki surface silently and still search every other
+surface; a missing corpus directory SHALL likewise be skipped without error.
 
 #### Scenario: Matches print ranked keyed blocks
 - **WHEN** `related export` runs in a repo where a verified capability's
@@ -1281,6 +1291,16 @@ a missing corpus directory SHALL likewise be skipped without error.
   contains it once
 - **THEN** both artifacts print as keyed blocks with `kind:`, `slug:`,
   `score:`, and `path:`, the verified capability first
+
+#### Scenario: Worktree-hosted artifacts are searched
+- **WHEN** `related <term>` runs from a main checkout whose
+  `.worktrees/<name>/` alone hosts an epic containing the term
+- **THEN** that epic prints as a match whose `path:` points into the worktree
+
+#### Scenario: Duplicate slugs dedupe root-first
+- **WHEN** the same `(kind, slug)` exists under both the invocation root and a
+  worktree and `related <term>` matches it
+- **THEN** exactly one block prints for it, scoring the invocation root's copy
 
 #### Scenario: Completed slug feeds the cat verb
 - **WHEN** `related <term>` matches only `completed/2026-08-14-my-change/`

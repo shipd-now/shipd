@@ -52,9 +52,7 @@ convention `/s:duck`, `/s:fix`, and `/s:status` use.
 
 Read the epic **exclusively** through the engine's mediated verbs. Never open a
 spec-tree path directly, never `cat`/`grep` `<content-dir>/epics/<slug>/epic.md`,
-and never reconstruct the epic from anything else you happen to know. (The one
-exception is the roster listing in section 4, which reads directory *names* and
-never artifact content.)
+and never reconstruct the epic from anything else you happen to know.
 
 ```
 python3 STATUS_CLI cat epic <slug>
@@ -143,7 +141,7 @@ Two cases take this path:
 - **No argument.** `/s:explain` was invoked bare — there is nothing to explain
   and no engine error to report.
 - **An unresolvable slug.** `cat epic <slug>` exited non-zero, printing
-  something like `Error: epic 'no-such-epic' not found (<path>)`.
+  something like `Error: epic 'no-such-epic' not found; probed: <roots>`.
 
 In both cases, **list the roster and stop**. Do not guess which epic was meant,
 do not fuzzy-match the slug to a near neighbour, and do not explain anything.
@@ -151,25 +149,24 @@ do not fuzzy-match the slug to a near neighbour, and do not explain anything.
 1. **Report the engine's error verbatim, when there was one.** On the
    unresolvable-slug case, show the line `cat epic` printed. On the
    no-argument case there is no error — skip this step.
-2. **Resolve the content directory:**
+2. **List the available epic slugs through the engine's roster verb:**
 
    ```
-   python3 STATUS_CLI config-show
+   "${CLAUDE_PLUGIN_ROOT}/bin/shipd" list epics
    ```
 
-   It prints a `content-dir: <dir>` line (e.g. `content-dir: .shipd`).
-3. **List the available epic slugs** — the child directory names of
-   `<content-dir>/epics/`, read directly from the filesystem (a plain
-   directory listing; this is a read, and the read-only contract holds).
-   Print them as the roster of epics this invocation root can see. If the
-   directory does not exist or is empty, say that no epics are installed here.
+   It prints one line per epic — slug, location (`root` or
+   `worktree:<name>`), and status — spanning this invocation root *and* its
+   worktrees, so an epic authored in another worktree appears in the roster
+   exactly as `cat epic` resolves it. The verb is read-only, so the read-only
+   contract holds.
+3. **Print that roster** as the epics this invocation root can see. When the
+   verb prints `no epics`, say that no epics are installed here.
 4. **Stop.** On the no-argument case, ask the user to pick one of the listed
    slugs and run `/s:explain <slug>`. On the unresolvable-slug case, stop after
    the error and the roster.
 
 Do **not** use the bare `show` board as the roster: a selected change preempts
-it, so it is not a reliable list of epics. The `epics/` directory names are.
-
-An epic authored in another worktree and not yet merged is invisible to this
-invocation root — that is exactly why the fallback reports the engine's own
-error alongside the epics it *can* see, and stops rather than guessing.
+it, so it is not a reliable list of epics. `shipd list epics` is. And never
+assemble the roster yourself from the spec tree's directory names — the verb is
+the only roster surface.
