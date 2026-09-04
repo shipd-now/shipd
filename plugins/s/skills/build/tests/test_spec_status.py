@@ -3905,6 +3905,27 @@ class WikiQueueAnswerTest(SpecStatusTestBase):
         self.assertIn("- Answer: one release", queue)
         self.assertEqual(queue.count("- Answer: pending"), 1)
 
+    def test_advisory_flag_prefixes_the_stored_answer(self):
+        self.make_store()
+        self.add_block("pr-unlock")
+        r = self.cli("wiki-queue-answer", "pr-unlock", "--advisory",
+                     "--answer", "always run the unlock")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "q-pr-unlock")
+        queue = self.queue_text()
+        self.assertIn("- Answer: advisory: always run the unlock", queue)
+        self.assertNotIn("Answer: pending", queue)
+
+    def test_without_advisory_the_answer_is_stored_unprefixed(self):
+        self.make_store()
+        self.add_block("retention")
+        r = self.cli("wiki-queue-answer", "retention",
+                     "--answer", "prune after one release")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        queue = self.queue_text()
+        self.assertIn("- Answer: prune after one release", queue)
+        self.assertNotIn("advisory:", queue)
+
     def test_missing_block_errors(self):
         self.make_store()
         self.add_block("retention")
@@ -3983,6 +4004,159 @@ class WikiQueueAnswerTest(SpecStatusTestBase):
         r = self.cli("wiki-queue-answer", "retention", "--answer", "one release")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("- Answer: one release", self.queue_text())
+        self.assertFalse(os.path.exists(os.path.join(self.root, ".git")))
+
+
+class WikiQueueDiscardTest(SpecStatusTestBase):
+    """The ``wiki-queue-discard <slug> --reason "<text>"`` verb (shipd-wiki
+    wiki-queue-discard-verb, wiki-autocommit): it removes a still-pending queue
+    block whose answer the capture rubric classified as not worth keeping.
+    ``self.root`` doubles as the workspace root; the store lives at
+    ``<root>/.shipd/wiki/``."""
+
+    def queue_text(self):
+        with open(os.path.join(self.root, ".shipd", "wiki", "queue.md"),
+                  encoding="utf-8") as fh:
+            return fh.read()
+
+    def make_store(self):
+        self.declare_workspace()
+        self.cli("wiki-init")
+
+    def add_block(self, slug):
+        r = self.cli("wiki-queue-add", slug,
+                     "--question", "Q?", "--options", "a | b",
+                     "--recommendation", "a")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_pending_block_is_discarded(self):
+        self.make_store()
+        self.add_block("framework-pick")
+        r = self.cli("wiki-queue-discard", "framework-pick",
+                     "--reason", "self-evidencing")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "q-framework-pick")
+        self.assertNotIn("## q-framework-pick", self.queue_text())
+
+    def test_other_blocks_are_preserved_verbatim(self):
+        self.make_store()
+        self.add_block("retention")
+        keeper = self.queue_text()
+        self.add_block("framework-pick")
+        r = self.cli("wiki-queue-discard", "framework-pick",
+                     "--reason", "one-off")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        after = self.queue_text()
+        self.assertNotIn("## q-framework-pick", after)
+        self.assertEqual([q for q, _f in sc.parse_queue_blocks(after)],
+                         ["q-retention"])
+        # The surviving block's own lines are untouched.
+        for line in keeper.splitlines():
+            if line.strip():
+                self.assertIn(line, after)
+
+    def test_answered_block_is_refused(self):
+        self.make_store()
+        self.add_block("retention")
+        self.assertEqual(
+            self.cli("wiki-queue-answer", "retention",
+                     "--answer", "one release").returncode, 0)
+        before = self.queue_text()
+        r = self.cli("wiki-queue-discard", "retention", "--reason", "x")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("q-retention", r.stderr)
+        self.assertIn("answered", r.stderr.lower())
+        self.assertEqual(self.queue_text(), before)  # byte-identical
+
+    def test_missing_block_errors(self):
+        self.make_store()
+        self.add_block("retention")
+        before = self.queue_text()
+        r = self.cli("wiki-queue-discard", "no-such-entry", "--reason", "x")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("q-no-such-entry", r.stderr)
+        self.assertEqual(self.queue_text(), before)  # byte-identical
+
+    def test_empty_reason_errors(self):
+        self.make_store()
+        self.add_block("retention")
+        before = self.queue_text()
+        r = self.cli("wiki-queue-discard", "retention", "--reason", "   ")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self.queue_text(), before)  # byte-identical
+
+    def test_missing_reason_errors(self):
+        self.make_store()
+        self.add_block("retention")
+        before = self.queue_text()
+        r = self.cli("wiki-queue-discard", "retention")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self.queue_text(), before)  # byte-identical
+
+    def test_requires_workspace(self):
+        r = self.cli("wiki-queue-discard", "retention", "--reason", "x")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no workspace", r.stderr.lower())
+
+    # -- Auto-commit (shipd-wiki wiki-autocommit) --
+
+    def _git(self, *args):
+        subprocess.run(["git", "-C", self.root, *args],
+                       capture_output=True, text=True, check=True)
+
+    def _init_git(self):
+        subprocess.run(["git", "init", "-q", self.root],
+                       capture_output=True, text=True, check=True)
+        self._git("config", "user.email", "test@example.com")
+        self._git("config", "user.name", "Test")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "baseline")
+
+    def _commit_count(self):
+        r = subprocess.run(
+            ["git", "-C", self.root, "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True, check=True)
+        return int(r.stdout.strip())
+
+    def _head_subject(self):
+        r = subprocess.run(
+            ["git", "-C", self.root, "log", "-1", "--format=%s"],
+            capture_output=True, text=True, check=True)
+        return r.stdout.strip()
+
+    def _head_files(self):
+        r = subprocess.run(
+            ["git", "-C", self.root, "show", "--name-only", "--format=", "HEAD"],
+            capture_output=True, text=True, check=True)
+        return sorted(p for p in r.stdout.split("\n") if p.strip())
+
+    def test_discard_commits_only_queue_md(self):
+        self.make_store()
+        self.add_block("retention")
+        self._init_git()
+        before = self._commit_count()
+        r = self.cli("wiki-queue-discard", "retention", "--reason", "one-off")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._commit_count(), before + 1)
+        self.assertEqual(self._head_subject(),
+                         "shipd-wiki: queue-discard q-retention")
+        self.assertEqual(self._head_files(), [".shipd/wiki/queue.md"])
+
+    def test_refused_discard_makes_no_commit(self):
+        self.make_store()
+        self.add_block("retention")
+        self._init_git()
+        before = self._commit_count()
+        r = self.cli("wiki-queue-discard", "no-such-entry", "--reason", "x")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self._commit_count(), before)
+
+    def test_non_git_store_discards_without_git(self):
+        self.make_store()
+        self.add_block("retention")
+        r = self.cli("wiki-queue-discard", "retention", "--reason", "one-off")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("## q-retention", self.queue_text())
         self.assertFalse(os.path.exists(os.path.join(self.root, ".git")))
 
 

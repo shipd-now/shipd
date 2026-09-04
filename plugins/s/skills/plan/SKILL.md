@@ -164,8 +164,8 @@ change directory (`<root>/<dir>`), never re-emitting through staging.
 3. **Put only the true gaps to the user.** A finding the repository genuinely
    cannot answer — an undecided product choice encoded as a placeholder — is the
    only thing you ask about. First route each true gap through the oracle rung
-   (see "The oracle rung" below); only the `INSUFFICIENT` gaps reach the typed
-   round. Batch those under the **fast-path question contract** (a visible
+   (see "The oracle rung" below); only the gaps it leaves open — `INSUFFICIENT`
+   verdicts and `Authority: advisory` answers — reach the typed round. Batch those under the **fast-path question contract** (a visible
    context brief first, then a plain-text numbered typed round), and fold the
    answers back into the artifacts. **Do not ask about anything discoverable
    from the repository.** An enrichment-time consultation is ledgered like any
@@ -315,8 +315,9 @@ answered by reading is a failure of this skill.
      genuinely open task-shaping questions, name them under an **OPEN
      QUESTIONS** header, then consult the oracle rung (see "The oracle
      rung" below) on each of them in this same turn, and end the turn on a
-     single plain-text numbered typed round for the `INSUFFICIENT`
-     remainder (per the fast-path question contract below) — brief, then
+     single plain-text numbered typed round (per the fast-path question
+     contract below) for the remainder it leaves open — `INSUFFICIENT`
+     verdicts and `Authority: advisory` answers alike — brief, then
      questions. So the user is interrupted at most once, and only for a
      decision no rung below them could settle.
    - **Without open questions** — printed only when no genuinely open
@@ -357,7 +358,8 @@ answered by reading is a failure of this skill.
    this step. Otherwise (step 2 ended without open questions, or a new
    decision surfaced), if genuinely un-inferrable decisions are left, first
    consult the oracle rung (see "The oracle rung" below) and batch only
-   the `INSUFFICIENT` remainder into a single typed question round (see the
+   the remainder it leaves open — `INSUFFICIENT` verdicts and
+   `Authority: advisory` answers — into a single typed question round (see the
    question contract below). If investigation already satisfied the
    readiness bar, ask nothing and go straight to step 6.
 5. **Check readiness.** Gate on the four-item checklist in
@@ -526,6 +528,13 @@ enrichment's true-gap round — consult the oracle on each remaining decision
 - **Branch on each verdict's first non-blank line.**
   - **`ANSWER`** → the decision is resolved: fold the oracle's position in and
     **do not put it to the user**.
+  - **`ANSWER` carrying an `Authority: advisory` line** → the position rests on
+    knowledge the user consented to record as a recommendation, not a standing
+    rule, so it **recommends, it never settles**. The decision still enters the
+    user round, with the oracle's advisory position as the **recommended first
+    option** and its `Cited:` source named, so accepting it is the cheapest
+    reply and overriding it costs one word. Never fold an advisory answer in
+    silently.
   - **`INSUFFICIENT`** → the decision enters the user round **unchanged**; the
     oracle has already queued it, so nothing more is needed to escalate it.
   - **Spawn failure or any other first line** (a malformed verdict) → treat the
@@ -563,22 +572,50 @@ enrichment's true-gap round — consult the oracle on each remaining decision
   filed a `q-<slug>` (a `Queued:` line naming a slug, not `none`), distill the
   user's typed resolution into one **concise durable answer** — the position
   chosen and the reason given, in a sentence or two that will still read
-  correctly to someone with none of this session's context — and write it into
-  that queue block **before emission**:
+  correctly to someone with none of this session's context — then **classify
+  that answer against the capture rubric**
+  (`${CLAUDE_PLUGIN_ROOT}/skills/ask/references/capture-rubric.md`) before any
+  queue write. Not every typed answer is worth standing oracle knowledge; the
+  rubric's three tiers decide, and its examples and tie-breakers settle
+  borderline cases. Act on the tier **before emission**:
 
-  ```
-  python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" \
-    --root <root> wiki-queue-answer <slug> --answer "<the distilled answer>"
-  ```
+  - **Include** — capture it as binding knowledge:
 
-  (Pass the bare `<slug>` — the verb prefixes `q-` itself.) This is **in
-  addition to** the ledger entry above, not instead of it: the ledger records
-  the consultation in `plan.md`, the queue write makes the answer citable by
-  the next oracle spawn, so the same question is never asked twice. Where the
-  verdict reported **`Queued: none`** (no discoverable workspace), skip the
-  write and say so in visible text — nothing durable was captured. If the write
-  **exits non-zero**, report the failure and continue to emission: capture
-  never blocks planning.
+    ```
+    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" \
+      --root <root> wiki-queue-answer <slug> --answer "<the distilled answer>"
+    ```
+
+  - **Exclude** — capture nothing and clear the block, so the queue stays a
+    pending-only worklist:
+
+    ```
+    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" \
+      --root <root> wiki-queue-discard <slug> --reason "<why it is not durable>"
+    ```
+
+  - **Consent-gated** — capture only on the user's **express affirmative** to
+    an explicit record-this question (which may ride along in the same typed
+    round), and always as advisory:
+
+    ```
+    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" \
+      --root <root> wiki-queue-answer <slug> --advisory \
+      --answer "<the distilled answer>"
+    ```
+
+    Anything short of that express yes — declined, deferred, or unaddressed —
+    **discards** the block via `wiki-queue-discard`. Never infer the consent
+    from how emphatically the answer was stated.
+
+  (Pass the bare `<slug>` — the verbs prefix `q-` themselves.) The tier governs
+  the queue only: **every** consultation still gets its ledger entry above,
+  discarded and advisory ones included — the ledger records the consultation in
+  `plan.md`, while the queue write is what makes an answer citable by the next
+  oracle spawn. Where the verdict reported **`Queued: none`** (no discoverable
+  workspace), skip the write and say so in visible text — nothing durable was
+  captured. If a capture or discard write **exits non-zero**, report the
+  failure and continue to emission: neither ever blocks planning.
 
 **The investigation turn consults the rung in place, same-turn.** When the
 findings digest (step 2) names open task-shaping decisions under **OPEN
@@ -597,8 +634,9 @@ rules below do not apply there. See `dialogue.md` for the authority.
 
 **The oracle rung precedes this round.** Before opening the round, consult the
 oracle on the remaining decisions (see "The oracle rung" above); only the
-`INSUFFICIENT` decisions are asked here, and oracle-settled decisions are
-reported in this round's context brief.
+decisions it leaves open — `INSUFFICIENT` verdicts, and `ANSWER`s carrying
+`Authority: advisory`, whose advisory position leads the options — are asked
+here, and oracle-settled decisions are reported in this round's context brief.
 
 When decisions remain that you truly cannot infer, ask them under this
 discipline — it is what separates a lean gate from an interrogation:

@@ -256,6 +256,17 @@ not `pending`**:
 Blocks whose `Answer:` is `pending` are left **untouched** — the queue stays a
 pending-only worklist. The run's `log.md` entry names each drained `q-<slug>`.
 
+**Preserve an advisory answer's standing.** An `Answer:` value beginning
+`advisory: ` was captured on the user's express instruction as a
+recommendation, not a standing rule (`/s:ask` and `/s:plan` write that prefix
+through `wiki-queue-answer --advisory`). Distill such a block into a page
+carrying an **`Authority: advisory`** line, so the oracle reading that page
+later relays it as a recommendation the user can override rather than a
+position that settles the decision. Drop neither the marker nor the standing:
+distilling an advisory answer into an unmarked page silently promotes guidance
+the user consented to record into a rule they never agreed to. Answers without
+the prefix distill into binding pages carrying no `Authority:` line, as before.
+
 ## 6. Ingest — the one staged write path
 
 Author the touched store subset in a throwaway staging directory and install it

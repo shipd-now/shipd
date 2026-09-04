@@ -177,6 +177,16 @@ asked. Follow it with:
   not have an `ANSWER`; return `INSUFFICIENT`. Callers demote an `ANSWER`
   carrying no `Cited:` or no `Evidence:` line back to `INSUFFICIENT`, so an
   unquoted answer is simply thrown away.
+- **An `Authority: advisory` line when the position rests on an advisory
+  source**, placed directly after the position. A source is advisory when it
+  carries either marker: a queue block whose `- Answer:` value begins
+  `advisory: `, or a wiki page carrying an `Authority: advisory` line. Such
+  knowledge was captured on the user's express instruction as a
+  recommendation, not a standing rule, so the caller surfaces it as the
+  recommended default and still puts the decision to the user. Where none of
+  the cited sources carries an advisory marker, emit **no** `Authority:` line
+  at all — an `ANSWER` without one is binding and settles the decision, as
+  before.
 
 ```
 ANSWER
@@ -199,6 +209,17 @@ The markers work the same on the other stores: a personal-store page cites as
 as `Cited: [[conventions]] (inherited /ws/outer)`, and an answered-but-undrained
 queue block cites as `Cited: queue q-answered-queue-retention`, with its
 `Evidence:` line quoting that block's `- Answer:` text verbatim.
+
+An advisory-backed answer looks the same but for the one extra line:
+
+```
+ANSWER
+Run the PR unlock first rather than fixing the tool in the same pass.
+Authority: advisory
+Cited: queue q-pr-unlock
+Evidence: queue q-pr-unlock — "- Answer: advisory: stop asking — always run
+the PR unlock instead of fixing the tool."
+```
 
 ### `INSUFFICIENT`
 
@@ -276,3 +297,9 @@ store — the base is another workspace's store and is read-only to you.
 - **Answered queue blocks are evidence; pending ones are not.** Cite a settled
   `## q-<slug>` block as `Cited: queue q-<slug>`; a block still reading
   `- Answer: pending` is an open question and never backs an `ANSWER`.
+- **Carry an advisory source's standing through.** A queue block whose
+  `- Answer:` value begins `advisory: `, or a wiki page carrying an
+  `Authority: advisory` line, backs an `ANSWER` that itself carries
+  `Authority: advisory`. Never drop the marker — dropping it silently
+  promotes a recommendation the user consented to record into a rule they
+  never agreed to.

@@ -29,6 +29,14 @@ An `ANSWER` carries:
 - `Evidence:` — the cited text quoted **verbatim**. A paraphrase is not
   evidence.
 - the recommendation itself, stated as a position rather than a menu.
+- `Authority: advisory` — present only when the position rests on an advisory
+  source: a queue block whose `Answer:` value begins `advisory: `, or a wiki
+  page carrying an `Authority: advisory` line. Such knowledge was recorded on
+  the user's express instruction as guidance, so it **recommends, it never
+  settles**: relay the position, keep the line, and still put the decision to
+  the user with that position as the recommended first option and its citation
+  named. An `ANSWER` with no `Authority:` line is binding, and settles the
+  decision without asking.
 
 ## Demotion
 
@@ -50,23 +58,74 @@ python3 "$S/spec_status.py" --root <repo-root> wiki-queue-add <slug> \
   --recommendation "<lean>" --origin "ask"
 ```
 
-The block lands with `Answer: pending`. Capture the user's reply against it:
+The block lands with `Answer: pending`. What happens to it next is decided by
+the **capture rubric**, applied to the distilled reply before any queue write.
 
-```
-python3 "$S/spec_status.py" --root <repo-root> wiki-queue-answer <slug> \
-  --answer "<the distilled answer>"
-```
+## The capture rubric
 
-Pass the bare `<slug>`; the verb prefixes `q-` itself.
+Three tiers, exactly one per answer:
+
+1. **Include — binding capture.** Durable engineering positions that shape
+   future work and are not evidenced by any single repo artifact: a clean
+   preference between packages, a data-modeling pattern ("never hard-delete;
+   soft-delete flags plus an audit log"), a naming convention ("async
+   accessors are `fetch*`, never `get*`"), an error-handling philosophy, a
+   testing-depth position. Capture immediately:
+
+   ```
+   python3 "$S/spec_status.py" --root <repo-root> wiki-queue-answer <slug> \
+     --answer "<the distilled answer>"
+   ```
+
+2. **Exclude — discard.** Answers whose durable record already lives somewhere
+   better, or that are explicitly scoped to one change: "pin Node 22 in
+   .nvmrc" (self-evidencing configuration; a copy goes stale on the next
+   bump), "ship this migration without a rollback, just this once". Capture
+   nothing and remove the pending block, so the queue stays a pending-only
+   worklist:
+
+   ```
+   python3 "$S/spec_status.py" --root <repo-root> wiki-queue-discard <slug> \
+     --reason "<why this answer is not durable>"
+   ```
+
+   The reason is echoed to you, not stored.
+
+3. **Consent-gated — advisory capture, express instruction only.** Workflow
+   shortcuts ("stop asking — always run the PR unlock"), process habits
+   ("always squash-merge with imperative subjects"), and personal
+   presentation preferences. **Never capture these by inference** — a vented
+   annoyance is not a standing instruction. Ask one explicit record-this
+   question; only an express affirmative captures, and always advisory:
+
+   ```
+   python3 "$S/spec_status.py" --root <repo-root> wiki-queue-answer <slug> \
+     --advisory --answer "<the distilled answer>"
+   ```
+
+   Anything else — declined, deferred, or unaddressed — discards the block.
+   The flag stores the answer as `advisory: <text>`, which is what makes a
+   later run relay it as a recommendation rather than a rule.
+
+Tie-breakers: a candidate between tiers leans toward consent-gated over
+include, and toward exclude over consent-gated — an un-captured answer costs
+one future question, a wrongly captured one silently steers work. Existing
+context can promote: a standing wiki page or an epic decision already
+encoding a related position tips a borderline case toward include. A
+preference about the user personally rather than the workspace's engineering
+belongs in their personal memory store, not the workspace wiki.
+
+Pass the bare `<slug>`; the verbs prefix `q-` themselves.
 
 Edge cases:
 
 - **No store** — `wiki-init` scaffolds one, but only where a workspace is
   discoverable. With no workspace, skip the queue entirely.
-- **Already answered** — the verb refuses to overwrite an answered block.
-  Correcting a captured answer is `/s:teach <change> Q<n>`'s job.
-- **Non-zero exit** — report the failure and relay the answer anyway.
-  Capture never blocks the reply.
+- **Already answered** — both verbs refuse a block that is no longer pending;
+  an answered block belongs to the teach drain. Correcting a captured answer
+  is `/s:teach <change> Q<n>`'s job.
+- **Non-zero exit** — report the failure and relay the answer anyway. Neither
+  capture nor discard ever blocks the reply.
 - **Nothing queued** — relay for this session only and say plainly that
   nothing durable was captured.
 

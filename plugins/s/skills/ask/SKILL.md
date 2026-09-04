@@ -23,8 +23,9 @@ returns.
 **The oracle is the middle rung of the epic's read → oracle → human ladder.**
 A caller at an un-inferrable decision consults the user's standing opinion before
 interrupting a person; when the user has no opinion yet, the question queues and
-this skill — the interactive rung — puts it to the user and captures their
-answer back into the queue, so the next spawn can cite it.
+this skill — the interactive rung — puts it to the user and, when the capture
+rubric says the answer is durable, writes it back into the queue so the next
+spawn can cite it.
 
 **Announce the version first.** Read the running plugin version from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `shipd:ask
@@ -72,6 +73,16 @@ Branch on the oracle's first line:
   block (`queue q-<slug>`), or the repo artifacts behind it, and its
   `Evidence:` quote line(s). Do not dilute the position into a list of
   alternatives; the oracle took a stance, so present it as one.
+- **`ANSWER` carrying `Authority: advisory`** — the position rests on
+  knowledge the user consented to record as a *recommendation*, not a standing
+  rule. Relay it the same way, then **still put the decision to the user**
+  through a single AskUserQuestion dialog with the oracle's position as the
+  **recommended first option**, naming its citation. Say plainly that the
+  oracle's knowledge here is advisory, so the user's answer in this session
+  governs. Never relay an advisory answer as settled — an advisory source
+  recommends, it never decides. (There is no queued block to capture against
+  on this branch, so the capture step below does not apply; the answer stands
+  for this session.)
 - **`INSUFFICIENT`** — the oracle could not answer from durable knowledge and
   has queued the decision. It appends the compact question to the workspace
   wiki queue through the engine (`spec_status.py wiki-queue-add`, scaffolding
@@ -103,21 +114,58 @@ rather than leaving the question to sit in the queue.
    answer**: the position they chose plus the reason they gave, in a sentence
    or two that will still make sense to a future reader with none of this
    session's context. Strip the session chatter; keep the decision.
-3. **Capture it against the queued entry.** Where the verdict reported a filed
-   `q-<slug>`, write the distilled answer into that block:
+3. **Classify the answer before any queue write.** Not every typed answer is
+   worth standing oracle knowledge. Read
+   `${CLAUDE_PLUGIN_ROOT}/skills/ask/references/capture-rubric.md` and place
+   the distilled answer in exactly one of its three tiers — **include**,
+   **exclude**, or **consent-gated** — before you touch the queue. The rubric's
+   calibrated examples and tie-breakers decide borderline cases; do not
+   improvise a fourth tier.
+4. **Act on the tier.** Where the verdict reported a filed `q-<slug>`:
 
-   ```
-   python3 ${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py \
-     --root <asking-repo-root> wiki-queue-answer <slug> \
-     --answer "<the distilled answer>"
-   ```
+   - **Include** — capture it as binding knowledge:
 
-   (Pass the bare `<slug>` — the verb prefixes `q-` itself.) The next oracle
-   spawn reads that answered block and can cite it, so the same question is
-   never asked twice. Tell the user the answer was captured, naming the
-   `q-<slug>`. If the write exits non-zero, report the failure and still relay
-   the answer — capture never blocks the reply.
-4. **`Queued: none` — relay only.** Where the oracle reported `Queued: none`
+     ```
+     python3 ${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py \
+       --root <asking-repo-root> wiki-queue-answer <slug> \
+       --answer "<the distilled answer>"
+     ```
+
+     (Pass the bare `<slug>` — the verb prefixes `q-` itself.) The next oracle
+     spawn reads that answered block and can cite it, so the same question is
+     never asked twice. Tell the user the answer was captured, naming the
+     `q-<slug>`.
+   - **Exclude** — capture nothing and clear the block, so the queue stays a
+     pending-only worklist:
+
+     ```
+     python3 ${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py \
+       --root <asking-repo-root> wiki-queue-discard <slug> \
+       --reason "<one line: why this answer is not durable>"
+     ```
+
+     Tell the user the answer stands for this session and was deliberately not
+     captured, naming the reason.
+   - **Consent-gated** — ask **one explicit record-this question** (an
+     AskUserQuestion dialog: "record this as standing guidance?"), and capture
+     only on an **express affirmative**, always advisory:
+
+     ```
+     python3 ${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py \
+       --root <asking-repo-root> wiki-queue-answer <slug> --advisory \
+       --answer "<the distilled answer>"
+     ```
+
+     Anything else — declined, deferred, or left unaddressed — **discards** the
+     block via `wiki-queue-discard`. Never infer the consent from the user's
+     tone or from how emphatically the answer was stated; only an express yes
+     captures. Where the answer is a preference about the user personally
+     rather than the workspace's engineering, say so and point at
+     `/s:remember` (the personal memory store) as the better destination.
+
+   If a capture or discard write exits non-zero, report the failure and still
+   relay the answer — neither ever blocks the reply.
+5. **`Queued: none` — relay only.** Where the oracle reported `Queued: none`
    (no discoverable workspace), there is no store to write to. Relay the user's
    answer for **this session only** and state plainly that **nothing durable
    was captured**, because the repo has no discoverable workspace — creating

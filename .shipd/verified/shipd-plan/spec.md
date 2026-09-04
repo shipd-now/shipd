@@ -552,22 +552,32 @@ remaining decision into a compact question (the decision, concrete options,
 and the skill's recommended default) and consult the `s:oracle` agent with
 one spawn per decision, passing the compact question, the asking repo's
 absolute root, and the status CLI path. The skill SHALL branch on the
-verdict's first non-blank line: a decision answered `ANSWER` SHALL be folded
-in as resolved and SHALL NOT be put to the user, while a decision returned
-`INSUFFICIENT` SHALL proceed to the user round unchanged. If a verdict's
-first line is `ANSWER` but its body lacks a `Cited:` line or an `Evidence:`
-line, then the skill SHALL treat that decision as `INSUFFICIENT`. If a spawn
-fails or the verdict's first line is neither `ANSWER` nor `INSUFFICIENT`,
-then the skill SHALL treat that decision as `INSUFFICIENT` and continue — the
-consultation SHALL never block planning. When the findings digest leaves open
-task-shaping decisions, the skill SHALL consult the rung in that same turn, so
-the digest, the consultation, and the round for the `INSUFFICIENT` remainder
-form a single message exchange.
+verdict's first non-blank line: a decision answered `ANSWER` with no
+`Authority: advisory` line SHALL be folded in as resolved and SHALL NOT be
+put to the user, while a decision returned `INSUFFICIENT` SHALL proceed to
+the user round unchanged. Where an `ANSWER` carries an `Authority: advisory`
+line, the decision SHALL still enter the user round, with the oracle's
+advisory position presented as the recommended first option and its
+citation named — the advisory answer recommends, it never settles. If a
+verdict's first line is `ANSWER` but its body lacks a `Cited:` line or an
+`Evidence:` line, then the skill SHALL treat that decision as
+`INSUFFICIENT`. If a spawn fails or the verdict's first line is neither
+`ANSWER` nor `INSUFFICIENT`, then the skill SHALL treat that decision as
+`INSUFFICIENT` and continue — the consultation SHALL never block planning.
+When the findings digest leaves open task-shaping decisions, the skill SHALL
+consult the rung in that same turn, so the digest, the consultation, and the
+round for the `INSUFFICIENT` remainder form a single message exchange.
 
 #### Scenario: Wiki-held answers skip the user round
 - **WHEN** every remaining un-inferrable decision comes back `ANSWER`
+  without an `Authority: advisory` line
 - **THEN** the skill proceeds toward the readiness gate without opening a
   user question round
+
+#### Scenario: Advisory answer still reaches the user
+- **WHEN** a decision comes back `ANSWER` carrying `Authority: advisory`
+- **THEN** the decision appears in the user question round with the
+  oracle's advisory position as the recommended first option, cited
 
 #### Scenario: Insufficient decisions still go to the user
 - **WHEN** the oracle returns `INSUFFICIENT` for a decision
@@ -949,18 +959,39 @@ id: typed-answer-capture
 When a typed user round resolves a decision the oracle returned
 `INSUFFICIENT` with a filed `q-<slug>` (a `Queued:` line naming a slug rather
 than `none`), the skill SHALL distill the typed resolution into a concise
-durable answer and write it through `spec_status.py wiki-queue-answer <slug>
---answer "<text>"` before emission, in addition to ledgering the consultation
-in `plan.md`'s `## Questions and answers` section. Where the verdict reported
-`Queued: none`, the skill SHALL skip the capture and state that nothing
-durable was written. If the capture write fails, then the skill SHALL report
-the failure and continue — capture SHALL never block planning.
+durable answer and classify it against the capture rubric
+(`plugins/s/skills/ask/references/capture-rubric.md`) before any queue
+write: an include-tier answer SHALL be written through
+`spec_status.py wiki-queue-answer <slug> --answer "<text>"` before emission;
+an exclude-tier answer SHALL discard the filed block through
+`spec_status.py wiki-queue-discard <slug> --reason "<text>"` instead of
+capturing; a consent-gated-tier answer SHALL be captured with
+`wiki-queue-answer --advisory` only when the user expressly affirms an
+explicit record-this question (which MAY join the same typed round), and
+SHALL otherwise be discarded. Every consultation is still ledgered in
+`plan.md`'s `## Questions and answers` section regardless of tier. Where the
+verdict reported `Queued: none`, the skill SHALL skip the capture and state
+that nothing durable was written. If a capture or discard write fails, then
+the skill SHALL report the failure and continue — capture SHALL never block
+planning.
 
-#### Scenario: Typed resolution reaches the queue block
+#### Scenario: Include-tier resolution reaches the queue block
 - **GIVEN** an `INSUFFICIENT` verdict whose `Queued:` line names `q-<slug>`
-- **WHEN** the user's typed reply resolves that decision
+- **WHEN** the user's typed reply resolves that decision and the rubric
+  classifies it include-tier
 - **THEN** the skill writes the distilled answer via `wiki-queue-answer`
   before emission and the ledger entry records the resolution
+
+#### Scenario: Exclude-tier resolution discards the block
+- **WHEN** the rubric classifies a typed resolution exclude-tier
+- **THEN** the skill discards the filed block via `wiki-queue-discard` with
+  a reason, and the ledger entry still records the resolution
+
+#### Scenario: Consent-gated capture requires express instruction
+- **WHEN** the rubric classifies a typed resolution consent-gated and the
+  user expressly affirms recording it
+- **THEN** the skill captures it via `wiki-queue-answer --advisory`; without
+  that express affirmative the block is discarded
 
 #### Scenario: No workspace skips capture
 - **GIVEN** an `INSUFFICIENT` verdict whose `Queued:` line reads `none`
@@ -969,7 +1000,8 @@ the failure and continue — capture SHALL never block planning.
   written, and planning proceeds
 
 #### Scenario: Capture failure does not block emission
-- **WHEN** the `wiki-queue-answer` write exits non-zero
+- **WHEN** the `wiki-queue-answer` or `wiki-queue-discard` write exits
+  non-zero
 - **THEN** the skill reports the failure and the flow continues to emission
 
 ### Requirement: Planning artefacts are stored with the change
