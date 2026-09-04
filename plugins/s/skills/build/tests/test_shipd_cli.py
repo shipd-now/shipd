@@ -40,8 +40,8 @@ MANIFEST = os.path.join(PLUGIN_ROOT, ".claude-plugin", "plugin.json")
 
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
 VERBS = ("init", "list", "status", "locate", "related", "epic", "workspace",
-         "board", "metrics", "lint", "worktree", "doctor", "statusline",
-         "copilot", "vendor", "harness", "install", "update")
+         "board", "render", "metrics", "lint", "worktree", "doctor",
+         "statusline", "copilot", "vendor", "harness", "install", "update")
 
 
 def _load_binary():
@@ -224,6 +224,60 @@ class DispatchTest(ShipdCliTestBase):
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("unrecognized arguments", r.stderr)
         self.assertIn("frobnicate", r.stderr)
+
+    @unittest.skipUnless(HAS_TEXTUAL, "render.py's screen entry provisions "
+                                      "textual; see HAS_TEXTUAL")
+    def test_bare_render_is_the_interactive_viewer(self):
+        # ``--help`` proves the default-mode mapping (and that flags reach the
+        # delegate untouched) without launching the full-screen viewer.
+        direct = self.script("render.py", "screen", "--help")
+        r = self.cli("render", "--help")
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+
+    def test_render_output_delegates_to_render_output(self):
+        # ``--plain`` keeps this in the stdlib-only lane: it never imports
+        # rich, and ``render.py``'s script entry provisions only for ``screen``.
+        path = os.path.join(self.root, "doc.md")
+        self.write(path, "# Doc\n\n```mermaid\ngraph LR\n  A[Plan] --> B[Ship]\n"
+                         "```\n")
+        direct = self.script("render.py", "output", "--plain", path)
+        r = self.cli("render", "output", "--plain", path)
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+        self.assertIn("```text", r.stdout)
+        self.assertNotIn("```mermaid", r.stdout)
+
+    @unittest.skipUnless(HAS_TEXTUAL, "render.py's screen entry provisions "
+                                      "textual; see HAS_TEXTUAL")
+    def test_unknown_render_mode_word_falls_through_to_the_screen_delegate(
+            self):
+        # ``output`` is the only render mode word, so any other word is not
+        # consumed: it reaches ``render.py screen`` as a trailing argument.
+        # ``--plain`` is an ``output``-only flag, so the delegate rejecting it
+        # by name is what makes this discriminating — a wrongly-consumed word
+        # would have run ``render.py output --plain`` cleanly instead.
+        r = self.cli("render", "frobnicate", "--plain")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("unrecognized arguments", r.stderr)
+        self.assertIn("--plain", r.stderr)
+
+    def test_render_modes_map_to_the_render_script(self):
+        """The render mode table mirrors ``board``'s: a mode-less default of
+        the interactive viewer, with ``output`` the one consumed mode word
+        (shipd-cli cli-dispatch)."""
+        self.assertEqual(shipd.RENDER_MODES,
+                         {None: ("render.py", ["screen"]),
+                          "output": ("render.py", ["output"])})
+
+    def test_the_banner_lists_render_as_a_verb(self):
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        rows = [line.strip() for line in r.stdout.splitlines()
+                if line.strip().startswith("render ")]
+        self.assertEqual(len(rows), 1, r.stdout)
 
     def test_related_is_a_curated_verb_mapped_to_the_status_script(self):
         """The `related` row delegates to ``spec_status.py related``

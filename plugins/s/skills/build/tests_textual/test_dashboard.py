@@ -3305,6 +3305,98 @@ class WorktreeEpicDetailOverviewTest(DashboardTestBase,
             self.assertFalse(list(app.screen.query(dashboard.Markdown)))
 
 
+class BoardMarkdownDiagramTest(DashboardTestBase,
+                               unittest.IsolatedAsyncioTestCase):
+    """The board's two markdown panes render mermaid fences as diagrams
+    (delivery-dashboard board-markdown-diagrams spec): both the spec modal's
+    artifact tabs and the epic modal's overview pass their text through
+    ``render.substitute_mermaid_fences``, so a fence arrives as a ```` ```text
+    ```` diagram block rather than raw mermaid source — and a fence the
+    renderer cannot parse arrives exactly as it was."""
+
+    # Spaced arrows: the vendored renderer reads `A-->B` as a label box, not an
+    # edge, so the fixture writes the form the diagram policy requires.
+    FENCE = "```mermaid\ngraph LR\n  A[Plan] --> B[Ship]\n```\n"
+    # A diagram type the renderer rejects, so the pane must degrade to source.
+    BAD_FENCE = '```mermaid\npie title Pets\n    "Dogs" : 386\n```\n'
+    BOX_DRAWING = "─│┌┐└┘"
+
+    def _sources(self, app):
+        return [w.source for w in app.screen.query(dashboard.Markdown)]
+
+    def _plant_plan(self, slug, fence):
+        _write(os.path.join(self.root, ".shipd", "planned", slug, "plan.md"),
+               "# %s plan\n\nBefore.\n\n%s\nAfter.\n" % (slug, fence))
+
+    async def _open_member(self, pilot, app, slug):
+        card = _find_card(app, slug)
+        card.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+
+    async def test_artifact_tab_shows_a_rendered_diagram(self):
+        self._plant_plan("documented", self.FENCE)
+        app = dashboard.BoardApp(
+            root=self.root,
+            board_fn=lambda: _detail_board(self.root, "documented"))
+        async with app.run_test() as pilot:
+            await self._open_member(pilot, app, "documented")
+            plan = next(s for s in self._sources(app) if "plan" in s)
+            self.assertIn("```text", plan)
+            self.assertNotIn("```mermaid", plan)
+            self.assertTrue(any(ch in plan for ch in self.BOX_DRAWING), plan)
+            # The prose either side of the fence is untouched.
+            self.assertIn("Before.", plan)
+            self.assertIn("After.", plan)
+
+    async def test_unrenderable_artifact_fence_degrades_to_source(self):
+        self._plant_plan("documented", self.BAD_FENCE)
+        app = dashboard.BoardApp(
+            root=self.root,
+            board_fn=lambda: _detail_board(self.root, "documented"))
+        async with app.run_test() as pilot:
+            await self._open_member(pilot, app, "documented")
+            plan = next(s for s in self._sources(app) if "plan" in s)
+            self.assertIn("```mermaid", plan)
+            self.assertIn("pie title Pets", plan)
+
+    def _plant_epic(self, slug, fence):
+        _make_epic(self.root, slug, [("m1", "d", "low")])
+        path = os.path.join(self.root, ".shipd", "epics", slug, "epic.md")
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("\n## Design\n\nBefore.\n\n%s\nAfter.\n" % fence)
+
+    async def test_epic_overview_shows_a_rendered_diagram(self):
+        self._plant_epic("ep1", self.FENCE)
+        app = dashboard.BoardApp(
+            root=self.root,
+            board_fn=lambda: _epic_detail_board(
+                self.root, "ep1", members=[("m1", "low", "ready")]))
+        self.app_ = app
+        async with app.run_test(size=(120, 24)) as pilot:
+            await _open_epic_detail(pilot, app, "ready", "ep1")
+            overview = app.screen.query_one(dashboard.Markdown).source
+            self.assertIn("```text", overview)
+            self.assertNotIn("```mermaid", overview)
+            self.assertTrue(
+                any(ch in overview for ch in self.BOX_DRAWING), overview)
+            self.assertIn("Before.", overview)
+            self.assertIn("After.", overview)
+
+    async def test_unrenderable_epic_fence_degrades_to_source(self):
+        self._plant_epic("ep1", self.BAD_FENCE)
+        app = dashboard.BoardApp(
+            root=self.root,
+            board_fn=lambda: _epic_detail_board(
+                self.root, "ep1", members=[("m1", "low", "ready")]))
+        self.app_ = app
+        async with app.run_test(size=(120, 24)) as pilot:
+            await _open_epic_detail(pilot, app, "ready", "ep1")
+            overview = app.screen.query_one(dashboard.Markdown).source
+            self.assertIn("```mermaid", overview)
+            self.assertIn("pie title Pets", overview)
+
+
 class CompactControlTest(DashboardTestBase, unittest.IsolatedAsyncioTestCase):
     """Every compact control renders exactly one row high (delivery-dashboard
     board-epic-grouping spec: the three modal close (``✕``) controls share

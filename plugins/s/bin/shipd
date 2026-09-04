@@ -76,6 +76,7 @@ VERB_TABLE = {
     "epic": ("spec_status.py", ["epic-show"]),
     "workspace": ("spec_status.py", ["workspace-show"]),
     "board": ("dashboard.py", ["tui"]),
+    "render": ("render.py", ["screen"]),
     "metrics": ("metrics.py", []),
     "lint": ("spec_lint.py", []),
     "worktree": ("worktree.py", []),
@@ -89,6 +90,15 @@ VERB_TABLE = {
 BOARD_MODES = {
     None: ("dashboard.py", ["tui"]),
     "text": ("dashboard.py", ["board"]),
+}
+
+# ``render`` follows the same grammar: the interactive viewer is the default,
+# and ``output`` is the one bare word consumed to select the non-interactive
+# rendering. Explicit mode words rather than TTY auto-detection, exactly as
+# ``board`` settled it.
+RENDER_MODES = {
+    None: ("render.py", ["screen"]),
+    "output": ("render.py", ["output"]),
 }
 
 USAGE = """\
@@ -109,6 +119,8 @@ verbs:
   epic <slug>                an epic's status, metadata, and member states
   workspace                  the workspace root, its projects, and initiatives
   board [text] [args]        the delivery board (default: full-screen)
+  render [output] [file]     markdown with its mermaid diagrams drawn as text
+                             (default: full-screen)
   metrics [subverb]          delivery metrics (default: summary)
   lint [change]              structurally validate specs and change deltas
   worktree <change> [--fresh]
@@ -2200,6 +2212,13 @@ def main(argv):
         if mode is not None:
             rest = rest[1:]
         script, leading = BOARD_MODES[mode]
+    # `shipd render [mode]` reads the same way: `output` is consumed, anything
+    # else (or nothing) opens the viewer with its arguments intact.
+    if verb == "render":
+        mode = rest[0] if rest and rest[0] in RENDER_MODES else None
+        if mode is not None:
+            rest = rest[1:]
+        script, leading = RENDER_MODES[mode]
     command = [sys.executable, str(SCRIPTS / script), *leading, *rest]
     try:
         os.execv(sys.executable, command)

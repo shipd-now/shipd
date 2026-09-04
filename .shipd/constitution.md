@@ -12,12 +12,20 @@ These are this repository's non-negotiable engineering rules.
 
 - **The spec engine is stdlib-only Python 3, with one named exception.**
   Every script under `plugins/s/skills/build/scripts/` uses only the Python 3
-  standard library — no third-party imports, no network access — except
-  `dashboard.py`'s `tui` rendering, which may import the pinned `textual`
-  (`requirements.txt`, installed in CI only for the `tests_textual` suite).
+  standard library — no third-party imports, no network access — except the
+  **display surfaces**: `dashboard.py`'s `tui` rendering and `render.py`'s
+  `screen` mode and styled `output` mode, which may import the pinned
+  `textual` and the `rich` it bundles (`requirements.txt`, installed in CI
+  only for the `tests_textual` suite). `render.py` keeps those imports inside its
+  display code paths, so importing it needs nothing installed; `dashboard.py`
+  imports `textual` at module scope behind its script-entry bootstrap, as it
+  always has.
   Every other engine script, including the rest of `dashboard.py` and the
   delivery engine `autopilot.py` depends on, stays stdlib-only and importable
-  without `textual` installed.
+  without `textual` installed. The vendored `beautiful_mermaid.py` is not an
+  exception to this rule: it is checked-in stdlib-only source, not a
+  dependency, so `render.py` and everything downstream of it stay importable
+  with nothing installed.
 - **`statusline.sh` stays POSIX-compatible.** The status line targets the
   bash 3.2 that ships with macOS: no `mapfile`, no `set -u`, no associative
   arrays, no `$'\uXXXX'` escapes. No Python or Node is spawned from it.
