@@ -255,6 +255,12 @@ def viewer_app(text, use_ascii=False):
 
 def cmd_screen(opts):
     """Open the document in the full-screen viewer."""
+    if opts.file == STDIN and sys.stdin.isatty():
+        # A bare `shipd render` at a terminal would otherwise block silently
+        # on the stdin read and look hung.
+        sys.stderr.write(
+            "reading markdown from standard input — end with ^D, "
+            "or pass a file\n")
     try:
         text = read_document(opts.file)
     except ReadError as exc:
