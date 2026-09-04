@@ -116,8 +116,9 @@ local changes before pushing, `/s:gate` to set up that review as a
 repository's merge gate (and `/s:gate update` to refresh an already-gated
 repository's managed files to the running plugin version),
 `/s:status` for lifecycle status,
-`/s:epic` to decompose features, `/s:research` to produce a cited research
-report an epic can link, `/s:workspace` to set up and inspect the
+`/s:epic` to decompose features, `/s:explain` to read a shipd epic and explain
+it in under 100 lines plus at-most-necessary diagrams, `/s:research` to produce
+a cited research report an epic can link, `/s:workspace` to set up and inspect the
 workspace, `/s:initiative` to run workspace initiatives, `/s:ask` to
 query the oracle before interrupting the user, `/s:teach` to
 distill spec artifacts and answered queue entries into the workspace wiki,
