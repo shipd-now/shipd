@@ -9,10 +9,15 @@ so the layered config search can never reach the developer's own
 
 Covers the create path that wraps ``worktree.sh``'s git mechanics and then
 runs the configured ``post-worktree-scripts`` (worktree-hooks
-engine-worktree-create, post-worktree-execution)."""
+engine-worktree-create, post-worktree-execution), and the machine-local trust
+ledger those scripts are gated on (worktree-hooks hook-trust-ledger,
+hook-consent-gate). ``$HOME`` isolation is what keeps the ledger tests off the
+developer's own ``~/.shipd-trust.json``."""
 
+import hashlib
 import json
 import os
+import pty
 import shutil
 import subprocess
 import sys
@@ -64,9 +69,51 @@ class WorktreeEngineTestBase(unittest.TestCase):
         path = os.path.join(where or self.root, ".shipd-config.json")
         return self.write(path, json.dumps(data, indent=2) + "\n")
 
-    def set_hooks(self, items, where=None):
+    def set_hooks(self, items, where=None, trust=True):
+        """Declare ``items`` in ``where``'s config and, unless ``trust`` is
+        false, record the machine-local trust entry the consent gate looks
+        for — the fixture equivalent of a user who has already consented."""
         self.write_config({"dir": ".shipd", "post-worktree-scripts": items},
                           where=where)
+        if trust:
+            self.trust_hooks(items, where=where)
+
+    # --- trust ledger helpers (hook-trust-ledger) ------------------------
+
+    def trust_path(self):
+        """The ledger the engine reads, inside the isolated ``$HOME``."""
+        return os.path.join(self.home, ".shipd-trust.json")
+
+    def fingerprint(self, items):
+        return hashlib.sha256(
+            json.dumps(items, separators=(",", ":")).encode()).hexdigest()
+
+    def read_ledger(self):
+        if not os.path.exists(self.trust_path()):
+            return {}
+        return json.loads(self.read(self.trust_path()))
+
+    def trust_hooks(self, items, where=None):
+        """Record consent for exactly ``items`` the way the engine does: keyed
+        by the list's fingerprint, with the declaring config path stored only
+        informationally, so consent follows the commands rather than the file
+        that happened to declare them (hook-trust-ledger)."""
+        ledger = self.read_ledger()
+        ledger[self.fingerprint(items)] = os.path.realpath(
+            os.path.join(where or self.root, ".shipd-config.json"))
+        self.write(self.trust_path(), json.dumps(ledger, indent=2) + "\n")
+
+    def assertTrusted(self, items):
+        self.assertIn(self.fingerprint(items), self.read_ledger())
+
+    def assertNotTrusted(self, items):
+        self.assertNotIn(self.fingerprint(items), self.read_ledger())
+
+    def commit_all(self, message="config"):
+        """Commit the working tree, so a config written here is *tracked* and
+        therefore checked out again inside every worktree created from it."""
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", message)
 
     def run_engine(self, *args, cwd=None, env=None):
         run_env = dict(os.environ)
@@ -77,6 +124,29 @@ class WorktreeEngineTestBase(unittest.TestCase):
             [sys.executable, SCRIPT, *args],
             cwd=cwd or self.root, capture_output=True, text=True,
             env=run_env)
+
+    def run_engine_tty(self, *args, answer="y\n", cwd=None):
+        """Drive the engine with stdin attached to a pseudo-terminal, feeding
+        ``answer`` to whatever it prompts for — the only way to exercise the
+        interactive half of the consent gate (hook-consent-gate)."""
+        run_env = dict(os.environ)
+        run_env["HOME"] = self.home
+        master, slave = pty.openpty()
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, SCRIPT, *args],
+                cwd=cwd or self.root, stdin=slave,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, env=run_env)
+            os.close(slave)
+            slave = None
+            os.write(master, answer.encode())
+            out, errtext = proc.communicate(timeout=120)
+        finally:
+            if slave is not None:
+                os.close(slave)
+            os.close(master)
+        return subprocess.CompletedProcess(args, proc.returncode, out, errtext)
 
     def run_shell(self, *args, cwd=None):
         run_env = dict(os.environ)
@@ -515,6 +585,250 @@ class HooksVerbTest(WorktreeEngineTestBase):
         self.assertEqual(added.returncode, 0, self.combined(added))
         self.assertEqual(self.config_data()["post-worktree-scripts"],
                          ["npm install"])
+
+
+class HookTrustTest(WorktreeEngineTestBase):
+    """The machine-local trust ledger and the consent gate in front of every
+    hook execution (worktree-hooks hook-trust-ledger, hook-consent-gate)."""
+
+    def hooks(self, *args, cwd=None):
+        return self.run_engine("hooks", *args, cwd=cwd)
+
+    def config_data(self, where=None):
+        return json.loads(self.read(
+            os.path.join(where or self.root, ".shipd-config.json")))
+
+    # --- the gate --------------------------------------------------------
+
+    def test_untrusted_hooks_refuse_non_interactively(self):
+        # hook-consent-gate: Untrusted hooks refuse non-interactively.
+        # Hooks inherited from an enclosing (workspace-style) config, with no
+        # ledger entry on this machine.
+        outer = self.write_config(
+            {"post-worktree-scripts": ["echo one >> ran.txt"]},
+            where=self.tmp)
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 3, self.combined(r))
+        wt = self.worktree_path("my-change")
+        # The worktree is created and left in place; the hook never ran.
+        self.assertTrue(os.path.isdir(wt), self.combined(r))
+        self.assertFalse(os.path.exists(os.path.join(wt, "ran.txt")))
+        out = self.combined(r)
+        self.assertNotIn("post-worktree: running", out)
+        # The declaring config is named — the layered search reaches it through
+        # the resolved cwd, so compare against its realpath.
+        self.assertIn(os.path.realpath(outer), out)
+        self.assertIn("echo one >> ran.txt", out)
+        # The resume path is named in full: consent, then run the hooks from
+        # the worktree that was just created — not from the parked root.
+        self.assertIn("hooks trust", out)
+        self.assertIn("hooks run", out)
+        self.assertIn(wt, out)
+
+    def test_untrusted_root_declared_hooks_refuse_too(self):
+        # The uniform ledger covers a freshly cloned repo's own tracked hooks,
+        # not only workspace-inherited ones.
+        self.set_hooks(["echo one >> ran.txt"], trust=False)
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 3, self.combined(r))
+        self.assertFalse(os.path.exists(
+            os.path.join(self.worktree_path("my-change"), "ran.txt")))
+        self.assertIn("hooks trust", self.combined(r))
+
+    def test_hooks_run_is_gated_too(self):
+        self.set_hooks(["echo one >> ran.txt"], trust=False)
+        r = self.hooks("run")
+        self.assertEqual(r.returncode, 3, self.combined(r))
+        self.assertFalse(os.path.exists(os.path.join(self.root, "ran.txt")))
+        # No worktree was created here, so the resume path names the worktree
+        # generically rather than pointing at a path.
+        self.assertIn("hooks trust", self.combined(r))
+        self.assertIn("from the worktree", self.combined(r))
+
+    def test_trusted_hooks_run_exactly_as_before(self):
+        self.set_hooks(["echo one >> ran.txt"])
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertEqual(
+            self.read(os.path.join(self.worktree_path("my-change"),
+                                   "ran.txt")), "one\n")
+
+    def test_consent_records_and_runs(self):
+        # hook-consent-gate: Consent records and runs.
+        self.set_hooks(["echo one >> ran.txt"], trust=False)
+        r = self.run_engine_tty("my-change", answer="y\n")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertEqual(
+            self.read(os.path.join(self.worktree_path("my-change"),
+                                   "ran.txt")), "one\n")
+        self.assertTrusted(["echo one >> ran.txt"])
+
+    def test_declined_consent_keeps_the_worktree(self):
+        # hook-consent-gate: Declined consent keeps the worktree.
+        self.set_hooks(["echo one >> ran.txt"], trust=False)
+        r = self.run_engine_tty("my-change", answer="n\n")
+        self.assertEqual(r.returncode, 3, self.combined(r))
+        wt = self.worktree_path("my-change")
+        self.assertTrue(os.path.isdir(wt))
+        self.assertFalse(os.path.exists(os.path.join(wt, "ran.txt")))
+        self.assertEqual(self.read_ledger(), {})
+        # A declined prompt leaves the same resume path behind as a headless
+        # refusal — the user can still consent and run the setup later.
+        out = self.combined(r)
+        self.assertIn("hooks trust", out)
+        self.assertIn("hooks run", out)
+        self.assertIn(wt, out)
+
+    # --- the ledger ------------------------------------------------------
+
+    def test_hooks_add_auto_trusts_the_resulting_list(self):
+        # hook-trust-ledger: Registration through the verb auto-trusts.
+        added = self.hooks("add", "echo one >> ran.txt")
+        self.assertEqual(added.returncode, 0, self.combined(added))
+        self.assertEqual(
+            self.read_ledger(),
+            {self.fingerprint(["echo one >> ran.txt"]):
+             os.path.realpath(os.path.join(self.root, ".shipd-config.json"))})
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertEqual(
+            self.read(os.path.join(self.worktree_path("my-change"),
+                                   "ran.txt")), "one\n")
+
+    def test_hooks_remove_re_trusts_the_remaining_list(self):
+        self.assertEqual(self.hooks("add", "echo one >> ran.txt").returncode, 0)
+        self.assertEqual(self.hooks("add", "echo two >> ran.txt").returncode, 0)
+        removed = self.hooks("remove", "echo two >> ran.txt")
+        self.assertEqual(removed.returncode, 0, self.combined(removed))
+        self.assertTrusted(["echo one >> ran.txt"])
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+
+    def test_out_of_band_list_edit_invalidates_trust(self):
+        # hook-trust-ledger: Out-of-band list edit invalidates trust.
+        self.assertEqual(self.hooks("add", "echo one >> ran.txt").returncode, 0)
+        data = self.config_data()
+        data["post-worktree-scripts"].append("echo two >> ran.txt")
+        self.write_config(data)
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 3, self.combined(r))
+        self.assertFalse(os.path.exists(
+            os.path.join(self.worktree_path("my-change"), "ran.txt")))
+        self.assertIn("hooks trust", self.combined(r))
+
+    def test_malformed_ledger_reads_as_empty(self):
+        # hook-trust-ledger: Malformed ledger reads as empty.
+        self.write(self.trust_path(), "{not json at all\n")
+        self.set_hooks(["echo one >> ran.txt"], trust=False)
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 3, self.combined(r))
+        self.assertNotIn("Traceback", self.combined(r))
+        self.assertIn("hooks trust", self.combined(r))
+
+    def test_no_hooks_never_touches_the_ledger(self):
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertFalse(os.path.exists(self.trust_path()))
+
+    def test_ledger_is_keyed_by_the_lists_fingerprint(self):
+        # hook-trust-ledger: consent is to the exact command list, so the
+        # ledger key is the list's fingerprint and the declaring config path
+        # is recorded only informationally.
+        self.assertEqual(self.hooks("add", "echo one >> ran.txt").returncode,
+                         0)
+        ledger = self.read_ledger()
+        key = self.fingerprint(["echo one >> ran.txt"])
+        self.assertEqual(list(ledger), [key])
+        self.assertEqual(
+            ledger[key],
+            os.path.realpath(os.path.join(self.root, ".shipd-config.json")))
+
+    def test_trust_carries_into_the_worktrees_copy_of_a_tracked_config(self):
+        # hook-trust-ledger: Trust carries into the worktree's copy of a
+        # tracked config. The worktree checks out its own copy of the tracked
+        # declaration, so a path-keyed ledger would strand the consent granted
+        # at the root.
+        self.set_hooks(["echo one >> ran.txt"], trust=False)
+        self.commit_all()
+        parked = self.run_engine("my-change")
+        self.assertEqual(parked.returncode, 3, self.combined(parked))
+        wt = self.worktree_path("my-change")
+        self.assertTrue(os.path.isfile(
+            os.path.join(wt, ".shipd-config.json")), self.combined(parked))
+
+        trusted = self.hooks("trust")
+        self.assertEqual(trusted.returncode, 0, self.combined(trusted))
+
+        rerun = self.hooks("run", cwd=wt)
+        self.assertEqual(rerun.returncode, 0, self.combined(rerun))
+        self.assertEqual(self.read(os.path.join(wt, "ran.txt")), "one\n")
+
+    def test_adding_onto_an_untrusted_list_does_not_trust_it(self):
+        # hook-trust-ledger: Adding onto an untrusted list does not trust it.
+        # A registration the user typed must never blanket-trust commands they
+        # have not yet been shown.
+        self.set_hooks(["echo theirs >> ran.txt"], trust=False)
+        self.commit_all()
+        added = self.hooks("add", "echo mine >> ran.txt")
+        self.assertEqual(added.returncode, 0, self.combined(added))
+        self.assertEqual(self.read_ledger(), {})
+
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 3, self.combined(r))
+        out = self.combined(r)
+        self.assertIn("echo theirs >> ran.txt", out)
+        self.assertIn("echo mine >> ran.txt", out)
+        self.assertFalse(os.path.exists(
+            os.path.join(self.worktree_path("my-change"), "ran.txt")))
+
+
+class HooksTrustVerbTest(WorktreeEngineTestBase):
+    """`hooks trust` records consent explicitly — the resume path a parked
+    create names (worktree-hooks worktree-hooks-trust-verb)."""
+
+    def hooks(self, *args, cwd=None):
+        return self.run_engine("hooks", *args, cwd=cwd)
+
+    def test_trust_verb_unblocks_a_parked_create(self):
+        # worktree-hooks-trust-verb: Trust verb unblocks a parked create.
+        self.set_hooks(["echo one >> ran.txt"], trust=False)
+        parked = self.run_engine("my-change")
+        self.assertEqual(parked.returncode, 3, self.combined(parked))
+        wt = self.worktree_path("my-change")
+
+        trusted = self.hooks("trust")
+        self.assertEqual(trusted.returncode, 0, self.combined(trusted))
+        self.assertIn("echo one >> ran.txt", trusted.stdout)
+        self.assertIn(
+            os.path.realpath(os.path.join(self.root, ".shipd-config.json")),
+            trusted.stdout)
+        self.assertTrusted(["echo one >> ran.txt"])
+
+        rerun = self.hooks("run", cwd=wt)
+        self.assertEqual(rerun.returncode, 0, self.combined(rerun))
+        self.assertEqual(self.read(os.path.join(wt, "ran.txt")), "one\n")
+
+    def test_trust_verb_lets_a_later_create_run_unprompted(self):
+        self.set_hooks(["echo one >> ran.txt"], trust=False)
+        self.assertEqual(self.hooks("trust").returncode, 0)
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertEqual(
+            self.read(os.path.join(self.worktree_path("my-change"),
+                                   "ran.txt")), "one\n")
+
+    def test_nothing_to_trust_is_an_error(self):
+        # worktree-hooks-trust-verb: Nothing to trust is an error.
+        self.write_config({"dir": ".shipd"})
+        r = self.hooks("trust")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("post-worktree-scripts", self.combined(r))
+        self.assertFalse(os.path.exists(self.trust_path()))
+
+    def test_trust_rejects_unknown_arguments(self):
+        r = self.hooks("trust", "--nope")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("usage:", self.combined(r))
 
 
 if __name__ == "__main__":
