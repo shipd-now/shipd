@@ -231,6 +231,13 @@ def merge_change(root, change, warnings):
         sc.write_spec(mpath, merged)
         written.append(mpath)
         affected.append(capability)
+    # Declare the grammar the freshly merged masters are written under
+    # (schema-versioning schema-marker-stamping). Absent or same-major-older
+    # only — a cross-major marker is never rewritten — and the marker joins the
+    # pathspec below so it travels in the merge's own commit, never a second.
+    marker = sc.stamp_schema_marker(root)
+    if marker:
+        written.append(marker)
     # A merge into an external store auto-commits locally, scoped to exactly
     # the rewritten masters (shipd-config store-autocommit); a no-op for an
     # in-repo library, and a commit failure never fails the merge.
@@ -320,6 +327,10 @@ def main(argv=None):
     # `.shipd-config.json` is a user-facing failure, not a bug: report it as the
     # one-line `Error:` the CLI convention requires rather than a traceback.
     try:
+        # The schema compatibility gate (schema-versioning schema-compat-gate):
+        # refuse a repo whose artifacts declare a different grammar major
+        # before any master file is rewritten or any change archived.
+        sc.check_schema_compat(args.root)
         affected = merge_change(args.root, args.change, warnings)
         archived = None
         if not args.no_archive:

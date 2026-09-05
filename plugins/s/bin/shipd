@@ -248,6 +248,47 @@ LIST_EMPTY_TEXT = {
 }
 
 
+def _schema_gate(root):
+    """Apply the artifact-schema compatibility gate to ``root`` on behalf of a
+    verb this binary serves itself (schema-versioning schema-compat-gate).
+
+    The engine scripts run this gate at their own dispatch, but ``list`` and
+    ``metrics`` reach artifacts without crossing one — ``list`` calls the row
+    seam in this process, and ``metrics`` is handed the root by an exec that
+    lands past every gated entry point — so both call this before their first
+    read. Returns 0 to proceed (silently, or after the engine's one
+    newer-minor warning) and 1 having reported the refusal as the CLI
+    convention's single ``Error:`` line.
+
+    Reporting rather than raising keeps this distinct from
+    :func:`check_schema`, the doctor's check, which must survive a repo this
+    gate refuses outright."""
+    _load_engine()
+    try:
+        sc.check_schema_compat(root)
+    except sc.ConfigError as exc:
+        _err(str(exc))
+        return 1
+    return 0
+
+
+def _metrics_root(args):
+    """The root ``metrics.py`` will resolve for ``args``: its ``--root`` value
+    when one is given (the last, as argparse would), otherwise the cwd every
+    metrics subverb defaults to.
+
+    Read here rather than taken from the engine's own parse because dispatch
+    replaces this process (:func:`os.execv`), so the gate has to know the root
+    before ``metrics.py`` ever parses it."""
+    root = None
+    for index, arg in enumerate(args):
+        if arg == "--root" and index + 1 < len(args):
+            root = args[index + 1]
+        elif arg.startswith("--root="):
+            root = arg.split("=", 1)[1]
+    return os.path.abspath(root if root is not None else os.getcwd())
+
+
 def _list_location_text(row):
     """A row's rendered location: its own universe's ``root`` or
     ``worktree:<name>`` as-is, a declared project's prefixed with that
@@ -289,6 +330,14 @@ def cmd_list(args):
 
     if opts.all and opts.kind != "changes":
         _err("--all applies to changes only, not '%s'" % opts.kind)
+        return 1
+
+    # The compatibility gate, before the engine seam (schema-versioning
+    # schema-compat-gate). This verb reads artifacts in-process rather than
+    # delegating to a script, so the gate the engine scripts run at their own
+    # dispatch never fires for it — the binary applies it itself, and no row is
+    # produced under a grammar this engine cannot speak.
+    if _schema_gate(root) != 0:
         return 1
 
     rows = ss.list_rows(root, opts.kind, span_workspace,
@@ -414,6 +463,35 @@ def check_pipeline(root, resolve=None):
         return ("fail", "pipeline", "%s" % exc)
     return ("ok", "pipeline",
             "resolves: %d entries (source: %s)" % (len(entries), provenance))
+
+
+def check_schema(root):
+    """The artifact grammar version ``root``'s artifacts declare, against the
+    engine's own ``SCHEMA_VERSION`` (shipd-cli doctor-schema-check).
+
+    Reports rather than raises — this is the one surface that must survive a
+    repo the compatibility gate refuses outright, so a mismatched (or
+    unreadable) marker is a check line and the preflight still completes:
+    ``ok`` when the majors match and the repo's minor is not ahead, ``warn``
+    when it is, ``fail`` naming both versions and the gate's own remedy on a
+    major difference."""
+    _load_engine()
+    try:
+        marker = sc.schema_marker_path(root)
+        repo_version = sc.read_schema_marker(root)
+    except sc.ConfigError as exc:
+        return ("fail", "schema", "%s" % exc)
+    engine = sc.parse_schema_version(sc.SCHEMA_VERSION)
+    repo = sc.parse_schema_version(repo_version)
+    if repo[0] != engine[0]:
+        return ("fail", "schema", sc.schema_remedy(repo_version))
+    if repo[1] > engine[1]:
+        return ("warn", "schema",
+                "%s is ahead of this engine's %s — some newer surface may be "
+                "ignored; upgrade the plugin" % (repo_version, sc.SCHEMA_VERSION))
+    if os.path.isfile(marker):
+        return ("ok", "schema", "%s (marker %s)" % (repo_version, marker))
+    return ("ok", "schema", "%s (assumed; no marker yet)" % repo_version)
 
 
 def check_gh(which=shutil.which, gh_status=_gh_auth_status):
@@ -821,6 +899,7 @@ def default_checks(root):
             check_git(),
             check_config(root),
             check_pipeline(root),
+            check_schema(root),
             check_gh(),
             check_difft(),
             check_textual(root),
@@ -2201,10 +2280,18 @@ def main(argv):
         return 2
 
     script, leading = VERB_TABLE[verb]
-    # Bare `shipd metrics` means the delivery-metrics summary; metrics.py has
-    # no default subcommand of its own.
-    if verb == "metrics" and not rest:
-        leading = ["summary"]
+    if verb == "metrics":
+        # Bare `shipd metrics` means the delivery-metrics summary; metrics.py
+        # has no default subcommand of its own.
+        if not rest:
+            leading = ["summary"]
+        # The compatibility gate, before the exec hands the root to the metrics
+        # engine (schema-versioning schema-compat-gate): that exec lands past
+        # every gated script entry point, so this verb is gated here — no
+        # metric is derived from artifacts written under a grammar this engine
+        # cannot speak.
+        if _schema_gate(_metrics_root(rest)) != 0:
+            return 1
     # `shipd board [mode]` picks its renderer by mode word, consuming it; any
     # other first argument (or none) leaves the default mode in place.
     if verb == "board":

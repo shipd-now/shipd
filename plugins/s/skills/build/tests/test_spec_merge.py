@@ -369,9 +369,13 @@ class MergeStoreAutocommitTest(unittest.TestCase):
         before = self._commit_count(self.store)
         sm.merge_change(self.tmp, "sample-change", [])
         self.assertEqual(self._commit_count(self.store), before + 1)
+        # The rewritten master, plus the `schema` marker this first merge stamps
+        # beside it (schema-versioning schema-marker-stamping) — one commit,
+        # scoped to exactly what the verb wrote.
         self.assertEqual(
             self._head_files(self.store),
-            ["%s/verified/auth/spec.md" % self.repo_folder])
+            sorted(["%s/verified/auth/spec.md" % self.repo_folder,
+                    "%s/schema" % self.repo_folder]))
 
     def test_archive_into_git_store_commits_the_move(self):
         self.seed_external_content()

@@ -124,10 +124,15 @@ def emit_change(root, name, src, replace):
         return sl.lint_change(root, name)
 
     _install_dir(root, True, src, dest_dir, replace, validate, copy)
+    # Declare the grammar the installed artifacts are written under
+    # (schema-versioning schema-marker-stamping); the marker joins the install's
+    # own pathspec below so it travels in that one commit, never a second.
+    marker = sc.stamp_schema_marker(root)
     # A successful install into an external store auto-commits locally, scoped
     # to the installed tree (shipd-config store-autocommit); a no-op for an
     # in-repo content directory, and a commit failure never fails the install.
-    sc.store_autocommit(root, [dest_dir], "shipd: install change %s" % name)
+    sc.store_autocommit(root, [dest_dir] + ([marker] if marker else []),
+                        "shipd: install change %s" % name)
     print("installed change %s at %s" % (name, dest_dir))
     # Best-effort flow-time-series capture: a change install (unplanned → draft)
     # is one of the three lifecycle mutation chokepoints (delivery-metrics
@@ -181,6 +186,9 @@ def emit_epic(root, slug, src, replace):
         return errors
 
     _install_dir(root, False, src, dest_dir, replace, validate, copy)
+    # Declare the grammar the installed artifact is written under
+    # (schema-versioning schema-marker-stamping).
+    sc.stamp_schema_marker(root)
     print("installed epic %s at %s" % (slug, epic_path))
     return 0
 
@@ -202,6 +210,9 @@ def emit_research(root, slug, src, replace):
         return errors
 
     _install_dir(root, False, src, dest_dir, replace, validate, copy)
+    # Declare the grammar the installed artifact is written under
+    # (schema-versioning schema-marker-stamping).
+    sc.stamp_schema_marker(root)
     print("installed research %s at %s" % (slug, report_path))
     return 0
 
@@ -222,6 +233,9 @@ def emit_video(root, slug, src, replace):
         return errors
 
     _install_dir(root, False, src, dest_dir, replace, validate, copy)
+    # Declare the grammar the installed artifact is written under
+    # (schema-versioning schema-marker-stamping).
+    sc.stamp_schema_marker(root)
     print("installed video %s at %s" % (slug, brief_path))
     return 0
 
@@ -379,6 +393,10 @@ def main(argv=None):
         return 2
 
     try:
+        # The schema compatibility gate (schema-versioning schema-compat-gate):
+        # refuse a repo whose artifacts declare a different grammar major
+        # before anything is installed.
+        sc.check_schema_compat(root)
         if args.mode == "change":
             return emit_change(root, args.name, args.src, args.replace)
         if args.mode == "initiative":

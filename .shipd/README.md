@@ -6,12 +6,57 @@ applied changes. The engine (`spec_merge.py`, `spec_lint.py`,
 `spec_common.py`, under `plugins/s/skills/build/scripts/`) is exact-keyed CRUD
 over the markdown described here — no language model reads or writes these files.
 
+## Schema version
+
+The grammar this document defines carries **its own semver**, independent of the
+plugin's version: `SCHEMA_VERSION` in `spec_common.py`, currently **1.0.0**. It
+covers everything below — the on-disk layout, the plan/tasks/epic/brief/report
+document contracts, the requirement and delta formats — and moves only when that
+grammar moves, never when the plugin ships.
+
+A repo declares the version its artifacts were written under in a one-line
+`schema` marker inside the content directory (`.shipd/schema`, or the per-repo
+folder of an external `store_root` store, so the marker always travels with the
+artifacts it versions). The marker is tracked alongside them:
+
+```
+1.0.0
+```
+
+Rules:
+
+- **An absent marker reads as `1.0.0`.** Every repo predating the marker stays
+  valid unmigrated; nothing needs a migration to be readable.
+- **Writes stamp it.** `shipd init`, an emit install, and a merge write the
+  marker when it is absent or carries a same-major, older version. A marker of a
+  different major is never rewritten — a major bump ships with its own migration
+  story.
+- **Reads and writes are gated.** Before the status, emit, merge, lint, and gate
+  entry points touch an artifact, they compare the repo's version to the
+  engine's: a **different major** is a hard error naming both versions and the
+  remedy (upgrade the older side — the plugin, or the repo's artifacts); a
+  **same-major, higher minor** prints one stderr warning and proceeds, since
+  additive surface an older engine ignores is not a break. `init` is exempt (it
+  stamps instead), and `shipd doctor` reports the mismatch as its `schema` check
+  line rather than refusing to run.
+- **A malformed marker** — anything but three dot-separated integers — is an
+  error naming the file.
+
+Which part to bump:
+
+| Part | When |
+| --- | --- |
+| major | a grammar **break** — an existing artifact stops parsing or changes meaning |
+| minor | **additive** surface — a new optional section, key, or artifact kind an older engine can ignore |
+| patch | a **clarification** — wording, examples, or documented behavior with no format change |
+
 ## On-disk layout
 
 ```
 .shipd/
   README.md                      this document — the spec grammar authority
   constitution.md                optional steering rules (binding when present)
+  schema                         one line: the artifact grammar's semver
   verified/                      master library — the single source of truth
     <capability>/
       spec.md                    one file per capability

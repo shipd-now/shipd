@@ -594,6 +594,89 @@ class ListKindsTest(ShipdCliTestBase):
         self.assertNotEqual(r.returncode, 0)
 
 
+class SchemaGateVerbTest(ShipdCliTestBase):
+    """The binary's own artifact read verbs sit behind the schema
+    compatibility gate (schema-versioning schema-compat-gate).
+
+    ``list`` reaches the engine's row seam in-process and ``metrics`` reaches
+    the metrics engine, so neither crosses the dispatch of a script the gate
+    already guards: the binary must check the marker itself, before a single
+    row is produced.
+
+    Written test-first; expected to FAIL until the gate lands in ``bin/shipd``
+    (task 5.2)."""
+
+    # A marker major no engine will ever speak, so the refusal is about the
+    # major difference and not about this suite's own version drift.
+    FUTURE = "9.9.9"
+
+    def engine_version(self):
+        shipd._load_engine()
+        return shipd.sc.SCHEMA_VERSION
+
+    def mark(self, version):
+        self.write(os.path.join(self.root, ".shipd", "schema"),
+                   version + "\n")
+
+    def make_verified(self, slug):
+        self.write(
+            os.path.join(self.root, ".shipd", "verified", slug, "spec.md"),
+            "# %s\n\n### Requirement: A thing\nid: a-thing\n\n"
+            "The system SHALL do it.\n" % slug)
+
+    def assertRefusedNamingBoth(self, r):
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("Error:", r.stderr)
+        self.assertIn(self.FUTURE, r.stderr)
+        self.assertIn(self.engine_version(), r.stderr)
+
+    def test_list_refuses_a_cross_major_repo_printing_no_rows(self):
+        self.make_verified("spec-io")
+        self.mark(self.FUTURE)
+        r = self.cli("list", "verified", "--root", self.root)
+        self.assertRefusedNamingBoth(r)
+        self.assertNotIn("spec-io", r.stdout)
+
+    def test_list_json_refuses_a_cross_major_repo_printing_no_rows(self):
+        self.make_verified("spec-io")
+        self.mark(self.FUTURE)
+        r = self.cli("list", "verified", "--json", "--root", self.root)
+        self.assertRefusedNamingBoth(r)
+        self.assertEqual(r.stdout.strip(), "")
+
+    def test_metrics_refuses_a_cross_major_repo(self):
+        # Bare ``metrics`` — the summary default, resolving its root from the
+        # cwd exactly as the engine script would.
+        self.mark(self.FUTURE)
+        r = self.cli("metrics")
+        self.assertRefusedNamingBoth(r)
+        self.assertNotIn("delivery metrics", r.stdout)
+
+    def test_metrics_refuses_the_repo_named_by_an_explicit_root(self):
+        # Run from outside the marked repo, so only the ``--root`` flag can
+        # point the gate at it — the gate must resolve the same root the
+        # engine will.
+        self.mark(self.FUTURE)
+        r = self.cli("metrics", "summary", "--root", self.root, cwd=self.home)
+        self.assertRefusedNamingBoth(r)
+        self.assertNotIn("delivery metrics", r.stdout)
+
+    def test_list_still_prints_rows_on_a_matching_marker(self):
+        self.make_verified("spec-io")
+        self.mark(self.engine_version())
+        r = self.cli("list", "verified", "--root", self.root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            [line.split() for line in r.stdout.splitlines() if line.strip()],
+            [["spec-io", "root", "-"]])
+
+    def test_metrics_still_reports_on_a_matching_marker(self):
+        self.mark(self.engine_version())
+        r = self.cli("metrics")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("delivery metrics", r.stdout)
+
+
 class VersionTest(ShipdCliTestBase):
     def test_version_is_the_plugin_manifest_version(self):
         manifest = os.path.normpath(
@@ -851,8 +934,8 @@ class DoctorCheckTest(unittest.TestCase):
         return made
 
     # The full preflight roster, in the order ``default_checks`` reports it.
-    ALL_CHECKS = ("python", "git", "config", "pipeline", "gh", "difft",
-                  "textual", "snapshot", "statusline",
+    ALL_CHECKS = ("python", "git", "config", "pipeline", "schema", "gh",
+                  "difft", "textual", "snapshot", "statusline",
                   "protection", "automerge", "copilot-secret")
 
     def probed_check_names(self, root):
@@ -1028,6 +1111,99 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual((level, name), ("fail", "pipeline"))
         self.assertEqual(detail, "boom")
 
+    # -- schema ------------------------------------------------------------
+
+    def schema_check(self, root):
+        """``check_schema`` with ``HOME`` pointed at the throwaway home, so the
+        outermost config layer can never be the real user's."""
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            return shipd.check_schema(root)
+
+    def repo_with_marker(self, name, value):
+        """A throwaway repo root whose content directory carries a ``schema``
+        marker holding ``value``; the marker path is returned alongside it."""
+        root = os.path.join(self.tmp, name)
+        content = os.path.join(root, ".shipd")
+        os.makedirs(content, exist_ok=True)
+        path = os.path.join(content, "schema")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(value + "\n")
+        return root, path
+
+    def engine_version(self):
+        shipd._load_engine()
+        return shipd.sc.SCHEMA_VERSION
+
+    def test_matching_marker_is_ok_naming_the_version_and_marker(self):
+        version = self.engine_version()
+        root, path = self.repo_with_marker("marked", version)
+        level, name, detail = self.schema_check(root)
+        self.assertEqual((level, name), ("ok", "schema"))
+        self.assertIn(version, detail)
+        self.assertIn(path, detail)
+
+    def test_absent_marker_is_ok_and_says_assumed(self):
+        version = self.engine_version()
+        root = os.path.join(self.tmp, "unmarked")
+        os.makedirs(os.path.join(root, ".shipd"), exist_ok=True)
+        level, name, detail = self.schema_check(root)
+        self.assertEqual((level, name), ("ok", "schema"))
+        self.assertIn(version, detail)
+        self.assertIn("assumed", detail)
+
+    def test_repo_minor_ahead_warns_naming_both_versions(self):
+        version = self.engine_version()
+        major, minor, _patch = version.split(".")
+        ahead = "%s.%d.0" % (major, int(minor) + 1)
+        root, _path = self.repo_with_marker("ahead", ahead)
+        level, name, detail = self.schema_check(root)
+        self.assertEqual((level, name), ("warn", "schema"))
+        self.assertIn(ahead, detail)
+        self.assertIn(version, detail)
+
+    def test_major_mismatch_fails_naming_both_versions_and_the_remedy(self):
+        version = self.engine_version()
+        future = "%d.0.0" % (int(version.split(".")[0]) + 1,)
+        root, _path = self.repo_with_marker("future", future)
+        level, name, detail = self.schema_check(root)
+        self.assertEqual((level, name), ("fail", "schema"))
+        self.assertIn(future, detail)
+        self.assertIn(version, detail)
+        self.assertIn("upgrade", detail)
+
+    def test_malformed_marker_fails_naming_the_file_rather_than_raising(self):
+        root, path = self.repo_with_marker("garbled", "one.two")
+        level, name, detail = self.schema_check(root)
+        self.assertEqual((level, name), ("fail", "schema"))
+        self.assertIn(path, detail)
+
+    def test_default_checks_report_schema_after_pipeline(self):
+        names = self.probed_check_names(self.tmp)
+        self.assertEqual(names.index("schema"), names.index("pipeline") + 1)
+
+    def test_major_mismatch_still_completes_the_preflight(self):
+        # The check reports rather than raises, so every later check still runs
+        # on a repo the compatibility gate would refuse outright.
+        version = self.engine_version()
+        future = "%d.0.0" % (int(version.split(".")[0]) + 1,)
+        root, _path = self.repo_with_marker("future-preflight", future)
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        with unittest.mock.patch.object(
+                shipd, "gh_context", lambda **kw: {"skip": "stubbed"}), \
+                unittest.mock.patch.dict(os.environ, env, clear=True):
+            results = shipd.default_checks(root)
+        names = [name for _level, name, _detail in results]
+        self.assertEqual(names, list(self.ALL_CHECKS))
+        schema = next(r for r in results if r[1] == "schema")
+        self.assertEqual(schema[0], "fail")
+        lines, code = shipd.doctor_report(results)
+        self.assertEqual(code, 1)
+        self.assertTrue(
+            any(line.startswith("fail schema — ") for line in lines), lines)
+
     # -- gh ----------------------------------------------------------------
 
     def test_gh_authenticated_is_ok(self):
@@ -1165,8 +1341,8 @@ class DoctorCheckTest(unittest.TestCase):
 
     def test_default_checks_run_in_the_documented_order(self):
         self.assertEqual(self.probed_check_names(self.tmp),
-                         ["python", "git", "config", "pipeline", "gh", "difft",
-                          "textual", "snapshot", "statusline",
+                         ["python", "git", "config", "pipeline", "schema",
+                          "gh", "difft", "textual", "snapshot", "statusline",
                           "protection", "automerge", "copilot-secret"])
 
     # -- statusline --------------------------------------------------------

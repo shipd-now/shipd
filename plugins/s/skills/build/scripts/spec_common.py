@@ -552,6 +552,135 @@ def specs_dir(root):
 
 
 # ---------------------------------------------------------------------------
+# Artifact schema version (schema-versioning schema-version-declaration,
+# schema-compat-gate, schema-marker-stamping)
+# ---------------------------------------------------------------------------
+
+# The artifact grammar's own semver, independent of the plugin version: it
+# moves when the on-disk format documented in ``.shipd/README.md`` moves, not
+# when the plugin ships. Major = a grammar break, minor = additive surface,
+# patch = a clarification.
+SCHEMA_VERSION = "1.0.0"
+
+# The marker's filename inside the resolved content directory. It sits beside
+# the artifacts it versions, so an external ``store_root`` store carries its
+# own marker and it travels with whatever git repo tracks those artifacts.
+SCHEMA_MARKER_NAME = "schema"
+
+# The version an unmarked repo reads as, so every repo predating the marker
+# stays valid unmigrated.
+SCHEMA_BASELINE = "1.0.0"
+
+SCHEMA_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+
+# Roots already warned about a newer-minor marker in this process, so the
+# "one stderr warning" contract holds even if a verb checks twice.
+_SCHEMA_WARNED = set()
+
+
+def schema_marker_path(root):
+    """Return the absolute path of ``root``'s ``schema`` marker — the resolved
+    content directory joined with :data:`SCHEMA_MARKER_NAME`."""
+    return os.path.join(specs_dir(root), SCHEMA_MARKER_NAME)
+
+
+def parse_schema_version(value):
+    """Return ``value`` as a ``(major, minor, patch)`` tuple of ints, or ``None``
+    when it is not three dot-separated integers. Stdlib-only comparison — a
+    tuple of ints orders exactly as semver does for this shape, so no packaging
+    dependency is taken (constitution: stdlib-only engine)."""
+    if not isinstance(value, str) or not SCHEMA_VERSION_RE.match(value):
+        return None
+    return tuple(int(part) for part in value.split("."))
+
+
+def read_schema_marker(root):
+    """Return the artifact grammar version ``root``'s artifacts were written
+    under (schema-versioning schema-version-declaration).
+
+    Reads the one-line ``schema`` marker in the resolved content directory. An
+    absent marker reads as :data:`SCHEMA_BASELINE`, so an unmigrated repo stays
+    valid. Content that is not three dot-separated integers raises
+    :class:`ConfigError` naming the marker file."""
+    path = schema_marker_path(root)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = fh.read()
+    except FileNotFoundError:
+        return SCHEMA_BASELINE
+    except OSError as exc:
+        raise ConfigError("%s is not readable: %s" % (path, exc))
+    value = raw.strip()
+    if parse_schema_version(value) is None:
+        raise ConfigError(
+            "%s must hold a three-part schema version (N.N.N), got %r"
+            % (path, value))
+    return value
+
+
+def stamp_schema_marker(root):
+    """Stamp ``root``'s ``schema`` marker with :data:`SCHEMA_VERSION`
+    (schema-versioning schema-marker-stamping).
+
+    Writes only while the marker is absent or carries a same-major, strictly
+    older version; a marker of a different major is never rewritten (a major
+    bump ships with its own migration story), and neither is one already at or
+    ahead of the engine's version. Returns the marker path when it was written,
+    otherwise ``None``. A malformed existing marker raises through
+    :func:`read_schema_marker`.
+
+    Writing only — committing is the caller's, so a stamp made alongside an
+    artifact write rides that write's existing :func:`store_autocommit` call
+    (its returned path joins the same pathspec) rather than adding a second
+    commit to an external store."""
+    path = schema_marker_path(root)
+    engine = parse_schema_version(SCHEMA_VERSION)
+    if os.path.exists(path):
+        current = parse_schema_version(read_schema_marker(root))
+        if current[0] != engine[0] or current >= engine:
+            return None
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(SCHEMA_VERSION + "\n")
+    return path
+
+
+def schema_remedy(repo_version, engine_version=None):
+    """The one remedy sentence every schema surface repeats — the gate's error,
+    and the doctor's ``fail`` detail."""
+    engine_version = engine_version or SCHEMA_VERSION
+    return (
+        "repo artifacts declare schema %s but this engine speaks %s; "
+        "upgrade the older side (the plugin, or the repo's artifacts) so both "
+        "share a major version" % (repo_version, engine_version))
+
+
+def check_schema_compat(root):
+    """Refuse or warn before an artifact verb touches ``root``'s artifacts
+    (schema-versioning schema-compat-gate).
+
+    A major difference between the repo's marker and :data:`SCHEMA_VERSION`
+    raises :class:`ConfigError` naming both versions and the remedy, so the
+    caller exits before reading or writing anything. A same-major marker whose
+    minor is ahead of the engine's prints one stderr warning and proceeds.
+    Everything else is silent. Callers that must report rather than die (the
+    doctor) read the marker directly instead."""
+    repo_version = read_schema_marker(root)
+    repo = parse_schema_version(repo_version)
+    engine = parse_schema_version(SCHEMA_VERSION)
+    if repo[0] != engine[0]:
+        raise ConfigError(schema_remedy(repo_version))
+    if repo[1] > engine[1]:
+        key = os.path.realpath(root)
+        if key not in _SCHEMA_WARNED:
+            _SCHEMA_WARNED.add(key)
+            sys.stderr.write(
+                "warning: repo artifacts declare schema %s, ahead of this "
+                "engine's %s; proceeding — some newer surface may be "
+                "ignored\n" % (repo_version, SCHEMA_VERSION))
+
+
+# ---------------------------------------------------------------------------
 # Autonomous pipeline (shipd-config autonomous-pipeline-key,
 # pipeline-stage-registry, pipeline-entry-validation)
 # ---------------------------------------------------------------------------
