@@ -1438,6 +1438,10 @@ def main(argv=None):
     # A malformed layered config is a fatal error, not a lint finding:
     # report it as the convention's one `Error:` line and exit 1.
     try:
+        # The schema compatibility gate (schema-versioning schema-compat-gate):
+        # a repo whose artifacts declare a different grammar major is refused
+        # before any of them is parsed, since the findings would be noise.
+        sc.check_schema_compat(args.root)
         if args.wiki:
             errors = []
             ws_root = sc.find_workspace_root(args.root)

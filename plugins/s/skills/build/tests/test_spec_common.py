@@ -27,6 +27,19 @@ def home_set_to(path):
             os.environ["HOME"] = old
 
 
+@contextlib.contextmanager
+def schema_version_set_to(value):
+    """Lift ``spec_common.SCHEMA_VERSION`` for the duration of the block, so the
+    comparison rules can be exercised on both sides of the grammar's current
+    floor without waiting for a real bump."""
+    old = sc.SCHEMA_VERSION
+    sc.SCHEMA_VERSION = value
+    try:
+        yield
+    finally:
+        sc.SCHEMA_VERSION = old
+
+
 class _BlockedFinder:
     """A ``sys.meta_path`` finder that makes importing the named modules raise
     :class:`ModuleNotFoundError`, whether or not they are installed."""
@@ -1317,6 +1330,448 @@ class ExternalStoreRootTest(unittest.TestCase):
             self.assertIn(os.path.realpath(root), sc._STORE_FOLDER_CACHE)
             sc._STORE_FOLDER_CACHE[os.path.realpath(root)] = "memoized"
             self.assertEqual(sc.repo_store_folder(root), "memoized")
+
+
+class SchemaMarkerTest(unittest.TestCase):
+    """SCHEMA_VERSION / read_schema_marker / stamp_schema_marker: the artifact
+    grammar's declared semver and the one-line `schema` marker in the resolved
+    content directory (schema-versioning schema-version-declaration,
+    schema-marker-stamping). ``$HOME`` is always overridden so the real home
+    config never leaks in."""
+
+    def setUp(self):
+        getattr(sc, "_STORE_FOLDER_CACHE", {}).clear()
+
+    def _write_config(self, d, payload):
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, sc.CONFIG_FILENAME), "w",
+                  encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        return d
+
+    def _write_marker(self, content_dir, value):
+        os.makedirs(content_dir, exist_ok=True)
+        path = os.path.join(content_dir, "schema")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(value)
+        return path
+
+    def _read_marker(self, content_dir):
+        with open(os.path.join(content_dir, "schema"), encoding="utf-8") as fh:
+            return fh.read()
+
+    # --- the constant -----------------------------------------------------
+
+    def test_schema_version_is_three_part_semver(self):
+        parts = sc.SCHEMA_VERSION.split(".")
+        self.assertEqual(len(parts), 3)
+        for part in parts:
+            self.assertTrue(part.isdigit(), sc.SCHEMA_VERSION)
+
+    # --- reading ----------------------------------------------------------
+
+    def test_absent_marker_reads_as_the_baseline(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            os.makedirs(os.path.join(root, ".shipd", "verified"))
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.read_schema_marker(root), "1.0.0")
+
+    def test_marker_value_is_read_and_trimmed(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_marker(os.path.join(root, ".shipd"), "1.4.0\n")
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.read_schema_marker(root), "1.4.0")
+
+    def test_marker_in_an_external_store_is_honored(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "cai-backend")
+            os.makedirs(repo)
+            self._write_config(ws, {"store_root": "shipd-store"})
+            self._write_marker(
+                os.path.join(ws, "shipd-store", "cai-backend"), "1.7.2\n")
+            # The in-repo location must not be consulted at all.
+            self._write_marker(os.path.join(repo, ".shipd"), "9.9.9\n")
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.read_schema_marker(repo), "1.7.2")
+
+    def test_malformed_marker_errors_naming_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            path = self._write_marker(os.path.join(root, ".shipd"), "one.two\n")
+            with home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.read_schema_marker(root)
+            self.assertIn(path, str(cm.exception))
+
+    def test_two_part_marker_errors_naming_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            path = self._write_marker(os.path.join(root, ".shipd"), "1.2\n")
+            with home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.read_schema_marker(root)
+            self.assertIn(path, str(cm.exception))
+
+    # --- stamping ---------------------------------------------------------
+
+    def test_stamp_writes_when_absent(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            content = os.path.join(root, ".shipd")
+            os.makedirs(content)
+            with home_set_to(os.path.realpath(home)):
+                sc.stamp_schema_marker(root)
+                self.assertEqual(
+                    self._read_marker(content), sc.SCHEMA_VERSION + "\n")
+                self.assertEqual(sc.read_schema_marker(root), sc.SCHEMA_VERSION)
+
+    def test_stamp_advances_a_same_major_older_marker(self):
+        # At the grammar's floor (1.0.0) no same-major-older value exists, so
+        # the advancement rule is exercised against a lifted engine version.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            content = os.path.join(root, ".shipd")
+            major = sc.SCHEMA_VERSION.split(".")[0]
+            self._write_marker(content, "%s.0.0\n" % major)
+            lifted = "%s.4.0" % major
+            with home_set_to(os.path.realpath(home)), \
+                    schema_version_set_to(lifted):
+                sc.stamp_schema_marker(root)
+            self.assertEqual(self._read_marker(content), lifted + "\n")
+
+    def test_stamp_leaves_a_cross_major_marker_untouched(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            content = os.path.join(root, ".shipd")
+            future = "%d.0.0" % (int(sc.SCHEMA_VERSION.split(".")[0]) + 1,)
+            self._write_marker(content, future + "\n")
+            with home_set_to(os.path.realpath(home)):
+                sc.stamp_schema_marker(root)
+            self.assertEqual(self._read_marker(content), future + "\n")
+
+    def test_stamp_leaves_a_same_major_newer_marker_untouched(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            content = os.path.join(root, ".shipd")
+            major, minor, _patch = sc.SCHEMA_VERSION.split(".")
+            ahead = "%s.%d.0" % (major, int(minor) + 1)
+            self._write_marker(content, ahead + "\n")
+            with home_set_to(os.path.realpath(home)):
+                sc.stamp_schema_marker(root)
+            self.assertEqual(self._read_marker(content), ahead + "\n")
+
+    def test_stamp_creates_the_content_directory_when_missing(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            with home_set_to(os.path.realpath(home)):
+                sc.stamp_schema_marker(root)
+            self.assertEqual(
+                self._read_marker(os.path.join(root, ".shipd")),
+                sc.SCHEMA_VERSION + "\n")
+
+    def test_stamp_into_an_external_store_lands_beside_the_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "cai-backend")
+            os.makedirs(repo)
+            self._write_config(ws, {"store_root": "shipd-store"})
+            with home_set_to(os.path.realpath(home)):
+                sc.stamp_schema_marker(repo)
+            self.assertEqual(
+                self._read_marker(
+                    os.path.join(ws, "shipd-store", "cai-backend")),
+                sc.SCHEMA_VERSION + "\n")
+            self.assertFalse(
+                os.path.exists(os.path.join(repo, ".shipd", "schema")))
+
+    # --- the compatibility gate ------------------------------------------
+
+    def test_compat_is_silent_on_a_matching_marker(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_marker(
+                os.path.join(root, ".shipd"), sc.SCHEMA_VERSION + "\n")
+            stderr = io.StringIO()
+            with home_set_to(os.path.realpath(home)), \
+                    contextlib.redirect_stderr(stderr):
+                sc.check_schema_compat(root)
+            self.assertEqual(stderr.getvalue(), "")
+
+    def test_compat_is_silent_with_no_marker(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            os.makedirs(os.path.join(root, ".shipd", "verified"))
+            stderr = io.StringIO()
+            with home_set_to(os.path.realpath(home)), \
+                    contextlib.redirect_stderr(stderr):
+                sc.check_schema_compat(root)
+            self.assertEqual(stderr.getvalue(), "")
+
+    def test_compat_warns_once_when_the_repo_minor_is_ahead(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            major, minor, _patch = sc.SCHEMA_VERSION.split(".")
+            ahead = "%s.%d.0" % (major, int(minor) + 1)
+            self._write_marker(os.path.join(root, ".shipd"), ahead + "\n")
+            stderr = io.StringIO()
+            with home_set_to(os.path.realpath(home)), \
+                    contextlib.redirect_stderr(stderr):
+                sc.check_schema_compat(root)
+            out = stderr.getvalue()
+            self.assertEqual(len(out.strip().splitlines()), 1)
+            self.assertIn(ahead, out)
+            self.assertIn(sc.SCHEMA_VERSION, out)
+
+    def test_compat_raises_on_a_major_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            future = "%d.0.0" % (int(sc.SCHEMA_VERSION.split(".")[0]) + 1,)
+            self._write_marker(os.path.join(root, ".shipd"), future + "\n")
+            with home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.check_schema_compat(root)
+            message = str(cm.exception)
+            self.assertIn(future, message)
+            self.assertIn(sc.SCHEMA_VERSION, message)
+            self.assertIn("upgrade", message)
+
+
+CLEAN_PLAN = (
+    "# my-change\n"
+    "Status: draft\n"
+    "\n"
+    "## Idea\n\nA one-sentence summary.\n\n"
+    "### Motivation\n\nBecause it matters.\n\n"
+    "### Details\n\nThe concrete changes.\n\n"
+    "### Non-goals\n\n- Not that.\n\n"
+    "## Implementation\n\nCarefully.\n"
+)
+
+CLEAN_DELTA = (
+    "## ADDED Requirements\n\n"
+    "### Requirement: Example\n"
+    "id: example\n\n"
+    "The system SHALL do a thing.\n\n"
+    "#### Scenario: It works\n"
+    "- **WHEN** something happens\n"
+    "- **THEN** it is handled\n"
+)
+
+CLEAN_TASKS = "# Tasks\n\n- [ ] 1.1 [req: *] Do the thing.\n"
+
+
+class SchemaCompatCliTest(unittest.TestCase):
+    """The compatibility gate at the engine's entry points, driven as
+    subprocesses against a throwaway repo root (schema-versioning
+    schema-compat-gate, schema-marker-stamping). ``$HOME`` and the flow log dir
+    are isolated so no test reads or writes the real ones."""
+
+    STATUS = os.path.join(SCRIPTS, "spec_status.py")
+    EMIT = os.path.join(SCRIPTS, "spec_emit.py")
+    MERGE = os.path.join(SCRIPTS, "spec_merge.py")
+    LINT = os.path.join(SCRIPTS, "spec_lint.py")
+    GATE = os.path.join(SCRIPTS, "spec_gate.py")
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="schema-gate-root-")
+        self.stage = tempfile.mkdtemp(prefix="schema-gate-stage-")
+        self.home = tempfile.mkdtemp(prefix="schema-gate-home-")
+        self.flow_dir = tempfile.mkdtemp(prefix="schema-gate-flow-")
+
+    def tearDown(self):
+        for d in (self.root, self.stage, self.home, self.flow_dir):
+            shutil.rmtree(d, ignore_errors=True)
+
+    # -- fixtures ----------------------------------------------------------
+
+    def content_dir(self):
+        return os.path.join(self.root, ".shipd")
+
+    def make_layout(self):
+        for name in ("verified", "planned", "completed", "research"):
+            os.makedirs(os.path.join(self.content_dir(), name), exist_ok=True)
+
+    def write_marker(self, value):
+        os.makedirs(self.content_dir(), exist_ok=True)
+        path = os.path.join(self.content_dir(), "schema")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(value + "\n")
+        return path
+
+    def marker(self):
+        path = os.path.join(self.content_dir(), "schema")
+        if not os.path.exists(path):
+            return None
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+
+    def future_major(self):
+        return "%d.0.0" % (int(sc.SCHEMA_VERSION.split(".")[0]) + 1,)
+
+    def newer_minor(self):
+        major, minor, _patch = sc.SCHEMA_VERSION.split(".")
+        return "%s.%d.0" % (major, int(minor) + 1)
+
+    def stage_change(self):
+        with open(os.path.join(self.stage, "plan.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(CLEAN_PLAN)
+        cap = os.path.join(self.stage, "specs", "auth")
+        os.makedirs(cap, exist_ok=True)
+        with open(os.path.join(cap, "spec.md"), "w", encoding="utf-8") as fh:
+            fh.write(CLEAN_DELTA)
+        with open(os.path.join(self.stage, "tasks.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(CLEAN_TASKS)
+
+    def install_change(self, name="my-change"):
+        """Install a clean planned change through the emit CLI, from a repo
+        state the gate lets through."""
+        self.stage_change()
+        r = self.cli(self.EMIT, "change", name, "--from", self.stage)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return os.path.join(self.content_dir(), "planned", name)
+
+    def cli(self, script, *args):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        env["AM_FLOW_LOG_DIR"] = self.flow_dir
+        return subprocess.run(
+            ["python3", script, "--root", self.root, *args],
+            capture_output=True, text=True, env=env)
+
+    def assertRefused(self, result, repo_version):
+        self.assertNotEqual(result.returncode, 0,
+                            "expected a refusal, got:\n%s" % result.stdout)
+        combined = result.stdout + result.stderr
+        self.assertIn(repo_version, combined)
+        self.assertIn(sc.SCHEMA_VERSION, combined)
+
+    # -- major mismatch refuses at every entry point -----------------------
+
+    def test_status_read_verb_refuses_on_a_major_mismatch(self):
+        self.make_layout()
+        self.install_change()
+        future = self.future_major()
+        self.write_marker(future)
+        self.assertRefused(self.cli(self.STATUS, "status", "my-change"), future)
+
+    def test_emit_refuses_on_a_major_mismatch_and_installs_nothing(self):
+        self.make_layout()
+        future = self.future_major()
+        self.write_marker(future)
+        self.stage_change()
+        r = self.cli(self.EMIT, "change", "my-change", "--from", self.stage)
+        self.assertRefused(r, future)
+        self.assertFalse(os.path.exists(
+            os.path.join(self.content_dir(), "planned", "my-change")))
+
+    def test_merge_refuses_on_a_major_mismatch_and_touches_nothing(self):
+        self.make_layout()
+        self.install_change()
+        future = self.future_major()
+        self.write_marker(future)
+        r = self.cli(self.MERGE, "my-change")
+        self.assertRefused(r, future)
+        # Neither merged into the master library nor archived away.
+        self.assertEqual(
+            os.listdir(os.path.join(self.content_dir(), "verified")), [])
+        self.assertTrue(os.path.isdir(
+            os.path.join(self.content_dir(), "planned", "my-change")))
+
+    def test_lint_refuses_on_a_major_mismatch(self):
+        self.make_layout()
+        future = self.future_major()
+        self.write_marker(future)
+        self.assertRefused(self.cli(self.LINT), future)
+
+    def test_gate_refuses_on_a_major_mismatch(self):
+        self.make_layout()
+        self.install_change()
+        future = self.future_major()
+        self.write_marker(future)
+        self.assertRefused(self.cli(self.GATE, "my-change"), future)
+
+    # -- newer minor warns, matching version is silent ---------------------
+
+    def test_newer_minor_warns_once_and_proceeds(self):
+        self.make_layout()
+        self.install_change()
+        ahead = self.newer_minor()
+        self.write_marker(ahead)
+        r = self.cli(self.STATUS, "status", "my-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "draft")
+        warnings = [line for line in r.stderr.splitlines() if line.strip()]
+        self.assertEqual(len(warnings), 1, r.stderr)
+        self.assertIn(ahead, warnings[0])
+        self.assertIn(sc.SCHEMA_VERSION, warnings[0])
+
+    def test_matching_marker_is_silent(self):
+        self.make_layout()
+        self.install_change()
+        self.write_marker(sc.SCHEMA_VERSION)
+        r = self.cli(self.STATUS, "status", "my-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr, "")
+
+    def test_unmarked_repo_is_silent(self):
+        self.make_layout()
+        self.install_change()
+        os.remove(os.path.join(self.content_dir(), "schema"))
+        r = self.cli(self.STATUS, "status", "my-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr, "")
+
+    # -- init: exempt from the gate, and the stamping path -----------------
+
+    def test_init_stamps_a_fresh_repo(self):
+        r = self.cli(self.STATUS, "init")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.marker(), sc.SCHEMA_VERSION + "\n")
+
+    def test_init_is_exempt_from_the_gate(self):
+        self.make_layout()
+        future = self.future_major()
+        self.write_marker(future)
+        r = self.cli(self.STATUS, "init")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # Exempt, and a cross-major marker is never rewritten.
+        self.assertEqual(self.marker(), future + "\n")
+
+    # -- stamping on emit and merge ---------------------------------------
+
+    def test_emit_stamps_the_marker(self):
+        self.make_layout()
+        self.assertIsNone(self.marker())
+        self.install_change()
+        self.assertEqual(self.marker(), sc.SCHEMA_VERSION + "\n")
+
+    def test_merge_stamps_the_marker(self):
+        self.make_layout()
+        self.install_change()
+        os.remove(os.path.join(self.content_dir(), "schema"))
+        r = self.cli(self.MERGE, "my-change")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.marker(), sc.SCHEMA_VERSION + "\n")
 
 
 class ResolvePipelineTest(unittest.TestCase):

@@ -393,6 +393,10 @@ def main(argv=None):
     root = os.path.abspath(args.root)
 
     try:
+        # The schema compatibility gate (schema-versioning schema-compat-gate):
+        # refuse a repo whose artifacts declare a different grammar major
+        # before the change is evaluated or its status settled.
+        sc.check_schema_compat(root)
         return run_gate(root, args.change)
     except GateError as exc:
         cc.err(str(exc))

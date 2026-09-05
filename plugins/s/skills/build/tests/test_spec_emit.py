@@ -771,10 +771,13 @@ class ChangeInstallStoreAutocommitTest(SpecEmitTestBase):
         self.assertEqual(self._commit_count(self.store), before + 1)
         prefix = "%s/planned/my-change/" % self.repo_folder
         committed = self._head_files(self.store)
+        # The install's own files, plus the `schema` marker this first install
+        # stamps beside them (schema-versioning schema-marker-stamping) — one
+        # commit, scoped to exactly what the verb wrote.
         self.assertEqual(
             committed,
             sorted([prefix + "plan.md", prefix + "specs/auth/spec.md",
-                    prefix + "tasks.md"]))
+                    prefix + "tasks.md", "%s/schema" % self.repo_folder]))
 
     def test_in_repo_install_never_commits(self):
         # No store_root: the content directory is in-repo, so the install is

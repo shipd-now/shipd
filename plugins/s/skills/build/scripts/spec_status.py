@@ -458,6 +458,11 @@ def cmd_init(root):
         os.makedirs(path, exist_ok=True)
         print("%s %s%s" % ("exists" if existed else "created",
                            os.path.relpath(path, root), os.sep))
+    # Declare the grammar the scaffolded layout is written under
+    # (schema-versioning schema-marker-stamping). A repo already marked at a
+    # different major keeps its marker — `init` is the one verb exempt from the
+    # compatibility gate, so it must not rewrite what the gate refuses.
+    sc.stamp_schema_marker(root)
     print("all shipd directories are ready")
     return 0
 
@@ -3640,6 +3645,13 @@ def main(argv=None):
         return 2
 
     try:
+        # The schema compatibility gate, at dispatch rather than inside
+        # `specs_dir()` (schema-versioning schema-compat-gate): a repo whose
+        # artifacts declare a different grammar major is refused before any
+        # verb reads or writes one. `init` is exempt — it scaffolds a repo and
+        # stamps the marker rather than reading artifacts.
+        if args.verb != "init":
+            sc.check_schema_compat(root)
         if args.verb == "init":
             return cmd_init(root)
         if args.verb == "use":
