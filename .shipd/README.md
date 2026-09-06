@@ -723,6 +723,10 @@ its intended outcome, with success criteria recommended.
 
 - [Kickoff call](../../video/kickoff-call/brief.md) — optional annotation.
 
+## References
+
+- [Strategy notes](../../docs/strategy-notes/doc.md) — optional annotation.
+
 ## Decisions
 
 The cross-cutting decisions every member change inherits.
@@ -791,6 +795,21 @@ Rules the linter enforces (in library lint and via `spec_lint.py --epic <slug>`)
   error. Omit the section entirely when a feature has no brief — an absent
   section is exactly as valid as before. The linter never walks `video/` on its
   own; files there are validated only when an epic links them.
+- **References (optional).** An epic MAY carry a `## References` section
+  associating reference documents of any installed kind — research reports,
+  video briefs, and supplied docs — with the epic: a superset shelf over
+  `<content-dir>/research/`, `<content-dir>/video/`, and `<content-dir>/docs/`.
+  The same resolve rules as `## Research` and `## Video` apply: when the
+  section is present it holds at least one markdown list entry
+  `- [title](path)` whose link resolves (epic-dir-first, then repo-root) to an
+  existing file under one of those three folders, and entries of the three
+  kinds may mix freely in the one section. An empty section, a dead link, or a
+  link to a file outside all three folders is a lint error. Omit the section
+  entirely when a feature has none of the three — an absent section is exactly
+  as valid as before, and the linter never walks any of the three folders on
+  its own. New authoring prefers `## References` for consumed reports and
+  briefs, while `## Research` and `## Video` stay valid forever and no
+  migration is ever forced onto an epic that already carries one.
 - **Stub table.** The `## Changes` section holds a table whose header is exactly
   the six columns `| Change | Description | Code | Integration | Unknowns | Risk |`
   in order, with at least one data row. Each `Change` cell is a kebab-case slug,

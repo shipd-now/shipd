@@ -59,34 +59,40 @@ about. A question you could have answered by reading is a failure of this skill.
    content dir's `research/` folder, read those reports as pre-investigation
    context before your question round — they may already answer questions you
    would otherwise ask. Record every report you actually read as a link entry in
-   the epic's `## Research` section (see the epic contract), and never invent an
-   entry for a file you did not read. **Install a supplied document that does
-   not already live under `research/`:** when the user points authoring at a
+   the epic's `## References` section (see the epic contract) — new authoring
+   prefers `## References`, though a pre-existing `## Research` section may be
+   extended in place instead — and never invent an entry for a file you did not
+   read. **Install a supplied document that does not already live under
+   `research/`, `video/`, or `docs/`:** when the user points authoring at a
    context document elsewhere — a strategy doc, a verbatim brief the members
    must build from — install it through the emit engine first, so the epic can
    link it and every downstream skill can read it back:
 
    ```
-   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_emit.py" research <slug> --from <file>
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_emit.py" docs <slug> --from <file>
    ```
 
-   Pick `<slug>` as the kebab-case form of the document's level-1 title, or of
-   its filename when the document carries no title. Where the first line is not
-   a level-1 title, stage a **copy** that prepends a `# <title>` derived from
-   the filename and install that copy — the user's original file is never
-   edited. Then read and link the installed report exactly as any other
-   consumed research. The engine validates the title but no longer demands a
-   citation skeleton, so an uncited document installs clean. **Never copy a
-   document into the spec tree yourself** — a raw write into `research/` is
-   forbidden, the emit engine is the only writer. A file the user names that is
-   already under the content dir's `research/` folder is read and linked as
-   before; nothing is reinstalled. **Read any supplied video brief the same
+   (`--root` precedes the subcommand when the working directory is not the
+   repo root — `spec_emit.py --root <repo-root> docs <slug> --from <file>` —
+   trailing it after the subcommand is rejected.) Pick `<slug>` as the
+   kebab-case form of the document's level-1 title, or of its filename when the
+   document carries no title. Where the first line is not a level-1 title,
+   stage a **copy** that prepends a `# <title>` derived from the filename and
+   install that copy — the user's original file is never edited. Then read and
+   link the installed document as a `## References` entry. The engine
+   validates the title but demands no citation skeleton, so an uncited
+   document installs clean. **Never copy a document into the spec tree
+   yourself** — a raw write into `docs/` is forbidden, the emit engine is the
+   only writer. A file the user names that is already under the content dir's
+   `research/`, `video/`, or `docs/` folder is read and linked as before;
+   nothing is reinstalled. **Read any supplied video brief the same
    way:** when the user names a video bundle slug, or points authoring at a
    brief under the content dir's `video/` folder, read it with
    `python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" cat
    video <slug>` as pre-investigation context before your question round.
    Record every brief you actually read as a link entry in the epic's
-   `## Video` section (see the epic contract), and never invent an entry for a
+   `## References` section (see the epic contract) — a pre-existing `## Video`
+   section may be extended in place instead — and never invent an entry for a
    brief you did not read. **The brief is an input to investigation, never a
    replacement for it:** the codebase-first rule above still applies in full —
    the affected capabilities and the decomposition seams are still established
@@ -171,6 +177,10 @@ a `### Non-goals` subsection listing the scope exclusions. This mirrors
 
 - [<brief title>](../../video/<slug>/brief.md) <optional annotation>
 
+## References                      (optional)
+
+- [<title>](../../docs/<slug>/doc.md) <optional annotation>
+
 ## Decisions
 
 The cross-cutting decisions every member change inherits — the shared
@@ -216,6 +226,16 @@ Rules the linter enforces (so get them right up front):
   convention. An empty `## Video` section, a dead link, or a link to a file
   outside `video/` is a lint error. List only briefs you actually read — never
   invent entries.
+- **References (optional).** `## References` is optional — a superset shelf
+  linking reference documents of any installed kind (research reports, video
+  briefs, and supplied docs) that mixes freely with `## Research` and
+  `## Video`. When present it must hold at least one markdown list entry
+  `- [title](path)` whose link resolves (epic-dir-first, then repo-root) to an
+  existing file under the content dir's `research/`, `video/`, or `docs/`
+  folder. An empty `## References` section, a dead link, or a link to a file
+  outside all three folders is a lint error. List only documents you actually
+  read — never invent entries. New authoring prefers `## References`, but
+  `## Research` and `## Video` stay valid forever and are never migrated.
 - **Stub table.** The header row must be exactly the six columns in order. At
   least one data row. Each `Change` cell is a kebab-case slug, unique within the
   table. Each of the four rating cells (Code, Integration, Unknowns, Risk) is one

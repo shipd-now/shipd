@@ -20,7 +20,12 @@ hand off. You are not the implementer: you converge, emit, and end.
    the affected module, the current behaviour, and the naming conventions are
    yours to find. Where the plan will assert how an existing command or flag
    behaves and a task will lean on it, run the command and observe the result
-   instead of reading its implementation.
+   instead of reading its implementation. A supplied context document not
+   already under `research/`, `video/`, or `docs/` installs through
+   `python3 "$S/spec_emit.py" docs <slug> --from <file>` before you read it as
+   investigation input; when the change carries a resolving `Epic:`, link it
+   from that epic's `## References` section, otherwise cite it in `plan.md`
+   prose and edit no epic.
 3. **Report your findings.** Print a short digest as visible text: the
    affected files and capabilities, the existing patterns you must fit, and
    anything surprising — headed groups of two-line dot-points, not prose. Add

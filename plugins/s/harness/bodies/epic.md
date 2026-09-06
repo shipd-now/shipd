@@ -24,9 +24,15 @@ answers.
 Read any research report or video brief the user names as pre-investigation
 context, through the engine rather than by opening paths — `python3
 "$S/spec_status.py" cat research <slug>`, or `cat video <slug>`. Link only what
-you actually read; a brief is an input to investigation, never a replacement
-for it. If the user names a raw recording rather than an installed brief, point
-them at `/s:video-ingest` first.
+you actually read, in `## References` (new authoring prefers it; a
+pre-existing `## Research` or `## Video` section may be extended in place
+instead); a brief is an input to investigation, never a replacement for it.
+If the user names a raw recording rather than an installed brief, point them
+at `/s:video-ingest` first. When the user points authoring at a document not
+already installed under `research/`, `video/`, or `docs/`, install it through
+the docs kind first — `python3 "$S/spec_emit.py" docs <slug> --from <file>`
+— then link it from `## References`; never write into the spec tree
+yourself.
 
 ## 3. Ask only what genuinely remains
 
@@ -56,8 +62,8 @@ One row per member: a unique kebab-case slug, then your honest `low`,
 `medium`, or `high` rating in each of the four complexity columns.
 <!-- if:file-references -->
 Read `{refs}/epic.md` for the full contract the linter enforces — the metadata
-keys, the optional `## Research` and `## Video` link sections, and the table
-rules.
+keys, the optional `## Research`, `## Video`, and `## References` link
+sections, and the table rules.
 <!-- else -->
 This harness cannot open a companion reference file, so the linter's full
 contract is unavailable here. Say so, author from the shape above, and let the

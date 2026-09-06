@@ -100,11 +100,12 @@ CHARS_PER_TOKEN = 4
 CHECKBOX_RE = re.compile(r"^[ \t]*- \[[ ~x]\]")
 REQ_TAG_RE = re.compile(r"\[req:([^\]]*)\]")
 
-# An epic's context sections (`## Research`, `## Video`; shipd-spec-format
-# epic-research-section, epic-video-section): a markdown list entry links a
-# context file — `- [title](path)`. This captures the link target of any
-# inline markdown link on a list-item line; trailing annotation prose after
-# the link is ignored.
+# An epic's context sections (`## Research`, `## Video`, `## References`;
+# shipd-spec-format epic-research-section, epic-video-section,
+# epic-references-section): a markdown list entry links a context file —
+# `- [title](path)`. This captures the link target of any inline markdown
+# link on a list-item line; trailing annotation prose after the link is
+# ignored.
 EPIC_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 
 # Plan `## Questions and answers` section (shipd-spec-format
@@ -580,19 +581,32 @@ def _is_within(path, parent):
     return path == parent or path.startswith(parent + os.sep)
 
 
-def _check_epic_link_section(root, path, text, errors, header, folder, noun):
+def _folder_phrase(folders):
+    """Render a tuple of content-directory folder names as the trailing
+    phrase of a link-resolution message: a single folder reads
+    ``"research/ folder"``; multiple fold into an Oxford-comma list reading
+    ``"research/, video/, or docs/ folders"``."""
+    names = ["%s/" % f for f in folders]
+    if len(names) == 1:
+        return "%s folder" % names[0]
+    return "%s, or %s folders" % (", ".join(names[:-1]), names[-1])
+
+
+def _check_epic_link_section(root, path, text, errors, header, folders, noun):
     """Validate one of an epic's optional context-link sections — ``header``
-    (e.g. ``"## Research"``), whose entries must resolve to files under the
-    content directory's ``folder`` (e.g. ``"research"``), reported with the
-    given ``noun`` (e.g. ``"research file"``).
+    (e.g. ``"## Research"``), whose entries must resolve to files under any
+    of the content directory's ``folders`` (a tuple, e.g. ``("research",)``
+    or ``("research", "video", "docs")``), reported with the given ``noun``
+    (e.g. ``"research file"``).
 
     When the section is present it SHALL hold at least one markdown list entry
     whose link resolves — first relative to the epic's own directory, then
-    relative to the repository root — to an existing file under the content
-    directory's ``folder`` folder. A section carrying no link entries is an
+    relative to the repository root — to an existing file under any of the
+    content directory's ``folders``. A section carrying no link entries is an
     error; each link that resolves to no existing file, or to a file outside
-    that folder, is an error naming the link. When the section is absent, no
-    finding is produced and the folder is never walked."""
+    every one of those folders, is an error naming the link. When the section
+    is absent, no finding is produced and none of the folders is ever
+    walked."""
     section = _section_lines(text, header)
     if section is None:
         return
@@ -607,25 +621,26 @@ def _check_epic_link_section(root, path, text, errors, header, folder, noun):
             path))
         return
     try:
-        folder_root = os.path.abspath(
-            os.path.join(sc.specs_dir(root), folder))
+        specs_root = sc.specs_dir(root)
     except sc.ConfigError as exc:
         errors.append(LintError(str(exc), sc.CONFIG_FILENAME))
         return
+    folder_roots = [os.path.abspath(os.path.join(specs_root, f))
+                     for f in folders]
     epic_dir = os.path.dirname(path)
     for target in links:
         resolved = False
         for base in (epic_dir, root):
             candidate = os.path.abspath(os.path.join(base, target))
-            if os.path.isfile(candidate) and _is_within(candidate,
-                                                        folder_root):
+            if os.path.isfile(candidate) and any(
+                    _is_within(candidate, fr) for fr in folder_roots):
                 resolved = True
                 break
         if not resolved:
             errors.append(LintError(
                 "epic.md `%s` link '%s' does not resolve to an existing "
-                "file under the content directory's %s/ folder"
-                % (header, target, folder), path))
+                "file under the content directory's %s"
+                % (header, target, _folder_phrase(folders)), path))
 
 
 def _section_lines(text, header):
@@ -648,10 +663,14 @@ def lint_epic(root, slug, errors, warnings=None):
     """Validate the epic at ``.shipd/epics/<slug>/epic.md`` (shipd-spec-lint
     epic-structural-validation): a ``# <slug>`` title matching the directory, a
     ``Status:`` line whose value is one of the four epic statuses, a recognized
-    header metadata block, the three required level-2 sections, and a
-    well-formed ``## Changes`` stub table. Appends :class:`LintError` for each
-    violation; ``warnings`` is accepted for signature parity with
-    :func:`lint_change` (epics emit no warnings today)."""
+    header metadata block, the three required level-2 sections, a well-formed
+    ``## Changes`` stub table, and the optional ``## Research``, ``## Video``,
+    and ``## References`` context-link sections (shipd-spec-lint
+    epic-references-link-lint) — the last a superset shelf resolving entries
+    under any of ``research/``, ``video/``, or ``docs/``. Appends
+    :class:`LintError` for each violation; ``warnings`` is accepted for
+    signature parity with :func:`lint_change` (epics emit no warnings
+    today)."""
     path = os.path.join(sc.specs_dir(root), "epics", slug, "epic.md")
     if not os.path.isfile(path):
         errors.append(LintError(
@@ -709,9 +728,14 @@ def lint_epic(root, slug, errors, warnings=None):
     if "## Changes" in stripped:
         _check_epic_changes(text, path, errors)
     _check_epic_link_section(
-        root, path, text, errors, "## Research", "research", "research file")
+        root, path, text, errors, "## Research", ("research",),
+        "research file")
     _check_epic_link_section(
-        root, path, text, errors, "## Video", "video", "video intent brief")
+        root, path, text, errors, "## Video", ("video",),
+        "video intent brief")
+    _check_epic_link_section(
+        root, path, text, errors, "## References",
+        ("research", "video", "docs"), "reference file")
 
 
 # ---------------------------------------------------------------------------
