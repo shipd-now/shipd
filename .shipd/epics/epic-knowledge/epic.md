@@ -1,5 +1,5 @@
 # epic-knowledge
-Status: ready
+Status: active
 Theme: developer-experience
 
 ## Introduction
@@ -106,3 +106,14 @@ The `docs` kind lands first — the shelf links it, the rubric routes to it.
 | epic-capture-rubric | The four-tier capture rubric reference document plus consult wiring in the plan, build, and epic skills at their information-arrival moments | low | medium | low | low |
 | epic-amend-flow | The `/s:epic <slug> amend` flow over a fresh `epic-amend-<slug>` worktree with dated Decision provenance, plus the `epic-amend-check` guard verb refusing protected-section edits | medium | medium | medium | medium |
 | repo-wiki-fallback | Wiki resolution falls back to the repo's own `<content-dir>/wiki/` when the workspace chain is empty — teach, queue, and oracle citation all functional in a bare repo, with doctor and config-show reporting the resolved store | medium | high | medium | medium |
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 91 | 23.7k |
+| Edit | 31 | 3.3k |
+| Read | 24 | 2.2k |
+| (no tool) | 0 | 54 |
+| Agent | 2 | 17 |
+| **Total** | 148 | 29.3k |
