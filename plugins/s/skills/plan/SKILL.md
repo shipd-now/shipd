@@ -317,7 +317,10 @@ answered by reading is a failure of this skill.
    epic's `## References` section (creating it when absent); when the change
    carries no resolving epic, cite the document in `plan.md` prose instead and
    edit no epic. A file the user names that is already under `research/`,
-   `video/`, or `docs/` is read without reinstalling.
+   `video/`, or `docs/` is read without reinstalling. This install-and-link
+   path **is** the **reference** tier of the knowledge capture rubric
+   (`${CLAUDE_PLUGIN_ROOT}/skills/epic/references/capture-rubric.md`):
+   material the change consults rather than obeys.
 2. **Report findings, then continue or open one round.** Print a short
    user-visible findings digest as plain response text — its job is
    situational awareness: the user sees where the flow stands and can always
@@ -589,6 +592,29 @@ enrichment's true-gap round — consult the oracle on each remaining decision
   with its `**Cited:**` sources, the user's typed resolution on an
   `INSUFFICIENT` entry with the `**Queued:**` `q-<slug>` the oracle filed. A
   session with no consultation emits no section.
+- **Classify what arrived.** A typed answer folded in from a question round
+  usually carries more than the decision it settles. Classify each
+  substantive item against the **knowledge capture rubric**
+  (`${CLAUDE_PLUGIN_ROOT}/skills/epic/references/capture-rubric.md`) into
+  exactly one of its four tiers, and act on that tier:
+  - **Binding** → the change's own artifacts: `plan.md`'s `## Implementation`,
+    the `## Questions and answers` ledger, a delta spec when it changes the
+    contract. Where the binding information is **epic-scope** — it binds every
+    member, not just this change — say so in visible text and flag it for the
+    epic's amendment discipline (a fresh `epic-amend-<slug>` worktree, a dated
+    provenance line on the amended Decision, lint-gated, shipped as a PR);
+    never edit the epic file in passing.
+  - **Reference** → install it through the emit engine's `docs` kind and link
+    it from the epic's `## References` shelf, exactly as the supplied-documents
+    rule in step 1 does, citing it in `plan.md` prose when no epic resolves.
+  - **Durable** → the workspace wiki or the oracle queue. The queue mechanics
+    are the next bullet's and stay unchanged: this rubric only routes the item
+    there, and the capture durability rubric decides the write.
+  - **Noise** → recorded nowhere. The ledger still records the resolution for
+    the change itself; noise means no *knowledge* capture.
+
+  This is a classification pass over answers already in hand, never a reason
+  to open a fresh question round.
 - **Capture the typed resolution back into the queue.** When a typed round
   resolves a decision the oracle returned `INSUFFICIENT` **and** whose verdict
   filed a `q-<slug>` (a `Queued:` line naming a slug, not `none`), distill the

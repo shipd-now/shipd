@@ -135,6 +135,27 @@ discipline — it is what separates a lean gate from an interrogation:
 - **Ask once, then converge.** After the answers come back, fold them in and
   proceed to emission — do not spawn a fresh round unless an answer genuinely
   opened a new un-inferrable decision.
+- **Classify what each answer carries.** An answer rarely carries only the
+  decision you asked about. Before folding one in, classify its substance
+  against the knowledge capture rubric
+  (`${CLAUDE_PLUGIN_ROOT}/skills/epic/references/capture-rubric.md`) into
+  **exactly one** of its four tiers, and act on that tier:
+  - **Binding** — a constraint every member change must obey. It lands in the
+    `## Decisions` section you are authoring. The epic does not exist yet, so
+    there is nothing to amend: write the Decision directly.
+  - **Reference** — material a member author consults rather than obeys. It
+    installs through the emit engine (`spec_emit.py docs <slug> --from <file>`,
+    step 1 above) and is linked from `## References`; its substance is not
+    copied into `## Decisions`.
+  - **Durable** — a standing position, convention, or workspace fact that
+    outlives this feature. It routes to the workspace wiki via `/s:teach` or
+    the oracle queue, not into the epic; the epic records only what its members
+    are bound by.
+  - **Noise** — session logistics, vented frustration, a tangent that changed
+    nothing. Dropped deliberately, recorded nowhere.
+
+  The rubric's calibrated examples and tie-breakers settle borderline cases; a
+  single answer may split across tiers, each part routed on its own.
 
 ## Question rejection recovery
 

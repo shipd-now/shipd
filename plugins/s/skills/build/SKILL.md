@@ -389,6 +389,34 @@ A sub-agent that hits missing context returns a message starting with `QUESTION:
    work violates
    `plan.md`, reject it: have it revert and redo per the spec, and remind it of
    the no-guessing rule.
+4. **Classify what the exchange carried.** The answer you form — and any
+   mid-build interjection the user drops into the loop — often carries
+   information worth more than this one task. Classify each substantive item
+   into exactly **one** tier of the knowledge capture rubric
+   (`${CLAUDE_PLUGIN_ROOT}/skills/epic/references/capture-rubric.md`), and act
+   on that tier before the loop moves on:
+
+   - **Binding, change scope** — it changes what an executor must do here.
+     That is step 3's rule named as the rubric's binding tier: **update the
+     spec artifacts first**, re-lint, then answer.
+   - **Binding, epic scope** — it binds every member change, so its home is the
+     epic's `## Decisions`. Surface it to the user for the epic's amendment
+     discipline (a fresh `epic-amend-<slug>` worktree, the amended Decision
+     stamped with a dated provenance line, re-linted, shipped as a pull
+     request). Never edit a live epic file in passing, and never stall the
+     build waiting on that amendment.
+   - **Reference** — consulted rather than obeyed: a pasted memo, meeting
+     notes, an API excerpt. Install it through the emit engine
+     (`spec_emit.py docs <slug> --from <file>`) and link it from the epic's
+     `## References` shelf, or cite it in `plan.md` prose when the change has
+     no resolving epic.
+   - **Durable** — it outlives the feature: a standing engineering position, a
+     cross-feature convention, a workspace fact. Route it to the workspace wiki
+     via `/s:teach` or the oracle queue, where the capture durability rubric
+     (`${CLAUDE_PLUGIN_ROOT}/skills/ask/references/capture-rubric.md`) governs
+     the queue write.
+   - **Noise** — session logistics, venting, a tangent that changed nothing:
+     recorded nowhere, deliberately.
 
 Never hand implementation decisions back as "your call" — you are the architect.
 
