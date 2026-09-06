@@ -111,9 +111,13 @@ The `docs` kind lands first — the shelf links it, the rubric routes to it.
 
 | Tool | Calls | Output tokens |
 | --- | --- | --- |
-| Bash | 91 | 23.7k |
-| Edit | 31 | 3.3k |
-| Read | 24 | 2.2k |
-| (no tool) | 0 | 54 |
-| Agent | 2 | 17 |
-| **Total** | 148 | 29.3k |
+| Bash | 223 | 46.0k |
+| Edit | 40 | 8.6k |
+| Read | 58 | 5.0k |
+| Agent | 6 | 1.4k |
+| SendMessage | 3 | 1.3k |
+| ToolSearch | 4 | 599 |
+| (no tool) | 0 | 574 |
+| Monitor | 2 | 33 |
+| Write | 1 | 3 |
+| **Total** | 337 | 63.5k |
