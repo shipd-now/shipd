@@ -110,22 +110,32 @@ Resolve the workspace wiki store and its health first:
 python3 STATUS_CLI --root <repo-root> wiki-show
 ```
 
-`wiki-show` resolves the workspace (the nearest ancestor declaring a
-`workspace` key) and prints the store's root, page count, coverage, last log
-entry, and a `base:` line reporting whether a durable base store is layered
-beneath this one (`base: <path> (present)`, `(absent)`, or `base: none`) — the
-scan and the promotion routing below consume that line. Branch on the outcome:
+`wiki-show` resolves the store — the nearest ancestor declaring a `workspace`
+key, or, where no ancestor declares one, this repo's own **repo-local fallback
+store** at `<repo-root>/<content-dir>/wiki` — and prints its root, page count,
+coverage, last log entry, and a `base:` line reporting whether a durable base
+store is layered beneath this one (`base: <path> (present)`, `(absent)`, or
+`base: none`) — the scan and the promotion routing below consume that line.
+Branch on the outcome:
 
-- **No workspace discoverable** — `wiki-show` fails naming the missing
-  workspace. Unlike the non-blocking oracle, `/s:teach` is user-invoked and
-  interactive, so **stop**: name the missing workspace and point the user at
-  `workspace-init` (`python3 STATUS_CLI --root <dir> workspace-init <path>`).
-  Do **not** invent a store location or write anything.
-- **Workspace but no store** — scaffold it once with
-  `python3 STATUS_CLI --root <repo-root> wiki-init`. The verb refuses an
-  existing store, so this call is safe to make only when `wiki-show` reported no
-  store. After scaffolding, the store holds an empty `index.md`, `queue.md`,
-  `log.md`, seeded `schema.md`, and empty `wiki/` and `sources/` directories.
+- **Repo-local fallback store** — the `wiki:` line carries a
+  `(repo-local fallback)` marker and `chain: none`. **Continue**: it is a real
+  store with the identical layout and grammar, and every verb below (`cat wiki
+  …`, `wiki-init`, the staged emit) already targets it. The only difference
+  worth telling the user is where the knowledge landed — say the store is this
+  repo's own, not a workspace's.
+- **Neither a workspace nor a content directory** — `wiki-show` fails naming
+  both missing prerequisites. Unlike the non-blocking oracle, `/s:teach` is
+  user-invoked and interactive, so **stop**: name both, and point the user at
+  `workspace-init` (`python3 STATUS_CLI --root <dir> workspace-init <path>`)
+  or at `shipd init` for a repo-local store. Do **not** invent a store location
+  or write anything.
+- **Store resolved but absent** — scaffold it once with
+  `python3 STATUS_CLI --root <repo-root> wiki-init`, whichever store resolved.
+  The verb refuses an existing store, so this call is safe to make only when
+  `wiki-show` reported no store. After scaffolding, the store holds an empty
+  `index.md`, `queue.md`, `log.md`, seeded `schema.md`, and empty `wiki/` and
+  `sources/` directories.
 - **Store present** — proceed to the scan.
 
 ## 2. Scan the repo's spec surfaces (engine reads only)

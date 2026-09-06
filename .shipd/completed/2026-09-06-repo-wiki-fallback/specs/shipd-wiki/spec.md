@@ -1,7 +1,8 @@
-# shipd-wiki
+## MODIFIED Requirements
 
 ### Requirement: Wiki store layout
 id: wiki-store-layout
+base: 6ccc6a5842a5
 
 The workspace wiki SHALL live at `<ws-root>/<content-dir>/wiki/`, holding
 `schema.md`, `index.md`, `log.md`, `queue.md`, a `sources/` directory, and a
@@ -77,59 +78,9 @@ operations SHALL never parse or modify existing files under `sources/`.
 - **THEN** it operates on `<memory_dir>/wiki/` (default `~/.shipd-memory/wiki/`),
   resolved without workspace discovery, carrying the identical store layout
 
-### Requirement: Wiki page grammar
-id: wiki-page-grammar
-
-Wiki pages SHALL be markdown files `wiki/<slug>.md` with kebab-case slugs, and
-the slugs `index`, `log`, `queue`, `schema`, and `sources` SHALL be reserved
-(invalid as page slugs). A `[[slug]]` wikilink in a wiki page or in `index.md`,
-outside fenced code blocks, SHALL resolve to an existing page.
-
-#### Scenario: Dead wikilink
-- **WHEN** a page contains `[[missing-page]]` and no `wiki/missing-page.md`
-  exists
-- **THEN** the store is invalid and the violation names the page and the link
-
-#### Scenario: Reserved slug
-- **WHEN** a page is named `wiki/index.md`
-- **THEN** the store is invalid citing the reserved slug
-
-### Requirement: Index catalog and append-only log
-id: wiki-index-and-log
-
-`index.md` SHALL catalog every page as a line `- [[slug]] — <summary>` (lines
-not matching the entry shape are ignored), and the set of catalog entries SHALL
-equal the set of pages under `wiki/`. Every level-2 header in `log.md` SHALL
-match `## [YYYY-MM-DD] <op> | <subject>`.
-
-#### Scenario: Unindexed page
-- **WHEN** `wiki/some-page.md` exists with no `- [[some-page]] — …` index entry
-- **THEN** the store is invalid naming the unindexed page
-
-#### Scenario: Malformed log header
-- **WHEN** `log.md` contains a level-2 header not matching the dated entry
-  shape
-- **THEN** the store is invalid naming the offending line
-
-### Requirement: Pending-question queue
-id: wiki-question-queue
-
-`queue.md` SHALL hold pending questions as `## q-<slug>` blocks with unique
-kebab-case slugs, each carrying non-empty `- Asked:`, `- Question:`,
-`- Options:`, `- Recommendation:`, and `- Answer:` lines, where `Answer:` is
-`pending` until the user supplies an answer.
-
-#### Scenario: Complete block passes
-- **WHEN** `queue.md` holds a `## q-` block with all five fields and
-  `Answer: pending`
-- **THEN** the store is valid
-
-#### Scenario: Missing field
-- **WHEN** a `## q-` block lacks a `- Recommendation:` line
-- **THEN** the store is invalid naming the block and the missing field
-
 ### Requirement: Wiki auto-commit
 id: wiki-autocommit
+base: 87d9ecf829ba
 
 When an engine wiki write succeeds — a staged `wiki` emission installing
 its file set, `wiki-queue-add` appending a valid block, `wiki-queue-answer`
@@ -195,83 +146,3 @@ no commit.
 - **WHEN** a wiki emit auto-commits
 - **THEN** the resulting commit omits the unrelated file, which remains
   staged and uncommitted
-
-### Requirement: Queue answer verb
-id: wiki-queue-answer-verb
-
-`spec_status.py` SHALL provide a `wiki-queue-answer <slug> --answer "<text>"`
-verb that resolves the workspace store exactly as `wiki-queue-add` does,
-accepts the bare slug (prefixing `q-` itself), locates the `## q-<slug>` block
-in `queue.md`, and replaces its `- Answer: pending` line with
-`- Answer: <text>`, printing the `q-<slug>` and exiting 0. Where the verb is
-invoked with an `--advisory` flag, it SHALL store the answer with an
-`advisory: ` prefix — `- Answer: advisory: <text>` — marking the captured
-knowledge as advisory rather than binding; without the flag the answer is
-stored unprefixed as before. If the store or the block is missing, or the
-block's `Answer:` line is not `pending`, then the verb SHALL write nothing
-and exit non-zero naming the reason — an answered block is owned by the
-`/s:teach` drain and is never overwritten. The verb SHALL use only the Python
-standard library.
-
-#### Scenario: Pending block is answered
-- **GIVEN** a queue block `## q-retention` whose answer line is
-  `- Answer: pending`
-- **WHEN** `wiki-queue-answer retention --answer "prune after one release"`
-  runs
-- **THEN** the block's answer line reads
-  `- Answer: prune after one release`, and the verb prints `q-retention` and
-  exits 0
-
-#### Scenario: Advisory flag prefixes the stored answer
-- **GIVEN** a pending queue block `## q-pr-unlock`
-- **WHEN** `wiki-queue-answer pr-unlock --advisory --answer "always run the
-  unlock"` runs
-- **THEN** the block's answer line reads
-  `- Answer: advisory: always run the unlock` and the verb exits 0
-
-#### Scenario: Missing block errors
-- **WHEN** `wiki-queue-answer no-such-entry --answer "x"` runs against a queue
-  with no `## q-no-such-entry` block
-- **THEN** nothing is written and the verb exits non-zero naming the missing
-  block
-
-#### Scenario: Already-answered block is refused
-- **GIVEN** a queue block whose `Answer:` line is not `pending`
-- **WHEN** `wiki-queue-answer` targets that block
-- **THEN** nothing is written and the verb exits non-zero naming the
-  already-answered state
-
-### Requirement: Queue discard verb
-id: wiki-queue-discard-verb
-
-`spec_status.py` SHALL provide a `wiki-queue-discard <slug> --reason "<text>"`
-verb that resolves the workspace store exactly as `wiki-queue-add` does,
-accepts the bare slug (prefixing `q-` itself), locates the `## q-<slug>`
-block in `queue.md`, and — when the block's `Answer:` line is `pending` —
-removes the entire block, printing the `q-<slug>` and exiting 0. The
-`--reason` text SHALL be required and non-empty; it is echoed to the caller,
-not stored. If the store or the block is missing, or the block's `Answer:`
-line is not `pending`, then the verb SHALL write nothing and exit non-zero
-naming the reason — an answered block is owned by the `/s:teach` drain and is
-never discarded. The verb SHALL use only the Python standard library, and
-every other queue block SHALL be preserved verbatim.
-
-#### Scenario: Pending block is discarded
-- **GIVEN** a queue block `## q-framework-pick` whose answer line is
-  `- Answer: pending`
-- **WHEN** `wiki-queue-discard framework-pick --reason "self-evidencing"`
-  runs
-- **THEN** the block is removed from `queue.md`, other blocks are unchanged,
-  and the verb prints `q-framework-pick` and exits 0
-
-#### Scenario: Answered block is refused
-- **GIVEN** a queue block whose `Answer:` line is not `pending`
-- **WHEN** `wiki-queue-discard` targets that block
-- **THEN** nothing is written and the verb exits non-zero naming the
-  answered state
-
-#### Scenario: Missing block errors
-- **WHEN** `wiki-queue-discard no-such-entry --reason "x"` runs against a
-  queue with no `## q-no-such-entry` block
-- **THEN** nothing is written and the verb exits non-zero naming the missing
-  block

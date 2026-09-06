@@ -2803,6 +2803,37 @@ class ConfigShowTest(SpecStatusTestBase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("store:", r.stdout)
 
+    # -- wiki: line (shipd-wiki wiki-store-layout) ---------------------------
+
+    def test_wiki_line_names_the_workspace_store(self):
+        self._write_config(self.root, {"workspace": {}})
+        r = self.cli("config-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(
+            "wiki: %s" % os.path.join(self.root, ".shipd", "wiki"),
+            r.stdout.splitlines())
+
+    def test_wiki_line_marks_the_repo_local_fallback(self):
+        os.makedirs(os.path.join(self.root, ".shipd"), exist_ok=True)
+        r = self.cli("config-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(
+            "wiki: %s (repo-local fallback)"
+            % os.path.join(self.root, ".shipd", "wiki"),
+            r.stdout.splitlines())
+
+    def test_wiki_line_reports_none_when_nothing_resolves(self):
+        # No workspace ancestor and no content directory on disk.
+        r = self.cli("config-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        wiki_lines = [ln for ln in r.stdout.splitlines()
+                      if ln.startswith("wiki: ")]
+        self.assertEqual(len(wiki_lines), 1, r.stdout)
+        self.assertIn("none", wiki_lines[0])
+        # Names both missing prerequisites.
+        self.assertIn("workspace", wiki_lines[0])
+        self.assertIn(os.path.join(self.root, ".shipd"), wiki_lines[0])
+
 
 class PipelineShowTest(SpecStatusTestBase):
     """`pipeline-show` prints the effective autonomous pipeline: one line per
@@ -3810,6 +3841,235 @@ class WikiShowChainTest(SpecStatusTestBase):
     def test_exits_non_zero_only_when_no_chain_member_holds_a_store(self):
         r = self.cli_at(self.repo, "wiki-show")
         self.assertNotEqual(r.returncode, 0)
+
+
+class WikiFallbackStoreTest(SpecStatusTestBase):
+    """The repo-local fallback store (spec-status wiki-status-verbs, shipd-wiki
+    wiki-store-layout): where no ancestor declares a ``workspace`` but the
+    repo's resolved content directory exists, every workspace-store wiki verb
+    resolves ``<root>/<content-dir>/wiki`` and operates on it with otherwise
+    unchanged semantics. ``self.root`` holds ``.shipd/`` and declares no
+    workspace."""
+
+    def setUp(self):
+        super().setUp()
+        os.makedirs(os.path.join(self.root, ".shipd"), exist_ok=True)
+
+    def wiki(self):
+        return os.path.join(self.root, ".shipd", "wiki")
+
+    def queue_text(self):
+        with open(os.path.join(self.wiki(), "queue.md"), encoding="utf-8") as fh:
+            return fh.read()
+
+    def cli_at(self, cwd, *args):
+        return subprocess.run(
+            ["python3", SCRIPT, "--root", cwd, *args],
+            capture_output=True, text=True)
+
+    def add_block(self, slug):
+        r = self.cli("wiki-queue-add", slug,
+                     "--question", "Q?", "--options", "a | b",
+                     "--recommendation", "a")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    # -- wiki-init / cat wiki ----------------------------------------------
+
+    def test_wiki_init_scaffolds_the_repo_local_store(self):
+        r = self.cli("wiki-init")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), self.wiki())
+        for name in ("schema.md", "index.md", "log.md", "queue.md"):
+            self.assertTrue(
+                os.path.isfile(os.path.join(self.wiki(), name)), name)
+        self.assertTrue(os.path.isdir(os.path.join(self.wiki(), "wiki")))
+        self.assertTrue(os.path.isdir(os.path.join(self.wiki(), "sources")))
+
+    def test_cat_wiki_reads_the_fallback_store_without_provenance(self):
+        self.assertEqual(self.cli("wiki-init").returncode, 0)
+        with open(os.path.join(self.wiki(), "wiki", "welcome.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("# Welcome\n\nHello there.\n")
+        r = self.cli("cat", "wiki", "welcome")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Hello there.", r.stdout)
+        self.assertIn("--- .shipd/wiki/wiki/welcome.md", r.stdout)
+        # A single-store resolution is never inherited, so no annotation.
+        self.assertNotIn("(inherited", r.stdout)
+
+    def test_cat_wiki_reads_the_fallback_queue(self):
+        self.add_block("stale-cache")
+        r = self.cli("cat", "wiki", "queue")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("## q-stale-cache", r.stdout)
+        self.assertNotIn("(inherited", r.stdout)
+
+    # -- wiki-show ----------------------------------------------------------
+
+    def test_wiki_show_marks_the_fallback_store(self):
+        self.assertEqual(self.cli("wiki-init").returncode, 0)
+        r = self.cli("wiki-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertIn("wiki: %s (repo-local fallback)" % self.wiki(), lines)
+        self.assertIn("chain: none", lines)
+
+    def test_wiki_show_base_from_the_roots_own_config(self):
+        base = os.path.join(self.root, "base-store")
+        os.makedirs(base)
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"wiki_base": base}, fh)
+        self.assertEqual(self.cli("wiki-init").returncode, 0)
+        r = self.cli("wiki-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("base: %s (present)" % base, r.stdout)
+
+    def test_wiki_show_self_referential_base_is_none(self):
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"wiki_base": self.wiki()}, fh)
+        self.assertEqual(self.cli("wiki-init").returncode, 0)
+        r = self.cli("wiki-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("base: none", r.stdout)
+
+    # -- queue verbs --------------------------------------------------------
+
+    def test_wiki_queue_add_scaffolds_the_store_on_demand(self):
+        # No `wiki-init` first: the write scaffolds the fallback store itself.
+        self.add_block("stale-cache")
+        self.assertIn("## q-stale-cache", self.queue_text())
+        self.assertIn("Answer: pending", self.queue_text())
+
+    def test_wiki_queue_answer_writes_into_the_fallback_store(self):
+        self.add_block("retention")
+        r = self.cli("wiki-queue-answer", "retention",
+                     "--answer", "prune after one release")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("- Answer: prune after one release", self.queue_text())
+
+    def test_wiki_queue_discard_removes_from_the_fallback_store(self):
+        self.add_block("retention")
+        r = self.cli("wiki-queue-discard", "retention", "--reason", "obsolete")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("## q-retention", self.queue_text())
+
+    # -- content-dir override ------------------------------------------------
+
+    def test_fallback_respects_the_content_dir_override(self):
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"dir": "specs"}, fh)
+        os.makedirs(os.path.join(self.root, "specs"), exist_ok=True)
+        r = self.cli("wiki-init")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            r.stdout.strip(), os.path.join(self.root, "specs", "wiki"))
+
+    # -- auto-commit carve-out (shipd-wiki wiki-autocommit) -------------------
+
+    def _init_git(self, target):
+        subprocess.run(["git", "init", "-q", target],
+                       capture_output=True, text=True, check=True)
+        for pair in (("user.email", "test@example.com"), ("user.name", "Test")):
+            subprocess.run(["git", "-C", target, "config", *pair],
+                           capture_output=True, text=True, check=True)
+        subprocess.run(["git", "-C", target, "add", "-A"],
+                       capture_output=True, text=True, check=True)
+        subprocess.run(
+            ["git", "-C", target, "commit", "-q", "-m", "baseline",
+             "--allow-empty"],
+            capture_output=True, text=True, check=True)
+
+    def _commit_count(self, target):
+        r = subprocess.run(
+            ["git", "-C", target, "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True, check=True)
+        return int(r.stdout.strip())
+
+    def _head_subject(self, target):
+        r = subprocess.run(
+            ["git", "-C", target, "log", "-1", "--format=%s"],
+            capture_output=True, text=True, check=True)
+        return r.stdout.strip()
+
+    def test_in_repo_fallback_queue_writes_make_no_commit(self):
+        # Committing in-repo artifacts stays the skill/PR workflow's job, so an
+        # engine write into the repo's own store never commits.
+        self.assertEqual(self.cli("wiki-init").returncode, 0)
+        self._init_git(self.root)
+        before = self._commit_count(self.root)
+        self.add_block("stale-cache")
+        r = self.cli("wiki-queue-answer", "stale-cache", "--answer", "yes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.add_block("retention")
+        r = self.cli("wiki-queue-discard", "retention", "--reason", "obsolete")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._commit_count(self.root), before)
+
+    def _redirect_store(self):
+        """Point the repo's content directory at a separate git-initialized
+        store repo and return that store's per-repo content directory."""
+        store = tempfile.mkdtemp(prefix="spec-status-store-")
+        self.addCleanup(shutil.rmtree, store, True)
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"store_root": store}, fh)
+        content = os.path.join(store, os.path.basename(self.root))
+        os.makedirs(content, exist_ok=True)
+        self._init_git(store)
+        return store, content
+
+    def test_externally_redirected_store_still_commits(self):
+        store, content = self._redirect_store()
+        before = self._commit_count(store)
+        self.add_block("stale-cache")
+        self.assertTrue(
+            os.path.isfile(os.path.join(content, "wiki", "queue.md")))
+        self.assertEqual(self._commit_count(store), before + 1)
+        self.assertEqual(
+            self._head_subject(store), "shipd-wiki: queue-add q-stale-cache")
+
+    def test_externally_redirected_store_commits_answer_and_discard(self):
+        store, _content = self._redirect_store()
+        self.add_block("retention")
+        r = self.cli("wiki-queue-answer", "retention", "--answer", "one release")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            self._head_subject(store), "shipd-wiki: queue-answer q-retention")
+        self.add_block("cache-ttl")
+        r = self.cli("wiki-queue-discard", "cache-ttl", "--reason", "obsolete")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            self._head_subject(store), "shipd-wiki: queue-discard q-cache-ttl")
+
+    # -- ineligible root ------------------------------------------------------
+
+    def assert_names_both_prerequisites(self, *args):
+        # A directory with neither a workspace ancestor nor a content directory
+        # of its own: resolution anchors on the invocation root, so the content
+        # dir under `self.root` never shadows this subtree.
+        bare = os.path.join(self.root, "bare", "deeper")
+        os.makedirs(bare, exist_ok=True)
+        r = self.cli_at(bare, *args)
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        err = r.stderr.lower()
+        self.assertIn("no workspace", err)
+        self.assertIn(os.path.join(bare, ".shipd"), r.stderr)
+
+    def test_every_verb_names_both_prerequisites_on_an_uninitialized_root(self):
+        self.assert_names_both_prerequisites("wiki-init")
+        self.assert_names_both_prerequisites("wiki-show")
+        self.assert_names_both_prerequisites("cat", "wiki", "index")
+        self.assert_names_both_prerequisites(
+            "wiki-queue-add", "stale-cache", "--question", "Q?",
+            "--options", "a | b", "--recommendation", "a")
+        self.assert_names_both_prerequisites(
+            "wiki-queue-answer", "stale-cache", "--answer", "x")
+        self.assert_names_both_prerequisites(
+            "wiki-queue-discard", "stale-cache", "--reason", "x")
+        self.assert_names_both_prerequisites("wiki-remove", "welcome")
 
 
 class WikiQueueAddTest(SpecStatusTestBase):

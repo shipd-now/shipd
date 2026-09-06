@@ -897,16 +897,47 @@ def find_workspace_root(start):
     return chain[0] if chain else None
 
 
-def resolve_wiki_stores(start):
-    """Return every existing wiki store directory across the workspace chain
-    resolved from ``start``, nearest first (shipd-workspace
-    workspace-chain-facilities).
+def resolve_wiki_root(start):
+    """Return ``(anchor_root, is_fallback)`` naming the root whose store every
+    workspace-store wiki verb operates on, resolved from ``start`` (shipd-wiki
+    wiki-store-layout).
 
-    A chain member holding no store directory on disk is skipped silently.
-    Returns an empty list when the chain is empty or no member holds a
-    store."""
-    return [d for d in (wiki_dir(root) for root in workspace_chain(start))
-            if os.path.isdir(d)]
+    The workspace chain wins outright: when it is non-empty this is
+    ``(chain[0], False)``, the nearest member, and the repo-local store is not
+    consulted at all. When the chain is empty and ``start``'s resolved content
+    directory exists on disk, the store falls back to the repo's own at
+    ``<start>/<content-dir>/wiki``, reported as ``(start, True)``. When neither
+    holds — no ancestor declares a workspace and no content directory exists —
+    returns ``None``, and the consuming verb fails naming both missing
+    prerequisites.
+
+    This is the one resolution seam: every consumer (the status CLI's wiki
+    verbs, the emit engine's ``wiki`` subcommand, the doctor's ``wiki`` check)
+    routes through it, so the answer can never drift between them. Raises
+    :class:`ConfigError` when ``start``'s layered configuration is malformed."""
+    chain = workspace_chain(start)
+    if chain:
+        return (chain[0], False)
+    root = os.path.abspath(start)
+    if os.path.isdir(specs_dir(root)):
+        return (root, True)
+    return None
+
+
+def resolve_wiki_stores(start):
+    """Return every existing wiki store directory resolved from ``start``,
+    nearest first (shipd-workspace workspace-chain-facilities).
+
+    Across the workspace chain this is every member's store directory that
+    exists on disk, nearest first; a chain member holding no store is skipped
+    silently. Where the chain is empty, the repo-local fallback store
+    (:func:`resolve_wiki_root`) is the single entry, again only when it exists.
+    Returns an empty list when nothing resolves to an existing store."""
+    chain = workspace_chain(start)
+    if not chain:
+        resolved = resolve_wiki_root(start)
+        chain = [resolved[0]] if resolved is not None else []
+    return [d for d in (wiki_dir(root) for root in chain) if os.path.isdir(d)]
 
 
 def resolve_initiative_brief(start, slug):
@@ -1220,7 +1251,9 @@ def wiki_base_dir(ws_root):
     store directory of any member of ``ws_root``'s workspace chain — the
     consuming workspace's own store included — the base is treated as
     undeclared (``None``), so a base that is also an enclosing workspace is
-    searched once, not twice."""
+    searched once, not twice. The same guard covers the repo-local fallback
+    store: where the chain is empty, a value equal to ``ws_root``'s own store
+    directory likewise reads as undeclared."""
     config, _prov = resolve_config(ws_root)
     raw = config.get("wiki_base")
     if raw is None:
@@ -1233,9 +1266,12 @@ def wiki_base_dir(ws_root):
         raise ConfigError(
             "config `wiki_base` must expand to an absolute path, got %r" % (raw,))
     resolved = os.path.realpath(expanded)
-    for member in workspace_chain(ws_root):
+    chain = workspace_chain(ws_root)
+    for member in chain:
         if os.path.realpath(wiki_dir(member)) == resolved:
             return None
+    if not chain and os.path.realpath(wiki_dir(ws_root)) == resolved:
+        return None
     return expanded
 
 

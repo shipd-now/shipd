@@ -552,8 +552,13 @@ resolved configuration declares `store_root`, the verb SHALL additionally
 print the resolved absolute external content directory path, so a
 mis-declared store is inspectable at a glance. Where the resolved workspace
 chain carries more than one member, the verb SHALL additionally print the
-whole chain in nearest-first order. The verb SHALL NOT require a
-discoverable workspace and SHALL exit zero on a default-only resolution.
+whole chain in nearest-first order. The verb SHALL additionally print a
+`wiki:` line reporting the resolved wiki store: the nearest workspace's
+store path when a chain exists, the repo-local fallback path annotated
+`(repo-local fallback)` when the chain is empty and the content directory
+exists, and `wiki: none` naming the missing prerequisites otherwise. The
+verb SHALL NOT require a discoverable workspace and SHALL exit zero on a
+default-only resolution.
 
 #### Scenario: Provenance is printed per key
 - **GIVEN** the repo layer declares `valid_themes` and the workspace layer
@@ -577,6 +582,12 @@ discoverable workspace and SHALL exit zero on a default-only resolution.
 - **WHEN** `config-show` runs
 - **THEN** the output includes the resolved absolute external content
   directory path
+
+#### Scenario: Wiki line reports the resolved store
+- **WHEN** `config-show` runs in a workspace repo, in a bare repo with a
+  content directory, and in an uninitialized directory
+- **THEN** the `wiki:` line names the workspace store, the fallback path
+  with `(repo-local fallback)`, and `none`, respectively
 
 ### Requirement: Epic initiative header verb
 id: epic-set-initiative-verb
@@ -733,13 +744,26 @@ the resulting queue is invalid. `wiki-show` SHALL additionally print a `chain:`
 line listing the inherited chain stores that exist, nearest first, or `chain:
 none` when the store has no inherited member; where the nearest workspace holds
 no store but a chain member does, `wiki-show` SHALL report the nearest store as
-absent, print the `chain:` line, and exit zero, exiting non-zero only when no
-chain member holds a store; and a `base:` line reporting the
+absent, print the `chain:` line, and exit zero, exiting non-zero only when the
+resolution holds no store at all; and a `base:` line reporting the
 resolved `wiki_base` store: `base: <path> (present)` when the resolved base
 directory exists, `base: <path> (absent)` when it is declared but missing, and
 `base: none` when the key is undeclared or resolves to any chain store's
 directory; if the declared `wiki_base` value is malformed, then `wiki-show`
 SHALL exit non-zero with an error naming `wiki_base`.
+
+Where no workspace is discoverable and the resolving root's resolved content
+directory exists, every workspace-store wiki verb (`wiki-init`, `wiki-show`,
+`cat wiki`, `wiki-queue-add`, `wiki-queue-answer`, `wiki-queue-discard`,
+`wiki-remove`) SHALL resolve the repo-local fallback store at
+`<root>/<content-dir>/wiki` and operate on it with otherwise unchanged
+semantics — a single-store resolution with no inherited chain member and
+never a provenance annotation. Under a fallback resolution `wiki-show` SHALL
+annotate its store line `(repo-local fallback)`, report `chain: none`, and
+resolve its `base:` line from the root's own layered configuration, treating
+a `wiki_base` resolving to the fallback store's own directory as undeclared.
+Where neither a workspace nor a content directory exists, the verbs SHALL
+exit non-zero naming both missing prerequisites.
 
 `wiki-init`, `wiki-show`, and the `cat wiki` verb SHALL each accept a
 `--personal` flag: when set, the verb SHALL resolve the personal memory store at
@@ -800,6 +824,26 @@ none` (a personal store participates in no chain or base layering).
 - **GIVEN** nested workspaces whose stores both exist
 - **WHEN** `wiki-show` runs from a repo under the inner workspace
 - **THEN** the output carries a `chain:` line naming the outer store
+
+#### Scenario: Fallback store serves a bare repo
+- **GIVEN** a repo with an existing content directory and no discoverable
+  workspace
+- **WHEN** `wiki-init` runs, then `wiki-queue-add stale-cache …`, then
+  `cat wiki queue`
+- **THEN** the store lives at `<root>/<content-dir>/wiki`, the block lands in
+  its `queue.md`, and the read prints it with no provenance annotation
+
+#### Scenario: wiki-show marks the fallback store
+- **GIVEN** a repo-local fallback store
+- **WHEN** `wiki-show` runs
+- **THEN** the store line carries `(repo-local fallback)` and the output
+  reports `chain: none`
+
+#### Scenario: Uninitialized root names both prerequisites
+- **WHEN** a workspace-store wiki verb runs where no ancestor declares a
+  workspace and no content directory exists
+- **THEN** it exits non-zero naming the missing workspace and the missing
+  content directory
 
 #### Scenario: Declared base is reported with presence
 - **GIVEN** a workspace whose config declares `wiki_base` pointing at an
@@ -985,18 +1029,22 @@ git, a model, or the network.
 ### Requirement: Wiki page removal verb
 id: wiki-remove-verb
 
-The status CLI SHALL provide a `wiki-remove <slug>` verb that resolves the store
-(the workspace store by default, or the personal memory store under
-`--personal`), deletes `wiki/<slug>.md`, removes the page's `index.md` catalog
-entry, and appends a `## [YYYY-MM-DD] remove | <slug>` entry to `log.md`. If the
+The status CLI SHALL provide a `wiki-remove <slug>` verb that resolves the
+store exactly as the other wiki verbs do (the nearest workspace's store, the
+repo-local fallback store where no workspace is discoverable but the content
+directory exists, or the personal memory store under `--personal`), deletes
+`wiki/<slug>.md`, removes the page's `index.md` catalog entry, and appends a
+`## [YYYY-MM-DD] remove | <slug>` entry to `log.md`. If the
 slug is reserved (`index`, `log`, `queue`, `schema`, `sources`), the page does
 not exist, or the resulting store fails the whole-store wiki lint — for example
 the removal would leave a dead `[[slug]]` wikilink in another page — then the
 verb SHALL restore the affected files byte-for-byte, exit non-zero, and name the
 reason (naming the linking page for a stranded wikilink). On a clean removal
-inside a git work tree, the verb SHALL auto-commit exactly the touched files
-with subject `shipd-wiki: remove <slug>`, following the wiki auto-commit semantics
-(no commit attempted outside git; a failed commit never fails the removal).
+the verb SHALL auto-commit exactly the touched files with subject
+`shipd-wiki: remove <slug>`, following the wiki auto-commit semantics in
+full — no commit attempted outside git, a failed commit never failing the
+removal, and no commit attempted for a repo-local fallback store whose
+content directory is not externally redirected.
 
 #### Scenario: Successful removal updates page, index, and log
 - **WHEN** `wiki-remove some-page` runs where `wiki/some-page.md` exists, is
@@ -1029,6 +1077,12 @@ with subject `shipd-wiki: remove <slug>`, following the wiki auto-commit semanti
 - **WHEN** a valid removal runs on a store that is not inside a git work tree
 - **THEN** the removal installs, the exit code is zero, and no commit is
   attempted
+
+#### Scenario: Fallback-store removal makes no commit
+- **GIVEN** a repo-local fallback store inside a git repo with no
+  `store_root`
+- **WHEN** `wiki-remove some-page` succeeds
+- **THEN** the page, index entry, and log update land and no commit is made
 
 ### Requirement: Workspace board report
 id: workspace-board-report

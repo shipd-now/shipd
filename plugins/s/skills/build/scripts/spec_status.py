@@ -2295,8 +2295,12 @@ def cmd_config_show(root):
     glance (shipd-config store-root-key). When the resolved workspace chain
     carries more than one member, additionally prints a ``chain:`` line listing
     the whole chain, nearest first (shipd-workspace
-    workspace-chain-facilities). Does not require a workspace; exits zero on a
-    default-only resolution (spec-status config-show-verb)."""
+    workspace-chain-facilities). Always prints a ``wiki:`` line naming the
+    resolved wiki store: the nearest workspace's store, the repo-local
+    fallback path marked ``(repo-local fallback)`` where the chain is empty and
+    the content directory exists, or ``none`` naming both missing prerequisites
+    (shipd-wiki wiki-store-layout). Does not require a workspace; exits zero on
+    a default-only resolution (spec-status config-show-verb)."""
     try:
         config, provenance = sc.resolve_config(root)
         content_dir = sc.specs_dirname(config)
@@ -2304,6 +2308,9 @@ def cmd_config_show(root):
         # one every verb writes to — never a re-derivation that could drift.
         store_content = (sc.specs_dir(root)
                          if sc.store_root_dir(root) is not None else None)
+        # The wiki store the working directory resolves, through the engine's
+        # one resolution seam (shipd-wiki wiki-store-layout).
+        wiki_resolution = sc.resolve_wiki_root(root)
     except sc.ConfigError as exc:
         raise StatusError(str(exc))
     print("config (resolved from %s):" % os.path.abspath(root))
@@ -2320,6 +2327,13 @@ def cmd_config_show(root):
         print("workspace: %s" % chain[0])
         if len(chain) > 1:
             print("chain: %s" % ", ".join(chain))
+    if wiki_resolution is None:
+        print("wiki: none (no workspace discoverable and no content directory "
+              "at %s)" % sc.specs_dir(root))
+    else:
+        anchor, is_fallback = wiki_resolution
+        print("wiki: %s%s" % (sc.wiki_dir(anchor),
+                              " (repo-local fallback)" if is_fallback else ""))
     return 0
 
 
@@ -2597,20 +2611,22 @@ def cmd_cat(root, kind, slug, personal=False):
         _cat_files(root, [path])
         return 0
     if kind == "wiki":
-        # Personal is a fixed single store, bypassing the chain entirely. The
+        # Personal is a fixed single store, bypassing the chain entirely, and
+        # so is the repo-local fallback store: a single-store resolution with
+        # no inherited member, hence never a provenance annotation. The
         # workspace store resolves across the chain (shipd-wiki
         # wiki-store-layout): `index`/`queue` aggregate every chain store's
         # file nearest first; `log`/`schema` and a page slug resolve to the
         # nearest chain store that holds one, a member holding no store
         # skipped silently. `stores` is never empty for the workspace case —
-        # `_resolve_workspace` already raises when no chain exists at all.
+        # `_resolve_wiki_anchor` already raises when nothing resolves at all.
         if personal:
             stores = [_wiki_store(root, personal)]
             store_roots = [None]
             nearest_root = None
         else:
-            ws_root = _resolve_workspace(root)
-            chain_roots = sc.workspace_chain(root)
+            ws_root, is_fallback = _resolve_wiki_anchor(root)
+            chain_roots = [] if is_fallback else sc.workspace_chain(root)
             nearest_root = chain_roots[0] if chain_roots else ws_root
             existing = [(r, sc.wiki_dir(r)) for r in chain_roots
                         if os.path.isdir(sc.wiki_dir(r))]
@@ -2686,16 +2702,62 @@ def _resolve_workspace(root):
     return ws_root
 
 
+def _resolve_wiki_anchor(root):
+    """Return ``(anchor_root, is_fallback)`` naming the root whose store a
+    workspace-store wiki verb operates on, or raise a :class:`StatusError`
+    naming both missing prerequisites (spec-status wiki-status-verbs,
+    shipd-wiki wiki-store-layout).
+
+    Thin adapter over :func:`spec_common.resolve_wiki_root` — the one
+    resolution seam — so every wiki verb agrees on the store: the workspace
+    chain's nearest member when one exists, else the repo-local fallback store
+    at ``<root>/<content-dir>/wiki`` when the resolved content directory exists
+    on disk. When neither holds, the error names the missing workspace *and*
+    the missing content directory, since either one would make the verb
+    work."""
+    try:
+        resolved = sc.resolve_wiki_root(root)
+    except sc.ConfigError as exc:
+        raise StatusError(str(exc))
+    if resolved is None:
+        raise StatusError(
+            "no workspace found from %s and no content directory at %s "
+            "(a wiki store resolves through the nearest ancestor whose "
+            ".shipd-config.json declares `workspace`, else this repo's own "
+            "content directory — run `workspace-init` or `shipd init`)"
+            % (os.path.abspath(root), sc.specs_dir(root)))
+    return resolved
+
+
 def _wiki_store(root, personal):
     """Resolve the wiki store directory a verb operates on (spec-status
     wiki-status-verbs). When ``personal`` is set, resolve the personal memory
     store at ``<memory_dir>/wiki`` by fixed path (bypassing workspace
-    discovery); otherwise resolve the workspace store through workspace
-    discovery. This single branch point selects the store — the rest of each
-    verb is store-agnostic."""
+    discovery); otherwise resolve the workspace store through
+    :func:`_resolve_wiki_anchor` — the nearest workspace's store, or the
+    repo-local fallback store where no workspace is discoverable. This single
+    branch point selects the store — the rest of each verb is
+    store-agnostic."""
     if personal:
         return sc.memory_store_dir(root)
-    return sc.wiki_dir(_resolve_workspace(root))
+    return sc.wiki_dir(_resolve_wiki_anchor(root)[0])
+
+
+def _wiki_write_autocommit(anchor, is_fallback, wiki, paths, subject):
+    """Auto-commit a successful wiki write, returning True only when a commit
+    was made (shipd-wiki wiki-autocommit).
+
+    A workspace store (and the personal store, which passes ``is_fallback``
+    false) commits through :func:`spec_common.wiki_autocommit` against the
+    store directory itself. A repo-local fallback store routes through
+    :func:`spec_common.store_autocommit` instead: a no-op while the content
+    directory resolves in-repo — committing in-repo artifacts stays the
+    skill/PR workflow's job, never the engine's — and a commit exactly as a
+    workspace store's when ``store_root`` redirects the content directory into
+    an external store."""
+    if is_fallback:
+        return sc.store_autocommit(anchor, paths, subject)
+    return sc.wiki_autocommit(wiki, paths, subject)
 
 
 def read_initiative_status(path):
@@ -3158,15 +3220,26 @@ def cmd_wiki_show(root, personal=False):
     store does not exist. For the workspace store, the nearest workspace's
     store may be absent while an enclosing chain member's is not: in that case
     the nearest store is reported absent rather than erroring, and the verb
-    errors only when no chain member holds a store at all."""
-    wiki = _wiki_store(root, personal)
+    errors only when no chain member holds a store at all. Where no workspace
+    is discoverable at all and the repo's content directory exists, the store
+    is the repo-local fallback (shipd-wiki wiki-store-layout): its store line
+    carries a ``(repo-local fallback)`` marker, the chain is always ``none``,
+    and the ``base:`` line resolves from the root's own layered
+    configuration."""
+    if personal:
+        wiki = _wiki_store(root, personal)
+        anchor, is_fallback = None, False
+    else:
+        anchor, is_fallback = _resolve_wiki_anchor(root)
+        wiki = sc.wiki_dir(anchor)
+    marker = " (repo-local fallback)" if is_fallback else ""
     chain_stores = [] if personal else sc.resolve_wiki_stores(root)
     if not os.path.isdir(wiki):
         if personal or not chain_stores:
             raise StatusError("no wiki store at %s (run `wiki-init`)" % wiki)
-        print("wiki: %s (absent)" % wiki)
+        print("wiki: %s (absent)%s" % (wiki, marker))
     else:
-        print("wiki: %s" % wiki)
+        print("wiki: %s%s" % (wiki, marker))
 
     # The chain's remaining (inherited) stores, nearest first — every chain
     # store that is not this store itself (shipd-wiki wiki-store-layout). A
@@ -3182,13 +3255,14 @@ def cmd_wiki_show(root, personal=False):
     # The layered `wiki_base` store, if declared (shipd-config wiki-base-key). A
     # malformed value surfaces as a ConfigError → the verb's error exit.
     # `wiki_base_dir` itself treats a base resolving to any workspace-chain
-    # member's store directory as undeclared, so running inside the base
+    # member's store directory — or, under a fallback resolution, the fallback
+    # store's own directory — as undeclared, so running inside the base
     # workspace itself (or an enclosing one) never double-layers. The personal
     # store participates in no base layering, so it always reports `base: none`.
     if personal:
         print("base: none")
     else:
-        base = sc.wiki_base_dir(_resolve_workspace(root))
+        base = sc.wiki_base_dir(anchor)
         if base is None:
             print("base: none")
         elif os.path.isdir(base):
@@ -3273,7 +3347,7 @@ def cmd_wiki_queue_add(root, slug, question, options, recommendation, origin):
     erroring."""
     if not sc.KEBAB_RE.match(slug):
         raise StatusError("queue slug '%s' is not a kebab-case slug" % slug)
-    ws_root = _resolve_workspace(root)
+    ws_root, is_fallback = _resolve_wiki_anchor(root)
     wiki = sc.wiki_dir(ws_root)
     queue_path = os.path.join(wiki, "queue.md")
     if not os.path.isfile(queue_path):
@@ -3308,9 +3382,10 @@ def cmd_wiki_queue_add(root, slug, question, options, recommendation, origin):
             "queue would become invalid; nothing appended (%s)"
             % "; ".join(errors))
     # A successful append auto-commits queue.md when the store sits inside a git
-    # work tree (shipd-wiki wiki-autocommit); a no-op outside git, and a commit
-    # failure never fails the write.
-    sc.wiki_autocommit(wiki, [queue_path], "shipd-wiki: queue-add %s" % qid)
+    # work tree (shipd-wiki wiki-autocommit); a no-op outside git and for an
+    # in-repo fallback store, and a commit failure never fails the write.
+    _wiki_write_autocommit(ws_root, is_fallback, wiki, [queue_path],
+                           "shipd-wiki: queue-add %s" % qid)
     print(qid)
     return 0
 
@@ -3336,7 +3411,7 @@ def cmd_wiki_queue_answer(root, slug, answer, advisory=False):
         raise StatusError("--answer must not be empty")
     if advisory:
         answer = "advisory: %s" % answer
-    ws_root = _resolve_workspace(root)
+    ws_root, is_fallback = _resolve_wiki_anchor(root)
     wiki = sc.wiki_dir(ws_root)
     queue_path = os.path.join(wiki, "queue.md")
     if not os.path.isfile(queue_path):
@@ -3386,9 +3461,10 @@ def cmd_wiki_queue_answer(root, slug, answer, advisory=False):
             "queue would become invalid; nothing written (%s)"
             % "; ".join(errors))
     # A successful write auto-commits queue.md when the store sits inside a git
-    # work tree (shipd-wiki wiki-autocommit); a no-op outside git, and a commit
-    # failure never fails the write.
-    sc.wiki_autocommit(wiki, [queue_path], "shipd-wiki: queue-answer %s" % qid)
+    # work tree (shipd-wiki wiki-autocommit); a no-op outside git and for an
+    # in-repo fallback store, and a commit failure never fails the write.
+    _wiki_write_autocommit(ws_root, is_fallback, wiki, [queue_path],
+                           "shipd-wiki: queue-answer %s" % qid)
     print(qid)
     return 0
 
@@ -3409,7 +3485,7 @@ def cmd_wiki_queue_discard(root, slug, reason):
     reason = (reason or "").strip()
     if not reason:
         raise StatusError("--reason must not be empty")
-    ws_root = _resolve_workspace(root)
+    ws_root, is_fallback = _resolve_wiki_anchor(root)
     wiki = sc.wiki_dir(ws_root)
     queue_path = os.path.join(wiki, "queue.md")
     if not os.path.isfile(queue_path):
@@ -3459,9 +3535,10 @@ def cmd_wiki_queue_discard(root, slug, reason):
             "queue would become invalid; nothing discarded (%s)"
             % "; ".join(errors))
     # A successful discard auto-commits queue.md when the store sits inside a
-    # git work tree (shipd-wiki wiki-autocommit); a no-op outside git, and a
-    # commit failure never fails the write.
-    sc.wiki_autocommit(wiki, [queue_path], "shipd-wiki: queue-discard %s" % qid)
+    # git work tree (shipd-wiki wiki-autocommit); a no-op outside git and for an
+    # in-repo fallback store, and a commit failure never fails the write.
+    _wiki_write_autocommit(ws_root, is_fallback, wiki, [queue_path],
+                           "shipd-wiki: queue-discard %s" % qid)
     print("discarded %s: %s" % (qid, reason), file=sys.stderr)
     print(qid)
     return 0
@@ -3483,8 +3560,10 @@ def _remove_index_entry(index_text, slug):
 def cmd_wiki_remove(root, slug, personal=False):
     """Remove a wiki page from the store (spec-status wiki-remove-verb).
 
-    Resolves the workspace store by default, or the personal memory store under
-    ``personal``. Refuses a reserved slug (``index``/``log``/``queue``/
+    Resolves the store exactly as the other wiki verbs do: the nearest
+    workspace's store, the repo-local fallback store where no workspace is
+    discoverable but the content directory exists, or the personal memory store
+    under ``personal``. Refuses a reserved slug (``index``/``log``/``queue``/
     ``schema``/``sources``) and a missing ``wiki/<slug>.md`` up front, writing
     nothing. Otherwise backs up ``wiki/<slug>.md``, ``index.md``, and
     ``log.md``; deletes the page; drops the page's ``index.md`` catalog entry;
@@ -3492,8 +3571,14 @@ def cmd_wiki_remove(root, slug, personal=False):
     resulting store is validated with the whole-store wiki lint; on any finding
     the backed-up files are restored byte-for-byte and the verb exits non-zero
     naming the reason. On a clean removal the touched files auto-commit inside a
-    git work tree."""
-    wiki = _wiki_store(root, personal)
+    git work tree — except for an in-repo fallback store, where no commit is
+    attempted at all (shipd-wiki wiki-autocommit)."""
+    if personal:
+        wiki = _wiki_store(root, personal)
+        anchor, is_fallback = None, False
+    else:
+        anchor, is_fallback = _resolve_wiki_anchor(root)
+        wiki = sc.wiki_dir(anchor)
     if not os.path.isdir(wiki):
         raise StatusError("no wiki store at %s (run `wiki-init`)" % wiki)
     if slug in sc.WIKI_RESERVED_SLUGS:
@@ -3549,10 +3634,12 @@ def cmd_wiki_remove(root, slug, personal=False):
             % (slug, "; ".join(str(e) for e in errors)))
 
     # A clean removal auto-commits exactly the touched files when the store sits
-    # inside a git work tree (shipd-wiki wiki-autocommit); a no-op outside git, and
-    # a commit failure never fails the removal.
-    sc.wiki_autocommit(
-        wiki, [page_path, index_path, log_path], "shipd-wiki: remove %s" % slug)
+    # inside a git work tree (shipd-wiki wiki-autocommit); a no-op outside git
+    # and for an in-repo fallback store, and a commit failure never fails the
+    # removal.
+    _wiki_write_autocommit(
+        anchor, is_fallback, wiki, [page_path, index_path, log_path],
+        "shipd-wiki: remove %s" % slug)
     print(slug)
     return 0
 

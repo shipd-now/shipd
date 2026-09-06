@@ -739,6 +739,110 @@ class WikiEmitTest(SpecEmitTestBase):
         self.assertEqual(self._commit_count(), before)
 
 
+class WikiEmitFallbackTest(SpecEmitTestBase):
+    """The staged ``wiki`` emit into the repo-local fallback store (spec-io
+    wiki-emission, shipd-wiki wiki-store-layout): no ancestor declares a
+    workspace, the repo's content directory exists, so the install targets
+    ``<root>/.shipd/wiki`` with identical backup, lint, and restore semantics —
+    and, the content directory being in-repo, makes no commit."""
+
+    def wiki(self):
+        return os.path.join(self.root, ".shipd", "wiki")
+
+    def seed_store(self):
+        """A clean seeded fallback store: one page cataloged by a matching
+        index, under a content directory that makes the repo eligible."""
+        os.makedirs(os.path.join(self.wiki(), "sources"), exist_ok=True)
+        os.makedirs(os.path.join(self.wiki(), "wiki"), exist_ok=True)
+        for rel, text in (
+                ("schema.md", "# Wiki schema\n\nConventions.\n"),
+                ("index.md", "# Index\n\n- [[welcome]] — The welcome page.\n"),
+                ("log.md", "# Log\n\n## [2026-07-30] wiki-init | seeded the "
+                           "store\n\nInit.\n"),
+                ("queue.md", "# Queue\n"),
+                ("wiki/welcome.md", "# Welcome\n\nHello.\n")):
+            path = os.path.join(self.wiki(), rel)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+
+    def stage_wiki(self, files):
+        for rel, text in files.items():
+            path = os.path.join(self.stage, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+
+    def _snapshot(self):
+        snap = {}
+        for dirpath, _dirs, names in os.walk(self.wiki()):
+            for name in names:
+                path = os.path.join(dirpath, name)
+                with open(path, encoding="utf-8") as fh:
+                    snap[os.path.relpath(path, self.wiki())] = fh.read()
+        return snap
+
+    def _git(self, *args):
+        subprocess.run(["git", "-C", self.root, *args],
+                       capture_output=True, text=True, check=True)
+
+    def _init_git(self):
+        subprocess.run(["git", "init", "-q", self.root],
+                       capture_output=True, text=True, check=True)
+        self._git("config", "user.email", "test@example.com")
+        self._git("config", "user.name", "Test")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "baseline")
+
+    def _commit_count(self):
+        r = subprocess.run(
+            ["git", "-C", self.root, "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True, check=True)
+        return int(r.stdout.strip())
+
+    def test_installs_into_the_fallback_store_without_committing(self):
+        self.seed_store()
+        self._init_git()
+        before = self._commit_count()
+        self.stage_wiki({
+            "wiki/intro.md": "# Intro\n\nThe intro page.\n",
+            "index.md": ("# Index\n\n- [[welcome]] — The welcome page.\n"
+                         "- [[intro]] — Introduction.\n"),
+        })
+        r = self.cli("wiki", "--from", self.stage)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.wiki(), "wiki", "intro.md")))
+        # Committing in-repo artifacts stays the skill/PR workflow's job.
+        self.assertEqual(self._commit_count(), before)
+
+    def test_invalid_result_rolls_back_in_the_fallback_store(self):
+        self.seed_store()
+        before = self._snapshot()
+        self.stage_wiki({"wiki/orphan.md": "# Orphan\n\nSee [[ghost]].\n"})
+        r = self.cli("wiki", "--from", self.stage)
+        self.assertNotEqual(r.returncode, 0)
+        # The store resolved — the refusal is the lint's, not a missing one.
+        self.assertNotIn("no workspace", r.stderr.lower())
+        self.assertTrue(r.stdout + r.stderr)  # findings printed
+        self.assertEqual(self._snapshot(), before)  # byte-for-byte restore
+        self.assertFalse(os.path.exists(
+            os.path.join(self.wiki(), "wiki", "orphan.md")))
+
+    def test_uninitialized_root_names_both_prerequisites(self):
+        # Neither a workspace ancestor nor a content directory.
+        bare = os.path.join(self.root, "bare", "deeper")
+        os.makedirs(bare, exist_ok=True)
+        self.stage_wiki({"wiki/intro.md": "# Intro\n\nHi.\n"})
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        r = subprocess.run(
+            ["python3", SCRIPT, "--root", bare, "wiki", "--from", self.stage],
+            capture_output=True, text=True, env=env)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no workspace", r.stderr.lower())
+        self.assertIn(os.path.join(bare, ".shipd"), r.stderr)
+
+
 class ChangeInstallFlowHookTest(SpecEmitTestBase):
     """A change install appends a best-effort flow snapshot
     (delivery-metrics flow-timeseries)."""

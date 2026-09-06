@@ -179,6 +179,50 @@ class WikiRemoveGitTest(WikiRemoveTestBase):
         self.assertEqual(len(files), 3)
 
 
+class WikiRemoveFallbackTest(WikiRemoveTestBase):
+    """``wiki-remove`` on the repo-local fallback store (spec-status
+    wiki-remove-verb, shipd-wiki wiki-store-layout): no ancestor declares a
+    workspace, the repo's content directory exists, so the verb resolves
+    ``<root>/.shipd/wiki`` — and, the content directory being in-repo, makes no
+    commit (shipd-wiki wiki-autocommit)."""
+
+    def git(self, *args):
+        return subprocess.run(
+            ["git", "-C", self.root, *args], capture_output=True, text=True)
+
+    def seed(self):
+        """A git-initialized bare repo: a content directory, no workspace."""
+        os.makedirs(os.path.join(self.root, ".shipd"), exist_ok=True)
+        self.assertEqual(self.git("init").returncode, 0)
+        self.git("config", "user.email", "t@example.com")
+        self.git("config", "user.name", "Test")
+        self.assertEqual(self.cli("wiki-init").returncode, 0)
+        store = self.wiki()
+        self.write_page(store, "some-page", "# Some Page\n\nBody.\n")
+        self.write_file(
+            store, "index.md", "# Index\n\n- [[some-page]] — A page.\n")
+        self.git("add", "-A")
+        self.git("commit", "-m", "seed store")
+        return store
+
+    def commit_count(self):
+        return int(self.git("rev-list", "--count", "HEAD").stdout.strip())
+
+    def test_fallback_removal_updates_page_index_and_log_without_committing(self):
+        store = self.seed()
+        before = self.commit_count()
+        r = self.cli("wiki-remove", "some-page")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(
+            os.path.exists(os.path.join(store, "wiki", "some-page.md")))
+        self.assertNotIn("some-page", self.read_file(store, "index.md"))
+        self.assertRegex(
+            self.read_file(store, "log.md"),
+            r"##\s+\[\d{4}-\d{2}-\d{2}\]\s+remove\s+\|\s+some-page")
+        # Committing in-repo artifacts stays the skill/PR workflow's job.
+        self.assertEqual(self.commit_count(), before)
+
+
 class WikiRemovePersonalTest(WikiRemoveTestBase):
     """``wiki-remove --personal`` targets the personal memory store and leaves
     the workspace store untouched."""

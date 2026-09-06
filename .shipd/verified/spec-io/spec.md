@@ -206,7 +206,7 @@ path from naming convention in either direction.
 - **THEN** the brief reaches the workspace via `spec_emit.py initiative`,
   and the skill never writes to a workspace path it composed itself
 
-### Requirement: Staged wiki emission
+### Requirement: Wiki emission
 id: wiki-emission
 
 The emit engine SHALL provide a `wiki` subcommand installing a staged store
@@ -217,11 +217,17 @@ top-level files), validate the resulting whole store with the wiki lint, and
 if any finding is reported, then it SHALL restore the backup and exit non-zero
 so an invalid store state never lands. If a staged `sources/` file already
 exists in the store, then the emission SHALL be refused before any install
-(sources are immutable). The `wiki` subcommand SHALL accept a `--personal` flag:
-when set, it SHALL install into the personal memory store at `<memory_dir>/wiki`
-(default `~/.shipd-memory/wiki`), resolved by fixed path and bypassing workspace
-discovery, instead of the workspace store, with the identical backup, lint, and
-restore semantics.
+(sources are immutable). Where no workspace is discoverable and the root's
+resolved content directory exists, the `wiki` subcommand SHALL install into
+the repo-local fallback store at `<root>/<content-dir>/wiki` with identical
+backup, lint, and restore semantics, and SHALL NOT auto-commit when that
+store resolves inside the repo itself (no `store_root` declared); where
+neither a workspace nor a content directory exists, it SHALL exit non-zero
+naming both missing prerequisites. The `wiki` subcommand SHALL accept a
+`--personal` flag: when set, it SHALL install into the personal memory store
+at `<memory_dir>/wiki` (default `~/.shipd-memory/wiki`), resolved by fixed
+path and bypassing workspace discovery, instead of the workspace store, with
+the identical backup, lint, and restore semantics.
 
 #### Scenario: Page install with index update
 - **WHEN** `spec_emit.py wiki --from <staging>` stages a new page and an
@@ -239,6 +245,18 @@ restore semantics.
   `sources/notes.md`
 - **THEN** nothing is installed and the command exits non-zero citing source
   immutability
+
+#### Scenario: Fallback install in a bare repo
+- **GIVEN** a repo with a content directory and no discoverable workspace
+- **WHEN** `spec_emit.py wiki --from <staging>` runs
+- **THEN** the staged set installs into `<root>/<content-dir>/wiki` with the
+  same lint and rollback guarantees, and no commit is made
+
+#### Scenario: Uninitialized root refused
+- **WHEN** `spec_emit.py wiki --from <staging>` runs where no workspace is
+  discoverable and no content directory exists
+- **THEN** nothing installs and the error names the missing workspace and
+  the missing content directory
 
 #### Scenario: Personal flag installs into the memory store
 - **WHEN** `spec_emit.py wiki --from <staging> --personal` runs
