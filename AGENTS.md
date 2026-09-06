@@ -98,6 +98,19 @@ run in a fresh `epic-close-<slug>` worktree — created with
 close-out branch — and ship as a PR, never from the main checkout, whose
 uncommitted epic-file edit a protected-main workflow cannot ship.
 
+**Amending a live epic** follows the same shape, and is never a free edit of
+the epic file: run `/s:epic <slug> amend`, which works in a fresh
+`epic-amend-<slug>` worktree (`shipd worktree epic-amend-<slug> --fresh`),
+changes only `## Decisions` and the shelf sections (`## References`,
+`## Research`, `## Video`) with every new or extended Decision carrying a dated
+`*(amended YYYY-MM-DD: <note>)*` stamp, and ships as a PR. Two gates run before
+the push: the linter's single-epic mode and
+`plugins/s/skills/build/scripts/spec_status.py epic-amend-check <slug>`, which
+exits `4` naming every protected region — the header metadata,
+`## Introduction`, `## Design`, `## Changes`, the token breakdown — that the
+amendment changed against `main`. A draft epic is not amended at all; it is
+edited in its authoring worktree.
+
 **Conventions live here (or in the specs), never only in an assistant's private
 memory** — a durable rule is checked into this file or the spec library so
 every session inherits it.

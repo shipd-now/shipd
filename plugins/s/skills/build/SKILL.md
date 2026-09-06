@@ -401,10 +401,11 @@ A sub-agent that hits missing context returns a message starting with `QUESTION:
      spec artifacts first**, re-lint, then answer.
    - **Binding, epic scope** — it binds every member change, so its home is the
      epic's `## Decisions`. Surface it to the user for the epic's amendment
-     discipline (a fresh `epic-amend-<slug>` worktree, the amended Decision
-     stamped with a dated provenance line, re-linted, shipped as a pull
-     request). Never edit a live epic file in passing, and never stall the
-     build waiting on that amendment.
+     discipline, whose entry point is `/s:epic <slug> amend` (a fresh
+     `epic-amend-<slug>` worktree, the amended Decision stamped with a dated
+     provenance line, guarded by `spec_status.py epic-amend-check <slug>` and
+     the linter, shipped as a pull request). Never edit a live epic file in
+     passing, and never stall the build waiting on that amendment.
    - **Reference** — consulted rather than obeyed: a pasted memo, meeting
      notes, an API excerpt. Install it through the emit engine
      (`spec_emit.py docs <slug> --from <file>`) and link it from the epic's

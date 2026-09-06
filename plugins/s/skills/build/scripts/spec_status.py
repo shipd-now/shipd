@@ -60,6 +60,15 @@ Verbs (see the spec-status + statusline capabilities for the contract):
   epic-set-status <status> <slug>
                      write a validated epic status (draft/ready/active/
                      complete); `ready` is refused unless the epic lints clean
+  epic-amend-check <slug> [--base <ref>]
+                     compare the working tree's epic against its content at the
+                     merge-base of HEAD and the base ref (default `main`),
+                     read-only: `## Decisions` and the shelf sections
+                     (`## References`, `## Research`, `## Video`) are amendable,
+                     every other region protected, printing one
+                     `protected-section <name>` line per changed protected
+                     region (`header` for the pre-section block) plus a summary;
+                     exit 0 clean, 4 on findings
   pipeline-show [--expand PRESET] [--json]
                      print the effective autonomous pipeline: one line per
                      resolved entry (form, bindings with fallbacks, declared
@@ -135,7 +144,8 @@ spec_lint.
 
 Exit codes: 0 success, 1 error (unknown change/status, missing plan, no
 selection), 2 usage, 3 refusal (a guard blocked a ``set-status`` transition),
-4 check-base findings (the supersession gate tripped — distinct from a crash).
+4 findings (the supersession gate or the epic amendment gate tripped —
+distinct from a crash).
 """
 
 import argparse
@@ -144,6 +154,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -2139,6 +2150,141 @@ def cmd_epic_set_initiative(root, slug, initiative):
     return 0
 
 
+# ---------------------------------------------------------------------------
+# The epic amendment gate (spec-status epic-amend-check-verb)
+# ---------------------------------------------------------------------------
+#
+# A live epic accretes: a mid-delivery Decision and the shelf of consulted
+# material may be amended in, while the epic's *settled* substance — what it is
+# for, how it is built, and which members deliver it — may not drift under an
+# in-flight change. This verb draws exactly that line, comparing the working
+# tree's epic against its content at the merge-base of ``HEAD`` and the base
+# ref, so unrelated motion on the base branch after the amendment worktree was
+# cut never yields a false finding.
+
+# The shelf family an amendment may rewrite freely.
+AMENDABLE_SECTIONS = (
+    "## Decisions", "## References", "## Research", "## Video")
+
+# The reported name of the pre-section block (title plus metadata lines).
+HEADER_REGION = "header"
+
+# The base ref an amendment is measured against when none is given.
+DEFAULT_AMEND_BASE = "main"
+
+
+def _git_capture(root, *args):
+    """Run a local ``git`` command under ``root`` and return its stdout.
+
+    Raises :class:`StatusError` carrying git's own first error line when git is
+    absent or the command fails, so an unresolvable ref or a non-repository
+    root surfaces as the CLI's ordinary error exit rather than a traceback.
+    Local git only — never the network."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", root, *args], capture_output=True, text=True)
+    except OSError as exc:
+        raise StatusError("git is not available (%s)" % exc)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        raise StatusError(
+            "git %s failed: %s"
+            % (" ".join(args), detail[0] if detail else "no output"))
+    return result.stdout
+
+
+def _split_epic_regions(text):
+    """Split an epic body into ``{region: body}``: the pre-section header block
+    under :data:`HEADER_REGION`, plus one entry per level-2 section keyed by its
+    full ``## <name>`` heading.
+
+    Splitting uses ``spec_common.SECTION_HEADER_RE``, which matches level-2
+    headings only, so a ``### Non-goals`` subsection travels inside its parent
+    ``## Introduction`` rather than becoming a region of its own. A repeated
+    heading's bodies are concatenated, so a duplicated section can never hide a
+    change in one of its copies. Bodies are stripped of leading and trailing
+    blank lines, so re-spacing around a heading is not itself a change."""
+    regions = {HEADER_REGION: []}
+    current = HEADER_REGION
+    for line in text.splitlines():
+        m = sc.SECTION_HEADER_RE.match(line)
+        if m:
+            current = "## %s" % m.group(1).strip()
+            regions.setdefault(current, [])
+            continue
+        regions[current].append(line)
+    return {name: "\n".join(body).strip("\n")
+            for name, body in regions.items()}
+
+
+def _epic_amend_findings(base_text, work_text):
+    """The names of the protected regions differing between the two epic
+    versions — in the base version's own order, then any protected region the
+    working tree adds.
+
+    Everything outside :data:`AMENDABLE_SECTIONS` is protected, including a
+    section unknown to the epic layout: an unrecognized heading is compared
+    like any other, so it can be neither introduced nor dropped silently. A
+    protected section present in one version and absent from the other differs
+    from ``None`` and is therefore reported."""
+    base = _split_epic_regions(base_text)
+    work = _split_epic_regions(work_text)
+    names = list(base) + [n for n in work if n not in base]
+    return [name for name in names
+            if name not in AMENDABLE_SECTIONS
+            and base.get(name) != work.get(name)]
+
+
+def cmd_epic_amend_check(root, slug, base=DEFAULT_AMEND_BASE):
+    """Compare the working tree's ``epics/<slug>/epic.md`` against its content
+    at the merge-base of ``HEAD`` and ``base`` (spec-status
+    epic-amend-check-verb), strictly read-only.
+
+    The base version is read through git alone — ``merge-base HEAD <base>``,
+    then ``show <sha>:<relpath>`` with the path taken relative to
+    ``rev-parse --show-toplevel`` — so the check works identically from the
+    main checkout and from a linked amendment worktree.
+
+    Prints one ``protected-section <name>`` line per changed protected region
+    (``header`` for the pre-section block) then a summary; exits 0 with a clean
+    summary when only the amendable shelf changed and 4 when at least one
+    finding exists. A comparison that cannot be made at all — no epic in the
+    work tree, no epic at the merge-base, an unresolvable base ref, a root
+    outside any git work tree — is the CLI's ordinary error (1), deliberately
+    distinct from the findings exit. Never writes."""
+    path = _epic_path(root, slug)
+    if not os.path.isfile(path):
+        raise StatusError("epic '%s' not found (%s)" % (slug, path))
+    with open(path, encoding="utf-8") as fh:
+        work_text = fh.read()
+
+    toplevel = _git_capture(root, "rev-parse", "--show-toplevel").strip()
+    if not toplevel:
+        raise StatusError("'%s' is not inside a git work tree" % root)
+    merge_base = _git_capture(root, "merge-base", "HEAD", base).strip()
+    # git reports the top level with every symlink resolved (on macOS, /var vs
+    # /private/var), so both sides are realpath'd before the relative path
+    # git's object lookup needs is derived.
+    relpath = os.path.relpath(
+        os.path.realpath(path), os.path.realpath(toplevel))
+    try:
+        base_text = _git_capture(
+            root, "show", "%s:%s" % (merge_base, relpath))
+    except StatusError:
+        raise StatusError(
+            "epic '%s' does not exist at the base (%s in %s) — an amendment "
+            "is measured against a live epic" % (slug, relpath, merge_base))
+
+    findings = _epic_amend_findings(base_text, work_text)
+    for name in findings:
+        print("protected-section %s" % name)
+    if findings:
+        print("epic-amend-check: %d finding(s)." % len(findings))
+        return 4
+    print("epic-amend-check: clean (no findings).")
+    return 0
+
+
 def cmd_config_show(root):
     """Print the resolved layered configuration: each effective top-level key
     with the path of the layer that supplied it (or ``default``), the resolved
@@ -3507,6 +3653,16 @@ def main(argv=None):
         "epic-sync", help="re-derive an epic's status from member states")
     p_epic_sync.add_argument("slug")
 
+    p_epic_amend = sub.add_parser(
+        "epic-amend-check",
+        help="compare an epic against its merge-base version, reporting the "
+             "protected sections an amendment changed (read-only)")
+    p_epic_amend.add_argument("slug")
+    p_epic_amend.add_argument(
+        "--base", default=DEFAULT_AMEND_BASE, metavar="REF",
+        help="the base ref to measure the amendment against (default: %s)"
+             % DEFAULT_AMEND_BASE)
+
     p_epic_set = sub.add_parser(
         "epic-set-status",
         help="write a validated epic status (ready guarded by lint)")
@@ -3693,6 +3849,8 @@ def main(argv=None):
             return cmd_epic_show(root, args.slug, as_json=args.json)
         if args.verb == "epic-sync":
             return cmd_epic_sync(root, args.slug)
+        if args.verb == "epic-amend-check":
+            return cmd_epic_amend_check(root, args.slug, args.base)
         if args.verb == "epic-set-status":
             return cmd_epic_set_status(root, args.status, args.slug)
         if args.verb == "epic-set-initiative":
