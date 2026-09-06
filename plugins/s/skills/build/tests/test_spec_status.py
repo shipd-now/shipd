@@ -5168,6 +5168,213 @@ class CheckBaseTest(SpecStatusTestBase):
         self.assertEqual(before, after)
 
 
+class EpicAmendCheckTest(SpecStatusTestBase):
+    """`epic-amend-check <slug> [--base <ref>]` compares the working tree's
+    epic against its content at the merge-base of ``HEAD`` and the base ref
+    (spec-status epic-amend-check-verb): read-only, one
+    ``protected-section <name>`` finding line per changed protected region
+    plus a summary, exit 0 clean / 4 on findings, and a non-zero *error* —
+    never 4 — when the comparison cannot be made at all."""
+
+    SLUG = "e1"
+
+    # -- git fixtures ------------------------------------------------------
+
+    def _git(self, *args):
+        """Run a local git command against the temp repo, asserting success.
+        Never touches the network — init/config/commit/branch only."""
+        subprocess.run(["git", *args], capture_output=True, text=True,
+                       check=True)
+
+    def _init_repo(self, root):
+        """git init at ``root`` on ``main`` with an in-repo identity so commits
+        succeed under the suite's isolated $HOME (mirrors ``_init_repo`` in
+        test_spec_common.py)."""
+        self._git("init", "-q", root)
+        self._git("-C", root, "symbolic-ref", "HEAD", "refs/heads/main")
+        self._git("-C", root, "config", "user.email", "test@example.com")
+        self._git("-C", root, "config", "user.name", "Test")
+        self._git("-C", root, "config", "commit.gpgsign", "false")
+
+    def _commit_all(self, subject):
+        self._git("-C", self.root, "add", "-A")
+        self._git("-C", self.root, "commit", "-q", "-m", subject)
+
+    # -- epic fixtures -----------------------------------------------------
+
+    def epic_text(self, status="active", intro="Why it matters.",
+                  decisions="- Ship the exporter behind the report seam.",
+                  design="A CSV writer behind the report seam.",
+                  references="- [Note](../../docs/note.md)",
+                  row="| csv-export | Export as CSV | low | low | low | low |",
+                  drop_design=False):
+        """A lint-shaped epic body whose every region is independently
+        overridable, so one test can vary exactly one region."""
+        parts = [
+            "# %s" % self.SLUG,
+            "Status: %s" % status,
+            "Theme: exports",
+            "",
+            "## Introduction",
+            "",
+            intro,
+            "",
+            "### Non-goals",
+            "",
+            "- Not that.",
+            "",
+            "## Decisions",
+            "",
+            decisions,
+            "",
+        ]
+        if not drop_design:
+            parts += ["## Design", "", design, ""]
+        parts += [
+            "## Changes",
+            "",
+            "| Change | Description | Code | Integration | Unknowns | Risk |",
+            "| --- | --- | --- | --- | --- | --- |",
+            row,
+            "",
+            "## References",
+            "",
+            references,
+            "",
+        ]
+        return "\n".join(parts)
+
+    def write_epic(self, text):
+        edir = os.path.join(self.root, ".shipd", "epics", self.SLUG)
+        os.makedirs(edir, exist_ok=True)
+        with open(os.path.join(edir, "epic.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def write_docs(self):
+        """A docs file so the epic's `## References` links resolve."""
+        ddir = os.path.join(self.root, ".shipd", "docs")
+        os.makedirs(ddir, exist_ok=True)
+        with open(os.path.join(ddir, "note.md"), "w", encoding="utf-8") as fh:
+            fh.write("# Note\n\nA consulted document.\n")
+
+    def seed_base(self, commit_epic=True):
+        """Commit the baseline epic (and its docs file) on ``main``, then cut
+        the amendment branch. With ``commit_epic=False`` only the docs file is
+        committed, so the epic exists on the branch alone."""
+        self._init_repo(self.root)
+        self.write_docs()
+        if commit_epic:
+            self.write_epic(self.epic_text())
+        self._commit_all("baseline")
+        self._git("-C", self.root, "checkout", "-q", "-b", "amend")
+
+    def snapshot_tree(self):
+        """A {path: bytes} snapshot of every tracked-tree file (``.git``
+        excluded) so a test can assert the verb wrote nothing."""
+        snap = {}
+        for dirpath, dirs, files in os.walk(self.root):
+            dirs[:] = [d for d in dirs if d != ".git"]
+            for name in files:
+                p = os.path.join(dirpath, name)
+                with open(p, "rb") as fh:
+                    snap[p] = fh.read()
+        return snap
+
+    def findings(self, out):
+        return [ln for ln in out.splitlines()
+                if ln.startswith("protected-section ")]
+
+    # -- amendable regions -------------------------------------------------
+
+    def test_amendable_edit_passes(self):
+        """A stamped Decisions bullet plus a References entry is clean."""
+        self.seed_base()
+        self.write_epic(self.epic_text(
+            decisions=("- Ship the exporter behind the report seam.\n"
+                       "- Stream rows rather than buffering "
+                       "*(amended 2026-09-06: memory ceiling)*"),
+            references=("- [Note](../../docs/note.md)\n"
+                        "- [Second](../../docs/second.md)")))
+        r = self.cli("epic-amend-check", self.SLUG)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.findings(r.stdout), [])
+        self.assertIn("clean", r.stdout)
+
+    # -- protected regions -------------------------------------------------
+
+    def test_introduction_and_changes_edits_are_findings(self):
+        self.seed_base()
+        self.write_epic(self.epic_text(
+            intro="Why it matters, restated.",
+            row="| csv-export | Export as TSV | low | low | low | high |"))
+        r = self.cli("epic-amend-check", self.SLUG)
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertIn("protected-section ## Introduction", r.stdout)
+        self.assertIn("protected-section ## Changes", r.stdout)
+
+    def test_changes_row_edit_is_a_finding(self):
+        self.seed_base()
+        self.write_epic(self.epic_text(
+            row="| csv-export | Export as CSV | high | low | low | low |"))
+        r = self.cli("epic-amend-check", self.SLUG)
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertEqual(self.findings(r.stdout),
+                         ["protected-section ## Changes"])
+
+    def test_header_metadata_edit_is_a_finding(self):
+        """The pre-section header block reports as ``header``."""
+        self.seed_base()
+        self.write_epic(self.epic_text(status="complete"))
+        r = self.cli("epic-amend-check", self.SLUG)
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertEqual(self.findings(r.stdout),
+                         ["protected-section header"])
+
+    def test_removed_protected_section_is_a_finding(self):
+        self.seed_base()
+        self.write_epic(self.epic_text(drop_design=True))
+        r = self.cli("epic-amend-check", self.SLUG)
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertEqual(self.findings(r.stdout),
+                         ["protected-section ## Design"])
+
+    # -- errors, distinct from findings ------------------------------------
+
+    def test_epic_absent_at_the_base_errors(self):
+        self.seed_base(commit_epic=False)
+        self.write_epic(self.epic_text())
+        r = self.cli("epic-amend-check", self.SLUG)
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertNotEqual(r.returncode, 4, r.stdout)
+        self.assertIn("Error:", r.stderr)
+
+    def test_unresolvable_base_ref_errors(self):
+        self.seed_base()
+        r = self.cli("epic-amend-check", self.SLUG, "--base", "no-such-ref")
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertNotEqual(r.returncode, 4, r.stdout)
+        self.assertIn("Error:", r.stderr)
+
+    def test_missing_epic_errors(self):
+        self.seed_base(commit_epic=False)
+        r = self.cli("epic-amend-check", self.SLUG)
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertNotEqual(r.returncode, 4, r.stdout)
+        self.assertIn("Error:", r.stderr)
+
+    # -- read-only ---------------------------------------------------------
+
+    def test_verb_never_writes(self):
+        self.seed_base()
+        self.write_epic(self.epic_text(
+            status="complete", intro="Restated.", drop_design=True,
+            decisions="- Amended *(amended 2026-09-06: note)*"))
+        before = self.snapshot_tree()
+        r = self.cli("epic-amend-check", self.SLUG)
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertEqual(self.snapshot_tree(), before)
+
+
 class FlowHookTest(SpecStatusTestBase):
     """A status write appends a best-effort full-band flow snapshot
     (delivery-metrics flow-timeseries)."""

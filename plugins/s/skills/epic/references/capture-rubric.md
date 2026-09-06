@@ -31,11 +31,13 @@ stay rejected. Its home is decided by **scope**.
   so the spec stays the single source of truth.
 - **Epic scope** — it binds every member change, so it belongs in the epic's
   `## Decisions`. A live epic's Decisions change **only** through the
-  sanctioned amendment discipline, never a free edit of the epic file:
-  a fresh worktree (`shipd worktree epic-amend-<slug> --fresh`), the amended
-  Decision stamped with a dated provenance line, the epic re-linted, and the
-  edit shipped as an auto-merging pull request — the same discipline an epic
-  status derivation ships under. A skill that meets epic-scope binding
+  sanctioned amendment discipline, whose entry point is `/s:epic <slug> amend`,
+  never a free edit of the epic file: a fresh worktree
+  (`shipd worktree epic-amend-<slug> --fresh`), the amended Decision stamped
+  with a dated provenance line, the epic re-linted and guarded by
+  `spec_status.py epic-amend-check <slug>`, and the edit shipped as an
+  auto-merging pull request — the same discipline an epic status derivation
+  ships under. A skill that meets epic-scope binding
   information mid-flow surfaces it to the user for that amendment; it does
   not edit the epic in passing.
 - **During epic authoring** the epic does not exist yet, so there is nothing

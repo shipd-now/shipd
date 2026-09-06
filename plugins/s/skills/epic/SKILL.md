@@ -4,10 +4,14 @@ description: >-
   Decompose a feature into an epic: investigate the codebase first, ask the user
   only what can't be inferred (one batched round), record the epic's Decisions
   and Design, and emit the stub table of member changes with complexity ratings
-  — then stop. Member changes are planned later, one at a time, via /s:plan. Use
-  when asked to "create an epic", "decompose a feature", "group changes", or plan
-  a multi-change initiative before spec'ing the individual changes. Trigger
-  phrases: "epic", "create an epic", "decompose", "/s:epic".
+  — then stop. Member changes are planned later, one at a time, via /s:plan.
+  Invoked as `/s:epic <slug> amend`, runs the amendment flow on a live epic
+  instead: a fresh `epic-amend-<slug>` worktree, stamped Decisions and shelf
+  edits only, gated by the linter and `epic-amend-check`, shipped as a PR. Use
+  when asked to "create an epic", "decompose a feature", "group changes", "amend
+  an epic", or plan a multi-change initiative before spec'ing the individual
+  changes. Trigger phrases: "epic", "create an epic", "decompose", "amend the
+  epic", "/s:epic".
 ---
 
 # /s:epic — Convergent epic authoring → stub-table emission
@@ -39,6 +43,88 @@ Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
   (drives the epic's lifecycle status; used to promote to `ready` at approval)
 
 ---
+
+## Amend mode (live-epic amendment)
+
+**When the invocation is `<slug> amend`, run this mode instead of the authoring
+flow — before investigating, before any question round, before anything.** The
+epic already exists; nothing below the Codebase-first rule runs, and no epic is
+emitted through staging.
+
+A live epic accretes but does not drift. Only the **amendable** regions may
+change: the `## Decisions` section and the shelf sections `## References`, plus
+a pre-existing `## Research` or `## Video` extended in place. `## Introduction`,
+`## Design`, the `## Changes` stub table, and the header metadata are
+**protected** — an amendment that needs one of those is a re-decomposition, not
+an amendment; say so and stop.
+
+1. **Resolve the epic and refuse a draft.** Read it through the engine:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" --root <repo-root> cat epic <slug>
+   ```
+
+   A slug that resolves to no epic → report that and stop. An epic at
+   `Status: draft` → **refuse the amendment**: a draft is still being authored,
+   so it is edited in its own `epic-<slug>` authoring worktree, not amended.
+   Say that and stop.
+
+2. **Work in a fresh worktree.** Create it and make every edit inside it, so the
+   amendment is born on `change/epic-amend-<slug>` and ships in one PR:
+
+   ```
+   "${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree epic-amend-<slug> --fresh
+   ```
+
+   `--fresh` is not optional: it guarantees the worktree is cut from the root
+   checkout's HEAD rather than adopting a stale amendment branch.
+
+3. **Classify the amendment's substance** against the capture rubric
+   (`references/capture-rubric.md`) before writing anything, and route it:
+   - **Binding on every member** → one new (or extended) `## Decisions` bullet.
+   - **Reference** → install it through the emit engine
+     (`spec_emit.py docs <slug> --from <file>`) and link it from
+     `## References`. **Never paste a document's content into `## Decisions`.**
+   - **Durable** → it outlives the epic: hand it to `/s:teach` for the wiki, and
+     amend nothing here.
+   - **Noise** → dropped, deliberately.
+
+   An item that is not epic-scope binding does not belong in this epic's
+   Decisions, however true it is.
+
+4. **Stamp every Decision you touch.** Each new or extended Decision bullet
+   carries a dated provenance marker:
+
+   ```
+   *(amended YYYY-MM-DD: <one-line note>)*
+   ```
+
+   using today's real date. **Existing Decision text is never rewritten or
+   deleted** — a superseded decision is recorded as a stamped addition beneath
+   the original, so the epic keeps its own history.
+
+5. **Pass both gates before shipping.** The linter, then the amendment gate:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_lint.py" --epic <slug> --root <repo-root>
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" --root <repo-root> epic-amend-check <slug>
+   ```
+
+   `epic-amend-check` compares the worktree's epic against its content at the
+   merge-base of `HEAD` and `main` (override with `--base <ref>`) and exits `4`
+   printing one `protected-section <name>` line per changed protected region
+   (`header` for the title-and-metadata block). **A finding stops the flow:**
+   revert that region to its base content and re-run — never push past it. A
+   non-zero exit that is not `4` is an error (no epic at the base, an
+   unresolvable ref, no git work tree); report it and stop.
+
+6. **Ship it as a PR**, per the repository's workflow — commit the epic edit on
+   `change/epic-amend-<slug>`, push, `gh pr create`, post the semantic-review
+   gate, and let it auto-merge. Report the PR with its **full clickable URL**.
+   Never edit a live epic on `main` and never push directly.
+
+7. **Summarize and stop** — what was amended, its tier, and the PR URL. Amend
+   mode plans no member change and re-decomposes nothing.
 
 ## Codebase-first rule (non-negotiable)
 

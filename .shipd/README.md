@@ -834,6 +834,42 @@ An epic's status is derived from its members, not from a task checklist:
 `complete`; any member started → `active`; otherwise `ready`. `epic-show <slug>`
 prints the epic's status, metadata, and one line per member with its state.
 
+### Amending a live epic
+
+An epic that has left `draft` still accretes: a binding decision surfaced
+mid-delivery belongs in the epic, and consulted material belongs on its shelf.
+That accretion runs through the **amendment discipline**, never a free edit of
+the epic file.
+
+Only the **amendable** regions may change: the `## Decisions` section and the
+shelf sections `## References`, `## Research`, and `## Video`. Everything else
+is **protected** — the pre-section header block (title, `Status:`, `Theme:`,
+`Initiative:`), `## Introduction` (its subsections included), `## Design`, the
+`## Changes` stub table, the machine-owned `## Token usage breakdown`, and any
+unrecognized level-2 section. Existing Decision text is never rewritten or
+deleted; a superseded decision is recorded as an addition beneath the original,
+and every new or extended Decision bullet carries a dated provenance stamp,
+`*(amended YYYY-MM-DD: <one-line note>)*`.
+
+The amendment is made in a **fresh `epic-amend-<slug>` worktree** (created with
+`shipd worktree epic-amend-<slug> --fresh`) and ships as a pull request, exactly
+as an `epic-close-<slug>` derivation does. Before shipping, the amendment passes
+two gates: the linter's single-epic mode (`spec_lint.py --epic <slug>`) and
+
+```
+spec_status.py epic-amend-check <slug> [--base <ref>]
+```
+
+which compares the working tree's `epic.md` against its content at the
+merge-base of `HEAD` and the base ref (default `main`), printing one
+`protected-section <name>` line per changed protected region (`header` for the
+pre-section block) plus a summary. It exits 0 when only amendable regions
+changed, 4 when it has findings, and non-zero-but-not-4 when the comparison
+cannot be made at all (no epic in the work tree, no epic at the merge-base, an
+unresolvable base ref, a root outside any git work tree). The verb is read-only
+and never enforces the stamp grammar — that is the flow's discipline, not the
+verb's. `/s:epic <slug> amend` runs the whole flow.
+
 ### Membership and slug uniqueness
 
 When a change plan carries `Epic: <slug>`, the linter resolves it: a reference to

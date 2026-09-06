@@ -7,6 +7,23 @@ them. You emit the epic and stop — you never plan or build its members.
 
 <!-- include:preamble -->
 
+## 0. Amend mode — invoked as `<slug> amend`
+
+The epic exists already: run this instead of everything below. Read it
+(`python3 "$S/spec_status.py" cat epic <slug>`) and refuse a `Status: draft`
+epic — a draft is edited in its authoring worktree. Otherwise work in
+`shipd worktree epic-amend-<slug> --fresh`, touching only `## Decisions` and the
+shelf (`## References`, or a pre-existing `## Research`/`## Video`). Classify
+against the capture rubric first — epic-binding → a Decisions bullet; reference
+→ the docs kind, linked never pasted; durable → the wiki; noise → dropped — then
+stamp each new or extended Decision `*(amended YYYY-MM-DD: <note>)*`, never
+rewriting or deleting existing Decision text.
+
+Gate on `spec_lint.py --epic <slug>`, then `spec_status.py epic-amend-check
+<slug>`, which exits `4` printing a `protected-section <name>` line per
+protected region the amendment changed; a finding stops the flow. Ship on
+`change/epic-amend-<slug>` as an auto-merging PR, report the full URL, and stop.
+
 ## 1. Work in the epic's own worktree
 
 Create it from the repo root (`shipd worktree epic-<slug>`) and work inside

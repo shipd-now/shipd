@@ -72,3 +72,33 @@ decomposition follows.
   within the table and, by convention, repo-unique — it should not collide with
   an existing or archived change. Each of `Code`, `Integration`, `Unknowns`,
   and `Risk` is `low`, `medium`, or `high`.
+
+## The amend contract — what `<slug> amend` may change
+
+A live epic (anything past `draft`) accretes only through the amendment
+discipline: a fresh `epic-amend-<slug>` worktree, gated edits, a pull request.
+A `draft` epic is not amended at all — it is edited in its authoring worktree.
+
+- **Amendable.** `## Decisions`, and the shelf sections `## References`,
+  `## Research`, and `## Video`. Reference material is installed through the
+  `docs` kind and linked from `## References`; its content is never pasted into
+  `## Decisions`.
+- **Protected.** Everything else: the pre-section header block (title,
+  `Status:`, `Theme:`, `Initiative:`), `## Introduction` and its subsections,
+  `## Design`, the `## Changes` stub table, the machine-owned
+  `## Token usage breakdown`, and any unrecognized level-2 section. An
+  amendment that needs one of these is a re-decomposition, not an amendment.
+- **Stamp grammar.** Every new or extended Decision bullet carries
+  `*(amended YYYY-MM-DD: <one-line note>)*` with the real current date.
+  Existing Decision text is never rewritten or deleted; a superseded decision
+  is recorded as a stamped addition beneath the original. The grammar is the
+  flow's discipline — no verb enforces it.
+- **The two gates**, both from the amendment worktree, both before pushing:
+  `spec_lint.py --epic <slug>` (exit `0`, prints `OK`), then
+  `spec_status.py epic-amend-check <slug> [--base <ref>]`, which compares the
+  epic against its content at the merge-base of `HEAD` and the base ref
+  (default `main`). It prints one `protected-section <name>` line per changed
+  protected region (`header` for the pre-section block) plus a summary, exiting
+  `0` clean and `4` on findings. A finding stops the flow. Any other non-zero
+  exit is an error, not a finding — no epic in the work tree, no epic at the
+  merge-base, an unresolvable base ref, or a root outside a git work tree.
