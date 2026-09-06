@@ -25,6 +25,10 @@ outcome, success criteria recommended.
 
 - [<brief title>](../../video/<slug>/brief.md) <optional annotation>
 
+## References                      (optional)
+
+- [<title>](../../docs/<slug>/doc.md) <optional annotation>
+
 ## Decisions
 
 The cross-cutting decisions every member change inherits — shared architectural
@@ -52,12 +56,17 @@ decomposition follows.
 - **Sections.** `## Introduction`, `## Decisions`, `## Design`, `## Changes`
   are all required, and `## Introduction` must be the first level-2 section and
   carry a `### Non-goals` subsection.
-- **Research and Video (both optional).** Omit the section entirely when there
-  is none. When present it holds at least one `- [title](path)` entry whose
-  link resolves (epic-dir first, then repo root) to an existing file under the
-  content directory's `research/` or `video/` folder; the epic-relative form
-  above is the clickable convention. An empty section, a dead link, or a link
-  outside that folder is a lint error. List only what you actually read.
+- **Research, Video, and References (all optional).** Omit a section entirely
+  when there is nothing for it. When present it holds at least one
+  `- [title](path)` entry whose link resolves (epic-dir first, then repo root)
+  to an existing file under the content directory's `research/` or `video/`
+  folder (`## Research`, `## Video`) — or, for `## References`, under any of
+  `research/`, `video/`, or `docs/`, its entries mixing freely across the
+  three kinds; the epic-relative form above is the clickable convention. An
+  empty section, a dead link, or a link outside the folder(s) it covers is a
+  lint error. List only what you actually read. `## References` is a superset
+  shelf: new authoring prefers it, but `## Research` and `## Video` stay valid
+  forever and are never migrated.
 - **Stub table.** The header row is exactly those six columns in that order,
   with at least one data row. Each `Change` cell is a kebab-case slug, unique
   within the table and, by convention, repo-unique — it should not collide with

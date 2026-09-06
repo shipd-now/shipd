@@ -295,7 +295,29 @@ answered by reading is a failure of this skill.
    task will depend on it, run it now and observe the result rather than
    reading its implementation — two individually reasonable decisions can be
    jointly broken, and only running the command reveals it (the
-   runnable-premise rule, `references/readiness.md`).
+   runnable-premise rule, `references/readiness.md`). **Supplied documents:**
+   when the user supplies a context document for the change that is not
+   already under the content dir's `research/`, `video/`, or `docs/` folder,
+   install it through the emit engine before treating it as investigation
+   input:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_emit.py" docs <slug> --from <file>
+   ```
+
+   Pick `<slug>` as the kebab-case form of the document's level-1 title, or of
+   its filename when the document carries no title; where the first line is
+   not a level-1 title, stage a **copy** that prepends a `# <title>` derived
+   from the filename and install that copy — the user's original file is
+   never edited, and no raw copy is ever written into the tree. Read the
+   installed document back with
+   `python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" cat
+   docs <slug>` as investigation input. When the change carries an `Epic:`
+   header resolving to an epic in the repository, append a link entry to that
+   epic's `## References` section (creating it when absent); when the change
+   carries no resolving epic, cite the document in `plan.md` prose instead and
+   edit no epic. A file the user names that is already under `research/`,
+   `video/`, or `docs/` is read without reinstalling.
 2. **Report findings, then continue or open one round.** Print a short
    user-visible findings digest as plain response text — its job is
    situational awareness: the user sees where the flow stands and can always

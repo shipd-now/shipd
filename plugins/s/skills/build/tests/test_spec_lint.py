@@ -1359,6 +1359,185 @@ class EpicVideoLintTest(unittest.TestCase):
                         errors)
 
 
+class EpicReferencesLintTest(unittest.TestCase):
+    """Epic ``## References`` section validation (shipd-spec-format
+    epic-references-section, shipd-spec-lint epic-references-link-lint): the
+    optional superset shelf links reference documents of any installed kind
+    — research reports, video briefs, and supplied docs — under the content
+    dir's ``research/``, ``video/``, or ``docs/`` folders. When present it
+    holds at least one markdown list entry whose link resolves — epic-dir-
+    first, then repo-root — to an existing file under one of those three
+    folders; entries of the three kinds mix freely in the one section.
+    Absent, the epic is exactly as valid as before; the linter never walks
+    any of the three folders on its own. The section is additive: the
+    ``## Research`` and ``## Video`` sections keep their existing findings
+    unchanged whether or not ``## References`` is present. The check is the
+    research/video check, generalized to accept a tuple of folders
+    (`_check_epic_link_section`), so this mirrors ``EpicResearchLintTest``
+    and ``EpicVideoLintTest``.
+
+    Written test-first; expected to FAIL until the References-link check
+    lands in ``lint_epic`` (task 1.2)."""
+
+    BASE_EPIC = (
+        "# reporting-overhaul\n"
+        "Status: draft\n"
+        "\n"
+        "## Introduction\n"
+        "\n"
+        "Reports drift from the source data, so teams stop trusting them.\n"
+        "\n"
+        "### Non-goals\n"
+        "\n"
+        "- No new report types.\n"
+        "\n"
+        "## Decisions\n"
+        "\n"
+        "Export lives behind a flag.\n"
+        "\n"
+        "## Design\n"
+        "\n"
+        "A shared exporter module feeds every format.\n"
+        "\n"
+        "## Changes\n"
+        "\n"
+        "| Change | Description | Code | Integration | Unknowns | Risk |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| csv-export | Export as CSV | low | medium | low | low |\n"
+    )
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.home = tempfile.mkdtemp()
+        self._old_home = os.environ.get("HOME")
+        os.environ["HOME"] = self.home
+
+    def tearDown(self):
+        if self._old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self._old_home
+        shutil.rmtree(self.root, ignore_errors=True)
+        shutil.rmtree(self.home, ignore_errors=True)
+
+    def _write_epic(self, slug, text):
+        edir = os.path.join(self.root, ".shipd", "epics", slug)
+        os.makedirs(edir, exist_ok=True)
+        with open(os.path.join(edir, "epic.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def _write_research(self, relpath, text="# report\n"):
+        p = os.path.join(self.root, ".shipd", "research", relpath)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def _write_video(self, relpath, text="# brief\n"):
+        p = os.path.join(self.root, ".shipd", "video", relpath)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def _write_docs(self, relpath, text="# doc\n"):
+        p = os.path.join(self.root, ".shipd", "docs", relpath)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def _epic_with_references(self, *entries):
+        return self.BASE_EPIC + "\n## References\n\n" + "".join(
+            e + "\n" for e in entries)
+
+    def _epic_errors(self, slug):
+        errors = []
+        sl.lint_epic(self.root, slug, errors)
+        return [str(e) for e in errors]
+
+    def _run_cli(self, argv):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = sl.main(argv)
+        return code, err.getvalue()
+
+    def test_docs_entry_resolves(self):
+        self._write_docs("strategy-notes/doc.md")
+        self._write_epic(
+            "reporting-overhaul",
+            self._epic_with_references(
+                "- [Strategy notes](../../docs/strategy-notes/doc.md)"))
+        self.assertEqual(self._epic_errors("reporting-overhaul"), [])
+
+    def test_mixed_kind_entries_resolve(self):
+        self._write_research("payment-apis/report.md")
+        self._write_video("kickoff-call/brief.md")
+        self._write_docs("strategy-notes/doc.md")
+        self._write_epic(
+            "reporting-overhaul",
+            self._epic_with_references(
+                "- [Payment APIs](../../research/payment-apis/report.md)",
+                "- [Kickoff call](../../video/kickoff-call/brief.md)",
+                "- [Strategy notes](../../docs/strategy-notes/doc.md)"))
+        self.assertEqual(self._epic_errors("reporting-overhaul"), [])
+
+    def test_dead_link_errors_naming_it(self):
+        self._write_epic(
+            "reporting-overhaul",
+            self._epic_with_references(
+                "- [Missing](../../docs/missing/doc.md)"))
+        errors = self._epic_errors("reporting-overhaul")
+        self.assertTrue(
+            has(errors, "../../docs/missing/doc.md"), errors)
+        # The dead link makes the --epic CLI mode exit non-zero.
+        code, _err = self._run_cli(["--epic", "reporting-overhaul",
+                                    "--root", self.root])
+        self.assertEqual(code, 1)
+
+    def test_link_outside_reference_folders_errors(self):
+        # A link that resolves (epic-relative) to a real file that does not
+        # live under any of research/, video/, or docs/.
+        edir = os.path.join(self.root, ".shipd", "epics", "reporting-overhaul")
+        os.makedirs(edir, exist_ok=True)
+        with open(os.path.join(edir, "notes.md"), "w", encoding="utf-8") as fh:
+            fh.write("# notes\n")
+        self._write_epic(
+            "reporting-overhaul",
+            self._epic_with_references("- [Notes](notes.md)"))
+        self.assertTrue(
+            has(self._epic_errors("reporting-overhaul"), "notes.md"))
+
+    def test_empty_references_section_errors(self):
+        self._write_epic(
+            "reporting-overhaul", self.BASE_EPIC + "\n## References\n")
+        self.assertTrue(
+            has(self._epic_errors("reporting-overhaul"), "References"))
+
+    def test_no_references_section_produces_no_finding(self):
+        self._write_epic("reporting-overhaul", self.BASE_EPIC)
+        errors = self._epic_errors("reporting-overhaul")
+        self.assertEqual(errors, [])
+        self.assertFalse(has([e.lower() for e in errors], "references"))
+
+    def test_dead_research_link_reported_unchanged_alongside_references(self):
+        # A dead `## Research` link is reported exactly as it is without a
+        # `## References` section, whether or not that section is present
+        # and resolving (shipd-spec-lint epic-references-link-lint).
+        self._write_docs("strategy-notes/doc.md")
+        text = (
+            self.BASE_EPIC
+            + "\n## Research\n\n"
+            + "- [Missing](../../research/missing/report.md)\n"
+            + "\n## References\n\n"
+            + "- [Strategy notes](../../docs/strategy-notes/doc.md)\n")
+        self._write_epic("reporting-overhaul", text)
+        errors = self._epic_errors("reporting-overhaul")
+        self.assertEqual(len(errors), 1, errors)
+        self.assertTrue(
+            has(errors, "`## Research` link "
+                        "'../../research/missing/report.md'"),
+            errors)
+
+
 class ResearchReportLintTest(unittest.TestCase):
     """Research report validation (shipd-spec-format research-report-format,
     shipd-spec-lint research-report-validation): ``lint_research(root, slug,
