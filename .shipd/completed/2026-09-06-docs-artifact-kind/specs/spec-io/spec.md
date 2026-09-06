@@ -1,7 +1,8 @@
-# spec-io
+## MODIFIED Requirements
 
 ### Requirement: Staged emission with validate-then-install
 id: staged-emission
+base: 52d3d222cfed
 
 A stdlib-Python `spec_emit.py` SHALL install spec content only after
 validation: `change <name> --from <staging-dir>` SHALL copy the staged
@@ -84,6 +85,7 @@ unless `--replace` is given.
 
 ### Requirement: Mediated spec reads
 id: mediated-read-verb
+base: c12fe5da4270
 
 The status CLI SHALL provide `cat
 change|verified|epic|initiative|research|video|docs <slug>` printing the
@@ -186,62 +188,3 @@ what it is without the directory.
 - **WHEN** `cat epic no-such-epic` runs and no candidate root hosts it
 - **THEN** the CLI exits non-zero with an error naming the missing epic and
   the probed candidate roots
-
-### Requirement: Engine-mediated skill access
-id: engine-mediated-skill-access
-
-Skills SHALL create and modify spec content only through engine verbs
-(`spec_emit.py`, the status CLI's transition and header verbs, the merge
-engine) and SHALL obtain spec content and locations only from engine output
-(`cat`, `config-show`, show verbs). A skill SHALL NOT construct a storage
-path from naming convention in either direction.
-
-#### Scenario: Planning emits through the engine
-- **WHEN** `/s:plan` reaches emission
-- **THEN** the artifacts are authored in a staging area and installed via
-  `spec_emit.py change`, not written directly into the spec tree
-
-#### Scenario: Briefs are written through the engine
-- **WHEN** `/s:initiative new` authors a brief
-- **THEN** the brief reaches the workspace via `spec_emit.py initiative`,
-  and the skill never writes to a workspace path it composed itself
-
-### Requirement: Staged wiki emission
-id: wiki-emission
-
-The emit engine SHALL provide a `wiki` subcommand installing a staged store
-subset — `wiki/<slug>.md` pages, `index.md`, `log.md`, `queue.md`, and
-`sources/<file>` additions — into the workspace wiki: it SHALL back up the
-affected store files, install the staged set (overwriting existing pages and
-top-level files), validate the resulting whole store with the wiki lint, and
-if any finding is reported, then it SHALL restore the backup and exit non-zero
-so an invalid store state never lands. If a staged `sources/` file already
-exists in the store, then the emission SHALL be refused before any install
-(sources are immutable). The `wiki` subcommand SHALL accept a `--personal` flag:
-when set, it SHALL install into the personal memory store at `<memory_dir>/wiki`
-(default `~/.shipd-memory/wiki`), resolved by fixed path and bypassing workspace
-discovery, instead of the workspace store, with the identical backup, lint, and
-restore semantics.
-
-#### Scenario: Page install with index update
-- **WHEN** `spec_emit.py wiki --from <staging>` stages a new page and an
-  `index.md` cataloging it
-- **THEN** both land in the store and the command reports the install and
-  exits zero
-
-#### Scenario: Invalid result rolls back
-- **WHEN** the staged set would leave a dead wikilink or an unindexed page
-- **THEN** the store's prior content is restored byte-for-byte and the command
-  exits non-zero printing the findings
-
-#### Scenario: Source overwrite refused
-- **WHEN** the staging dir holds `sources/notes.md` and the store already has
-  `sources/notes.md`
-- **THEN** nothing is installed and the command exits non-zero citing source
-  immutability
-
-#### Scenario: Personal flag installs into the memory store
-- **WHEN** `spec_emit.py wiki --from <staging> --personal` runs
-- **THEN** the staged set installs into `<memory_dir>/wiki` (default
-  `~/.shipd-memory/wiki`) by fixed path, with the same lint and rollback
-  guarantees, and the workspace store is untouched

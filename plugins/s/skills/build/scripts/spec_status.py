@@ -846,7 +846,8 @@ def _related_candidate_artifacts(candidate):
     """One ``(kind, slug, path, files)`` record per searchable artifact under
     a single candidate root's resolved content directory: its verified
     capabilities, planned changes, completed archives (slug date-stripped),
-    research reports, and epics. ``path`` identifies the artifact — its single
+    research reports, installed documents (``docs/<slug>/doc.md``), and epics.
+    ``path`` identifies the artifact — its single
     file for the one-file kinds, its directory for a change — while ``files``
     is everything the score sums over."""
     specs = sc.specs_dir(candidate)
@@ -876,6 +877,11 @@ def _related_candidate_artifacts(candidate):
         path = os.path.join(specs, "research", slug, "report.md")
         if os.path.isfile(path):
             artifacts.append(("research", slug, path, [path]))
+
+    for slug in _dir_names(os.path.join(specs, "docs")):
+        path = os.path.join(specs, "docs", slug, "doc.md")
+        if os.path.isfile(path):
+            artifacts.append(("docs", slug, path, [path]))
 
     for slug in _dir_names(os.path.join(specs, "epics")):
         path = os.path.join(specs, "epics", slug, "epic.md")
@@ -947,7 +953,10 @@ def _related_path(root, path):
 def cmd_related(root, terms, as_json=False):
     """Rank the spec library's artifacts by case-insensitive term-hit count
     (spec-status related-verb) — the retrieval step ``/s:fix`` runs before it
-    reads any code. Artifacts with no hits are dropped; the rest sort by score
+    reads any code. The searched surfaces are the verified capabilities,
+    planned changes, completed archives, research reports, installed documents
+    (kind ``docs``), epics, and — where discoverable — the workspace wiki's
+    pages. Artifacts with no hits are dropped; the rest sort by score
     descending, then kind, then slug, so the ordering is fully deterministic.
     At most :data:`RELATED_MAX_BLOCKS` keyed blocks print (``kind:``, ``slug:``,
     ``score:``, ``path:``), followed by a single line naming the remaining
@@ -1318,7 +1327,7 @@ def all_epic_slugs_with_roots(root):
 
 # The kinds ``shipd list`` enumerates, ``changes`` first: it is the verb's
 # default and the only kind carrying lifecycle status and archives.
-LIST_KINDS = ("changes", "epics", "verified", "research", "video")
+LIST_KINDS = ("changes", "epics", "verified", "research", "video", "docs")
 
 # The content-directory subdirectory each status-less kind lists slug
 # directories from.
@@ -1326,6 +1335,7 @@ _LIST_KIND_DIRS = {
     "verified": "verified",
     "research": "research",
     "video": "video",
+    "docs": "docs",
 }
 
 
@@ -1428,8 +1438,8 @@ def list_rows(root, kind, span_workspace, include_archived=False):
     for a name not still in flight. ``epics`` walks
     :func:`all_epic_slugs_with_roots`, reading each status with
     :func:`read_epic_status` on the hosting root (``None`` when the epic
-    carries no valid ``Status:`` line). ``verified``, ``research`` and
-    ``video`` list slug directories per candidate root, root-first, with no
+    carries no valid ``Status:`` line). ``verified``, ``research``, ``video``
+    and ``docs`` list slug directories per candidate root, root-first, with no
     status value.
 
     With ``span_workspace``, the listing spans every universe
@@ -2356,7 +2366,9 @@ def _existing_file(path):
 # (spec-io mediated-read-verb): the noun a not-found error names, and the
 # artifact a single candidate root either holds or does not. ``change`` probes
 # the read-side planned-then-archived resolution, so a candidate's archive is
-# found before the next candidate is tried. ``initiative`` and ``wiki`` are
+# found before the next candidate is tried. ``docs`` probes the single
+# document a candidate's ``docs/<slug>/doc.md`` either holds or does not.
+# ``initiative`` and ``wiki`` are
 # absent deliberately — they resolve through the workspace chain instead.
 _CAT_PROBES = {
     "change": ("change", _readable_change_dir),
@@ -2368,6 +2380,8 @@ _CAT_PROBES = {
         os.path.join(sc.specs_dir(candidate), "research", slug, "report.md"))),
     "video": ("video", lambda candidate, slug: _existing_file(
         os.path.join(sc.specs_dir(candidate), "video", slug, "brief.md"))),
+    "docs": ("docs", lambda candidate, slug: _existing_file(
+        os.path.join(sc.specs_dir(candidate), "docs", slug, "doc.md"))),
 }
 
 
@@ -2389,10 +2403,11 @@ def _cat_resolve(root, kind, slug):
 def cmd_cat(root, kind, slug, personal=False):
     """Print a named artifact's content through the engine's resolved locations
     (spec-io mediated-read-verb). The kinds ``change``, ``verified``, ``epic``,
-    ``research`` and ``video`` resolve across the universes and candidate roots
-    :func:`_cat_resolve` walks — the invocation root first, so it shadows a
-    worktree's copy of the same slug — while ``initiative`` and ``wiki``
-    resolve through the workspace chain. For a change: its ``plan.md``, every
+    ``research``, ``video`` and ``docs`` resolve across the universes and
+    candidate roots :func:`_cat_resolve` walks — the invocation root first, so
+    it shadows a worktree's copy of the same slug — while ``initiative`` and
+    ``wiki`` resolve through the workspace chain. For a change: its
+    ``plan.md``, every
     delta spec, and ``tasks.md``, resolved from the hosting candidate's
     ``planned/<slug>/`` and falling back to that candidate's newest archived
     ``completed/*-<slug>/`` so a reference survives the merge/archive. For a
@@ -2419,7 +2434,7 @@ def cmd_cat(root, kind, slug, personal=False):
         _cat_files(root, paths, absolute_outside=True)
         _cat_artefacts_listing(root, cdir)
         return 0
-    if kind in ("verified", "epic", "research", "video"):
+    if kind in ("verified", "epic", "research", "video", "docs"):
         _cat_files(root, [_cat_resolve(root, kind, slug)],
                    absolute_outside=True)
         return 0
@@ -2497,7 +2512,7 @@ def cmd_cat(root, kind, slug, personal=False):
         return 0
     raise StatusError(
         "unknown cat kind '%s' (expected "
-        "change|verified|epic|initiative|research|video|wiki)" % kind)
+        "change|verified|epic|initiative|research|video|docs|wiki)" % kind)
 
 
 def _lint_epic_errors(root, slug):
@@ -3528,7 +3543,7 @@ def main(argv=None):
         help="print an artifact's content with `--- <relpath>` separators")
     p_cat.add_argument("kind",
                        choices=("change", "verified", "epic", "initiative",
-                                "research", "video", "wiki"))
+                                "research", "video", "docs", "wiki"))
     p_cat.add_argument("slug")
     p_cat.add_argument(
         "--personal", action="store_true",

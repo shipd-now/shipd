@@ -561,6 +561,31 @@ class ListKindsTest(ShipdCliTestBase):
             self.rows("verified"),
             [["shipd-cli", "root", "-"], ["spec-io", "root", "-"]])
 
+    def make_docs(self, slug):
+        self.write(
+            os.path.join(self.root, ".shipd", "docs", slug, "doc.md"),
+            "# %s\n\nFree-form body.\n" % slug)
+
+    def test_installed_documents_list_without_status(self):
+        self.make_docs("payments-strategy")
+        self.make_docs("board-minutes")
+        self.assertEqual(
+            self.rows("docs"),
+            [["board-minutes", "root", "-"],
+             ["payments-strategy", "root", "-"]])
+
+    def test_empty_docs_listing_prints_its_placeholder(self):
+        r = self.cli("list", "docs", "--root", self.root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "no docs")
+
+    def test_usage_banner_names_docs_among_the_list_kinds(self):
+        # The banner's kind roster runs from `kind is` to the `--all` clause.
+        r = self.cli()
+        self.assertEqual(r.returncode, 2)
+        roster = r.stderr.split("kind is", 1)[1].split("--all", 1)[0]
+        self.assertIn("docs", roster)
+
     def test_changes_is_the_default_kind(self):
         self.make_change(self.root, "foo", status="active")
         self.assertEqual(self.rows("changes"), self.rows())

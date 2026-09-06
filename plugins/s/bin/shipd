@@ -112,7 +112,8 @@ verbs:
   list [kind] [--root DIR] [--all]
                              spec artifacts across the root and its worktrees —
                              kind is changes (default), epics, verified,
-                             research, or video; --all applies to changes only
+                             research, video, or docs; --all applies to
+                             changes only
   status [change]            a change's status and progress
   locate [change]            where an installed change lives
   related <term> [term...]   spec artifacts ranked by term-hit count
@@ -245,6 +246,7 @@ LIST_EMPTY_TEXT = {
     "verified": "no verified capabilities",
     "research": "no research reports",
     "video": "no video briefs",
+    "docs": "no docs",
 }
 
 

@@ -135,10 +135,10 @@ id: cli-list
 
 When invoked as `shipd list [kind]`, the binary SHALL enumerate spec-library
 artifacts of the given kind — `changes` (the default when the kind word is
-omitted), `epics`, `verified`, `research`, or `video` — obtaining the rows
-from the engine's shared discovery seam (`spec_status.list_rows`), never from
-a private re-walk of the tree, and printing one line per row with the name,
-its location, and its status.
+omitted), `epics`, `verified`, `research`, `video`, or `docs` — obtaining the
+rows from the engine's shared discovery seam (`spec_status.list_rows`), never
+from a private re-walk of the tree, and printing one line per row with the
+name, its location, and its status.
 
 For `changes`, the binary SHALL probe the invocation root's
 `<content-dir>/planned/` and, for each `.worktrees/<name>` directory that has
@@ -154,9 +154,9 @@ For `epics`, the rows SHALL be the epics the engine's epic-discovery seam
 yields — the invocation root's epics first, then epics hosted only under a
 worktree, a contested slug appearing once with the invocation root winning —
 each with the status read from its hosting root. For `verified`, `research`,
-and `video`, the rows SHALL be the slug directories of that kind under each
-candidate root, deduped root-first, with no status value (rendered `-` in
-text). If `--all` is combined with a kind other than `changes`, then the
+`video`, and `docs`, the rows SHALL be the slug directories of that kind under
+each candidate root, deduped root-first, with no status value (rendered `-`
+in text). If `--all` is combined with a kind other than `changes`, then the
 binary SHALL exit non-zero with an error saying `--all` applies to changes
 only.
 
@@ -208,6 +208,17 @@ output unchanged.
   masters
 - **THEN** one line prints per capability slug with location `root` and
   status `-`
+
+#### Scenario: Installed documents list without status
+- **WHEN** `shipd list docs --root <repo>` runs on a repo whose content
+  directory holds `docs/payments-strategy/`
+- **THEN** one line prints naming `payments-strategy` with location `root`
+  and status `-`
+
+#### Scenario: Empty docs listing prints its placeholder
+- **WHEN** `shipd list docs --root <repo>` runs against a repo with no
+  installed documents
+- **THEN** the binary prints `no docs` and exits `0`
 
 #### Scenario: --all refuses a non-changes kind
 - **WHEN** `shipd list epics --all` runs

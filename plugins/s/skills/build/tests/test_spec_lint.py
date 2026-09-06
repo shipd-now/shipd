@@ -1759,6 +1759,83 @@ class VideoBriefLintTest(unittest.TestCase):
                 sl.main(["--video", "board-walkthrough"])
 
 
+class DocsDocumentLintTest(unittest.TestCase):
+    """Docs document validation (shipd-spec-format docs-document-format,
+    shipd-spec-lint docs-document-validation): ``lint_docs(root, slug,
+    errors)`` enforces exactly one rule on
+    ``<content-dir>/docs/<slug>/doc.md`` — a non-empty ``# <title>`` on line
+    1 — and never demands a citation skeleton, header metadata, or section
+    structure, so a supplied document (strategy notes, meeting minutes, an
+    API excerpt) installs without pretending to a grammar it does not have.
+    A missing document file is itself a finding naming the expected path.
+    Library linting never walks the content directory's ``docs/`` folder on
+    its own, and ``spec_lint.py`` exposes no command-line mode for these
+    checks.
+
+    Written test-first; expected to FAIL until ``lint_docs`` lands in
+    ``spec_lint.py`` (task 1.2)."""
+
+    CONFORMING = (
+        "# Payments strategy\n"
+        "\n"
+        "## Context\n"
+        "\n"
+        "We move to a single processor next quarter [3], per the board's\n"
+        "own minutes, and the migration runs through Q2.\n"
+    )
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _doc_path(self, slug):
+        return os.path.join(self.root, ".shipd", "docs", slug, "doc.md")
+
+    def _write_doc(self, slug, text):
+        ddir = os.path.join(self.root, ".shipd", "docs", slug)
+        os.makedirs(ddir, exist_ok=True)
+        with open(os.path.join(ddir, "doc.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def _errors(self, slug):
+        errors = []
+        sl.lint_docs(self.root, slug, errors)
+        return [str(e) for e in errors]
+
+    def test_titled_free_form_document_passes(self):
+        # A `[3]`-style bracket marker and no `## Sources` section: free-form
+        # body, so the citation grammar never applies.
+        self._write_doc("payments-strategy", self.CONFORMING)
+        self.assertEqual(self._errors("payments-strategy"), [])
+
+    def test_untitled_document_errors_naming_the_file(self):
+        self._write_doc("payments-strategy", "Not a title.\n")
+        errors = self._errors("payments-strategy")
+        self.assertTrue(has(errors, "line 1"), errors)
+        self.assertTrue(
+            has(errors, self._doc_path("payments-strategy")), errors)
+
+    def test_missing_document_errors_naming_the_path(self):
+        errors = self._errors("no-such-doc")
+        self.assertTrue(has(errors, "no-such-doc"), errors)
+        self.assertTrue(has(errors, self._doc_path("no-such-doc")), errors)
+
+    def test_library_lint_ignores_docs_files(self):
+        # An untitled file under docs/ produces no library-lint finding —
+        # the linter never walks docs/ on its own.
+        self._write_doc("broken", "not a valid document @@@\n")
+        self.assertEqual([str(e) for e in sl.lint_library(self.root)], [])
+
+    def test_no_command_line_mode_for_docs_checks(self):
+        # spec_lint.py exposes no --docs flag (unlike --epic/--initiative);
+        # argparse rejects the unrecognized option with SystemExit(2).
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stderr(io.StringIO()):
+                sl.main(["--docs", "payments-strategy"])
+
+
 class EpicReferenceLintTest(unittest.TestCase):
     """Epic reference resolution on a change plan (shipd-spec-lint
     epic-reference-resolution): a change's ``Epic:`` line must resolve to an
