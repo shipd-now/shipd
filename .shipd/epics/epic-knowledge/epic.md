@@ -1,5 +1,5 @@
 # epic-knowledge
-Status: active
+Status: complete
 Theme: developer-experience
 
 ## Introduction
@@ -111,13 +111,13 @@ The `docs` kind lands first — the shelf links it, the rubric routes to it.
 
 | Tool | Calls | Output tokens |
 | --- | --- | --- |
-| Bash | 223 | 46.0k |
-| Edit | 40 | 8.6k |
-| Read | 58 | 5.0k |
-| Agent | 6 | 1.4k |
+| Bash | 503 | 111.2k |
+| Edit | 99 | 22.4k |
+| Read | 139 | 17.0k |
+| (no tool) | 0 | 15.4k |
+| Agent | 16 | 3.0k |
 | SendMessage | 3 | 1.3k |
-| ToolSearch | 4 | 599 |
-| (no tool) | 0 | 574 |
-| Monitor | 2 | 33 |
-| Write | 1 | 3 |
-| **Total** | 337 | 63.5k |
+| ToolSearch | 6 | 780 |
+| Write | 2 | 470 |
+| Monitor | 3 | 294 |
+| **Total** | 771 | 171.8k |
