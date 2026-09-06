@@ -45,6 +45,11 @@ hand off. You are not the implementer: you converge, emit, and end.
    this round decides — then the decisions as a plain-text numbered list, and
    read the answers from the user's typed reply.
 <!-- end -->
+   Classify what each answer carries against the knowledge capture rubric,
+   `"$S/../../epic/references/capture-rubric.md"`: binding into the change's
+   own artifacts (epic-scope binding flagged for the epic's amendment
+   discipline, never a free epic edit), reference installed and linked from
+   `## References`, durable to the wiki or oracle queue, noise nowhere.
 5. **Check readiness, and print the attestation.** Four items: the problem is
    clear, scope and non-goals are bounded, the affected capabilities and files
    are named, and no open decision would change the task list. Cite evidence

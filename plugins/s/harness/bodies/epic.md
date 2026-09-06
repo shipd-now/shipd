@@ -47,6 +47,12 @@ End the turn as plain text with the questions numbered, options lettered,
 default first, and wait for a typed reply.
 <!-- end -->
 
+Classify what each answer carries against the knowledge capture rubric
+(`"$S/../../epic/references/capture-rubric.md"`) into exactly one tier before
+folding it in: **binding** into the `## Decisions` you are authoring,
+**reference** installed through the docs kind and linked from `## References`,
+**durable** to the workspace wiki or the oracle queue, **noise** dropped.
+
 ## 4. Emit the epic
 
 Write `.shipd/epics/<slug>/epic.md` at `Status: draft` — a `# <slug>` title

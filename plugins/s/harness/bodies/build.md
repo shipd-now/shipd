@@ -56,6 +56,14 @@ against a lint-clean change, and only inside that change's own branch.
    loop, and never a backgrounded claim — and stop only once
    `bash "$S/claim_task.sh" status <change>` reports `pending=0`.
 <!-- end -->
+   Information arriving mid-build — an answer you form, an interjection the
+   user drops in — lands in exactly one tier of the knowledge capture rubric
+   (`"$S/../../epic/references/capture-rubric.md"`): binding updates the
+   change's artifacts before the answer goes back, with epic-scope binding
+   surfaced to the user for the epic's amendment discipline rather than a free
+   edit; reference installs through the emit engine and links from the epic's
+   `## References` shelf; durable routes to the wiki or oracle queue; noise is
+   recorded nowhere.
 <!-- if:background-tasks -->
    Tasks sharing a `[P<n>]` tag are mutually independent: run a ready group's
    tasks together in the background rather than one after another, and keep
