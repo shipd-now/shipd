@@ -281,21 +281,31 @@ def emit_wiki(root, src, personal=False):
     any finding the backup is restored byte-for-byte and the command exits
     non-zero, so an invalid store state never lands.
 
-    By default the destination is the workspace store, resolved through
-    workspace discovery. When ``personal`` is set, the destination is the
-    personal memory store at ``<memory_dir>/wiki``, resolved by fixed path
-    (bypassing workspace discovery), with identical backup, lint, and restore
+    By default the destination is the workspace store, resolved through the
+    engine's one wiki-resolution seam: the nearest workspace-chain member's
+    store, or — where no workspace is discoverable and the root's resolved
+    content directory exists — the repo-local fallback store at
+    ``<root>/<content-dir>/wiki``, with identical backup, lint, and restore
+    semantics (shipd-wiki wiki-store-layout). Where neither resolves, the
+    refusal names both missing prerequisites. When ``personal`` is set, the
+    destination is the personal memory store at ``<memory_dir>/wiki``, resolved
+    by fixed path (bypassing workspace discovery), again with identical
     semantics."""
     if not os.path.isdir(src):
         raise EmitError("staging directory not found: %s" % src)
     if personal:
         wiki = sc.memory_store_dir(root)
+        ws_root, is_fallback = None, False
     else:
-        ws_root = sc.find_workspace_root(root)
-        if ws_root is None:
+        resolved = sc.resolve_wiki_root(root)
+        if resolved is None:
             raise EmitError(
-                "no workspace found from %s; `wiki` requires a discoverable "
-                "workspace root" % os.path.abspath(root))
+                "no workspace found from %s and no content directory at %s; "
+                "`wiki` requires either a discoverable workspace root or this "
+                "repo's own content directory (run `workspace-init` or "
+                "`shipd init`)"
+                % (os.path.abspath(root), sc.specs_dir(root)))
+        ws_root, is_fallback = resolved
         wiki = sc.wiki_dir(ws_root)
 
     # Enumerate staged files, validating each against the recognized subset.
@@ -363,9 +373,17 @@ def emit_wiki(root, src, personal=False):
 
     # A successful write auto-commits its file set when the store sits inside a
     # git work tree (shipd-wiki wiki-autocommit); a no-op outside git, and a commit
-    # failure never fails the write.
+    # failure never fails the write. A repo-local fallback store routes through
+    # `store_autocommit` instead: no commit while the content directory resolves
+    # in-repo — committing in-repo artifacts stays the skill/PR workflow's job —
+    # and a commit in an externally redirected store exactly as a workspace
+    # store's.
     dest_paths = [dest_abs for _rel, _staged, dest_abs, _is_source in ops]
-    sc.wiki_autocommit(wiki, dest_paths, "shipd-wiki: emit %d file(s)" % len(ops))
+    subject = "shipd-wiki: emit %d file(s)" % len(ops)
+    if is_fallback:
+        sc.store_autocommit(ws_root, dest_paths, subject)
+    else:
+        sc.wiki_autocommit(wiki, dest_paths, subject)
 
     print("installed wiki content into %s (%d file(s))" % (wiki, len(ops)))
     return 0

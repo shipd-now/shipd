@@ -60,8 +60,14 @@ code is `1` when a required check failed, `0` otherwise.
 
 Parse each line into `(level, check, detail)` and keep the whole output
 verbatim as the **before** state. The checks are `python`, `git`, `config`,
-`pipeline`, `gh`, `difft`, `textual`, `snapshot`, `statusline`,
+`pipeline`, `wiki`, `gh`, `difft`, `textual`, `snapshot`, `statusline`,
 `protection`, `automerge`, and `copilot-secret`.
+
+`wiki` is **report-only** and always `ok`: it names the wiki store the working
+directory resolves — a workspace store, the repo-local fallback store, or
+neither — so the durable-knowledge tier is visible at a glance. It has no
+remedy row in the table below, so never scaffold a store on its behalf; relay
+its line in the diagnosis exactly as the other informational checks.
 
 **Unparseable output is your own failure.** If the command produced no output,
 no closing `doctor:` line, or lines that do not match the format above, report

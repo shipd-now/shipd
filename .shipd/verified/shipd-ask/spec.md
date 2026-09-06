@@ -162,10 +162,14 @@ reporting the slug on a `Queued: q-<slug>` line. The queue write — and any
 `wiki-init` scaffolding — SHALL target the asking workspace's own store,
 never the base store, which is read-only to the oracle. Before queueing, the
 oracle SHALL read the existing queue and cite an equivalent pending question
-instead of duplicating it. If the workspace has no wiki store, then the
-oracle SHALL scaffold it with `wiki-init` before queueing; if no workspace is
-discoverable at all, then the oracle SHALL still return its verdict and
-report `Queued: none` naming the missing workspace instead of failing.
+instead of duplicating it. If the resolved store does not exist yet, then the
+oracle SHALL scaffold it with `wiki-init` before queueing. Where no workspace
+is discoverable but the asking repo's resolved content directory exists, the
+queue write SHALL land in the repo-local fallback store through the same
+verbs, which resolve and scaffold it on demand. Only where the asking repo
+has neither a discoverable workspace nor a content directory SHALL the
+oracle still return its verdict and report `Queued: none` naming the missing
+prerequisites instead of failing.
 
 #### Scenario: Unanswerable question is queued
 - **WHEN** the oracle cannot answer from the wiki or repo surfaces in a
@@ -184,10 +188,19 @@ report `Queued: none` naming the missing workspace instead of failing.
 - **THEN** it runs `wiki-init` and then queues, and the verdict reports the
   `q-<slug>`
 
-#### Scenario: No workspace still yields a verdict
+#### Scenario: Bare repo queues into the fallback store
+- **GIVEN** an asking repo with a content directory and no discoverable
+  workspace
+- **WHEN** the oracle cannot answer the question
+- **THEN** the block lands in `<root>/<content-dir>/wiki/queue.md` and the
+  verdict reports `Queued: q-<slug>`, not `Queued: none`
+
+#### Scenario: Uninitialized repo still yields a verdict
 - **WHEN** the oracle runs for an asking repo with no discoverable workspace
-- **THEN** it answers from the repo's spec surfaces alone or returns
-  `INSUFFICIENT` with `Queued: none`, and does not exit in error
+  and no content directory
+- **THEN** it answers from what it can reach or returns `INSUFFICIENT` with
+  `Queued: none` naming the missing prerequisites, and does not exit in
+  error
 
 ### Requirement: Ask skill entry
 id: ask-skill
@@ -352,3 +365,27 @@ personal memory store instead.
 - **WHEN** the rubric's examples are inspected
 - **THEN** each named example category appears with its tier and a short
   rationale
+
+### Requirement: Fallback store serves a bare repo
+id: oracle-fallback-store
+
+Where no workspace is discoverable from the asking repo and the repo's
+resolved content directory exists, the oracle's wiki rung SHALL operate on
+the repo-local fallback store reported by `wiki-show` — through the same
+engine reads (`cat wiki index`, `cat wiki <slug>`, `cat wiki queue`) and
+read-only grep under the reported store directory — and
+answered-but-undrained queue blocks found there SHALL be citable exactly as
+chain-store blocks are (`Cited: queue q-<slug>`).
+
+#### Scenario: Fallback page answers the question
+- **GIVEN** a bare repo whose fallback store holds a page settling the
+  decision
+- **WHEN** the oracle is spawned
+- **THEN** it returns `ANSWER` citing that page before widening to the
+  repo's spec surfaces
+
+#### Scenario: Fallback answered queue block is citable
+- **GIVEN** a bare repo whose fallback store's queue holds a `## q-<slug>`
+  block with a non-`pending` answer settling the decision
+- **WHEN** the oracle is spawned
+- **THEN** it returns `ANSWER` cited as `queue q-<slug>`

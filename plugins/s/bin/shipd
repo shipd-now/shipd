@@ -496,6 +496,37 @@ def check_schema(root):
     return ("ok", "schema", "%s (assumed; no marker yet)" % repo_version)
 
 
+def check_wiki(root):
+    """The wiki store the working directory resolves (shipd-cli
+    doctor-wiki-check).
+
+    Report-only: always ``ok``, mutating nothing. It names which store the
+    durable-knowledge tier would use — the nearest workspace-chain member's,
+    the repo-local fallback where no workspace is discoverable but the content
+    directory exists (noting that ``wiki-init`` scaffolds an absent one), or
+    neither, naming both missing prerequisites. A malformed configuration is
+    reported as the detail rather than failing the preflight: the ``config``
+    check owns config failures, and this line must never double-fail them."""
+    _load_engine()
+    try:
+        resolved = sc.resolve_wiki_root(root)
+        if resolved is None:
+            return ("ok", "wiki",
+                    "no store resolvable — no ancestor declares a `workspace` "
+                    "and no content directory at %s" % sc.specs_dir(root))
+        anchor, is_fallback = resolved
+        store = sc.wiki_dir(anchor)
+    except sc.ConfigError as exc:
+        return ("ok", "wiki", "%s" % exc)
+    presence = "present" if os.path.isdir(store) else "absent"
+    if is_fallback:
+        return ("ok", "wiki",
+                "%s (repo-local fallback, %s%s)"
+                % (store, presence,
+                   "" if presence == "present" else "; `wiki-init` scaffolds it"))
+    return ("ok", "wiki", "%s (workspace store, %s)" % (store, presence))
+
+
 def check_gh(which=shutil.which, gh_status=_gh_auth_status):
     """The GitHub CLI. A warning, never a failure: planning and building work
     without it, and shipping is its first touchpoint."""
@@ -902,6 +933,7 @@ def default_checks(root):
             check_config(root),
             check_pipeline(root),
             check_schema(root),
+            check_wiki(root),
             check_gh(),
             check_difft(),
             check_textual(root),

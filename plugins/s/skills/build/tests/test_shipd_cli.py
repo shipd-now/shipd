@@ -959,8 +959,8 @@ class DoctorCheckTest(unittest.TestCase):
         return made
 
     # The full preflight roster, in the order ``default_checks`` reports it.
-    ALL_CHECKS = ("python", "git", "config", "pipeline", "schema", "gh",
-                  "difft", "textual", "snapshot", "statusline",
+    ALL_CHECKS = ("python", "git", "config", "pipeline", "schema", "wiki",
+                  "gh", "difft", "textual", "snapshot", "statusline",
                   "protection", "automerge", "copilot-secret")
 
     def probed_check_names(self, root):
@@ -1229,6 +1229,85 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertTrue(
             any(line.startswith("fail schema — ") for line in lines), lines)
 
+    # -- wiki (shipd-cli doctor-wiki-check) ---------------------------------
+
+    def wiki_check(self, root):
+        """``check_wiki`` with ``HOME`` pointed at the throwaway home, so the
+        outermost config layer — and any real workspace above it — can never be
+        the user's own."""
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            return shipd.check_wiki(root)
+
+    def test_workspace_store_is_named_with_its_presence(self):
+        root = os.path.join(self.tmp, "ws")
+        os.makedirs(os.path.join(root, ".shipd", "wiki"))
+        with open(os.path.join(root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"workspace": {}}, fh)
+        level, name, detail = self.wiki_check(root)
+        self.assertEqual((level, name), ("ok", "wiki"))
+        self.assertIn(os.path.join(root, ".shipd", "wiki"), detail)
+        self.assertIn("present", detail)
+        self.assertNotIn("fallback", detail)
+
+    def test_absent_workspace_store_is_still_ok(self):
+        root = os.path.join(self.tmp, "ws-empty")
+        os.makedirs(os.path.join(root, ".shipd"))
+        with open(os.path.join(root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"workspace": {}}, fh)
+        level, name, detail = self.wiki_check(root)
+        self.assertEqual((level, name), ("ok", "wiki"))
+        self.assertIn("absent", detail)
+
+    def test_bare_repo_names_the_repo_local_fallback(self):
+        root = os.path.join(self.tmp, "bare-repo")
+        os.makedirs(os.path.join(root, ".shipd", "wiki"))
+        level, name, detail = self.wiki_check(root)
+        self.assertEqual((level, name), ("ok", "wiki"))
+        self.assertIn(os.path.join(root, ".shipd", "wiki"), detail)
+        self.assertIn("repo-local fallback", detail)
+        self.assertIn("present", detail)
+
+    def test_absent_fallback_store_names_wiki_init(self):
+        root = os.path.join(self.tmp, "bare-no-store")
+        os.makedirs(os.path.join(root, ".shipd"))
+        level, name, detail = self.wiki_check(root)
+        self.assertEqual((level, name), ("ok", "wiki"))
+        self.assertIn("repo-local fallback", detail)
+        self.assertIn("absent", detail)
+        self.assertIn("wiki-init", detail)
+
+    def test_nothing_resolvable_is_ok_naming_both_prerequisites(self):
+        root = os.path.join(self.tmp, "uninitialized")
+        os.makedirs(root)
+        level, name, detail = self.wiki_check(root)
+        self.assertEqual((level, name), ("ok", "wiki"))
+        self.assertIn("workspace", detail)
+        self.assertIn(os.path.join(root, ".shipd"), detail)
+
+    def test_malformed_config_is_ok_carrying_the_error(self):
+        # The `config` check owns config failures; this one only reports.
+        root = os.path.join(self.tmp, "wiki-broken")
+        os.makedirs(root)
+        with open(os.path.join(root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("{not json")
+        level, name, _detail = self.wiki_check(root)
+        self.assertEqual((level, name), ("ok", "wiki"))
+
+    def test_wiki_check_mutates_nothing(self):
+        root = os.path.join(self.tmp, "bare-untouched")
+        os.makedirs(os.path.join(root, ".shipd"))
+        self.wiki_check(root)
+        self.assertEqual(os.listdir(os.path.join(root, ".shipd")), [])
+
+    def test_default_checks_report_wiki_after_schema(self):
+        names = self.probed_check_names(self.tmp)
+        self.assertEqual(names.index("wiki"), names.index("schema") + 1)
+
     # -- gh ----------------------------------------------------------------
 
     def test_gh_authenticated_is_ok(self):
@@ -1367,8 +1446,9 @@ class DoctorCheckTest(unittest.TestCase):
     def test_default_checks_run_in_the_documented_order(self):
         self.assertEqual(self.probed_check_names(self.tmp),
                          ["python", "git", "config", "pipeline", "schema",
-                          "gh", "difft", "textual", "snapshot", "statusline",
-                          "protection", "automerge", "copilot-secret"])
+                          "wiki", "gh", "difft", "textual", "snapshot",
+                          "statusline", "protection", "automerge",
+                          "copilot-secret"])
 
     # -- statusline --------------------------------------------------------
 

@@ -547,6 +547,24 @@ class WorkspaceChainFacilitiesTest(unittest.TestCase):
             with home_set_to(os.path.realpath(home)):
                 self.assertEqual(sc.resolve_wiki_stores(start), [])
 
+    def test_resolve_wiki_stores_empty_chain_yields_the_fallback_store(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            with home_set_to(os.path.realpath(home)):
+                os.makedirs(sc.wiki_dir(root), exist_ok=True)
+                self.assertEqual(
+                    sc.resolve_wiki_stores(root), [sc.wiki_dir(root)])
+
+    def test_resolve_wiki_stores_skips_an_absent_fallback_store(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            with home_set_to(os.path.realpath(home)):
+                # The content directory exists, but holds no wiki store yet.
+                os.makedirs(sc.specs_dir(root), exist_ok=True)
+                self.assertEqual(sc.resolve_wiki_stores(root), [])
+
     def test_resolve_initiative_brief_finds_nearest_member_holding_it(self):
         with tempfile.TemporaryDirectory() as tmp, \
                 tempfile.TemporaryDirectory() as home:
@@ -615,6 +633,64 @@ class WorkspaceChainFacilitiesTest(unittest.TestCase):
             os.makedirs(start, exist_ok=True)
             with home_set_to(os.path.realpath(home)):
                 self.assertIsNone(sc.registry_root(start))
+
+
+class ResolveWikiRootTest(unittest.TestCase):
+    """resolve_wiki_root: the single seam every workspace-store wiki consumer
+    resolves through — the chain's nearest member, else the repo-local fallback
+    (shipd-wiki wiki-store-layout). ``$HOME`` is overridden so the real home
+    config never masquerades as an ancestor workspace."""
+
+    def test_chain_member_wins_and_is_not_a_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            outer = os.path.realpath(tmp)
+            _write_ws_config(outer, {})
+            inner = os.path.join(outer, "nested")
+            _write_ws_config(inner, {})
+            start = os.path.join(inner, "repo")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.resolve_wiki_root(start), (inner, False))
+
+    def test_chain_wins_even_when_the_repo_holds_its_own_content_dir(self):
+        # The epic's non-goal: once an ancestor declares a workspace, the chain
+        # takes precedence outright and the repo-local store is not consulted.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            _write_ws_config(ws, {})
+            start = os.path.join(ws, "repo")
+            with home_set_to(os.path.realpath(home)):
+                os.makedirs(sc.specs_dir(start), exist_ok=True)
+                self.assertEqual(sc.resolve_wiki_root(start), (ws, False))
+
+    def test_empty_chain_with_a_content_dir_is_the_repo_local_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            with home_set_to(os.path.realpath(home)):
+                os.makedirs(sc.specs_dir(root), exist_ok=True)
+                self.assertEqual(sc.resolve_wiki_root(root), (root, True))
+
+    def test_fallback_respects_the_content_dir_override(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            _write_ws_config(root, workspace=None, extra={"dir": "specs"})
+            with home_set_to(os.path.realpath(home)):
+                os.makedirs(os.path.join(root, "specs"), exist_ok=True)
+                self.assertEqual(sc.resolve_wiki_root(root), (root, True))
+                self.assertEqual(
+                    sc.wiki_dir(root), os.path.join(root, "specs", "wiki"))
+
+    def test_no_workspace_and_no_content_dir_resolves_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            start = os.path.join(os.path.realpath(tmp), "a", "b")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertIsNone(sc.resolve_wiki_root(start))
 
 
 class InitWorkspaceTest(unittest.TestCase):
@@ -2168,6 +2244,20 @@ class WikiBaseDirTest(unittest.TestCase):
                 _write_ws_config(
                     inner, {}, extra={"wiki_base": sc.wiki_dir(outer)})
                 self.assertIsNone(sc.wiki_base_dir(inner))
+
+    def test_base_equal_to_the_fallback_stores_own_dir_is_none(self):
+        # No ancestor declares a workspace, so the store resolves repo-locally;
+        # a `wiki_base` naming that same directory reads as undeclared, exactly
+        # as a chain member's own store does.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            with home_set_to(os.path.realpath(home)):
+                os.makedirs(sc.specs_dir(root), exist_ok=True)
+                _write_ws_config(
+                    root, workspace=None,
+                    extra={"wiki_base": sc.wiki_dir(root)})
+                self.assertIsNone(sc.wiki_base_dir(root))
 
 
 class WikiGrammarHelpersTest(unittest.TestCase):

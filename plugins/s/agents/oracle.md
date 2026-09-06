@@ -57,8 +57,9 @@ service).
      beyond the index when it is thin — matching page bodies for the decision's
      terms. Never write through grep or edit any personal-store file.
 
-2. **Workspace chain — the asking workspace and every enclosing one it nests
-   under (second).** The engine's wiki reads already walk the chain for you —
+2. **Workspace wiki — the asking workspace and every enclosing one it nests
+   under, or the asking repo's own store when it nests under none (second).**
+   The engine's wiki reads already walk the chain for you —
    `cat wiki index` and `cat wiki queue` aggregate every chain store's file,
    nearest first; `cat wiki <slug>` resolves to the nearest chain store
    holding that page. Your job is to read the `chain:` line so you know which
@@ -100,6 +101,16 @@ service).
      answer is only the bridge until teach drains it. **Queue writes (the
      `INSUFFICIENT` path below) always land in the nearest workspace's store,
      never an inherited one.**
+   - **No workspace? This rung still runs.** Where no ancestor declares a
+     workspace but the asking repo's content directory exists, `wiki-show`
+     resolves the **repo-local fallback store** at
+     `<asking-root>/<content-dir>/wiki`, printing its path with a
+     `(repo-local fallback)` marker and `chain: none`. Every verb above reads
+     it unchanged; it is a single store, so a page separator never carries an
+     `(inherited …)` annotation — cite such a page bare, `Cited: [[slug]]` —
+     and an answered `## q-<slug>` block found in its queue is citable exactly
+     as a chain store's, `Cited: queue q-<slug>`. Skip this rung only when
+     `wiki-show` reports no store at all.
 
 3. **Base wiki — the durable store layered beneath (third).** `wiki-show`'s
    `base:` line reports it: `base: <path> (present)`, `base: <path> (absent)`,
@@ -246,8 +257,9 @@ Queued: q-answered-queue-retention
 Queueing is your **only** store write, and it goes exclusively through the engine
 verbs — never a direct edit of `queue.md` or any wiki file. Both
 `wiki-queue-add` and any `wiki-init` scaffolding **always target the asking
-workspace's own store** (invoked with `--root <asking-root>`), never the base
-store — the base is another workspace's store and is read-only to you.
+workspace's own store** — or, where no workspace is discoverable, the asking
+repo's own fallback store — (invoked with `--root <asking-root>`), never the
+base store, which is another workspace's store and read-only to you.
 
 1. **Check for a duplicate first.** Read `cat wiki queue` and look for an
    equivalent pending question. If one already covers this decision, do **not**
@@ -270,11 +282,20 @@ store — the base is another workspace's store and is read-only to you.
    `python3 STATUS_CLI --root <asking-root> wiki-init` first, then queue. The
    `wiki-init` verb refuses an existing store, so running it only when the store
    is absent is safe.
-4. **No workspace at all → still answer.** If no workspace is discoverable from
-   the asking repo, do not error. Answer from the repo's spec surfaces alone if
-   you can; otherwise return `INSUFFICIENT` with
-   `Queued: none (no workspace at <asking-root>)`. The oracle must never block
-   its caller on a missing workspace.
+4. **No workspace → the fallback store still takes the write.** Where no
+   workspace is discoverable from the asking repo but its content directory
+   exists, `wiki-queue-add` (and any `wiki-init` scaffolding) resolve the
+   **repo-local fallback store** — the very one `wiki-show` reported in rung 2
+   — and write there through the same verbs, scaffolding it on demand. Nothing
+   about the flow changes: report the real `Queued: q-<slug>` the verb printed,
+   never `Queued: none`.
+5. **Nowhere to write at all → still answer.** Only where the asking repo has
+   **neither** a discoverable workspace **nor** a content directory is there no
+   store to file into. Do not error. Answer from the repo's spec surfaces alone
+   if you can; otherwise return `INSUFFICIENT` with
+   `Queued: none (<the missing prerequisites the verb named — no workspace at
+   <asking-root> and no content directory>)`. The oracle must never block its
+   caller on a missing store.
 
 ## Guardrails
 
