@@ -97,6 +97,18 @@ CLEAN_VIDEO_BRIEF = (
     "1. [00:14:22.4] Ada: parked members need a visible signal.\n"
 )
 
+# A supplied document: a title and free-form body, carrying `[n]`-looking
+# markers and no `## Sources` section — no citation grammar is ever demanded
+# of it (shipd-spec-format docs-document-format).
+CLEAN_DOC = (
+    "# Payments strategy\n"
+    "\n"
+    "## Context\n"
+    "\n"
+    "We move to a single processor next quarter [3], per the board's own\n"
+    "minutes.\n"
+)
+
 
 class SpecEmitTestBase(unittest.TestCase):
     def setUp(self):
@@ -434,6 +446,59 @@ class VideoEmitTest(SpecEmitTestBase):
         r = self.cli("video", "board-walkthrough", "--from", src)
         self.assertNotEqual(r.returncode, 0)
         self.assertTrue(os.path.isfile(sentinel))
+
+
+class DocsEmitTest(SpecEmitTestBase):
+    """The staged ``docs`` emit subcommand (spec-io staged-emission),
+    installing a supplied document at ``<content-dir>/docs/<slug>/doc.md``
+    under the validate-then-install rule. Only the title check gates the
+    install, so a free-form body carrying `[n]`-looking markers and no
+    ``## Sources`` section lands clean.
+
+    Written test-first; expected to FAIL until ``docs`` lands in
+    ``spec_emit.py`` (task 2.2)."""
+
+    def _doc_path(self, slug):
+        return os.path.join(self.root, ".shipd", "docs", slug, "doc.md")
+
+    def test_clean_document_installs(self):
+        src = self.stage_file(CLEAN_DOC)
+        r = self.cli("docs", "payments-strategy", "--from", src)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        path = self._doc_path("payments-strategy")
+        self.assertTrue(os.path.isfile(path))
+        self.assertIn(
+            "installed docs payments-strategy at %s" % path, r.stdout)
+
+    def test_untitled_document_leaves_no_directory(self):
+        src = self.stage_file("Not a title.\n\nJust prose.\n")
+        r = self.cli("docs", "payments-strategy", "--from", src)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("line 1", r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(
+            self.root, ".shipd", "docs", "payments-strategy")))
+
+    def test_existing_destination_refused_without_replace(self):
+        src = self.stage_file(CLEAN_DOC)
+        self.assertEqual(
+            self.cli("docs", "payments-strategy", "--from", src).returncode, 0)
+        sentinel = os.path.join(
+            os.path.dirname(self._doc_path("payments-strategy")), "sentinel")
+        with open(sentinel, "w", encoding="utf-8") as fh:
+            fh.write("keep")
+        r = self.cli("docs", "payments-strategy", "--from", src)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue(os.path.isfile(sentinel))
+
+    def test_existing_destination_replaced_with_flag(self):
+        src = self.stage_file(CLEAN_DOC)
+        self.assertEqual(
+            self.cli("docs", "payments-strategy", "--from", src).returncode, 0)
+        fresh = self.stage_file(CLEAN_DOC + "\nA second revision.\n")
+        r = self.cli("docs", "payments-strategy", "--from", fresh, "--replace")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(self._doc_path("payments-strategy"), encoding="utf-8") as fh:
+            self.assertIn("A second revision.", fh.read())
 
 
 class WikiEmitTest(SpecEmitTestBase):

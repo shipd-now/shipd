@@ -950,6 +950,37 @@ def lint_research(root, slug, errors):
 
 
 # ---------------------------------------------------------------------------
+# Docs document validation (shipd-spec-lint docs-document-validation,
+# shipd-spec-format docs-document-format)
+# ---------------------------------------------------------------------------
+
+
+def lint_docs(root, slug, errors):
+    """Validate the document at ``<content-dir>/docs/<slug>/doc.md``
+    (shipd-spec-lint docs-document-validation, shipd-spec-format
+    docs-document-format): exactly one rule applies — a non-empty
+    ``# <title>`` on line 1. The body is free-form markdown, so no citation
+    skeleton, header metadata, or section structure is ever demanded and a
+    supplied document (strategy notes, meeting minutes, an API excerpt)
+    never fails on a grammar it did not claim. Every finding names the
+    document file. These checks run only when the emit engine installs a
+    document; :func:`lint_library` never calls them, so the library lint
+    never walks the content directory's ``docs/`` folder."""
+    path = os.path.join(sc.specs_dir(root), "docs", slug, "doc.md")
+    if not os.path.isfile(path):
+        errors.append(LintError(
+            "document '%s' not found (%s)" % (slug, path), path))
+        return
+
+    lines = _read(path).splitlines()
+    first_line = lines[0].rstrip() if lines else ""
+    if not first_line.startswith("# ") or not first_line[2:].strip():
+        errors.append(LintError(
+            "doc.md line 1 is '%s', expected a non-empty `# <title>`"
+            % first_line, path))
+
+
+# ---------------------------------------------------------------------------
 # Video intent brief validation (shipd-spec-lint video-brief-validation,
 # shipd-spec-format video-brief-format)
 # ---------------------------------------------------------------------------

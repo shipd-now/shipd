@@ -3247,6 +3247,29 @@ class CatTest(SpecStatusTestBase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("no-such-brief", r.stderr)
 
+    def test_cat_docs(self):
+        ddir = os.path.join(self.root, ".shipd", "docs", "payments-strategy")
+        os.makedirs(ddir)
+        with open(os.path.join(ddir, "doc.md"), "w", encoding="utf-8") as fh:
+            fh.write("# Payments strategy\n\n## Context\n\n"
+                     "One processor next quarter.\n")
+        r = self.cli("cat", "docs", "payments-strategy")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        sep = "--- " + os.path.join(
+            ".shipd", "docs", "payments-strategy", "doc.md")
+        self.assertIn(sep, r.stdout)
+        # Exactly one separator line precedes the single document file.
+        self.assertEqual(
+            len([ln for ln in r.stdout.splitlines()
+                 if ln.startswith("--- ")]), 1)
+        self.assertIn("Payments strategy", r.stdout)
+
+    def test_cat_unknown_docs_errors_naming_the_probed_roots(self):
+        r = self.cli("cat", "docs", "no-such-doc")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no-such-doc", r.stderr)
+        self.assertIn(self.root, r.stderr)
+
     def test_cat_unknown_change_errors(self):
         r = self.cli("cat", "change", "ghost")
         self.assertNotEqual(r.returncode, 0)
@@ -3336,6 +3359,20 @@ class CatCrossUniverseTest(CatTest):
                 "payment-apis", "report.md"),
             r.stdout)
         self.assertIn("Payment API landscape", r.stdout)
+
+    def test_cat_docs_reads_a_worktree_hosted_document(self):
+        self.write_artifact(
+            self.worktree("docs-wt"),
+            ("docs", "payments-strategy", "doc.md"),
+            "# Payments strategy\n\nOne processor next quarter.\n")
+        r = self.cli("cat", "docs", "payments-strategy")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(
+            "--- " + os.path.join(
+                ".worktrees", "docs-wt", ".shipd", "docs",
+                "payments-strategy", "doc.md"),
+            r.stdout)
+        self.assertIn("Payments strategy", r.stdout)
 
     def test_cat_unknown_epic_names_the_probed_roots(self):
         wt = self.worktree("epic-wt")
@@ -4404,6 +4441,13 @@ class RelatedTest(SpecStatusTestBase):
             fh.write(text)
         return os.path.join(".shipd", "research", slug, "report.md")
 
+    def make_docs(self, slug, text):
+        ddir = os.path.join(self.root, ".shipd", "docs", slug)
+        os.makedirs(ddir, exist_ok=True)
+        with open(os.path.join(ddir, "doc.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return os.path.join(".shipd", "docs", slug, "doc.md")
+
     def make_epic(self, slug, text):
         edir = os.path.join(self.root, ".shipd", "epics", slug)
         os.makedirs(edir, exist_ok=True)
@@ -4510,6 +4554,19 @@ class RelatedTest(SpecStatusTestBase):
         self.assertEqual(by_kind["research"]["slug"], "payment-apis")
         self.assertEqual(by_kind["research"]["score"], "1")
         self.assertEqual(by_kind["research"]["path"], rpath)
+
+    def test_docs_surface_is_searched(self):
+        # An installed document is a first-class search surface (spec-status
+        # related-verb), printed with kind `docs` and its slug.
+        dpath = self.make_docs(
+            "payments-strategy",
+            "# Payments strategy\n\nWe consolidate payments this quarter.\n")
+        r = self.cli("related", "payments")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        by_kind = {b["kind"]: b for b in self.blocks(r.stdout)}
+        self.assertIn("docs", by_kind)
+        self.assertEqual(by_kind["docs"]["slug"], "payments-strategy")
+        self.assertEqual(by_kind["docs"]["path"], dpath)
 
     def test_non_matching_artifacts_are_dropped(self):
         self.make_verified("reporting", "# reporting\n\nAn export.\n")
@@ -4764,6 +4821,33 @@ class ListRowsTest(SpecStatusTestBase):
         self.assertEqual(
             [row["name"] for row in ss.list_rows(self.root, "verified", False)],
             ["spec-io"])
+
+    # -- docs ---------------------------------------------------------------
+
+    def make_docs(self, root, slug):
+        ddir = os.path.join(root, ".shipd", "docs", slug)
+        os.makedirs(ddir, exist_ok=True)
+        with open(os.path.join(ddir, "doc.md"), "w", encoding="utf-8") as fh:
+            fh.write("# %s\n" % slug)
+
+    def test_docs_rows_have_no_status(self):
+        self.make_docs(self.root, "payments-strategy")
+        self.make_docs(self.root, "board-minutes")
+        self.assertEqual(
+            ss.list_rows(self.root, "docs", False),
+            [{"name": "board-minutes", "location": "root", "project": None,
+              "status": None},
+             {"name": "payments-strategy", "location": "root",
+              "project": None, "status": None}])
+
+    def test_docs_span_the_worktrees_root_first(self):
+        self.make_docs(self.root, "payments-strategy")
+        self.make_docs(self.worktree("wt"), "payments-strategy")
+        self.make_docs(self.worktree("wt"), "board-minutes")
+        self.assertEqual(
+            [(row["name"], row["location"])
+             for row in ss.list_rows(self.root, "docs", False)],
+            [("payments-strategy", "root"), ("board-minutes", "worktree:wt")])
 
     # -- changes and guards ------------------------------------------------
 

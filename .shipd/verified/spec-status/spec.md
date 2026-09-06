@@ -1261,9 +1261,10 @@ searching the resolved content directory's `verified/<slug>/spec.md` (kind
 `verified`), `planned/<slug>/` artifact files (`plan.md`, `tasks.md`, delta
 `specs/*/spec.md`; kind `planned`), `completed/*-<slug>/` artifact files (kind
 `completed`, the slug printed with its `YYYY-MM-DD-` prefix stripped),
-`research/<slug>/report.md` (kind `research`), and `epics/<slug>/epic.md`
-(kind `epic`), and — where a workspace is discoverable — the workspace wiki
-store's `wiki/<slug>.md` pages (kind `wiki`).
+`research/<slug>/report.md` (kind `research`), `docs/<slug>/doc.md` (kind
+`docs`), and `epics/<slug>/epic.md` (kind `epic`), and — where a workspace is
+discoverable — the workspace wiki store's `wiki/<slug>.md` pages (kind
+`wiki`).
 
 The corpus SHALL span the invocation root's own universe: the invocation root
 first, then each `.worktrees/<name>` directory under it in sorted name order,
@@ -1291,6 +1292,12 @@ surface; a missing corpus directory SHALL likewise be skipped without error.
   contains it once
 - **THEN** both artifacts print as keyed blocks with `kind:`, `slug:`,
   `score:`, and `path:`, the verified capability first
+
+#### Scenario: Installed documents are searched
+- **WHEN** `related payments` runs in a repo whose
+  `docs/payments-strategy/doc.md` contains `payments`
+- **THEN** a block prints with `kind: docs` and `slug: payments-strategy`,
+  its `path:` naming the document
 
 #### Scenario: Worktree-hosted artifacts are searched
 - **WHEN** `related <term>` runs from a main checkout whose

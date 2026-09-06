@@ -33,6 +33,11 @@ Modes (all resolve locations through the layered configuration):
       Install a video intent brief to ``<content-dir>/video/<slug>/brief.md``
       and run the video brief checks.
 
+  docs <slug> --from <file> [--replace]
+      Install a document to ``<content-dir>/docs/<slug>/doc.md`` and run the
+      docs document checks (a non-empty ``# <title>`` on line 1, nothing
+      more — the body is free-form).
+
   wiki --from <staging-dir>
       Install a staged wiki-store subset (``wiki/<slug>.md`` pages, ``index.md``,
       ``log.md``, ``queue.md``, add-only ``sources/<file>``) into the workspace
@@ -217,6 +222,29 @@ def emit_research(root, slug, src, replace):
     return 0
 
 
+def emit_docs(root, slug, src, replace):
+    if not os.path.isfile(src):
+        raise EmitError("document file not found: %s" % src)
+    doc_path = os.path.join(sc.specs_dir(root), "docs", slug, "doc.md")
+    dest_dir = os.path.dirname(doc_path)
+
+    def copy():
+        os.makedirs(dest_dir, exist_ok=True)
+        shutil.copyfile(src, doc_path)
+
+    def validate():
+        errors = []
+        sl.lint_docs(root, slug, errors)
+        return errors
+
+    _install_dir(root, False, src, dest_dir, replace, validate, copy)
+    # Declare the grammar the installed artifact is written under
+    # (schema-versioning schema-marker-stamping).
+    sc.stamp_schema_marker(root)
+    print("installed docs %s at %s" % (slug, doc_path))
+    return 0
+
+
 def emit_video(root, slug, src, replace):
     if not os.path.isfile(src):
         raise EmitError("brief file not found: %s" % src)
@@ -377,6 +405,11 @@ def main(argv=None):
     p_video.add_argument("--from", dest="src", required=True)
     p_video.add_argument("--replace", action="store_true")
 
+    p_docs = sub.add_parser("docs", help="install a document")
+    p_docs.add_argument("slug")
+    p_docs.add_argument("--from", dest="src", required=True)
+    p_docs.add_argument("--replace", action="store_true")
+
     p_wiki = sub.add_parser(
         "wiki", help="install a staged wiki-store subset")
     p_wiki.add_argument("--from", dest="src", required=True)
@@ -407,6 +440,8 @@ def main(argv=None):
             return emit_research(root, args.slug, args.src, args.replace)
         if args.mode == "video":
             return emit_video(root, args.slug, args.src, args.replace)
+        if args.mode == "docs":
+            return emit_docs(root, args.slug, args.src, args.replace)
         if args.mode == "wiki":
             return emit_wiki(root, args.src, args.personal)
     except (EmitError, sc.ConfigError) as exc:
