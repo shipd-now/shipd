@@ -8,7 +8,7 @@ a versioned plugin cache snapshot alike. Delegation is process replacement
 (:func:`os.execv`), so the delegate's stdout, stderr, interactivity, and exit
 code are this binary's own — nothing is reimplemented or reformatted here.
 
-Only read/inspect verbs are exposed, with six deliberate exceptions, each
+Only read/inspect verbs are exposed, with nine deliberate exceptions, each
 writing user-domain files and never a spec artifact, and each only under an
 explicit word: ``statusline install`` writes the statusline registration into
 the user's own Claude Code settings file, ``copilot add`` / ``copilot remove``
@@ -17,8 +17,11 @@ repository, ``vendor add`` / ``vendor remove`` maintain a vendored per-repo
 shipd install there, ``harness add`` / ``harness remove`` maintain the
 generated ``/s:`` command files inside a repository or the user's own harness
 directories, ``install`` asks which harnesses the user works in and
-installs the chosen ones' commands into their home directory, and ``init``
-creates the content directory's empty layout directories — never a spec
+installs the chosen ones' commands into their home directory, ``init``
+creates the content directory's empty layout directories, ``workspace init``
+writes the workspace marker (and, under ``--git``, the marked member-repos
+``.gitignore`` block), ``workspace sync --write-gitignore`` rewrites that same
+marked block, and ``wiki init`` scaffolds the wiki store — never a spec
 artifact, and never modifying anything already there. The mutating
 verbs over the spec library (``set-status``,
 ``merge``, ``emit``, ``autopilot``, ``worktree remove``) stay behind their
@@ -75,6 +78,8 @@ VERB_TABLE = {
     "related": ("spec_status.py", ["related"]),
     "epic": ("spec_status.py", ["epic-show"]),
     "workspace": ("spec_status.py", ["workspace-show"]),
+    "wiki": ("spec_status.py", ["wiki-show"]),
+    "config": ("spec_status.py", ["config-show"]),
     "board": ("dashboard.py", ["tui"]),
     "render": ("render.py", ["screen"]),
     "metrics": ("metrics.py", []),
@@ -101,6 +106,23 @@ RENDER_MODES = {
     "output": ("render.py", ["output"]),
 }
 
+# ``workspace`` reads the same way: the roster report is the default, and the
+# two bare words ``init`` and ``sync`` are consumed to select the setup and
+# materialization verbs. ``workspace-show`` takes no positionals, so the mode
+# words shadow nothing.
+WORKSPACE_MODES = {
+    None: ("spec_status.py", ["workspace-show"]),
+    "init": ("spec_status.py", ["workspace-init"]),
+    "sync": ("spec_status.py", ["workspace-sync"]),
+}
+
+# ``wiki`` likewise: the store report by default, with ``init`` the one word
+# consumed to scaffold it.
+WIKI_MODES = {
+    None: ("spec_status.py", ["wiki-show"]),
+    "init": ("spec_status.py", ["wiki-init"]),
+}
+
 USAGE = """\
 usage: shipd <verb> [args...]
 
@@ -118,7 +140,10 @@ verbs:
   locate [change]            where an installed change lives
   related <term> [term...]   spec artifacts ranked by term-hit count
   epic <slug>                an epic's status, metadata, and member states
-  workspace                  the workspace root, its projects, and initiatives
+  workspace [init|sync]      the workspace root, its projects, and initiatives
+                             (init: create one; sync: materialize its members)
+  wiki [init]                the wiki store (init: scaffold it)
+  config                     the layered configuration this root resolves
   board [text] [args]        the delivery board (default: full-screen)
   render [output] [file]     markdown with its mermaid diagrams drawn as text
                              (default: full-screen)
@@ -2340,6 +2365,20 @@ def main(argv):
         if mode is not None:
             rest = rest[1:]
         script, leading = RENDER_MODES[mode]
+    # `shipd workspace [mode]` and `shipd wiki [mode]` follow the same grammar:
+    # a known bare word as the first argument is consumed to pick the delegate,
+    # anything else (or nothing) falls through to the report with its arguments
+    # intact.
+    if verb == "workspace":
+        mode = rest[0] if rest and rest[0] in WORKSPACE_MODES else None
+        if mode is not None:
+            rest = rest[1:]
+        script, leading = WORKSPACE_MODES[mode]
+    if verb == "wiki":
+        mode = rest[0] if rest and rest[0] in WIKI_MODES else None
+        if mode is not None:
+            rest = rest[1:]
+        script, leading = WIKI_MODES[mode]
     command = [sys.executable, str(SCRIPTS / script), *leading, *rest]
     try:
         os.execv(sys.executable, command)
