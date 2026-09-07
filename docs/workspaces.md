@@ -29,12 +29,14 @@ of repos you already have locally**, full clones only on a fresh machine.
 ## 1. One-time machine setup
 
 Tell the engine where your existing local clones live (so materialization is
-cheap) and where your durable base wiki is. In `~/.shipd-config.json`:
+cheap), where your durable base wiki is, and — optionally — where job
+workspaces are allowed to live. In `~/.shipd-config.json`:
 
 ```json
 {
   "clone_sources": ["~/projects"],
-  "wiki_base": "~/projects/.shipd/wiki"
+  "wiki_base": "~/projects/.shipd/wiki",
+  "workspaces_root": "~/workspaces"
 }
 ```
 
@@ -46,10 +48,25 @@ cheap) and where your durable base wiki is. In `~/.shipd-config.json`:
   recommended for a durable base that sits **outside** the chain — see
   [§6 Nesting job workspaces](#6-nesting-job-workspaces) for a base reached by
   nesting instead.
+- `workspaces_root` — the mandated parent directory for job workspaces:
+  declaring it turns this guide's one-folder-per-job-under-`~/workspaces/`
+  convention from a habit into a rule. A bare name given to `shipd workspace
+  init` resolves to `<workspaces_root>/<name>`, with the leaf directory
+  created for you; an explicit init target — or a `/s:workspace clone`
+  destination — that lands outside the root is refused with an error naming
+  the target, the declared root, and `workspaces_root`. The root itself and
+  everything beneath it counts as inside, so `--nested` job workspaces (see
+  [§6 Nesting job workspaces](#6-nesting-job-workspaces)) inside the root stay
+  legal. Undeclared = no mandated root, and every surface behaves exactly as it
+  does without the key. `shipd config` reports the value **as declared**, with
+  `~` left unexpanded; the installed sample config documents the key; and
+  doctor's existing `config` check validates it — `fail` on a malformed value
+  (not a non-empty string, or not absolute once `~` expands), `warn` when the
+  declared root directory does not exist.
 
-Both keys tune *materialization* and *wiki fallback* — neither is needed to
-read a workspace, so a machine with no `~/.shipd-config.json` at all still
-resolves every read verb (see
+These keys tune *materialization*, *wiki fallback*, and *where workspaces
+live* — none of them is needed to read a workspace, so a machine with no
+`~/.shipd-config.json` at all still resolves every read verb (see
 [§9 Headless consumers](#9-headless-consumers)).
 
 ## 2. Create a job workspace
@@ -60,6 +77,14 @@ shipd workspace init ~/workspaces/documents-linking --git
 ```
 
 `--git` makes the root a git repo and seeds the managed `.gitignore` block.
+
+With `workspaces_root` declared
+([§1 One-time machine setup](#1-one-time-machine-setup)), the bare job name
+suffices — `shipd workspace init documents-linking --git` creates
+`~/workspaces/documents-linking` and initializes it there, no `mkdir` needed.
+The explicit-path example above is the flow when the key is undeclared, and
+keeps working either way.
+
 Then declare the job in
 `~/workspaces/documents-linking/.shipd-config.json`:
 
