@@ -2764,6 +2764,49 @@ class WorkspaceInitTest(SpecStatusTestBase):
         self.assertIn(self.root, r.stderr)
         self.assertFalse(os.path.exists(self.marker_path(target)))
 
+    # -- mandated workspaces root ------------------------------------------
+
+    def declare_workspaces_root(self, value):
+        """Declare ``workspaces_root`` in the isolated home layer — the natural
+        home of the key — so the CLI subprocess resolves it from any target."""
+        with open(os.path.join(self._base_home, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"workspaces_root": value}, fh)
+
+    def cli_in(self, cwd, *args):
+        """Drive the CLI from an explicit working directory, so a bare-name
+        target resolves against a controlled directory rather than the
+        checkout the suite runs from."""
+        return subprocess.run(
+            ["python3", SCRIPT, "--root", self.root, *args],
+            cwd=cwd, capture_output=True, text=True)
+
+    def test_bare_name_resolves_into_the_declared_root(self):
+        ws_root = os.path.join(os.path.realpath(self.root), "workflows")
+        os.makedirs(ws_root)
+        self.declare_workspaces_root(ws_root)
+        r = self.cli_in(self.root, "workspace-init", "acme-job")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        printed = r.stdout.strip()
+        expected = os.path.join(ws_root, "acme-job")
+        self.assertEqual(
+            os.path.realpath(printed), os.path.realpath(expected))
+        with open(self.marker_path(expected), encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["workspace"], {})
+
+    def test_target_outside_the_declared_root_exits_non_zero(self):
+        ws_root = os.path.join(os.path.realpath(self.root), "workflows")
+        os.makedirs(ws_root)
+        self.declare_workspaces_root(ws_root)
+        outside = os.path.join(os.path.realpath(self.root), "elsewhere")
+        os.makedirs(outside)
+        r = self.cli_in(self.root, "workspace-init", outside)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn(outside, r.stderr)
+        self.assertIn(ws_root, r.stderr)
+        self.assertIn("workspaces_root", r.stderr)
+        self.assertFalse(os.path.exists(self.marker_path(outside)))
+
 
 class ConfigShowTest(SpecStatusTestBase):
     """`config-show` prints the resolved layered configuration: per-key

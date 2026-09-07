@@ -462,13 +462,26 @@ def check_config(root):
     invalid *declared* value fails this check carrying the accessor's own
     error line, which already names the key, the offending value, the
     accepted values, and the config file that supplied it. A valid or
-    undeclared key leaves the reporting below untouched."""
+    undeclared key leaves the reporting below untouched.
+
+    ``workspaces_root`` folds in the same way (shipd-cli
+    doctor-workspaces-root-check spec): a malformed value fails this check
+    carrying the accessor's own error line, and a well-formed value naming a
+    directory that does not exist warns naming the key and the missing path —
+    report-only, mutating nothing. A valid-and-present or undeclared key
+    leaves the reporting below untouched."""
     _load_engine()
     try:
         content = sc.specs_dir(root)
         sc.resolve_pr_mode(root)
+        workspaces_root = sc.workspaces_root_dir(root)
     except sc.ConfigError as exc:
         return ("fail", "config", "%s" % exc)
+    if workspaces_root is not None and not os.path.isdir(workspaces_root):
+        return ("warn", "config",
+                "config `workspaces_root` names %s, which is not an existing "
+                "directory — create it, or fix the key, before initializing a "
+                "job workspace there" % workspaces_root)
     if os.path.isdir(content):
         return ("ok", "config", "content directory %s" % content)
     return ("ok", "config",

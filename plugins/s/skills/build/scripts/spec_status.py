@@ -3075,7 +3075,14 @@ def cmd_workspace_init(path, git=False, nested=False):
     refusal or error (an existing workspace already discoverable from the
     target without ``nested``, a target that itself already declares
     ``workspace``, or a missing target directory) surfaces as a
-    :class:`StatusError`, exiting non-zero."""
+    :class:`StatusError`, exiting non-zero.
+
+    Where the layered configuration declares ``workspaces_root`` (shipd-config
+    workspaces-root-key), the engine's mandated-root behavior is inherited
+    unchanged: a bare name resolves into the declared root and that resolved
+    path is what gets printed, while a refused target — an explicit path
+    outside the declared root, or a bare name whose declared root is missing —
+    surfaces as the engine's error naming ``workspaces_root``."""
     try:
         result = sc.init_workspace(path, git=git, nested=nested)
     except sc.ConfigError as exc:
@@ -3859,7 +3866,11 @@ def main(argv=None):
     p_ws_init = sub.add_parser(
         "workspace-init",
         help="initialize a workspace at the given directory")
-    p_ws_init.add_argument("path")
+    p_ws_init.add_argument(
+        "path",
+        help="the target directory; where the layered config declares "
+             "`workspaces_root`, a bare name resolves into that declared root "
+             "(the leaf is created) and a target outside it is refused")
     p_ws_init.add_argument(
         "--git", action="store_true",
         help="git-init the target when needed and seed a marked member-repos "

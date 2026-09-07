@@ -28,6 +28,19 @@ def home_set_to(path):
 
 
 @contextlib.contextmanager
+def cwd_set_to(path):
+    """Run the block with the process working directory at ``path``, so a bare
+    relative target resolves against a controlled directory rather than the
+    checkout the suite happens to run from."""
+    old = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(old)
+
+
+@contextlib.contextmanager
 def schema_version_set_to(value):
     """Lift ``spec_common.SCHEMA_VERSION`` for the duration of the block, so the
     comparison rules can be exercised on both sides of the grammar's current
@@ -791,6 +804,100 @@ class InitWorkspaceTest(unittest.TestCase):
             self.assertIn(ws, str(cm.exception))
             self.assertFalse(
                 os.path.exists(os.path.join(nested, sc.CONFIG_FILENAME)))
+
+
+class InitWorkspaceWorkspacesRootTest(unittest.TestCase):
+    """init_workspace enforces a declared ``workspaces_root`` (shipd-workspace
+    workspace-initialization, shipd-config workspaces-root-key). Every case
+    isolates ``$HOME`` — the layer declaring the key — and the working
+    directory a bare name would otherwise resolve against, and compares
+    ``os.path.realpath`` on both sides so macOS ``/tmp`` symlinking never
+    decides the outcome."""
+
+    def test_bare_name_resolves_into_the_declared_root(self):
+        with tempfile.TemporaryDirectory() as home, \
+                tempfile.TemporaryDirectory() as cwd:
+            home = os.path.realpath(home)
+            root = os.path.join(home, "workflows")
+            os.makedirs(root)
+            _write_ws_config(
+                home, workspace=None, extra={"workspaces_root": root})
+            with home_set_to(home), cwd_set_to(os.path.realpath(cwd)):
+                created = sc.init_workspace("acme-job")
+            self.assertEqual(
+                os.path.realpath(created),
+                os.path.realpath(os.path.join(root, "acme-job")))
+            cfg = os.path.join(created, sc.CONFIG_FILENAME)
+            self.assertTrue(os.path.isfile(cfg))
+            with open(cfg, encoding="utf-8") as fh:
+                self.assertEqual(json.load(fh)["workspace"], {})
+
+    def test_explicit_target_outside_the_root_is_refused(self):
+        with tempfile.TemporaryDirectory() as home, \
+                tempfile.TemporaryDirectory() as outside, \
+                tempfile.TemporaryDirectory() as cwd:
+            home = os.path.realpath(home)
+            outside = os.path.realpath(outside)
+            root = os.path.join(home, "workflows")
+            os.makedirs(root)
+            _write_ws_config(
+                home, workspace=None, extra={"workspaces_root": root})
+            with home_set_to(home), cwd_set_to(os.path.realpath(cwd)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.init_workspace(outside)
+            message = str(cm.exception)
+            self.assertIn(outside, message)
+            self.assertIn(root, message)
+            self.assertIn("workspaces_root", message)
+            self.assertFalse(
+                os.path.exists(os.path.join(outside, sc.CONFIG_FILENAME)))
+
+    def test_explicit_target_beneath_the_root_proceeds(self):
+        with tempfile.TemporaryDirectory() as home, \
+                tempfile.TemporaryDirectory() as cwd:
+            home = os.path.realpath(home)
+            root = os.path.join(home, "workflows")
+            target = os.path.join(root, "acme-job")
+            os.makedirs(target)
+            _write_ws_config(
+                home, workspace=None, extra={"workspaces_root": root})
+            with home_set_to(home), cwd_set_to(os.path.realpath(cwd)):
+                created = sc.init_workspace(target)
+            self.assertEqual(
+                os.path.realpath(created), os.path.realpath(target))
+            with open(os.path.join(target, sc.CONFIG_FILENAME),
+                      encoding="utf-8") as fh:
+                self.assertEqual(json.load(fh)["workspace"], {})
+
+    def test_bare_name_with_a_missing_declared_root_errors(self):
+        with tempfile.TemporaryDirectory() as home, \
+                tempfile.TemporaryDirectory() as cwd:
+            home = os.path.realpath(home)
+            root = os.path.join(home, "workflows")
+            _write_ws_config(
+                home, workspace=None, extra={"workspaces_root": root})
+            with home_set_to(home), cwd_set_to(os.path.realpath(cwd)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.init_workspace("acme-job")
+            message = str(cm.exception)
+            self.assertIn("workspaces_root", message)
+            self.assertIn(root, message)
+            self.assertFalse(os.path.exists(root))
+
+    def test_undeclared_key_leaves_a_bare_name_cwd_relative(self):
+        with tempfile.TemporaryDirectory() as home, \
+                tempfile.TemporaryDirectory() as cwd:
+            home = os.path.realpath(home)
+            cwd = os.path.realpath(cwd)
+            target = os.path.join(cwd, "acme-job")
+            os.makedirs(target)
+            with home_set_to(home), cwd_set_to(cwd):
+                created = sc.init_workspace("acme-job")
+            self.assertEqual(
+                os.path.realpath(created), os.path.realpath(target))
+            with open(os.path.join(target, sc.CONFIG_FILENAME),
+                      encoding="utf-8") as fh:
+                self.assertEqual(json.load(fh)["workspace"], {})
 
 
 class ValidateWorkspaceTest(unittest.TestCase):
@@ -2353,6 +2460,76 @@ class WikiBaseDirTest(unittest.TestCase):
                     root, workspace=None,
                     extra={"wiki_base": sc.wiki_dir(root)})
                 self.assertIsNone(sc.wiki_base_dir(root))
+
+
+class WorkspacesRootDirTest(unittest.TestCase):
+    """workspaces_root_dir resolves the optional ``workspaces_root`` config key
+    (shipd-config workspaces-root-key). ``$HOME`` is overridden so ``~``
+    expansion is deterministic and resolution never reads the real home
+    config."""
+
+    def test_declared_tilde_path_resolves_expanded(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            home = os.path.realpath(home)
+            _write_ws_config(
+                root, {}, extra={"workspaces_root": "~/workflows"})
+            with home_set_to(home):
+                self.assertEqual(
+                    sc.workspaces_root_dir(root),
+                    os.path.join(home, "workflows"))
+
+    def test_undeclared_key_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            _write_ws_config(root, {})
+            with home_set_to(os.path.realpath(home)):
+                self.assertIsNone(sc.workspaces_root_dir(root))
+
+    def test_relative_value_errors(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            _write_ws_config(
+                root, {}, extra={"workspaces_root": "relative/path"})
+            with home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.workspaces_root_dir(root)
+            self.assertIn("workspaces_root", str(cm.exception))
+
+    def test_empty_string_errors(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            _write_ws_config(root, {}, extra={"workspaces_root": ""})
+            with home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.workspaces_root_dir(root)
+            self.assertIn("workspaces_root", str(cm.exception))
+
+    def test_non_string_errors(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            _write_ws_config(root, {}, extra={"workspaces_root": 42})
+            with home_set_to(os.path.realpath(home)):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.workspaces_root_dir(root)
+            self.assertIn("workspaces_root", str(cm.exception))
+
+    def test_declared_path_is_normalized(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            home = os.path.realpath(home)
+            _write_ws_config(
+                root, {}, extra={"workspaces_root": "~/workflows/../workflows/"})
+            with home_set_to(home):
+                self.assertEqual(
+                    sc.workspaces_root_dir(root),
+                    os.path.join(home, "workflows"))
 
 
 class WikiGrammarHelpersTest(unittest.TestCase):

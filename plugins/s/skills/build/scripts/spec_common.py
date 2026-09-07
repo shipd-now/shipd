@@ -380,6 +380,7 @@ RECOGNIZED_CONFIG_KEYS = (
     "valid_themes",
     "wiki_base",
     "workspace",
+    "workspaces_root",
 )
 
 # Built-in defaults beneath all config files. Only ``dir`` and
@@ -1141,6 +1142,22 @@ def _ensure_members_gitignore_block(target):
         fh.write(new_body)
 
 
+def _is_bare_name(path):
+    """True when ``path`` is a *bare name*: a single-component relative path
+    that is neither ``.`` nor ``..``, so it names a leaf rather than a location
+    (shipd-workspace workspace-initialization). Anything carrying a separator,
+    an absolute path, and the two self/parent references are explicit targets."""
+    if not isinstance(path, str) or not path:
+        return False
+    if os.path.isabs(path):
+        return False
+    if os.sep in path or "/" in path:
+        return False
+    if os.altsep and os.altsep in path:
+        return False
+    return path not in (".", "..")
+
+
 def init_workspace(path, git=False, nested=False):
     """Initialize a workspace at ``path`` (shipd-workspace
     workspace-initialization).
@@ -1166,8 +1183,39 @@ def init_workspace(path, git=False, nested=False):
     not already inside a git work tree, then ensure the target's ``.gitignore``
     carries the marked member-repos block (appending an empty marked block only
     when the markers are absent). Local git operations only — never the network.
+
+    When the layered configuration resolved from ``path`` declares
+    ``workspaces_root`` (shipd-config workspaces-root-key), the mandated root is
+    enforced first: a *bare name* — a single-component relative path that is
+    neither ``.`` nor ``..`` — is re-targeted to ``<workspaces_root>/<name>``,
+    the declared root having to be an existing directory (:class:`ConfigError`
+    naming ``workspaces_root`` and the missing root otherwise) and the leaf
+    created when absent; any other target whose real path lies outside the
+    declared root (the root itself and its descendants are inside) raises
+    :class:`ConfigError` naming the target, the declared root, and
+    ``workspaces_root``, writing nothing. Every guard above then runs unchanged
+    against the resolved target. An undeclared key changes nothing.
     Stdlib only."""
     target = os.path.abspath(path)
+    config, _prov = resolve_config(target)
+    mandated_root = _workspaces_root_from_config(config)
+    if mandated_root is not None:
+        if _is_bare_name(path):
+            if not os.path.isdir(mandated_root):
+                raise ConfigError(
+                    "config `workspaces_root` names %s, which is not an "
+                    "existing directory; create it or fix the key before "
+                    "initializing %r there" % (mandated_root, path))
+            target = os.path.join(mandated_root, path)
+            if not os.path.exists(target):
+                os.mkdir(target)
+        real_root = os.path.realpath(mandated_root)
+        real_target = os.path.realpath(target)
+        if os.path.commonpath([real_root, real_target]) != real_root:
+            raise ConfigError(
+                "%s lies outside %s, the job-workspace root config "
+                "`workspaces_root` mandates; initialize the workspace inside "
+                "that root instead" % (target, mandated_root))
     existing = find_workspace_root(target)
     self_declares = (
         existing is not None
@@ -1368,6 +1416,48 @@ def memory_store_dir(root):
             "config `memory_dir` must expand to an absolute path, got %r"
             % (raw,))
     return os.path.join(expanded, "wiki")
+
+
+# The config key mandating the parent directory of every job workspace.
+WORKSPACES_ROOT_KEY = "workspaces_root"
+
+
+def _workspaces_root_from_config(config):
+    """Return the mandated job-workspace parent directory declared by
+    ``workspaces_root`` in an *already resolved* ``config``, or ``None`` when
+    the key is undeclared (shipd-config workspaces-root-key).
+
+    The config-taking half of :func:`workspaces_root_dir`, so a caller that has
+    already resolved the layered configuration — ``init_workspace`` — enforces
+    the mandate without resolving it a second time."""
+    raw = config.get(WORKSPACES_ROOT_KEY)
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw:
+        raise ConfigError(
+            "config `workspaces_root` must be a non-empty string path, got %r"
+            % (raw,))
+    expanded = os.path.expanduser(raw)
+    if not os.path.isabs(expanded):
+        raise ConfigError(
+            "config `workspaces_root` must expand to an absolute path, got %r"
+            % (raw,))
+    return os.path.normpath(expanded)
+
+
+def workspaces_root_dir(root):
+    """Return the mandated parent directory for job workspaces declared by the
+    optional ``workspaces_root`` config key resolved from ``root``
+    (shipd-config workspaces-root-key), or ``None`` when undeclared.
+
+    The value MUST be a non-empty string; ``~`` is expanded and the expanded
+    value MUST be absolute. A value that is not a non-empty string, or does not
+    expand to an absolute path, raises :class:`ConfigError` naming
+    ``workspaces_root`` so the consuming verb can exit non-zero. When the key is
+    undeclared there is no mandated root and every consuming surface behaves as
+    it does without the key."""
+    config, _prov = resolve_config(root)
+    return _workspaces_root_from_config(config)
 
 
 def extract_wikilinks(text):
