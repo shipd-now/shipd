@@ -1170,6 +1170,45 @@ class DoctorCheckTest(unittest.TestCase):
             ("ok", "config",
              "content directory %s" % os.path.join(root, ".shipd")))
 
+    def test_malformed_workspaces_root_fails_naming_the_key(self):
+        # The `config` check also validates `workspaces_root` (shipd-cli
+        # doctor-workspaces-root-check spec), reporting the accessor's own
+        # error line rather than growing a check name of its own.
+        root, _path = self.repo_with_config(
+            "badwsroot", {"workspaces_root": "relative/path"})
+        level, name, detail = self.config_check(root)
+        self.assertEqual((level, name), ("fail", "config"))
+        self.assertIn("workspaces_root", detail)
+
+    def test_missing_workspaces_root_directory_warns(self):
+        missing = os.path.join(self.tmp, "nowhere", "workflows")
+        root, _path = self.repo_with_config(
+            "missingwsroot", {"workspaces_root": missing})
+        os.makedirs(os.path.join(root, ".shipd", "planned"))
+        level, name, detail = self.config_check(root)
+        self.assertEqual((level, name), ("warn", "config"))
+        self.assertIn("workspaces_root", detail)
+        self.assertIn(missing, detail)
+
+    def test_existing_workspaces_root_is_ok_with_the_usual_detail(self):
+        present = os.path.join(self.tmp, "workflows")
+        os.makedirs(present)
+        root, _path = self.repo_with_config(
+            "goodwsroot", {"workspaces_root": present})
+        os.makedirs(os.path.join(root, ".shipd", "planned"))
+        level, name, detail = self.config_check(root)
+        self.assertEqual((level, name), ("ok", "config"))
+        self.assertIn("content directory", detail)
+        self.assertIn(".shipd", detail)
+
+    def test_undeclared_workspaces_root_leaves_the_check_unchanged(self):
+        root = os.path.join(self.tmp, "nowsroot")
+        os.makedirs(os.path.join(root, ".shipd", "planned"))
+        self.assertEqual(
+            self.config_check(root),
+            ("ok", "config",
+             "content directory %s" % os.path.join(root, ".shipd")))
+
     # -- pipeline ----------------------------------------------------------
 
     def pipeline_check(self, root, **kwargs):

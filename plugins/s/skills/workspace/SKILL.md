@@ -79,8 +79,18 @@ section below:
    also enforced downstream.)
 
 2. **When no workspace is discoverable** (the command exits non-zero with its
-   no-workspace error), ask the user with a **single AskUserQuestion carrying
-   two questions**:
+   no-workspace error), first **read the resolved configuration** — the
+   declared job-workspace root, if any, decides which targets you may offer:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" config-show
+   ```
+
+   Look for a `workspaces_root = ...` line. It is the parent directory the
+   configuration **mandates** for every job workspace; the engine enforces it,
+   so a target outside it is refused whatever you offer.
+
+   Then ask the user with a **single AskUserQuestion carrying two questions**:
 
    - **Target root** — offer two concrete options, recommended default first:
      - **The repository's parent directory** (recommended) — a workspace groups
@@ -91,6 +101,14 @@ section below:
 
      Resolve both to absolute paths before offering them (the parent of the
      repo root, and the repo root).
+
+     **When `workspaces_root` is declared**, name the declared root in the
+     question text and offer only candidates **inside** it: keep any natural
+     candidate that already lies within the declared root, and **substitute
+     `<workspaces_root>/<repo-name>`** for any that lies outside it (the
+     repository's own directory name under the declared root). Offering an
+     outside path only earns the verb's refusal. When the key is undeclared,
+     offer the two natural candidates exactly as above.
 
    - **Portable git seeding** — whether to seed the root as a portable git
      workspace. Recommended default: **plain init** (unchanged behavior, no git
@@ -113,6 +131,15 @@ section below:
    created root. If it refuses — a workspace already discoverable from the
    target, or a missing target directory — report its error verbatim and stop;
    do not retry against a different path without the user.
+
+   **A bare name passes straight through.** Where `workspaces_root` is
+   declared, a chosen target that is a bare name (a single path component, e.g.
+   `acme-job`) goes to the verb unchanged — the engine resolves it to
+   `<workspaces_root>/<name>`, creating the leaf directory, and prints the
+   resolved root. Do not pre-expand it yourself. Where the chosen target is an
+   explicit path outside the declared root, the verb refuses with an error
+   naming the target, the declared root, and `workspaces_root`; report that
+   error verbatim and stop.
 
 4. **Report the created root** the verb printed. The workspace starts empty (no
    projects, no initiatives); those appear lazily as they are declared.
@@ -143,6 +170,28 @@ consent.
    trailing `.git` stripped (`git@host:acme/jobs-alpha.git` → `jobs-alpha`).
    Resolve it to an absolute path; its **immediate parent** is where the clone
    lands.
+
+   **Honour a declared `workspaces_root`.** Read the resolved configuration
+   first:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" config-show
+   ```
+
+   When a `workspaces_root = ...` line is present, it is the parent directory
+   the configuration mandates for every job workspace:
+   - **No `[dest]` given** — the destination is
+     `<workspaces_root>/<derived-name>`, the git-derived name under the
+     declared root, rather than a directory in the cwd.
+   - **An explicit `[dest]` given** — resolve it, and if it lies **outside**
+     the declared root (the root itself and its descendants are inside),
+     **refuse before cloning**: report an error naming the dest, the declared
+     root, and `workspaces_root`, and clone nothing. This check is the skill's
+     because `git clone` never passes through the engine; it mirrors the
+     refusal `workspace-init` raises.
+
+   When the key is undeclared, resolve the destination exactly as above and
+   change nothing else.
 
 2. **Guard against nesting — refuse only the one topology `workspace-init`
    rejects.** Check whether the destination's immediate parent directory
@@ -249,6 +298,12 @@ consent; a question would break unattended bootstrap):
   repository's parent directory (recommended) and the repository root, both as
   resolved absolute paths. For git seeding, offer plain init (recommended,
   unchanged behavior) and seed git (`--git`).
+- **Honour a declared `workspaces_root`.** Read the resolved configuration
+  (`config-show`) before the round. When the key is declared, name the declared
+  root in the question text and offer **only** target candidates inside it,
+  substituting `<workspaces_root>/<repo-name>` for any natural candidate that
+  lies outside — the engine refuses an outside target anyway, naming the key.
+  When the key is undeclared, the round is exactly as it was.
 - **Ask once, then converge.** Fold both answers in and drive `workspace-init`
   immediately — with `--git` when git seeding was chosen.
 
@@ -262,7 +317,8 @@ Each verb ends the moment its work is done and self-consistent:
   portable option was chosen.
 - **`show`** — the roster is reported; nothing was changed.
 - **`clone`** — the repository was cloned with real git (or refused because the
-  destination's immediate parent is itself a workspace root), the `sync` flow
+  destination's immediate parent is itself a workspace root, or because an
+  explicit dest resolved outside a declared `workspaces_root`), the `sync` flow
   ran inside the created root, and the roster was reported.
 - **`sync`** — the plan's per-member actions were executed (failures reported
   and skipped, drift reported never repaired), the marked ignore block was

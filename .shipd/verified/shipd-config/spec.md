@@ -792,7 +792,8 @@ The engine SHALL define the recognized top-level configuration keys in a
 single registry constant in `spec_common.py`
 (`autonomous-pipeline`, `build`, `clone_sources`, `completed_retention_days`,
 `dir`, `guardrails`, `memory_dir`, `post-worktree-scripts`, `pr-mode`,
-`store_root`, `valid_themes`, `wiki_base`, `workspace`). The copyable config
+`store_root`, `valid_themes`, `wiki_base`, `workspace`, `workspaces_root`).
+The copyable config
 example JSON shipped in the plugin's build references SHALL be strict JSON
 parseable by the stdlib `json` module and SHALL document every registry key —
 as a declared key or as a `// <key>` comment entry — each with a comment
@@ -866,3 +867,29 @@ file and line.
 - **THEN** the command it shows resolves the content directory from
   `config-show`'s `content-dir:` line before listing, rather than hardcoding
   `.shipd/verified/` or `.shipd/planned/`
+
+### Requirement: Workspaces root key
+id: workspaces-root-key
+
+The configuration MAY declare `workspaces_root`: a non-empty string path (with
+`~` expansion) naming the mandated parent directory under which job workspaces
+are created and cloned, resolved through the standard layered per-key merge.
+The expanded value SHALL be an absolute path; if the declared value is not a
+non-empty string or does not expand to an absolute path, then the consuming
+verb SHALL exit non-zero with an error naming `workspaces_root`. When the key
+is undeclared, there SHALL be no mandated root and every consuming surface
+SHALL behave exactly as it does without the key.
+
+#### Scenario: Declared key resolves expanded
+- **GIVEN** a config layer declaring `workspaces_root: "~/workflows"`
+- **WHEN** the key is resolved
+- **THEN** the result is the absolute expanded path to that directory
+
+#### Scenario: Undeclared key means no mandated root
+- **WHEN** no layer declares `workspaces_root`
+- **THEN** resolution yields no root and no error is raised
+
+#### Scenario: Malformed value errors
+- **WHEN** `workspaces_root` is declared as a relative path, an empty string,
+  or a non-string and a consuming verb runs
+- **THEN** the verb exits non-zero with an error naming `workspaces_root`
