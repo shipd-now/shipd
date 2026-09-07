@@ -1242,10 +1242,32 @@ class LayeredConfigTest(unittest.TestCase):
                 self.assertEqual(
                     sc.specs_dir(root), os.path.join(root, "specs"))
 
-    def test_separator_in_dir_errors_naming_value(self):
+    def test_nested_dir_is_returned_unchanged(self):
+        self.assertEqual(
+            sc.specs_dirname({"dir": ".agents/specs/.shipd"}),
+            ".agents/specs/.shipd")
+
+    def test_specs_dir_joins_nested_dirname_natively(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"dir": ".agents/specs/.shipd"})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.specs_dir(root),
+                    os.path.join(root, ".agents", "specs", ".shipd"))
+
+    def test_invalid_dir_values_error_naming_the_value(self):
+        for value in ("../specs", "/abs/specs", "a//b", "./x", "a\\b", ""):
+            with self.subTest(value=value):
+                with self.assertRaises(sc.ConfigError) as cm:
+                    sc.specs_dirname({"dir": value})
+                self.assertIn(repr(value), str(cm.exception))
+
+    def test_non_string_dir_errors_naming_value(self):
         with self.assertRaises(sc.ConfigError) as cm:
-            sc.specs_dirname({"dir": "nested/specs"})
-        self.assertIn("nested/specs", str(cm.exception))
+            sc.specs_dirname({"dir": 7})
+        self.assertIn("7", str(cm.exception))
 
 
 class ExternalStoreRootTest(unittest.TestCase):
