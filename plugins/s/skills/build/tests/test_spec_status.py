@@ -5116,6 +5116,173 @@ class RelatedWorktreeCorpusTest(RelatedTest):
         self.assertEqual(blocks[0]["score"], "2")
 
 
+class SearchTest(SpecStatusTestBase):
+    """``search <term> [<term>...]`` ranks a superset of ``related``'s corpus
+    (spec-status search-verb): every surface ``related`` searches, plus the
+    workspace's initiative briefs (kind ``initiative``) and the invocation
+    root's git-tracked files (kind ``code``).
+
+    The output contract is ``related``'s own — keyed blocks in descending
+    score order, a ten-block cap with a remainder line, ``--json``, and a
+    single ``Error:`` line on no match — so the block parsers and the
+    verified-spec fixture are borrowed from :class:`RelatedTest` rather than
+    restated, keeping the two verbs' expectations literally the same code."""
+
+    make_verified = RelatedTest.make_verified
+    blocks = RelatedTest.blocks
+    remainder = RelatedTest.remainder
+
+    # -- fixture helpers ---------------------------------------------------
+
+    def write_text(self, relpath, text):
+        """Write a text file at ``relpath`` under the root, creating parents."""
+        path = os.path.join(self.root, relpath)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return relpath
+
+    def write_bytes(self, relpath, data):
+        """Write raw bytes at ``relpath`` under the root — the binary-sniff
+        fixture, whose NUL byte must keep the file out of the code surface."""
+        path = os.path.join(self.root, relpath)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return relpath
+
+    def make_initiative(self, slug, text):
+        return self.write_text(
+            os.path.join(".shipd", "initiatives", slug, "brief.md"), text)
+
+    def git(self, *args):
+        subprocess.run(["git", "-C", self.root, *args],
+                       capture_output=True, text=True, check=True)
+
+    def track_all(self):
+        """Turn the temp root into a git repo whose files are all tracked, so
+        ``git ls-files`` enumerates exactly the fixtures written so far."""
+        subprocess.run(["git", "init", "-q", self.root],
+                       capture_output=True, text=True, check=True)
+        self.git("config", "user.email", "test@example.com")
+        self.git("config", "user.name", "Test")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "baseline")
+
+    # -- the code surface --------------------------------------------------
+
+    def test_tracked_code_files_are_searched(self):
+        rel = self.write_text(os.path.join("src", "report.py"),
+                              "def export():\n    return 'export'\n")
+        self.track_all()
+        r = self.cli("search", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["kind"], "code")
+        self.assertEqual(blocks[0]["slug"], rel)
+        self.assertEqual(blocks[0]["score"], "2")
+        self.assertEqual(blocks[0]["path"], rel)
+
+    def test_content_directory_files_are_not_code_records(self):
+        """A tracked file under the resolved content directory is already an
+        artifact record, so it never doubles as a ``code`` one."""
+        vpath = self.make_verified("reporting", "# reporting\n\nAn export.\n")
+        self.track_all()
+        r = self.cli("search", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual([b["kind"] for b in blocks], ["verified"])
+        self.assertEqual(blocks[0]["path"], vpath)
+
+    def test_binary_files_are_skipped(self):
+        self.write_bytes(os.path.join("assets", "blob.bin"),
+                         b"export\x00export")
+        self.track_all()
+        r = self.cli("search", "export")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, "")
+        self.assertIn("Error:", r.stderr)
+
+    # -- the initiative surface --------------------------------------------
+
+    def test_initiative_briefs_are_searched(self):
+        self.declare_workspace()
+        ipath = self.make_initiative(
+            "faster-onboarding",
+            "# faster-onboarding\nStatus: active\n\nOnboarding is slow.\n")
+        r = self.cli("search", "onboarding")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["kind"], "initiative")
+        self.assertEqual(blocks[0]["slug"], "faster-onboarding")
+        self.assertEqual(blocks[0]["score"], "2")
+        self.assertEqual(blocks[0]["path"], ipath)
+
+    # -- ranking across surfaces -------------------------------------------
+
+    def test_spec_and_code_matches_rank_together(self):
+        vpath = self.make_verified("reporting", "# reporting\n\nAn export.\n")
+        rel = self.write_text(os.path.join("src", "report.py"),
+                              "export\nexport\nexport\n")
+        self.track_all()
+        r = self.cli("search", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual([(b["kind"], b["score"]) for b in blocks],
+                         [("code", "3"), ("verified", "1")])
+        self.assertEqual(blocks[0]["path"], rel)
+        self.assertEqual(blocks[1]["path"], vpath)
+
+    def test_non_git_root_degrades_to_the_other_surfaces(self):
+        vpath = self.make_verified("reporting", "# reporting\n\nAn export.\n")
+        r = self.cli("search", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr, "")
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["kind"], "verified")
+        self.assertEqual(blocks[0]["path"], vpath)
+
+    # -- output contract ---------------------------------------------------
+
+    def test_json_is_one_array_of_objects(self):
+        rel = self.write_text(os.path.join("src", "report.py"), "export\n")
+        self.track_all()
+        r = self.cli("search", "export", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            json.loads(r.stdout),
+            [{"kind": "code", "slug": rel, "score": 1, "path": rel}])
+
+    def test_output_caps_at_ten_with_a_remainder_line(self):
+        for n in range(1, 13):
+            self.make_verified("cap-%02d" % n, "export\n")
+        r = self.cli("search", "export")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 10)
+        self.assertEqual([b["slug"] for b in blocks],
+                         ["cap-%02d" % n for n in range(1, 11)])
+        line = self.remainder(r.stdout)
+        self.assertIsNotNone(line, r.stdout)
+        self.assertIn("2", line)
+        self.assertIn("more", line)
+
+    def test_no_match_is_a_single_error_line(self):
+        self.make_verified("reporting", "An export.\n")
+        self.write_text(os.path.join("src", "report.py"), "export\n")
+        self.track_all()
+        r = self.cli("search", "zzz-no-such-term")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, "")
+        lines = [ln for ln in r.stderr.strip().splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 1, r.stderr)
+        self.assertTrue(lines[0].startswith("Error:"), lines[0])
+        self.assertIn("zzz-no-such-term", lines[0])
+
+
 class ListRowsTest(SpecStatusTestBase):
     """``spec_status.list_rows`` — the shared discovery seam ``shipd list``
     renders (shipd-cli cli-list). Called in-process: the rows, not their
