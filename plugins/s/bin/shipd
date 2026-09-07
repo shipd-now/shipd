@@ -76,6 +76,7 @@ VERB_TABLE = {
     "status": ("spec_status.py", ["show"]),
     "locate": ("spec_status.py", ["locate"]),
     "related": ("spec_status.py", ["related"]),
+    "search": ("spec_status.py", ["search"]),
     "epic": ("spec_status.py", ["epic-show"]),
     "workspace": ("spec_status.py", ["workspace-show"]),
     "wiki": ("spec_status.py", ["wiki-show"]),
@@ -139,6 +140,9 @@ verbs:
   status [change]            a change's status and progress
   locate [change]            where an installed change lives
   related <term> [term...]   spec artifacts ranked by term-hit count
+  search <term> [term...]    the same ranking over a wider corpus — every
+                             related surface plus initiative briefs and this
+                             repo's git-tracked files
   epic <slug>                an epic's status, metadata, and member states
   workspace [init|sync]      the workspace root, its projects, and initiatives
                              (init: create one; sync: materialize its members)
@@ -167,9 +171,9 @@ options:
   -h, --help                 print this banner
   --version                  print the plugin version
 
-The read verbs list, status, locate, related, epic, workspace, lint, and
-harness accept --json, emitting one machine-readable JSON document instead of
-the text report.
+The read verbs list, status, locate, related, search, epic, workspace, lint,
+and harness accept --json, emitting one machine-readable JSON document instead
+of the text report.
 """
 
 

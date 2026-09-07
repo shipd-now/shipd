@@ -39,8 +39,9 @@ BIN = os.path.join(PLUGIN_ROOT, "bin", "shipd")
 MANIFEST = os.path.join(PLUGIN_ROOT, ".claude-plugin", "plugin.json")
 
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
-VERBS = ("init", "list", "status", "locate", "related", "epic", "workspace",
-         "wiki", "config", "board", "render", "metrics", "lint", "worktree",
+VERBS = ("init", "list", "status", "locate", "related", "search", "epic",
+         "workspace", "wiki", "config", "board", "render", "metrics", "lint",
+         "worktree",
          "doctor", "statusline", "copilot", "vendor", "harness", "install",
          "update")
 
@@ -418,6 +419,37 @@ class DispatchTest(ShipdCliTestBase):
         self.assertEqual(r.stdout, direct.stdout)
         self.assertIn("kind: planned", r.stdout)
         self.assertIn("slug: dark-mode", r.stdout)
+
+    def test_search_is_a_curated_verb_mapped_to_the_status_script(self):
+        """The `search` row delegates to ``spec_status.py search``
+        (shipd-cli cli-dispatch)."""
+        self.assertEqual(shipd.VERB_TABLE.get("search"),
+                         ("spec_status.py", ["search"]))
+
+    def test_the_banner_lists_search_as_a_verb(self):
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        rows = [line.strip() for line in r.stdout.splitlines()
+                if line.strip().startswith("search ")]
+        self.assertEqual(len(rows), 1, r.stdout)
+
+    def test_the_banner_names_search_as_json_capable(self):
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        note = [para for para in r.stdout.split("\n\n") if "--json" in para]
+        self.assertEqual(len(note), 1, r.stdout)
+        self.assertIn("search", note[0])
+
+    def test_search_no_match_preserves_output_and_exit_code(self):
+        # ``--root`` is the engine parser's *global* option, so it precedes the
+        # verb — the same shape the sibling ``related`` delegation test uses.
+        direct = self.script("spec_status.py", "--root", self.root,
+                             "search", "zzz-no-such-term")
+        r = self.cli("search", "zzz-no-such-term")
+        self.assertNotEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, direct.returncode)
+        self.assertEqual(r.stderr, direct.stderr)
+        self.assertIn("Error:", r.stderr)
 
     def test_init_is_a_curated_verb_mapped_to_the_status_script(self):
         """The `init` row delegates to ``spec_status.py init``

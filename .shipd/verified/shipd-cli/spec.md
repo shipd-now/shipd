@@ -4,14 +4,16 @@
 id: cli-dispatch
 
 The `shipd` binary SHALL expose exactly the curated verbs `init`, `list`,
-`status`, `locate`, `related`, `epic`, `workspace`, `wiki`, `config`,
+`status`, `locate`, `related`, `search`, `epic`, `workspace`, `wiki`,
+`config`,
 `board`, `render`, `metrics`, `lint`, `worktree`, `doctor`, `statusline`,
 `copilot`, `vendor`, `harness`, `install`, and `update`, and for every verb
 except `list`, `doctor`, `statusline`, `copilot`, `vendor`, `harness`,
 `install`, and `update` SHALL delegate by replacing its own process with the
 mapped engine script invocation (`init` -> `spec_status.py init`, `status` ->
 `spec_status.py show`, `locate` -> `spec_status.py locate`, `related` ->
-`spec_status.py related`, `epic` -> `spec_status.py epic-show`, `workspace`
+`spec_status.py related`, `search` -> `spec_status.py search`, `epic` ->
+`spec_status.py epic-show`, `workspace`
 -> `spec_status.py` per the workspace-mode mapping below, `wiki` ->
 `spec_status.py` per the wiki-mode mapping below, `config` ->
 `spec_status.py config-show`, `board` -> `dashboard.py` per the board-mode
@@ -176,6 +178,13 @@ SHALL print the same banner to stdout and exit `0`.
 - **THEN** the banner of `shipd --help` lists `worktree` among the verbs, and
   the invocation prints `worktree.py`'s own usage — not the shipd banner —
   and exits non-zero, proving the delegation
+
+#### Scenario: Search is a curated verb that delegates
+- **WHEN** `shipd search zzz-no-such-term` runs from a repo whose corpus
+  contains no such term
+- **THEN** the banner of `shipd --help` lists `search` among the verbs, and
+  the invocation exits non-zero with the `Error:` line of
+  `spec_status.py search`, proving the delegation
 
 ### Requirement: List in-flight changes
 id: cli-list

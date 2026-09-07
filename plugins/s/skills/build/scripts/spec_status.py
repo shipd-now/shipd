@@ -1008,22 +1008,21 @@ def _related_path(root, path):
     return rel
 
 
-def cmd_related(root, terms, as_json=False):
-    """Rank the spec library's artifacts by case-insensitive term-hit count
-    (spec-status related-verb) — the retrieval step ``/s:fix`` runs before it
-    reads any code. The searched surfaces are the verified capabilities,
-    planned changes, completed archives, research reports, installed documents
-    (kind ``docs``), epics, and — where discoverable — the workspace wiki's
-    pages. Artifacts with no hits are dropped; the rest sort by score
-    descending, then kind, then slug, so the ordering is fully deterministic.
-    At most :data:`RELATED_MAX_BLOCKS` keyed blocks print (``kind:``, ``slug:``,
+def _render_ranked_matches(root, artifacts, terms, as_json=False):
+    """Score ``artifacts`` against ``terms`` and print the ranked matches — the
+    output contract every ranked-retrieval verb shares (spec-status
+    related-verb, search-verb), so ``related`` and ``search`` differ only in
+    the corpus they hand in.
+
+    Artifacts with no hits are dropped; the rest sort by score descending, then
+    kind, then slug, so the ordering is fully deterministic. At most
+    :data:`RELATED_MAX_BLOCKS` keyed blocks print (``kind:``, ``slug:``,
     ``score:``, ``path:``), followed by a single line naming the remaining
     matches when more matched. With ``as_json``, the same capped rows are
-    emitted as one JSON array instead. No match raises (exit 1). Read-only: no
-    git, model, or network calls."""
+    emitted as one JSON array instead. No match raises (exit 1)."""
     lowered = [term.lower() for term in terms]
     rows = []
-    for kind, slug, path, files in _related_corpus(root):
+    for kind, slug, path, files in artifacts:
         score = _related_score(files, lowered)
         if score:
             rows.append({"kind": kind, "slug": slug, "score": score,
@@ -1045,6 +1044,125 @@ def cmd_related(root, terms, as_json=False):
     if remaining:
         print("… and %d more" % remaining)
     return 0
+
+
+def cmd_related(root, terms, as_json=False):
+    """Rank the spec library's artifacts by case-insensitive term-hit count
+    (spec-status related-verb) — the retrieval step ``/s:fix`` runs before it
+    reads any code. The searched surfaces are the verified capabilities,
+    planned changes, completed archives, research reports, installed documents
+    (kind ``docs``), epics, and — where discoverable — the workspace wiki's
+    pages; the ranking and printing are
+    :func:`_render_ranked_matches`. Read-only: no git, model, or network
+    calls."""
+    return _render_ranked_matches(root, _related_corpus(root), terms, as_json)
+
+
+# ---------------------------------------------------------------------------
+# Superset search (spec-status search-verb)
+# ---------------------------------------------------------------------------
+
+# A tracked file above this size never enters the code corpus: the guard keeps
+# an interactive search's runtime bounded on a repo carrying large generated
+# or vendored files.
+SEARCH_MAX_CODE_BYTES = 1024 * 1024
+
+# A NUL byte among a tracked file's first bytes marks it binary, so it is not
+# read as text — the sniff git itself uses, and cheaper than any extension
+# allowlist is accurate.
+SEARCH_BINARY_SNIFF_BYTES = 8192
+
+
+def _search_initiative_artifacts(root):
+    """The workspace's ``initiatives/<slug>/brief.md`` briefs as corpus records
+    (spec-status search-verb).
+
+    The anchor resolves through :func:`spec_common.resolve_wiki_root` — the
+    same single seam the wiki surface uses, so the two workspace-level surfaces
+    can never disagree about which workspace they read. Any resolution failure
+    — nothing discoverable, a malformed config, an unreadable directory —
+    yields no records, so the surface degrades silently while every other
+    surface still searches."""
+    artifacts = []
+    try:
+        resolved = sc.resolve_wiki_root(root)
+        if resolved is None:
+            return []
+        anchor = resolved[0]
+        for slug in sorted(os.listdir(sc.initiatives_dir(anchor))):
+            path = sc.initiative_brief_path(anchor, slug)
+            if os.path.isfile(path):
+                artifacts.append(("initiative", slug, path, [path]))
+    except (sc.ConfigError, OSError):
+        return []
+    return artifacts
+
+
+def _search_is_readable_text(path):
+    """True when a tracked file is small enough and textual enough to search:
+    at most :data:`SEARCH_MAX_CODE_BYTES`, no NUL byte in its first
+    :data:`SEARCH_BINARY_SNIFF_BYTES`, and readable at all. Anything else —
+    a huge asset, a binary, a broken symlink, a submodule directory — is
+    skipped rather than raising."""
+    try:
+        if os.path.getsize(path) > SEARCH_MAX_CODE_BYTES:
+            return False
+        with open(path, "rb") as fh:
+            head = fh.read(SEARCH_BINARY_SNIFF_BYTES)
+    except OSError:
+        return False
+    return b"\0" not in head
+
+
+def _search_code_artifacts(root):
+    """The invocation root's git-tracked files as corpus records (spec-status
+    search-verb), each slugged by its root-relative path so a block reads as
+    the file it names.
+
+    ``git ls-files`` defines the surface, so the repo's own ignore rules apply
+    for free and no directory walk is needed. Where git is unavailable or exits
+    non-zero — the root is not a work tree — the surface yields nothing and
+    every other surface still searches. Files under the resolved content
+    directory are skipped: they already rank as artifact records, and counting
+    them twice would let the spec library outvote the code."""
+    try:
+        proc = subprocess.run(["git", "ls-files", "-z"], cwd=root,
+                              capture_output=True)
+        if proc.returncode != 0:
+            return []
+        specs = os.path.abspath(sc.specs_dir(root))
+    except (sc.ConfigError, OSError):
+        return []
+    artifacts = []
+    for rel in proc.stdout.decode("utf-8", "replace").split("\0"):
+        if not rel:
+            continue
+        path = os.path.join(root, rel)
+        if os.path.abspath(path).startswith(specs + os.sep):
+            continue
+        if _search_is_readable_text(path):
+            artifacts.append(("code", rel, path, [path]))
+    return artifacts
+
+
+def cmd_search(root, terms, as_json=False):
+    """Rank a superset of ``related``'s corpus by case-insensitive term-hit
+    count (spec-status search-verb) — the retrieval step a discovery flow runs
+    before it interrogates anyone.
+
+    The corpus is ``related``'s exactly (:func:`_related_corpus`: the root and
+    its worktrees, deduped root-first, plus the workspace wiki), extended with
+    the workspace's initiative briefs and the invocation root's git-tracked
+    files. The two new surfaces append after it, and the shared
+    rank-and-render tail (:func:`_render_ranked_matches`) sorts the whole,
+    so ordering, the ten-block cap, ``--json``, and the no-match error are
+    ``related``'s own — this verb only widens what is searched, and leaves
+    ``related`` itself untouched. Read-only: the one subprocess is
+    ``git ls-files``; no model or network calls."""
+    corpus = (_related_corpus(root)
+              + _search_initiative_artifacts(root)
+              + _search_code_artifacts(root))
+    return _render_ranked_matches(root, corpus, terms, as_json)
 
 
 # ---------------------------------------------------------------------------
@@ -3778,6 +3896,14 @@ def main(argv=None):
     p_related.add_argument("terms", nargs="+", metavar="term")
     _add_json_flag(p_related)
 
+    p_search = sub.add_parser(
+        "search",
+        help="rank a superset corpus by term-hit count — every `related` "
+             "surface plus the workspace's initiative briefs and the root's "
+             "git-tracked files (same keyed blocks, top ten)")
+    p_search.add_argument("terms", nargs="+", metavar="term")
+    _add_json_flag(p_search)
+
     p_check_base = sub.add_parser(
         "check-base",
         help="compare a change's deltas against the master library (read-only)")
@@ -3988,6 +4114,8 @@ def main(argv=None):
             return cmd_locate(root, args.change, as_json=args.json)
         if args.verb == "related":
             return cmd_related(root, args.terms, as_json=args.json)
+        if args.verb == "search":
+            return cmd_search(root, args.terms, as_json=args.json)
         if args.verb == "check-base":
             return cmd_check_base(root, args.change)
         if args.verb == "epic-show":
