@@ -5,6 +5,11 @@ This is an internal step of planning: there is no separate user-facing spec or
 propose skill. You produce the artifacts in a **staging area**, install them
 through the engine, and hand off.
 
+Path notation: literal `.shipd/` paths in this skill denote the repo's resolved
+content directory (default `.shipd`) — resolve the actual name with
+`spec_status.py config-show` (its `content-dir:` line) and substitute it when
+the repo configures another.
+
 **Engine-mediated emission (non-negotiable).** You never write into the spec
 tree directly and never construct a storage path from convention. Author the
 artifact set in a throwaway **staging directory** (e.g. a `mktemp -d` path),
@@ -27,7 +32,8 @@ default configuration). That file is the source of truth — read it if anything
 here is ambiguous. This guide does not restate the grammar; it shows a worked
 example and the plan-specific rules for filling each artifact.
 
-**Constitution.** When `.shipd/constitution.md` is present, read it before
+**Constitution.** When the resolved content directory's `constitution.md`
+(default `.shipd/constitution.md`) is present, read it before
 emitting and treat its rules as binding constraints on the plan, the delta
 specs, and the tasks. Do not author a design or a task that violates it.
 
