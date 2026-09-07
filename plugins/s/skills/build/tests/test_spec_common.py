@@ -1248,6 +1248,79 @@ class LayeredConfigTest(unittest.TestCase):
         self.assertIn("nested/specs", str(cm.exception))
 
 
+class CompletedRetentionKeyTest(unittest.TestCase):
+    """completed_retention_days: the layered retention window key and its
+    accessor (shipd-config completed-retention-key). ``$HOME`` is always
+    overridden so the real home config never leaks into a test."""
+
+    def _write_config(self, d, payload):
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, sc.CONFIG_FILENAME), "w",
+                  encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        return d
+
+    def _resolve(self, declared):
+        """Resolve a config from a repo declaring ``declared`` (a dict, or the
+        sentinel ``None`` for a layer-free repo). Returns ``(config, prov)``."""
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            repo = os.path.realpath(tmp)
+            if declared is not None:
+                self._write_config(repo, declared)
+            with home_set_to(os.path.realpath(home)):
+                return sc.resolve_config(repo)
+
+    def test_undeclared_yields_the_default_window(self):
+        config, prov = self._resolve(None)
+        self.assertEqual(sc.completed_retention_days(config), 30)
+        self.assertEqual(config[sc.COMPLETED_RETENTION_KEY], 30)
+        self.assertEqual(prov[sc.COMPLETED_RETENTION_KEY], "default")
+
+    def test_module_constants(self):
+        self.assertEqual(
+            sc.COMPLETED_RETENTION_KEY, "completed_retention_days")
+        self.assertEqual(sc.DEFAULT_COMPLETED_RETENTION_DAYS, 30)
+
+    def test_nearest_layer_wins_the_key(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "repo")
+            self._write_config(ws, {sc.COMPLETED_RETENTION_KEY: 90})
+            self._write_config(repo, {sc.COMPLETED_RETENTION_KEY: 7})
+            with home_set_to(os.path.realpath(home)):
+                config, prov = sc.resolve_config(repo)
+        self.assertEqual(sc.completed_retention_days(config), 7)
+        self.assertEqual(
+            prov[sc.COMPLETED_RETENTION_KEY],
+            os.path.join(repo, sc.CONFIG_FILENAME))
+
+    def test_zero_disables_retention(self):
+        config, _prov = self._resolve({sc.COMPLETED_RETENTION_KEY: 0})
+        self.assertIsNone(sc.completed_retention_days(config))
+
+    def test_null_disables_retention(self):
+        config, _prov = self._resolve({sc.COMPLETED_RETENTION_KEY: None})
+        self.assertIsNone(sc.completed_retention_days(config))
+
+    def test_string_value_is_treated_as_undeclared(self):
+        config, _prov = self._resolve({sc.COMPLETED_RETENTION_KEY: "forever"})
+        self.assertEqual(sc.completed_retention_days(config), 30)
+
+    def test_boolean_value_is_treated_as_undeclared(self):
+        config, _prov = self._resolve({sc.COMPLETED_RETENTION_KEY: True})
+        self.assertEqual(sc.completed_retention_days(config), 30)
+
+    def test_negative_value_is_treated_as_undeclared(self):
+        config, _prov = self._resolve({sc.COMPLETED_RETENTION_KEY: -5})
+        self.assertEqual(sc.completed_retention_days(config), 30)
+
+    def test_non_integer_number_is_treated_as_undeclared(self):
+        config, _prov = self._resolve({sc.COMPLETED_RETENTION_KEY: 12.5})
+        self.assertEqual(sc.completed_retention_days(config), 30)
+
+
 class ExternalStoreRootTest(unittest.TestCase):
     """store_root_dir / repo_store_folder / specs_dir's external branch: the
     optional `store_root` key relocating a repo's content directory into an

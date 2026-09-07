@@ -1140,7 +1140,51 @@ def _all_epic_member_slugs(root):
     return slugs
 
 
-def build_board(root, epic=None):
+# The sentinel `build_board(retention_days=...)` default: resolve the window
+# from the invocation root's layered configuration. An explicit `None` disables
+# retention; an explicit int is the window in days.
+_RESOLVE = object()
+
+
+def _archive_date(location, slug):
+    """The newest archive date stamped on ``slug``'s ``completed/<date>-<slug>``
+    directory under ``location``'s content directory, as a ``datetime.date``, or
+    ``None`` (delivery-dashboard board-completed-retention).
+
+    ``None`` when the change has no archive there, when the newest directory
+    name carries no parseable leading ``YYYY-MM-DD``, or when ``location``'s
+    configuration is unreadable — a probe that yields no date keeps its item
+    visible, honest over tidy."""
+    try:
+        specs_dir = sc.specs_dir(location)
+    except sc.ConfigError:
+        return None
+    names = [os.path.basename(p)
+             for p in glob.glob(os.path.join(specs_dir, "completed",
+                                             "*-" + slug))
+             if os.path.isdir(p)]
+    if not names:
+        return None
+    try:
+        return _dt.date.fromisoformat(sorted(names)[-1][:10])
+    except ValueError:
+        return None
+
+
+def _epic_completion_date(epic):
+    """An epic's completion date: the newest archive date among its stub
+    members, each probed under its own hosting ``location``, or ``None`` when no
+    member yields one (delivery-dashboard board-completed-retention)."""
+    dates = []
+    for member in epic.get("members", []):
+        stamp = _archive_date(member.get("location") or epic.get("location"),
+                              member.get("slug"))
+        if stamp is not None:
+            dates.append(stamp)
+    return max(dates) if dates else None
+
+
+def build_board(root, epic=None, retention_days=_RESOLVE, today=None):
     """Aggregate the delivery board for ``root`` (every epic, or only ``epic``).
 
     Returns ``{"root", "generated_at", "epics": [...], "groups": [...],
@@ -1174,7 +1218,22 @@ def build_board(root, epic=None):
     resolves against the universes in seam order, the first hosting universe
     winning; one no universe hosts raises ``ValueError`` — the CLI turns it
     into a one-line error rather than a raw FileNotFoundError from
-    ``_epic_board``."""
+    ``_epic_board``.
+
+    Completed work ages off the board (delivery-dashboard
+    board-completed-retention). ``retention_days`` defaults to the window the
+    invocation root's layered ``completed_retention_days`` key resolves to (a
+    viewer display preference, resolved once from ``root``, not per universe;
+    an unreadable root configuration fails open to a disabled window);
+    an explicit ``None`` — the ``--all`` flag, a ``0``/``null`` key — disables
+    it, and an ``--epic`` scope skips it outright, an explicit request naming
+    its epic. Under a live window each ``complete`` epic whose completion date
+    (:func:`_epic_completion_date`) and each ``archived`` standalone row whose
+    archive date precedes ``today`` (default: the local date) minus the window
+    is dropped before grouping, so ``epics``, ``groups``, and every lane derive
+    from the survivors alone; a retained epic's members are never individually
+    hidden. The board carries the drop count as ``hidden_completed`` and the
+    applied window as ``retention_days`` (``None`` when no filtering ran)."""
     epics = []
     standalone = []
     for project, universe_root in sc.aggregation_universes(root):
@@ -1200,12 +1259,49 @@ def build_board(root, epic=None):
     if epic is not None and not epics:
         raise ValueError(
             "epic '%s' not found under %s" % (epic, sc.specs_dir(root)))
+    if retention_days is _RESOLVE:
+        try:
+            retention_days = sc.completed_retention_days(
+                sc.resolve_config(root)[0])
+        except sc.ConfigError:
+            # An unreadable invocation-root config fails open: retention is
+            # a display preference, so the board renders unfiltered rather
+            # than failing the aggregation (delivery-dashboard
+            # board-completed-retention).
+            retention_days = None
+    if epic is not None:
+        # An explicit `--epic` scope names its epic; retention never applies.
+        retention_days = None
+    hidden = 0
+    if retention_days is not None:
+        cutoff = (today or _dt.date.today()) - _dt.timedelta(
+            days=retention_days)
+        kept_epics = []
+        for row in epics:
+            stamp = (_epic_completion_date(row)
+                     if row.get("status") == "complete" else None)
+            if stamp is not None and stamp < cutoff:
+                hidden += 1
+                continue
+            kept_epics.append(row)
+        epics = kept_epics
+        kept_standalone = []
+        for row in standalone:
+            stamp = (_archive_date(row.get("location"), row.get("slug"))
+                     if row.get("state") == "archived" else None)
+            if stamp is not None and stamp < cutoff:
+                hidden += 1
+                continue
+            kept_standalone.append(row)
+        standalone = kept_standalone
     board = {
         "root": os.path.abspath(root),
         "generated_at": time.time(),
         "epics": epics,
         "groups": _group_epics(epics),
         "standalone": standalone,
+        "hidden_completed": hidden,
+        "retention_days": retention_days,
     }
     # Attach each interactive build heartbeat to its slug-matching member so the
     # activity predicates and the throughput chart see hand-driven builds too
@@ -1294,7 +1390,12 @@ def render_board_lines(board):
     epics carrying no ``Initiative:``); each epic names its status/theme and run
     age; each member names its worktree-aware state, its live stage (joined from
     the heartbeat roster), its risk, and its eligible actions. No terminal
-    interaction."""
+    interaction.
+
+    When the aggregation hid older completed work, the last line is a one-line
+    note naming the count and the ``completed_retention_days`` key that set the
+    window (delivery-dashboard board-completed-retention); a board that hid
+    nothing — or a fixture predating the field — renders exactly as before."""
     lines = []
     board_root = board.get("root")
     groups = board.get("groups")
@@ -1311,6 +1412,10 @@ def render_board_lines(board):
             lines.append("initiative (workspace-wide)")
         for epic in group.get("epics", []):
             lines.extend(_render_epic_lines(epic, board_root))
+    hidden = board.get("hidden_completed") or 0
+    if hidden > 0:
+        lines.append("%d older completed hidden (%s=%s)" % (
+            hidden, sc.COMPLETED_RETENTION_KEY, board.get("retention_days")))
     return lines
 
 
@@ -1799,7 +1904,11 @@ def chart_lines_and_stats(events, chart_state, cols, rows):
 # ---------------------------------------------------------------------------
 
 def _cmd_board(args):
-    board = build_board(os.path.abspath(args.root), epic=args.epic)
+    # `--all` disables the completed-retention window for this invocation
+    # (delivery-dashboard board-completed-retention); without it the window
+    # resolves from the layered config.
+    kwargs = {"retention_days": None} if getattr(args, "all", False) else {}
+    board = build_board(os.path.abspath(args.root), epic=args.epic, **kwargs)
     if args.json:
         print(json.dumps(board, indent=2, sort_keys=True))
     else:
@@ -3857,7 +3966,8 @@ class BoardApp(App):
                 priority=True),
     ]
 
-    def __init__(self, root, epic=None, interval=2.0, board_fn=None):
+    def __init__(self, root, epic=None, interval=2.0, board_fn=None,
+                 show_all=False):
         super().__init__()
         # Register and activate the Shipd theme before first paint (design:
         # theme registration) so the custom palette is live under `run_test`
@@ -3867,8 +3977,14 @@ class BoardApp(App):
         self.root = root
         self.epic = epic
         self.interval = interval
+        # `--all` disables the completed-retention window for this session
+        # (delivery-dashboard board-completed-retention); the default lets
+        # `build_board` resolve it from the layered config.
+        self.show_all = show_all
         self._board_fn = board_fn or (
-            lambda: build_board(self.root, epic=self.epic))
+            lambda: build_board(
+                self.root, epic=self.epic,
+                **({"retention_days": None} if self.show_all else {})))
         self.board = None
         # The lane grouping mode (delivery-dashboard board-epic-grouping spec):
         # `epic` (collapsible per-epic headers, the default), `initiative`
@@ -4190,8 +4306,18 @@ class BoardApp(App):
         children-and-remount only the lanes whose signature changed since the
         last render, updating the stored signature as each is rebuilt. An
         unchanged lane is left exactly as it was (no teardown, no flash, any
-        collapsed epic group stays collapsed)."""
+        collapsed epic group stays collapsed).
+
+        The shipped lane's docked header also carries the retention hidden
+        count while the aggregation aged completed work off the board
+        (delivery-dashboard board-completed-retention), and reads plain
+        ``SHIPPED`` again once nothing is hidden."""
         contents = self._filtered_lane_contents()
+        hidden = self.board.get("hidden_completed") or 0
+        shipped_header = ("SHIPPED · %d older hidden" % hidden if hidden > 0
+                          else "SHIPPED")
+        for header in self.query("#lane-shipped .lane-header"):
+            header.update(shipped_header)
         # The match-count label reports matching members across all lanes while
         # a query is active, and is blank otherwise (delivery-dashboard
         # board-search spec). Queried empty-safely — an interval-timer refresh
@@ -4549,7 +4675,7 @@ class BoardApp(App):
 
 def _cmd_tui(args):
     app = BoardApp(os.path.abspath(args.root), epic=args.epic,
-                  interval=args.interval)
+                  interval=args.interval, show_all=args.all)
     app.run()
     return 0
 
@@ -4567,6 +4693,9 @@ def main(argv=None):
                          help="scope the board to one epic slug")
     p_board.add_argument("--json", action="store_true",
                          help="emit the full board object as JSON")
+    p_board.add_argument(
+        "--all", action="store_true",
+        help="show completed work beyond the retention window")
     p_board.set_defaults(func=_cmd_board)
 
     p_tui = sub.add_parser(
@@ -4577,6 +4706,9 @@ def main(argv=None):
                        help="scope the board to one epic slug")
     p_tui.add_argument("--interval", type=float, default=2.0,
                        help="seconds between redraws (default: 2)")
+    p_tui.add_argument(
+        "--all", action="store_true",
+        help="show completed work beyond the retention window")
     p_tui.set_defaults(func=_cmd_tui)
 
     args = parser.parse_args(argv)
