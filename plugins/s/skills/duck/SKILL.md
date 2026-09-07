@@ -25,9 +25,15 @@ an idea into artifacts, code, or a PR. This one does the opposite: it stress-
 tests the idea until it is worth spending a change on, and then hands it off by
 name.
 
-Design source: the installed research report
-`.shipd/research/ai-rubber-duck-dx/report.md` — read it only if the user asks
-where this behavior comes from; the behavior itself is compiled into this file.
+Path notation: literal `.shipd/` paths in this skill denote the repo's resolved
+content directory (default `.shipd`) — resolve the actual name with
+`spec_status.py config-show` (its `content-dir:` line) and substitute it when
+the repo configures another.
+
+Design source: the installed research report `ai-rubber-duck-dx` — read it only
+if the user asks where this behavior comes from (through the engine:
+`spec_status.py cat research ai-rubber-duck-dx`); the behavior itself is
+compiled into this file.
 
 **Announce the version first.** Read the running plugin version from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and open your **first reply
@@ -61,9 +67,9 @@ generic advice that misses the repo's actual constraints, so before you push
 back on anything that touches this codebase, look:
 
 - Read the relevant source, tests, and configuration directly.
-- Read the repo's conventions — `AGENTS.md` / `CLAUDE.md`, and the constitution
-  at `.shipd/constitution.md` when present. A critique that contradicts a
-  binding repo rule is a wrong critique.
+- Read the repo's conventions — `AGENTS.md` / `CLAUDE.md`, and the resolved
+  content directory's `constitution.md` (default `.shipd/constitution.md`) when
+  present. A critique that contradicts a binding repo rule is a wrong critique.
 - Read the spec library through the engine's mediated read verbs, never by
   constructing a spec-tree path yourself:
 

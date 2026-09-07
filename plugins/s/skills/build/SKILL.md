@@ -53,11 +53,16 @@ sub-agents** running on the next tier down (the second-most-powerful model).
   entry's own `model` is ignored interactively — you are the session the user
   chose.
 
-Requirements: this repo uses the plugin's own homegrown spec engine under
-`.shipd/` — no external CLI. The spec lives in `.shipd/verified/` (master
-capability library) and in-flight changes in `.shipd/planned/`. If the
-`.shipd/` layout does not exist yet, it is created the first time a change is
-merged; you never need to run an external init.
+Requirements: this repo uses the plugin's own homegrown spec engine under the
+resolved content directory (default `.shipd`) — no external CLI. The spec lives
+in that directory's `verified/` (master capability library) and in-flight
+changes in its `planned/`. If the layout does not exist yet, it is created the
+first time a change is merged; you never need to run an external init.
+
+Path notation: literal `.shipd/` paths in this skill denote the repo's resolved
+content directory (default `.shipd`) — resolve the actual name with
+`spec_status.py config-show` (its `content-dir:` line) and substitute it when
+the repo configures another.
 
 Paths in this skill:
 - Coordinator script: `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/claim_task.sh`
@@ -85,7 +90,8 @@ planning already answered. Before authoring anything, gate on context:
   change = one worktree = one branch = one PR; never author artifacts or edit
   code directly in the main checkout.
 
-0. **Load the constitution first.** When `.shipd/constitution.md` is present,
+0. **Load the constitution first.** When the resolved content directory's
+   `constitution.md` (default `.shipd/constitution.md`) is present,
    read it now and treat its rules as binding constraints on every design and
    implementation that follows in this build. When it is absent, proceed
    unchanged.
@@ -192,12 +198,14 @@ planning already answered. Before authoring anything, gate on context:
 
 ## Phase 1 — Context discovery (brownfield awareness)
 
-Always look before you plan. Read the spec layout directly from disk (there is
-no CLI):
+Always look before you plan. Resolve the content directory through the engine,
+then read the spec layout directly from disk (there is no CLI):
 
 ```
-ls .shipd/verified/            # existing capabilities (one dir per capability)
-ls .shipd/planned/          # in-flight changes (don't collide / duplicate)
+CONTENT_DIR=$(python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" \
+  config-show | sed -n 's/^content-dir: //p')
+ls "$CONTENT_DIR/verified/"   # existing capabilities (one dir per capability)
+ls "$CONTENT_DIR/planned/"    # in-flight changes (don't collide / duplicate)
 ```
 
 Read the capability specs relevant to the request under `.shipd/verified/<cap>/spec.md`
@@ -294,7 +302,8 @@ coordinator path, and any addenda, and nothing else. Do **not** paste
 conversational history, the planning transcript, or exploratory research into
 the message — the sub-agent obtains all change context by reading the named
 artifact set (`plan.md`, the delta specs, `tasks.md`, the change's `artefacts/`
-directory when present, `.shipd/constitution.md` when present, and the
+directory when present, the resolved content directory's `constitution.md`
+(default `.shipd/constitution.md`) when present, and the
 relevant masters), and the rationale for binding decisions lives in `plan.md`'s
 `## Implementation` section where it can find it. When `plan.md`'s
 `## Implementation` names a design scratch directory, that directory is part
@@ -491,10 +500,12 @@ section of the change's `tasks.md`, replacing an existing one so a re-run is
 idempotent:
 
 ```
+CONTENT_DIR=$(python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" \
+  config-show | sed -n 's/^content-dir: //p')
 TOOL_TABLE=$(python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/build_report.py" \
   --since "$BUILD_START" --tool-table)
 if [ -n "$TOOL_TABLE" ]; then
-  TOOL_TABLE="$TOOL_TABLE" python3 - .shipd/planned/<change-name>/tasks.md <<'PY'
+  TOOL_TABLE="$TOOL_TABLE" python3 - "$CONTENT_DIR/planned/<change-name>/tasks.md" <<'PY'
 import os, sys
 heading = "## Token usage breakdown"
 path = sys.argv[1]
