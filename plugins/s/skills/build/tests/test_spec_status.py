@@ -2592,6 +2592,70 @@ class TestInitVerb(SpecStatusTestBase):
         for path in self.layout():
             self.assertTrue(os.path.isdir(path), path)
 
+    # -- the copyable config sample ----------------------------------------
+
+    SAMPLE_NAME = "shipd.config.example.json"
+    REFERENCE = os.path.normpath(
+        os.path.join(HERE, "..", "references", SAMPLE_NAME))
+
+    def sample_path(self, content=".shipd"):
+        return os.path.join(self.root, content, self.SAMPLE_NAME)
+
+    def test_fresh_init_installs_the_config_sample(self):
+        r = self.init()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        installed = self.sample_path()
+        self.assertTrue(os.path.isfile(installed), installed)
+        with open(installed, encoding="utf-8") as fh:
+            got = fh.read()
+        with open(self.REFERENCE, encoding="utf-8") as fh:
+            self.assertEqual(got, fh.read())
+        lines = r.stdout.splitlines()
+        expected = "created %s" % os.path.join(".shipd", self.SAMPLE_NAME)
+        # Between the four directory lines and the ready summary, and with no
+        # trailing separator — it is a file, not a directory.
+        self.assertEqual(lines[len(self.NAMES)], expected)
+        self.assertEqual(lines[-1], self.SUMMARY)
+
+    def test_existing_sample_copy_is_never_rewritten(self):
+        self.assertEqual(self.init().returncode, 0)
+        installed = self.sample_path()
+        with open(installed, "w", encoding="utf-8") as fh:
+            fh.write('{"dir": "mine"}\n')
+        r = self.init()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(installed, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), '{"dir": "mine"}\n')
+        lines = r.stdout.splitlines()
+        self.assertEqual(
+            lines[len(self.NAMES)],
+            "exists %s" % os.path.join(".shipd", self.SAMPLE_NAME))
+        self.assertEqual(lines[-1], self.SUMMARY)
+
+    def test_missing_reference_warns_without_failing(self):
+        # An engine copy whose sibling `references/` is absent — the shape a
+        # broken plugin snapshot presents. The layout, not the sample, is the
+        # verb's contract, so the run still succeeds.
+        engine = tempfile.mkdtemp(prefix="spec-status-engine-")
+        self.addCleanup(shutil.rmtree, engine, True)
+        scripts = os.path.join(engine, "scripts")
+        shutil.copytree(os.path.dirname(SCRIPT), scripts)
+        probed = os.path.normpath(
+            os.path.join(scripts, "..", "references", self.SAMPLE_NAME))
+        r = subprocess.run(
+            ["python3", os.path.join(scripts, "spec_status.py"),
+             "init", "--root", self.root],
+            capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for path in self.layout():
+            self.assertTrue(os.path.isdir(path), path)
+        self.assertFalse(os.path.exists(self.sample_path()))
+        warnings = [line for line in r.stderr.splitlines() if line.strip()]
+        self.assertEqual(len(warnings), 1, r.stderr)
+        self.assertIn(probed, warnings[0])
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[-1], self.SUMMARY)
+
 
 class WorkspaceInitTest(SpecStatusTestBase):
     """The ``workspace-init <path>`` verb (spec-status workspace-init-verb).
