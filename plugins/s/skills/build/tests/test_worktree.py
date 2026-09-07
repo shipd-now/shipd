@@ -675,6 +675,49 @@ class RemoveWorktreeTest(WorktreeScriptTestBase):
         self.assertTrue(os.path.isdir(wt))
         self.assertIn("unshipped change", self.combined(r))
 
+    def test_nested_configured_dir_guards_removal(self):
+        # The guard resolves the worktree's content directory through the
+        # engine, so a nested `dir` is scanned where it actually lives
+        # (build-spec-lifecycle worktree-guard-content-dir).
+        wt = self.make_worktree("my-change")
+        with open(os.path.join(wt, ".shipd-config.json"), "w") as fh:
+            fh.write('{"dir": ".agents/specs/.shipd"}\n')
+        planned = os.path.join(
+            wt, ".agents", "specs", ".shipd", "planned", "foo")
+        os.makedirs(planned)
+        with open(os.path.join(planned, "spec.md"), "w") as fh:
+            fh.write("# spec\n")
+        # Commit so the tree is clean and only the unshipped guard fires.
+        self.git_in(wt, "add", "-A")
+        self.git_in(wt, "commit", "-q", "-m", "nested planned change")
+        self.age_tree(wt)
+        r = self.run_helper("remove", "my-change")
+        self.assertEqual(r.returncode, 2, self.combined(r))
+        self.assertTrue(os.path.isdir(wt))
+        out = self.combined(r)
+        self.assertIn("unshipped change", out)
+        self.assertIn(".agents/specs/.shipd/planned", out)
+
+    def test_malformed_config_falls_back_to_dot_shipd(self):
+        # Resolution failure must never weaken the guard: the helper falls
+        # back to the literal `.shipd`.
+        wt = self.make_worktree("my-change")
+        with open(os.path.join(wt, ".shipd-config.json"), "w") as fh:
+            fh.write("NOT JSON\n")
+        planned = os.path.join(wt, ".shipd", "planned", "foo")
+        os.makedirs(planned)
+        with open(os.path.join(planned, "spec.md"), "w") as fh:
+            fh.write("# spec\n")
+        self.git_in(wt, "add", "-A")
+        self.git_in(wt, "commit", "-q", "-m", "planned change, broken config")
+        self.age_tree(wt)
+        r = self.run_helper("remove", "my-change")
+        self.assertEqual(r.returncode, 2, self.combined(r))
+        self.assertTrue(os.path.isdir(wt))
+        out = self.combined(r)
+        self.assertIn("unshipped change", out)
+        self.assertIn(".shipd/planned", out)
+
     def test_non_kebab_name_refused(self):
         # A path-ish name must not escape .worktrees/ (see the remove verb's
         # kebab-case guard).

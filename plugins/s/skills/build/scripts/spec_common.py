@@ -434,17 +434,28 @@ def resolve_config(start):
 
 def specs_dirname(config):
     """Return the content-directory name from a resolved config's ``dir`` key
-    (shipd-config content-dir-key), defaulting to ``.shipd``. The value SHALL be a
-    single, non-empty path component; a value that is empty, non-string, ``.``,
-    ``..``, or contains a path separator raises :class:`ConfigError` naming the
-    offending value."""
+    (shipd-config content-dir-key), defaulting to ``.shipd``. The value SHALL be
+    a relative path of one or more non-empty ``/``-separated components — the
+    committed value always uses ``/``, whatever the host separator is — so a
+    library can be grouped under a subfolder like ``.agents/specs/.shipd``. A
+    value that is not a non-empty string, is absolute, contains a backslash, or
+    carries a component that is empty, ``.``, or ``..`` raises
+    :class:`ConfigError` naming the offending value."""
     name = config.get("dir", DEFAULT_DIR)
     if not isinstance(name, str) or not name:
         raise ConfigError(
             "config `dir` must be a non-empty string, got %r" % (name,))
-    if name in (".", "..") or "/" in name or "\\" in name or os.sep in name:
+    if os.path.isabs(name) or name.startswith("/"):
         raise ConfigError(
-            "config `dir` must be a single path component, got %r" % (name,))
+            "config `dir` must be a relative path, got %r" % (name,))
+    if "\\" in name:
+        raise ConfigError(
+            "config `dir` must not contain a backslash, got %r" % (name,))
+    for part in name.split("/"):
+        if part in ("", ".", ".."):
+            raise ConfigError(
+                "config `dir` components must be non-empty and neither `.` nor "
+                "`..`, got %r" % (name,))
     return name
 
 
@@ -543,12 +554,14 @@ def specs_dir(root):
     ``<resolved store root>/<repo folder name>``, that per-repo folder directly
     holding ``verified/``, ``planned/``, ``completed/`` and ``research/``, and
     the ``dir`` key does not apply. Otherwise it is ``root`` joined with the
-    ``dir`` name resolved from ``root``'s layered configuration."""
+    ``dir`` name resolved from ``root``'s layered configuration — a possibly
+    nested, always ``/``-separated value whose components are joined onto
+    ``root`` with the host's native separator."""
     config, provenance = resolve_config(root)
     store = _resolve_store_root(config, provenance, root)
     if store is not None:
         return os.path.join(store, repo_store_folder(root))
-    return os.path.join(root, specs_dirname(config))
+    return os.path.join(root, *specs_dirname(config).split("/"))
 
 
 # ---------------------------------------------------------------------------

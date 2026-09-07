@@ -8,7 +8,9 @@
 #
 # It also provides `remove <change>`, a *guarded* teardown: removal refuses
 # (exit 2, listing every reason) while the worktree shows work in progress —
-# uncommitted/untracked files, an unshipped change under `.shipd/planned/`, a
+# uncommitted/untracked files, an unshipped change under the worktree's
+# configured content directory (`<content-dir>/planned/`, resolved through the
+# engine and falling back to the literal `.shipd`), a
 # `[~]` task claim or `.tasks.lock` in a planned checklist, or — only while the
 # tree is already dirty — any file modified within the idle window (default 30
 # minutes, `SHIPD_WORKTREE_IDLE_MINUTES` overrides; `0` disables the activity
@@ -43,6 +45,11 @@
 #
 # Bash 3.2-safe (macOS system bash): no mapfile, no associative arrays.
 set -e
+
+# This script's own directory, so `remove` can reach the engine beside it to
+# resolve the worktree's configured content directory. Resolved without
+# `readlink -f`, which BSD/macOS lacks.
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 usage() {
   echo "usage: worktree.sh <change-name> [--fresh]    # create .worktrees/<change-name>" >&2
@@ -209,10 +216,23 @@ cmd_remove() {
     reasons+=("dirty worktree: uncommitted or untracked files")
   fi
 
-  planned="$WORKTREE/.shipd/planned"
+  # The worktree's content directory, resolved through the engine rather than
+  # hardcoded, so a repo that configures `dir` to a renamed or nested path is
+  # guarded where its artifacts actually live (build-spec-lifecycle
+  # worktree-guard-content-dir). Any failure — python3 absent, malformed
+  # config, no `content-dir:` line — falls back to the literal `.shipd`, so the
+  # guard never scans less than it does under the default configuration and the
+  # helper still runs in repositories with nothing but git.
+  content_dir=$(python3 "$SCRIPT_DIR/spec_status.py" --root "$WORKTREE" \
+    config-show 2>/dev/null | sed -n 's/^content-dir: //p' | head -n 1)
+  if [ -z "$content_dir" ]; then
+    content_dir=".shipd"
+  fi
 
-  # 2. Unshipped changes still parked under .shipd/planned/ — except the ones
-  # that are base content rather than this worktree's own work (a planned
+  planned="$WORKTREE/$content_dir/planned"
+
+  # 2. Unshipped changes still parked under <content-dir>/planned/ — except the
+  # ones that are base content rather than this worktree's own work (a planned
   # change committed on the base branch and checked out here unmodified). The
   # worktree's *own* change never qualifies: `planned/<change>/` is absent from
   # the base, so the identical-to-base probe fails and the guard fires.
@@ -223,7 +243,7 @@ cmd_remove() {
       if planned_is_base_content "$WORKTREE" "$BASE" "${dir#$WORKTREE/}"; then
         continue
       fi
-      reasons+=("unshipped change under .shipd/planned: $dir")
+      reasons+=("unshipped change under $content_dir/planned: $dir")
     done
   fi
 
