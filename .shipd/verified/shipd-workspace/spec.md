@@ -578,7 +578,20 @@ diagram SHALL label which folder is the workspace repo. Every interactive
 setup command in the guide SHALL invoke the `shipd` binary (`shipd workspace
 init`, `shipd wiki init`, `shipd workspace sync`, `shipd workspace`,
 `shipd config`), never a `spec_status.py` path, except in the
-headless-consumer section. The guide SHALL document team-shared workspace
+headless-consumer section. Where the guide introduces its directory
+convention, it SHALL document the optional `workspaces_root` config key
+(shipd-config workspaces-root-key) as the way to mandate that convention:
+that declaring the key in `~/.shipd-config.json` makes a bare name given to
+`shipd workspace init` resolve to `<workspaces_root>/<name>` with the leaf
+directory created, makes an explicit init target or clone destination
+outside the declared root refused with an error naming the target, the
+declared root, and `workspaces_root`, leaves `--nested` job workspaces
+inside the root legal, and changes no behavior when undeclared. The guide
+SHALL also state that `shipd config` reports the raw declared value with
+`~` unexpanded, that the installed sample config documents the key, and
+that the doctor `config` check validates it — failing on a malformed value
+and warning when the declared root directory is missing. The guide SHALL
+document team-shared workspace
 repos: that any number of engineers may clone the same workspace repo, that
 each clone materializes its own machine-local members through the sync
 ladder, and that the shared knowledge (wiki, queue, initiatives) travels
@@ -642,6 +655,23 @@ reads.
 - **THEN** every standalone workspace example lives under `~/workspaces/`,
   the layout diagram labels the workspace repo, and no example uses the
   retired `~/jobs/` convention
+
+#### Scenario: Guide documents the workspaces_root mandate
+- **WHEN** the guide's setup sections are inspected
+- **THEN** they document declaring `workspaces_root` in
+  `~/.shipd-config.json` as mandating the parent-directory convention — a
+  bare init name resolving to `<workspaces_root>/<name>` with the leaf
+  created, out-of-root init targets and clone destinations refused naming
+  the target, the declared root, and the key, `--nested` job workspaces
+  inside the root staying legal, and no behavior change when the key is
+  undeclared
+
+#### Scenario: Guide names the key's reporting and checks
+- **WHEN** the guide's `workspaces_root` coverage is inspected
+- **THEN** it states that `shipd config` reports the raw declared value with
+  `~` unexpanded, that the installed sample config documents the key, and
+  that the doctor `config` check fails on a malformed value and warns when
+  the declared root directory is missing
 
 ### Requirement: Workspaces guide practical examples
 id: workspaces-doc-examples
