@@ -40,8 +40,9 @@ MANIFEST = os.path.join(PLUGIN_ROOT, ".claude-plugin", "plugin.json")
 
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
 VERBS = ("init", "list", "status", "locate", "related", "epic", "workspace",
-         "board", "render", "metrics", "lint", "worktree", "doctor",
-         "statusline", "copilot", "vendor", "harness", "install", "update")
+         "wiki", "config", "board", "render", "metrics", "lint", "worktree",
+         "doctor", "statusline", "copilot", "vendor", "harness", "install",
+         "update")
 
 
 def _load_binary():
@@ -278,6 +279,108 @@ class DispatchTest(ShipdCliTestBase):
         rows = [line.strip() for line in r.stdout.splitlines()
                 if line.strip().startswith("render ")]
         self.assertEqual(len(rows), 1, r.stdout)
+
+    def test_workspace_init_delegates_to_workspace_init(self):
+        # ``--help`` proves the mode word is consumed and the remaining
+        # arguments reach the delegate, without creating a workspace.
+        direct = self.script("spec_status.py", "workspace-init", "--help")
+        r = self.cli("workspace", "init", "--help")
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+        self.assertIn("workspace-init", r.stdout)
+
+    def test_workspace_sync_delegates_to_workspace_sync(self):
+        direct = self.script("spec_status.py", "workspace-sync", "--help")
+        r = self.cli("workspace", "sync", "--help")
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+        self.assertIn("workspace-sync", r.stdout)
+
+    def test_bare_workspace_is_still_the_roster_report(self):
+        # ``init`` and ``sync`` are the only workspace mode words, so anything
+        # else falls through to ``workspace-show`` with its arguments intact.
+        direct = self.script("spec_status.py", "workspace-show", "--help")
+        r = self.cli("workspace", "--help")
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+        self.assertIn("workspace-show", r.stdout)
+
+    def test_wiki_init_delegates_to_wiki_init(self):
+        direct = self.script("spec_status.py", "wiki-init", "--help")
+        r = self.cli("wiki", "init", "--help")
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+        self.assertIn("wiki-init", r.stdout)
+
+    def test_bare_wiki_is_the_store_report(self):
+        direct = self.script("spec_status.py", "wiki-show", "--help")
+        r = self.cli("wiki", "--help")
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+        self.assertIn("wiki-show", r.stdout)
+
+    def test_workspace_modes_map_to_the_status_script(self):
+        """The workspace mode table: a mode-less default of the roster report,
+        with ``init`` and ``sync`` the two consumed mode words (shipd-cli
+        cli-dispatch)."""
+        self.assertEqual(shipd.WORKSPACE_MODES,
+                         {None: ("spec_status.py", ["workspace-show"]),
+                          "init": ("spec_status.py", ["workspace-init"]),
+                          "sync": ("spec_status.py", ["workspace-sync"])})
+
+    def test_wiki_modes_map_to_the_status_script(self):
+        """The wiki mode table: a mode-less default of the store report, with
+        ``init`` the one consumed mode word (shipd-cli cli-dispatch)."""
+        self.assertEqual(shipd.WIKI_MODES,
+                         {None: ("spec_status.py", ["wiki-show"]),
+                          "init": ("spec_status.py", ["wiki-init"])})
+
+    def test_wiki_is_a_curated_verb_mapped_to_the_status_script(self):
+        """The `wiki` row delegates to ``spec_status.py wiki-show``
+        (shipd-cli cli-dispatch)."""
+        self.assertEqual(shipd.VERB_TABLE.get("wiki"),
+                         ("spec_status.py", ["wiki-show"]))
+
+    def test_config_is_a_curated_verb_mapped_to_the_status_script(self):
+        """The `config` row delegates to ``spec_status.py config-show``
+        (shipd-cli cli-dispatch)."""
+        self.assertEqual(shipd.VERB_TABLE.get("config"),
+                         ("spec_status.py", ["config-show"]))
+
+    def test_config_delegates_the_resolved_config_report(self):
+        direct = self.script("spec_status.py", "config-show")
+        r = self.cli("config")
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+        self.assertIn("config (resolved from", r.stdout)
+
+    def test_the_banner_lists_wiki_as_a_verb(self):
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        rows = [line.strip() for line in r.stdout.splitlines()
+                if line.strip().startswith("wiki ")]
+        self.assertEqual(len(rows), 1, r.stdout)
+
+    def test_the_banner_lists_config_as_a_verb(self):
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        rows = [line.strip() for line in r.stdout.splitlines()
+                if line.strip().startswith("config ")]
+        self.assertEqual(len(rows), 1, r.stdout)
+
+    def test_the_banner_names_the_workspace_mode_words(self):
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        rows = [line.strip() for line in r.stdout.splitlines()
+                if line.strip().startswith("workspace ")]
+        self.assertEqual(len(rows), 1, r.stdout)
+        self.assertIn("[init|sync]", rows[0])
 
     def test_related_is_a_curated_verb_mapped_to_the_status_script(self):
         """The `related` row delegates to ``spec_status.py related``

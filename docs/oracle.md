@@ -222,5 +222,5 @@ the wiki merely caches your standing answer.
 ## See also
 
 - [What is shipd?](what-is-shipd.md) — where the oracle sits in the workflow.
-- [Portable workspaces](portable-workspaces.md) — the workspace that holds the
-  wiki store the oracle reads and queues into.
+- [Workspaces](workspaces.md) — the workspace that holds the wiki store the
+  oracle reads and queues into.

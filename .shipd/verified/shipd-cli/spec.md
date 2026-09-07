@@ -4,39 +4,86 @@
 id: cli-dispatch
 
 The `shipd` binary SHALL expose exactly the curated verbs `init`, `list`,
-`status`, `locate`, `related`, `epic`, `workspace`, `board`, `render`,
-`metrics`, `lint`, `worktree`, `doctor`, `statusline`, `copilot`, `vendor`,
-`harness`, `install`, and `update`, and for every verb except `list`,
-`doctor`, `statusline`, `copilot`, `vendor`, `harness`, `install`, and
-`update` SHALL delegate by replacing its own process with the mapped engine
-script invocation (`init` -> `spec_status.py init`, `status` ->
+`status`, `locate`, `related`, `epic`, `workspace`, `wiki`, `config`,
+`board`, `render`, `metrics`, `lint`, `worktree`, `doctor`, `statusline`,
+`copilot`, `vendor`, `harness`, `install`, and `update`, and for every verb
+except `list`, `doctor`, `statusline`, `copilot`, `vendor`, `harness`,
+`install`, and `update` SHALL delegate by replacing its own process with the
+mapped engine script invocation (`init` -> `spec_status.py init`, `status` ->
 `spec_status.py show`, `locate` -> `spec_status.py locate`, `related` ->
 `spec_status.py related`, `epic` -> `spec_status.py epic-show`, `workspace`
--> `spec_status.py workspace-show`, `board` -> `dashboard.py` per the
-board-mode mapping below, `render` -> `render.py` per the render-mode mapping
-below, `metrics` -> `metrics.py`, `lint` -> `spec_lint.py`, `worktree` ->
+-> `spec_status.py` per the workspace-mode mapping below, `wiki` ->
+`spec_status.py` per the wiki-mode mapping below, `config` ->
+`spec_status.py config-show`, `board` -> `dashboard.py` per the board-mode
+mapping below, `render` -> `render.py` per the render-mode mapping below,
+`metrics` -> `metrics.py`, `lint` -> `spec_lint.py`, `worktree` ->
 `worktree.py`), passing all trailing arguments through verbatim so the
 delegate's output and exit code are the binary's own. When `metrics` is given
 no trailing arguments, the binary SHALL delegate to `metrics.py summary`.
-When invoked as `shipd board`, the binary SHALL select the delegate by the
-first trailing argument: the bare word `text` SHALL be consumed and delegate
-to `dashboard.py board`, and any other first trailing argument (or none)
-SHALL delegate to `dashboard.py tui` with all trailing arguments intact. When
-invoked as `shipd render`, the binary SHALL select the delegate by the first
-trailing argument: the bare word `output` SHALL be consumed and delegate to
-`render.py output`, and any other first trailing argument (or none) SHALL
-delegate to `render.py screen` with all trailing arguments intact. The binary
-SHALL resolve the engine scripts relative to its own resolved file location.
-If the verb is unknown or missing — including the retired `tui` — the binary
-SHALL print a usage banner listing the curated verbs to stderr and exit `2`;
-when invoked with `help`, `-h`, or `--help` it SHALL print the same banner to
-stdout and exit `0`.
+When invoked as `shipd workspace`, the binary SHALL select the delegate by
+the first trailing argument: the bare word `init` SHALL be consumed and
+delegate to `spec_status.py workspace-init`, the bare word `sync` SHALL be
+consumed and delegate to `spec_status.py workspace-sync`, and any other
+first trailing argument (or none) SHALL delegate to
+`spec_status.py workspace-show` with all trailing arguments intact. When
+invoked as `shipd wiki`, the binary SHALL select the delegate by the first
+trailing argument: the bare word `init` SHALL be consumed and delegate to
+`spec_status.py wiki-init`, and any other first trailing argument (or none)
+SHALL delegate to `spec_status.py wiki-show` with all trailing arguments
+intact. When invoked as `shipd board`, the binary SHALL select the delegate
+by the first trailing argument: the bare word `text` SHALL be consumed and
+delegate to `dashboard.py board`, and any other first trailing argument (or
+none) SHALL delegate to `dashboard.py tui` with all trailing arguments
+intact. When invoked as `shipd render`, the binary SHALL select the delegate
+by the first trailing argument: the bare word `output` SHALL be consumed and
+delegate to `render.py output`, and any other first trailing argument (or
+none) SHALL delegate to `render.py screen` with all trailing arguments
+intact. The binary SHALL resolve the engine scripts relative to its own
+resolved file location. If the verb is unknown or missing — including the
+retired `tui` — the binary SHALL print a usage banner listing the curated
+verbs to stderr and exit `2`; when invoked with `help`, `-h`, or `--help` it
+SHALL print the same banner to stdout and exit `0`.
 
 #### Scenario: Delegated verb preserves output and exit code
 - **WHEN** `shipd locate no-such-change` runs in a repo where that change does
   not exist
 - **THEN** the binary exits `1` with `Error: change 'no-such-change' not found`
   on stderr, exactly as `spec_status.py locate` does
+
+#### Scenario: Workspace init mode
+- **WHEN** `shipd workspace init --help` runs
+- **THEN** the output is identical to `spec_status.py workspace-init --help`
+  and the exit code is `0`, proving the mode word is consumed and the
+  remaining arguments pass through
+
+#### Scenario: Workspace sync mode
+- **WHEN** `shipd workspace sync --help` runs
+- **THEN** the output is identical to `spec_status.py workspace-sync --help`
+  and the exit code is `0`
+
+#### Scenario: Bare workspace is still the roster report
+- **WHEN** `shipd workspace --help` runs
+- **THEN** the output is identical to `spec_status.py workspace-show --help`
+  and the exit code is `0`, proving non-mode arguments fall through intact
+
+#### Scenario: Wiki init mode
+- **WHEN** `shipd wiki init --help` runs
+- **THEN** the output is identical to `spec_status.py wiki-init --help` and
+  the exit code is `0`
+
+#### Scenario: Bare wiki is the store report
+- **WHEN** `shipd wiki --help` runs
+- **THEN** the output is identical to `spec_status.py wiki-show --help` and
+  the exit code is `0`
+
+#### Scenario: Config delegates to the resolved-config report
+- **WHEN** `shipd config` runs from a repo root
+- **THEN** the output of `spec_status.py config-show` is printed — including
+  its `config (resolved from …)` header line — and the exit code is `0`
+
+#### Scenario: Wiki and config are curated verbs
+- **WHEN** `shipd --help` runs
+- **THEN** the usage banner lists `wiki` and `config` among the verbs
 
 #### Scenario: Bare board is the interactive board
 - **WHEN** `shipd board --help` runs

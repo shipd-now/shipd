@@ -1,21 +1,26 @@
-# Portable workspaces
+# Workspaces
 
-A **portable workspace** is a git repo you clone to stand up a whole
-*job to be done*: a cross-repo feature that touches several of your projects.
-The workspace repo carries the **manifest** (which member repos belong to the
-job, where to clone them from, which project is the focus) and the job's
-**LLM wiki** — the member repos themselves are materialized beside them and
-never tracked by the workspace repo.
+A **workspace** is a git repo you clone to stand up a whole *job to be done*:
+a cross-repo feature that touches several of your projects. The workspace repo
+carries the **manifest** (which member repos belong to the job, where to clone
+them from, which project is the focus) and the job's **LLM wiki** — the member
+repos themselves are materialized beside them and never tracked by the
+workspace repo.
 
 ```
-~/jobs/documents-linking/        ← the workspace repo (git clone …)
-  .shipd-config.json                ← manifest: focus + projects + clone urls   (tracked)
-  .gitignore                     ← members block, engine-managed             (tracked)
+~/workspaces/documents-linking/   ← THE WORKSPACE REPO — this folder is what
+                                    you clone, commit, and push
+  .shipd-config.json              ← manifest: focus + projects + clone urls  (tracked)
+  .gitignore                      ← members block, engine-managed            (tracked)
   .shipd/
-    wiki/                        ← the job's knowledge store                 (tracked)
-    initiatives/  projects/      ← goals & per-project context              (tracked)
-  documents/  tasks/  incentives/   ← member repos, machine-local           (ignored)
+    wiki/                         ← the job's knowledge store                (tracked)
+    initiatives/  projects/       ← goals & per-project context              (tracked)
+  documents/  tasks/  incentives/ ← member repos, machine-local              (ignored)
 ```
+
+One folder per job, all of them under a `~/workspaces/` parent: the leaf is the
+job's name (`documents-linking`), never a member repo's, so it is never
+confused with the `documents/` checkout materialized inside it.
 
 Everything above the line travels with `git clone`; everything below is
 rebuilt per machine by the sync ladder — as **worktrees or reference-clones
@@ -50,13 +55,13 @@ resolves every read verb (see
 ## 2. Create a job workspace
 
 ```sh
-mkdir -p ~/jobs/documents-linking
-python3 <plugin>/skills/build/scripts/spec_status.py workspace-init ~/jobs/documents-linking --git
+mkdir -p ~/workspaces/documents-linking
+shipd workspace init ~/workspaces/documents-linking --git
 ```
 
 `--git` makes the root a git repo and seeds the managed `.gitignore` block.
-(`<plugin>` = `plugins/s` in a shipd checkout, or the installed plugin
-root.) Then declare the job in `~/jobs/documents-linking/.shipd-config.json`:
+Then declare the job in
+`~/workspaces/documents-linking/.shipd-config.json`:
 
 ```json
 {
@@ -79,11 +84,11 @@ root.) Then declare the job in `~/jobs/documents-linking/.shipd-config.json`:
 Finish the bootstrap from inside the workspace:
 
 ```sh
-python3 <plugin>/skills/build/scripts/spec_status.py wiki-init       # job wiki store
-python3 <plugin>/skills/build/scripts/spec_status.py workspace-sync --write-gitignore
+shipd wiki init                          # job wiki store
+shipd workspace sync --write-gitignore
 ```
 
-`workspace-sync` prints the materialization plan (it never touches the
+`shipd workspace sync` prints the materialization plan (it never touches the
 network); `--write-gitignore` fills the managed members block so the member
 dirs stay untracked. Then run `/s:workspace sync` in a Claude session to
 actually execute the plan's git commands, or run the printed `command:` lines
@@ -95,7 +100,7 @@ The engine already keeps member repos out of the workspace repo — you commit
 only the manifest and the knowledge:
 
 ```sh
-cd ~/jobs/documents-linking
+cd ~/workspaces/documents-linking
 git add .shipd-config.json .gitignore .shipd/
 git commit -m "documents-linking workspace: manifest + wiki"
 git remote add origin git@github.com:acme/ws-documents-linking.git
@@ -120,7 +125,7 @@ Notes:
 One command in a Claude session:
 
 ```
-/s:workspace clone git@github.com:acme/ws-documents-linking.git ~/jobs/documents-linking
+/s:workspace clone git@github.com:acme/ws-documents-linking.git ~/workspaces/documents-linking
 ```
 
 This clones the workspace repo, then runs the sync flow, which executes the
@@ -136,10 +141,9 @@ in every teammate's clone of it.
 
 ## 5. Day to day
 
-- `spec_status.py workspace-show` — roster, focus, absent members, `[url]`
-  markers.
-- `spec_status.py workspace-sync` — re-plan any time; **drift** (an on-disk
-  origin differing from the manifest) is reported, never "repaired".
+- `shipd workspace` — roster, focus, absent members, `[url]` markers.
+- `shipd workspace sync` — re-plan any time; **drift** (an on-disk origin
+  differing from the manifest) is reported, never "repaired".
   `--json` emits machine-readable records.
 - `/s:workspace sync` — execute the plan again after editing the manifest
   (e.g. a new member repo was added to the job).
@@ -159,10 +163,22 @@ A job workspace can nest inside a base workspace instead of standing alone —
 file it directly beneath the base root and every enclosing workspace's
 knowledge is inherited automatically, no `wiki_base` needed for that base:
 
+Say the base workspace is `~/workspaces/acme-base/` — an ordinary workspace
+created exactly as [§2](#2-create-a-job-workspace) creates one. The nested job
+is a folder **inside** it, named for the job:
+
 ```sh
-mkdir -p ~/projects/jobs/documents-linking
-python3 <plugin>/skills/build/scripts/spec_status.py workspace-init \
-  ~/projects/jobs/documents-linking --nested --git
+mkdir -p ~/workspaces/acme-base/documents-linking
+shipd workspace init ~/workspaces/acme-base/documents-linking --nested --git
+```
+
+```
+~/workspaces/acme-base/           ← the base workspace repo
+  .shipd/wiki/                    ← knowledge every job beneath it inherits
+  documents-linking/              ← THE NESTED JOB'S WORKSPACE REPO
+    .shipd-config.json            ← this job's own manifest
+    .shipd/wiki/                  ← this job's own store — every write lands here
+    documents/  tasks/            ← this job's member repos, machine-local
 ```
 
 `--nested` is required: the bare verb refuses to create a workspace under an
@@ -222,7 +238,7 @@ config at all:
 ```
 
 ```
-~/jobs/documents-linking/
+~/workspaces/documents-linking/
   .shipd-config.json          ← declares store_root once
   shipd-store/                ← the external store (tracked with the workspace)
     documents/                ← one folder per member repo …
@@ -239,9 +255,9 @@ an *in-repo* `.shipd/`) does not apply to an external store.
 **Where the store lands.** `~` expands, an absolute value is used as-is, and a
 relative value resolves against the directory of the config file that declared
 it — not the current repo. So `"store_root": "shipd-store"` in
-`~/jobs/documents-linking/.shipd-config.json` always means
-`~/jobs/documents-linking/shipd-store`, however deep the repo resolving it
-sits, and the committed workspace config stays portable across machines.
+`~/workspaces/documents-linking/.shipd-config.json` always means
+`~/workspaces/documents-linking/shipd-store`, however deep the repo resolving it
+sits, and the committed workspace config resolves the same on every machine.
 
 **A dedicated artifacts repo** is the same key pointed elsewhere — clone the
 artifacts repo anywhere and declare it, either in the workspace config or in
@@ -271,7 +287,7 @@ change's own PR.
 silently resolves a fresh, empty store rather than failing:
 
 ```sh
-python3 <plugin>/skills/build/scripts/spec_status.py config-show
+shipd config
 ```
 
 It prints a `store:` line carrying the resolved absolute content directory
@@ -300,7 +316,7 @@ clone the same one — the load flow of
 your own laptop or a teammate's:
 
 ```
-/s:workspace clone git@github.com:acme/ws-documents-linking.git ~/jobs/documents-linking
+/s:workspace clone git@github.com:acme/ws-documents-linking.git ~/workspaces/documents-linking
 ```
 
 **Members are machine-local, always.** Each clone runs its own sync ladder and
@@ -329,9 +345,9 @@ server, no sync service, and no workspace-level daemon.
 **The ignore block does not churn.** The managed members block in `.gitignore`
 (`# >>> shipd-workspace members` … `# <<< shipd-workspace members`) is derived
 deterministically from the manifest's member paths, so every clone with the
-same manifest reconciles to the same block. Running
-`workspace-sync --write-gitignore` on two machines produces no diff to fight
-over — the block only changes when the manifest's members do.
+same manifest reconciles to the same block. Running `shipd workspace sync
+--write-gitignore` on two machines produces no diff to fight over — the block
+only changes when the manifest's members do.
 
 **A shared workspace supplies worktree hooks to every member repo — and they
 need your consent.** `post-worktree-scripts` resolve nearest-wins through the
@@ -429,13 +445,20 @@ job, a chat bot, a cloud agent. The footprint is deliberately small:
   place inside a plugin checkout — it imports its sibling modules from that
   directory, so copying the one file out on its own does not work.
 
-That is the whole list. Run the verbs from inside the clone, or point at it
-from anywhere with the top-level `--root`:
+That is the whole list — and it is why this section alone names the script
+rather than the `shipd` binary every other section uses: a headless consumer
+has nothing but a bare clone and a plugin checkout, with no binary on its
+`PATH`, so `spec_status.py` run in place *is* the pinned contract.
+
+Run the verbs from inside the clone, or point at it from anywhere with the
+top-level `--root`:
 
 ```sh
 git clone git@github.com:acme/ws-documents-linking.git /tmp/ws
 python3 <plugin>/skills/build/scripts/spec_status.py --root /tmp/ws workspace-show
 ```
+
+(`<plugin>` = `plugins/s` in a shipd checkout, or the installed plugin root.)
 
 **Discovery needs nothing but the config file.** The engine finds the
 workspace by walking upward for a `.shipd-config.json` that declares

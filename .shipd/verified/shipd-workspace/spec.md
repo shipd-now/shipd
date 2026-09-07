@@ -488,14 +488,22 @@ never through a private reimplementation.
 - **WHEN** `aggregation_universes` runs
 - **THEN** it returns exactly `[(None, root)]`
 
-### Requirement: Portable workspaces guide
-id: portable-workspaces-doc
+### Requirement: Workspaces guide
+id: workspaces-doc
 
-The repository SHALL provide `docs/portable-workspaces.md`, a user-facing
-guide to portable workspace repos. The guide SHALL document team-shared
-workspace repos: that any number of engineers may clone the same workspace
-repo, that each clone materializes its own machine-local members through the
-sync ladder, and that the shared knowledge (wiki, queue, initiatives) travels
+The repository SHALL provide `docs/workspaces.md`, a user-facing guide to
+workspace repos, titled "Workspaces" and using the term "workspace" — never
+"portable workspace" — throughout. The guide's examples SHALL follow a single
+directory convention — workspace repos live in a `~/workspaces/` parent, one
+folder per job (e.g. `~/workspaces/documents-linking/`) — and its layout
+diagram SHALL label which folder is the workspace repo. Every interactive
+setup command in the guide SHALL invoke the `shipd` binary (`shipd workspace
+init`, `shipd wiki init`, `shipd workspace sync`, `shipd workspace`,
+`shipd config`), never a `spec_status.py` path, except in the
+headless-consumer section. The guide SHALL document team-shared workspace
+repos: that any number of engineers may clone the same workspace repo, that
+each clone materializes its own machine-local members through the sync
+ladder, and that the shared knowledge (wiki, queue, initiatives) travels
 between engineers through ordinary git pull and push of the workspace repo.
 The guide SHALL state the concurrency expectations for a shared workspace:
 the engine takes no locks and never pushes, pulls, or fetches — wiki writes
@@ -518,7 +526,7 @@ values and `clone_sources` mattering only for materialization, never for
 reads.
 
 #### Scenario: Guide covers team-shared workspaces
-- **WHEN** `docs/portable-workspaces.md` is inspected
+- **WHEN** `docs/workspaces.md` is inspected
 - **THEN** it documents several engineers cloning one workspace repo,
   per-machine member materialization, and git pull/push of the workspace repo
   as the knowledge transport
@@ -543,3 +551,16 @@ reads.
 - **THEN** it names the minimal footprint — a workspace clone, Python 3, and
   `spec_status.py` — and states that reads succeed with all members absent,
   without git, and without any machine-level configuration
+
+#### Scenario: Interactive commands use the shipd binary
+- **WHEN** the guide's sections outside the headless-consumer section are
+  inspected
+- **THEN** every setup and day-to-day command invokes the `shipd` binary and
+  no interactive example invokes `spec_status.py` by path, while the
+  headless-consumer section still names `spec_status.py` as its footprint
+
+#### Scenario: Examples share one directory convention
+- **WHEN** the guide's layout and command examples are inspected
+- **THEN** every standalone workspace example lives under `~/workspaces/`,
+  the layout diagram labels the workspace repo, and no example uses the
+  retired `~/jobs/` convention

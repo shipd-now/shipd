@@ -1600,8 +1600,8 @@ def aggregation_universes(root):
 # shipd-config clone-sources-key)
 # ---------------------------------------------------------------------------
 
-# The fixed cheapest-first materialization ladder for an absent member (epic
-# portable-workspaces): a local work-tree candidate is cheapest, then a bare
+# The fixed cheapest-first materialization ladder for an absent member
+# (docs/workspaces.md): a local work-tree candidate is cheapest, then a bare
 # reference clone, then a full clone, and finally unmaterializable.
 SYNC_ACTIONS = ("none", "worktree", "reference-clone", "clone", "unmaterializable")
 
