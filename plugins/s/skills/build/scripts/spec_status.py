@@ -444,6 +444,48 @@ def derive_status(counts):
 # ``init`` makes these four and nothing else.
 LAYOUT_DIRS = ("verified", "planned", "completed", "research")
 
+# The copyable config reference `init` installs into the content directory
+# (spec-status layout-init-verb). Its filename is the same on both sides of the
+# copy, and the source is resolved relative to this script rather than to any
+# repo layout, so the same path holds in a repo checkout and in the plugin's
+# cache snapshot.
+CONFIG_SAMPLE_NAME = "shipd.config.example.json"
+
+
+def config_sample_source():
+    """Absolute path of the plugin's copyable config reference, resolved
+    ``__file__``-relative as ``../references/<name>``."""
+    return os.path.normpath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "references",
+        CONFIG_SAMPLE_NAME))
+
+
+def _install_config_sample(root, specs):
+    """Install the config reference as ``<specs>/<name>`` and report it with one
+    ``created``/``exists`` line — no trailing separator, it is a file
+    (spec-status layout-init-verb).
+
+    Never clobbers: while any filesystem object sits at the destination it is
+    the user's copy, left byte-for-byte untouched and reported ``exists``. A
+    missing source warns on stderr naming the probed path and installs nothing,
+    leaving the caller's exit code unchanged — the layout, not the sample, is
+    ``init``'s contract, so a broken snapshot must not block scaffolding."""
+    dest = os.path.join(specs, CONFIG_SAMPLE_NAME)
+    if os.path.exists(dest) or os.path.islink(dest):
+        print("exists %s" % os.path.relpath(dest, root))
+        return
+    source = config_sample_source()
+    if not os.path.isfile(source):
+        sys.stderr.write(
+            "Warning: config example not found at %s — skipping its "
+            "installation\n" % source)
+        return
+    with open(source, "rb") as fh:
+        payload = fh.read()
+    with open(dest, "wb") as fh:
+        fh.write(payload)
+    print("created %s" % os.path.relpath(dest, root))
+
 
 def cmd_init(root):
     """Create ``root``'s content-directory layout — ``verified/``,
@@ -456,7 +498,11 @@ def cmd_init(root):
     layout's paths refuses the whole run rather than leaving it half-created.
     Creation is ``exist_ok``, so an existing directory — and everything already
     inside it — is left exactly as it was, and a re-run is a no-op that still
-    exits ``0``."""
+    exits ``0``.
+
+    The plugin's copyable config reference is then installed into the content
+    directory by :func:`_install_config_sample`, reported on its own line
+    between the directory lines and the ready summary."""
     specs = sc.specs_dir(root)
     targets = [os.path.join(specs, name) for name in LAYOUT_DIRS]
     for path in [specs] + targets:
@@ -469,6 +515,7 @@ def cmd_init(root):
         os.makedirs(path, exist_ok=True)
         print("%s %s%s" % ("exists" if existed else "created",
                            os.path.relpath(path, root), os.sep))
+    _install_config_sample(root, specs)
     # Declare the grammar the scaffolded layout is written under
     # (schema-versioning schema-marker-stamping). A repo already marked at a
     # different major keeps its marker — `init` is the one verb exempt from the

@@ -1,12 +1,29 @@
 {
-  "//": "Example ~/.shipd-config.json for /s:build. Copy to ~/.shipd-config.json and edit. All keys are optional; the build telemetry settings live under the `build` key, and unknown keys are ignored. Values shown are the defaults.",
+  "//": "Reference .shipd-config.json covering every recognized top-level key. Copy it to .shipd-config.json (in a repo root, or a workspace root to govern every repo beneath it) and edit. All keys are optional; layers resolve nearest-wins-wholesale — the nearest file declaring a key supplies its whole value — and unknown keys are ignored, so the `// <key>` entries below are inert documentation you can keep or delete. Declared values shown are the built-in defaults, so copying this file unchanged changes no behavior.",
+  "// dir": "Names the content directory holding the spec library (verified/, planned/, completed/, research/). Default `.shipd`; the config filename itself is never renamed.",
+  "// completed_retention_days": "How many days a completed change stays visible to consumers. Default 30; `0` or `null` disables retention so nothing is hidden.",
+  "// store_root": "Relocates the content directory into an external store, one folder per repo. No default (the content directory sits in the repo). `~` expands, and a relative value resolves against the directory of the config file that declared it.",
+  "// wiki_base": "A durable base wiki store searched alongside the workspace's own wiki/. No default. Must expand (via `~`) to an absolute path.",
+  "// memory_dir": "Root of the personal memory store, whose pages live in <memory_dir>/wiki. Default `~/.shipd-memory`.",
+  "// valid_themes": "The vocabulary the linter accepts in an artifact's `Theme:` header. A list of strings; undeclared or empty means any theme passes. Documented in the content directory's README.md ('Theme vocabulary' section).",
   "// autonomous-pipeline": "Optional top-level key declaring the delivery pipeline: a preset name (\"default\", \"eco\", \"basic\") or an ordered list of stage entries. Omitted here so copying this file declares no pipeline; the full grammar lives in the content directory's README.md ('The autonomous pipeline' section).",
   "// pr-mode": "Optional top-level key choosing how a change's PR ships: \"auto\" (the default when omitted — an auto-merging PR) or \"draft\" (a draft PR, no auto-merge, a human merges). Omitted here so copying this file declares no mode; usually declared once at a workspace root, and documented in the content directory's README.md ('PR mode' section).",
   "// guardrails": "Optional top-level key holding the guardrail hook's kill-switches: `false` turns the hook off, or an object with `disable` (rule names to drop). The rules themselves are markdown files, not config — `<content-dir>/rules/*.md` in the repo, `~/.shipd/rules/*.md` for every repo, and the plugin's own `hooks/rules/*.md` built-ins, first source winning a name. Omitted here so copying this file declares nothing and the three built-in comment rules stay active; the rule file format and both modes (`deny`, `remind`) are documented in the content directory's README.md ('Guardrails' section).",
+  "// workspace": "Marks the declaring directory as a workspace root and holds its registry of `projects` and the current `focus`. An empty object `{}` is a valid marker. No default (a repo is not a workspace); documented in the content directory's README.md ('Workspace' section).",
+  "// post-worktree-scripts": "An ordered list of shell command lines run in a freshly created worktree, e.g. copying a .env or seeding a database. Undeclared means no hooks run; register entries through `shipd worktree hooks add` (or /s:worktree-hooks) rather than by hand.",
+  "// clone_sources": "Local directories the workspace sync planner probes for an existing clone of an absent member before cloning it fresh. A list of directory paths with `~` expansion; undeclared means no probing.",
   "build": {
+    "//": "Settings for a /s:build run and the flows sharing its config: telemetry, plus the design and video-ingest roots.",
     "logging_enabled": true,
     "log_dir": "~/.shipd/builds",
     "number_format": "short",
-    "parallelism": 3
+    "parallelism": 3,
+    "// design_dir": "Root of the design scratch directories a plan may reference. Default `~/.shipd/designs`.",
+    "// video_dir": "Root holding the ingested video bundles (transcript, frames, index). Default `~/.shipd/video`.",
+    "// video_asr": "The speech-recognition backend used to transcribe a recording. Default `parakeet`.",
+    "// video_vocabulary": "Extra domain terms biasing the transcription. A list of strings; default `[]`.",
+    "// video_max_frames": "Cap on the frames indexed from one recording. Default 24.",
+    "// video_scene_floor": "The fraction of that frame cap reserved for scene-change candidates, so deixis anchors cannot starve them. Default 0.25.",
+    "// video_cursor": "Whether cursor position is tracked and drawn when grounding a frame. Default true."
   }
 }

@@ -360,6 +360,28 @@ class ConfigError(Exception):
 # renames the *content* directory (default ``.shipd``), never this file.
 CONFIG_FILENAME = ".shipd-config.json"
 
+# The authoritative registry of top-level keys the engine recognizes in a
+# ``.shipd-config.json`` layer (shipd-config config-sample-coverage). Every key
+# the engine reads is listed here, and the plugin's copyable reference,
+# ``plugins/s/skills/build/references/shipd.config.example.json``, documents
+# exactly these keys — a test asserts the two agree in both directions. Adding a
+# newly recognized top-level key means extending *both*, in the same change.
+RECOGNIZED_CONFIG_KEYS = (
+    "autonomous-pipeline",
+    "build",
+    "clone_sources",
+    "completed_retention_days",
+    "dir",
+    "guardrails",
+    "memory_dir",
+    "post-worktree-scripts",
+    "pr-mode",
+    "store_root",
+    "valid_themes",
+    "wiki_base",
+    "workspace",
+)
+
 # Built-in defaults beneath all config files. Only ``dir`` and
 # ``completed_retention_days`` carry defined defaults; every other key is
 # absent unless a layer declares it.
