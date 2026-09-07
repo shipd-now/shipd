@@ -27,8 +27,16 @@ Initiative → Epic → Change hierarchy. It owns the cross-cutting decisions an
 list of member changes; each member is born later in its own worktree via
 `/s:plan`, carrying an `Epic: <slug>` line back to this epic.
 
-Requirements: this repo must have the `.shipd/` layout (an `.shipd/` dir; the spec engine
-and linter live under `plugins/s/skills/build/scripts/`).
+Requirements: this repo must have the resolved content-directory layout (the
+spec engine and linter live under `plugins/s/skills/build/scripts/`). The
+content directory is configured, not hardcoded — resolve its name and confirm it
+exists with `spec_status.py config-show` (it prints the resolved `content-dir`,
+default `.shipd`).
+
+Path notation: literal `.shipd/` paths in this skill denote the repo's resolved
+content directory (default `.shipd`) — resolve the actual name with
+`spec_status.py config-show` (its `content-dir:` line) and substitute it when
+the repo configures another.
 
 **Where to run:** author the epic inside its own worktree — create it first with
 `"${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree epic-<slug>` and work in

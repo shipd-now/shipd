@@ -141,7 +141,8 @@ Branch on the outcome:
 ## 2. Scan the repo's spec surfaces (engine reads only)
 
 Scan the invoking repo's durable surfaces through **engine reads only** — never
-raw file reads of `.shipd/` internals. Prefer decision-dense surfaces first:
+raw file reads of content-directory internals. Prefer decision-dense surfaces
+first:
 
 1. `cat epic <slug>` — an epic's `## Decisions` / `## Design` (the densest
    source of standing positions).

@@ -77,6 +77,11 @@ same function behind `shipd init` — never by making the directories by hand; i
 reports one `created`/`exists` line per directory and the summary
 `all shipd directories are ready`, and is safe to re-run.
 
+Path notation: literal `.shipd/` paths in this skill denote the repo's resolved
+content directory (default `.shipd`) — resolve the actual name with
+`spec_status.py config-show` (its `content-dir:` line) and substitute it when
+the repo configures another.
+
 **Where to run:** planning for a change that will be built runs inside that
 change's worktree — create it first with
 `"${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree <change>` and
