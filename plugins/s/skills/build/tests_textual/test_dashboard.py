@@ -189,6 +189,138 @@ class BoardTest(DashboardTestBase):
         self.assertEqual({e["slug"] for e in data["epics"]}, {"ep"})
 
 
+class BoardRetentionTest(DashboardTestBase):
+    """The completed-retention filter: a `complete` epic whose newest member
+    archive is older than the window, and an `archived` standalone change whose
+    archive is older, drop out of the aggregation, while live epics, recent
+    completions, undatable epics and an `--epic` scope are untouched
+    (delivery-dashboard board-completed-retention).
+
+    Written test-first; expected to FAIL until the filter lands in
+    ``dashboard.py`` (task 2.2)."""
+
+    TODAY = _dt.date(2026, 3, 1)
+    OLD = "2026-01-20"      # 40 days before TODAY
+    RECENT = "2026-02-24"   # 5 days before TODAY
+
+    def _archive(self, base, stamp_slug, slug):
+        """Plant an archived change directory ``completed/<stamp_slug>`` under
+        ``base``'s content directory, holding the change's plan."""
+        _write(os.path.join(base, ".shipd", "completed", stamp_slug, "plan.md"),
+               "# %s\nStatus: verified\n\n## Idea\n\nx\n" % slug)
+
+    def _fixture(self):
+        # A complete epic whose only member archived 40 days ago.
+        _make_epic(self.root, "old-ep", [("old-m", "an old member", "low")],
+                   status="complete")
+        self._archive(self.root, "%s-old-m" % self.OLD, "old-m")
+        # A complete epic whose only member archived 5 days ago.
+        _make_epic(self.root, "recent-ep",
+                   [("recent-m", "a recent member", "low")], status="complete")
+        self._archive(self.root, "%s-recent-m" % self.RECENT, "recent-m")
+        # A live epic with one long-archived member and one still building.
+        _make_epic(self.root, "live-ep",
+                   [("live-old-m", "an old shipped member", "low"),
+                    ("live-planned-m", "a building member", "medium")],
+                   status="active")
+        self._archive(self.root, "%s-live-old-m" % self.OLD, "live-old-m")
+        _plan(self.root, "live-planned-m", "active")
+        # A complete epic whose archive directory carries no date prefix.
+        _make_epic(self.root, "undated-ep",
+                   [("undated-m", "an undatable member", "low")],
+                   status="complete")
+        self._archive(self.root, "nodate-undated-m", "undated-m")
+        # A standalone change (no `Epic:` line), archived 40 days ago inside
+        # its own worktree.
+        wt = os.path.join(self.root, ".worktrees", "lonely")
+        self._archive(wt, "%s-lonely" % self.OLD, "lonely")
+
+    def _board(self, **kwargs):
+        kwargs.setdefault("today", self.TODAY)
+        return dashboard.build_board(self.root, **kwargs)
+
+    def test_old_complete_epic_is_hidden_from_epics_and_groups(self):
+        self._fixture()
+        board = self._board(retention_days=30)
+        slugs = {e["slug"] for e in board["epics"]}
+        self.assertNotIn("old-ep", slugs)
+        grouped = {e["slug"] for g in board["groups"] for e in g["epics"]}
+        self.assertNotIn("old-ep", grouped)
+
+    def test_recent_complete_epic_is_retained(self):
+        self._fixture()
+        board = self._board(retention_days=30)
+        self.assertIn("recent-ep", {e["slug"] for e in board["epics"]})
+
+    def test_live_epic_keeps_both_members(self):
+        self._fixture()
+        board = self._board(retention_days=30)
+        epics = {e["slug"]: e for e in board["epics"]}
+        self.assertIn("live-ep", epics)
+        members = {m["slug"]: m for m in epics["live-ep"]["members"]}
+        self.assertEqual(set(members), {"live-old-m", "live-planned-m"})
+        self.assertEqual(members["live-old-m"]["state"], "archived")
+
+    def test_old_standalone_row_is_hidden(self):
+        self._fixture()
+        board = self._board(retention_days=30)
+        self.assertNotIn("lonely", {s["slug"] for s in board["standalone"]})
+
+    def test_undatable_complete_epic_is_retained(self):
+        self._fixture()
+        board = self._board(retention_days=30)
+        self.assertIn("undated-ep", {e["slug"] for e in board["epics"]})
+
+    def test_hidden_count_and_window_ride_the_board(self):
+        self._fixture()
+        board = self._board(retention_days=30)
+        self.assertEqual(board["hidden_completed"], 2)
+        self.assertEqual(board["retention_days"], 30)
+
+    def test_disabled_window_hides_nothing(self):
+        self._fixture()
+        board = self._board(retention_days=None)
+        slugs = {e["slug"] for e in board["epics"]}
+        self.assertEqual(
+            slugs, {"old-ep", "recent-ep", "live-ep", "undated-ep"})
+        self.assertIn("lonely", {s["slug"] for s in board["standalone"]})
+        self.assertEqual(board["hidden_completed"], 0)
+        self.assertIsNone(board["retention_days"])
+
+    def test_epic_scope_is_never_filtered(self):
+        self._fixture()
+        board = self._board(retention_days=30, epic="old-ep")
+        self.assertEqual([e["slug"] for e in board["epics"]], ["old-ep"])
+        self.assertEqual(board["hidden_completed"], 0)
+        self.assertIsNone(board["retention_days"])
+
+
+class RetentionUnreadableConfigTest(DashboardTestBase):
+    """An invocation root whose own ``.shipd-config.json`` is malformed JSON
+    fails open: the default retention resolution treats retention as disabled
+    — the board renders unfiltered, nothing hidden, no traceback — instead of
+    letting ``sc.ConfigError`` escape the ``_RESOLVE`` sentinel path
+    (delivery-dashboard board-completed-retention)."""
+
+    def _break_config(self):
+        _write(os.path.join(self.root, ".shipd-config.json"),
+               '{"dir": ".shipd",}\n')
+
+    def test_build_board_fails_open_on_unreadable_root_config(self):
+        self._break_config()
+        board = dashboard.build_board(self.root)
+        self.assertEqual(board["hidden_completed"], 0)
+        self.assertIsNone(board["retention_days"])
+
+    def test_board_verb_exits_zero_on_unreadable_root_config(self):
+        self._break_config()
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = dashboard.main(["board", "--root", self.root])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("Traceback", err.getvalue())
+
+
 class WorktreeEpicBoardTest(DashboardTestBase):
     """An epic authored inside a ``.worktrees/<name>`` worktree joins the board
     (delivery-dashboard board-aggregation): it aggregates once, carries the
@@ -724,6 +856,33 @@ class RendererTest(unittest.TestCase):
         # A run that never started (or crashed away its heartbeat) still renders.
         lines = dashboard.render_board_lines(board)
         self.assertIn("ep", "\n".join(lines))
+
+
+class RetentionNoteRendererTest(unittest.TestCase):
+    """The text board's trailing hidden-count note (delivery-dashboard
+    board-completed-retention): present, last, and naming both the count and
+    the key when work was hidden; absent otherwise. Pure — no terminal."""
+
+    def _board(self, **extra):
+        board = _sample_board()
+        board.update(extra)
+        return board
+
+    def test_note_is_the_last_line_and_names_count_and_key(self):
+        lines = dashboard.render_board_lines(
+            self._board(hidden_completed=3, retention_days=30))
+        self.assertIn("3 older completed hidden", lines[-1])
+        self.assertIn("completed_retention_days=30", lines[-1])
+
+    def test_no_note_when_nothing_is_hidden(self):
+        lines = dashboard.render_board_lines(
+            self._board(hidden_completed=0, retention_days=30))
+        self.assertNotIn("older completed hidden", "\n".join(lines))
+
+    def test_no_note_when_the_field_is_absent(self):
+        # A hand-built fixture predating the field renders exactly as before.
+        lines = dashboard.render_board_lines(_sample_board())
+        self.assertNotIn("older completed hidden", "\n".join(lines))
 
 
 class WorktreeEpicMarkerTest(unittest.TestCase):
@@ -2611,6 +2770,50 @@ class LaneHeaderBandTest(unittest.IsolatedAsyncioTestCase):
             self.assertIs(header_after, header_before)
             card_ids_after = {id(c) for c in lane.query(dashboard.TaskCard)}
             self.assertNotEqual(card_ids_before, card_ids_after)
+
+
+class ShippedLaneHiddenCountTest(unittest.IsolatedAsyncioTestCase):
+    """The shipped lane's header carries the retention hidden count when the
+    aggregation aged completed work off the board, and reads plain ``SHIPPED``
+    otherwise (delivery-dashboard board-completed-retention)."""
+
+    def _board(self, hidden):
+        board = _kanban_board()
+        board["hidden_completed"] = hidden
+        board["retention_days"] = 30
+        return board
+
+    async def test_header_names_the_count_when_work_is_hidden(self):
+        app = dashboard.BoardApp(root="/x",
+                                 board_fn=lambda: self._board(2))
+        async with app.run_test():
+            lane = app.query_one("#lane-shipped", dashboard.Lane)
+            text = str(lane.query_one(".lane-header", dashboard.Static)
+                       .render())
+            self.assertIn("SHIPPED", text)
+            self.assertIn("2", text)
+            self.assertIn("older hidden", text)
+
+    async def test_header_is_plain_when_nothing_is_hidden(self):
+        app = dashboard.BoardApp(root="/x",
+                                 board_fn=lambda: self._board(0))
+        async with app.run_test():
+            lane = app.query_one("#lane-shipped", dashboard.Lane)
+            text = str(lane.query_one(".lane-header", dashboard.Static)
+                       .render())
+            self.assertEqual(text.strip(), "SHIPPED")
+
+    async def test_header_returns_to_plain_when_the_count_clears(self):
+        boards = [self._board(2)]
+        app = dashboard.BoardApp(root="/x", board_fn=lambda: boards[-1])
+        async with app.run_test() as pilot:
+            lane = app.query_one("#lane-shipped", dashboard.Lane)
+            boards.append(self._board(0))
+            await app.refresh_board()
+            await pilot.pause()
+            text = str(lane.query_one(".lane-header", dashboard.Static)
+                       .render())
+            self.assertEqual(text.strip(), "SHIPPED")
 
 
 # ---------------------------------------------------------------------------

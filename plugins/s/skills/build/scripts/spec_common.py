@@ -360,9 +360,15 @@ class ConfigError(Exception):
 # renames the *content* directory (default ``.shipd``), never this file.
 CONFIG_FILENAME = ".shipd-config.json"
 
-# Built-in defaults beneath all config files. Only ``dir`` carries a defined
-# default; every other key is absent unless a layer declares it.
+# Built-in defaults beneath all config files. Only ``dir`` and
+# ``completed_retention_days`` carry defined defaults; every other key is
+# absent unless a layer declares it.
 DEFAULT_DIR = ".shipd"
+
+# The retention window, in days, beyond which consumers hide completed work
+# (shipd-config completed-retention-key).
+COMPLETED_RETENTION_KEY = "completed_retention_days"
+DEFAULT_COMPLETED_RETENTION_DAYS = 30
 
 
 def _load_config_file(path):
@@ -421,8 +427,11 @@ def resolve_config(start):
     path of the file that supplied it, or the string ``"default"`` for a
     defaulted key."""
     layers = load_layered_config(start)
-    config = {"dir": DEFAULT_DIR}
-    provenance = {"dir": "default"}
+    config = {
+        "dir": DEFAULT_DIR,
+        COMPLETED_RETENTION_KEY: DEFAULT_COMPLETED_RETENTION_DAYS,
+    }
+    provenance = {"dir": "default", COMPLETED_RETENTION_KEY: "default"}
     # Nearest-first: the first layer to declare a key wins it wholesale.
     for path, data in layers:
         for key, value in data.items():
@@ -457,6 +466,28 @@ def specs_dirname(config):
                 "config `dir` components must be non-empty and neither `.` nor "
                 "`..`, got %r" % (name,))
     return name
+
+
+def completed_retention_days(config):
+    """Return the completed-work retention window in days from a resolved
+    config's ``completed_retention_days`` key (shipd-config
+    completed-retention-key), or ``None`` when retention is disabled.
+
+    A positive integer is the window itself; ``0`` and ``null`` disable
+    retention; anything else — a boolean, a negative number, a non-integer —
+    is treated as undeclared and yields the built-in default rather than
+    raising, mirroring the ``guardrails`` key's tolerance."""
+    value = config.get(
+        COMPLETED_RETENTION_KEY, DEFAULT_COMPLETED_RETENTION_DAYS)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        return DEFAULT_COMPLETED_RETENTION_DAYS
+    if value == 0:
+        return None
+    if value < 0:
+        return DEFAULT_COMPLETED_RETENTION_DAYS
+    return value
 
 
 # ---------------------------------------------------------------------------

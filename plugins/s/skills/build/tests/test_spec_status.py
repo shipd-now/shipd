@@ -2735,6 +2735,17 @@ class ConfigShowTest(SpecStatusTestBase):
         self.assertIn(".shipd", r.stdout)
         self.assertIn("default", r.stdout)
 
+    def test_completed_retention_key_shown_with_default_provenance(self):
+        # The built-in retention default is seeded into resolution, so an
+        # undeclared key still reports with `default` provenance (shipd-config
+        # completed-retention-key).
+        r = self.cli("config-show")
+        self.assertEqual(r.returncode, 0)
+        line = [ln for ln in r.stdout.splitlines()
+                if "completed_retention_days = 30" in ln]
+        self.assertTrue(line, r.stdout)
+        self.assertIn("default", line[0])
+
     def test_per_key_provenance_printed(self):
         self._write_config(self.root, {"valid_themes": ["reliability"]})
         r = self.cli("config-show")
