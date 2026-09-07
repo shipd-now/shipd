@@ -88,7 +88,9 @@ section below:
 
    Look for a `workspaces_root = ...` line. It is the parent directory the
    configuration **mandates** for every job workspace; the engine enforces it,
-   so a target outside it is refused whatever you offer.
+   so a target outside it is refused whatever you offer. The line shows the
+   **raw declared** value — it may carry `~`, so expand it to an absolute path
+   before composing any candidate from it.
 
    Then ask the user with a **single AskUserQuestion carrying two questions**:
 
@@ -179,7 +181,8 @@ consent.
    ```
 
    When a `workspaces_root = ...` line is present, it is the parent directory
-   the configuration mandates for every job workspace:
+   the configuration mandates for every job workspace (the printed value is the
+   raw declared one — expand a `~` to an absolute path before using it):
    - **No `[dest]` given** — the destination is
      `<workspaces_root>/<derived-name>`, the git-derived name under the
      declared root, rather than a directory in the cwd.
