@@ -103,13 +103,19 @@ the epic file: run `/s:epic <slug> amend`, which works in a fresh
 `epic-amend-<slug>` worktree (`shipd worktree epic-amend-<slug> --fresh`),
 changes only `## Decisions` and the shelf sections (`## References`,
 `## Research`, `## Video`) with every new or extended Decision carrying a dated
-`*(amended YYYY-MM-DD: <note>)*` stamp, and ships as a PR. Two gates run before
-the push: the linter's single-epic mode and
+`*(amended YYYY-MM-DD: <note>)*` stamp, and — with the epic tracked in this
+repo — ships as a PR. Two gates run before the push: the linter's single-epic
+mode and
 `plugins/s/skills/build/scripts/spec_status.py epic-amend-check <slug>`, which
 exits `4` naming every protected region — the header metadata,
 `## Introduction`, `## Design`, `## Changes`, the token breakdown — that the
-amendment changed against `main`. A draft epic is not amended at all; it is
-edited in its authoring worktree.
+amendment changed against `main`. Where the repo's configuration resolves the
+epic into an external store (`store_root`), there is no worktree, branch, or
+PR: the flow edits the epic in the store's working tree and runs both gates
+against that uncommitted edit, with `--root` still naming the consuming repo.
+It then ships one local commit in the store scoped to the epic file alone,
+subject `shipd: amend epic <slug>`, never pushed. A draft epic is not amended
+at all; it is edited in its authoring worktree.
 
 **Conventions live here (or in the specs), never only in an assistant's private
 memory** — a durable rule is checked into this file or the spec library so

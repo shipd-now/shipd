@@ -2407,26 +2407,38 @@ def cmd_epic_amend_check(root, slug, base=DEFAULT_AMEND_BASE):
 
     The base version is read through git alone — ``merge-base HEAD <base>``,
     then ``show <sha>:<relpath>`` with the path taken relative to
-    ``rev-parse --show-toplevel`` — so the check works identically from the
-    main checkout and from a linked amendment worktree.
+    ``rev-parse --show-toplevel``. Every one of those calls is anchored on the
+    directory holding the epic file, never on the invocation root, so the base
+    always comes from the repository that actually tracks the epic: the
+    consuming repo in the default in-repo case (where the anchor sits inside
+    that repo, main checkout and linked amendment worktree alike), and the
+    external store's own repository where ``store_root`` relocates the content
+    directory out of the consuming repo.
 
     Prints one ``protected-section <name>`` line per changed protected region
     (``header`` for the pre-section block) then a summary; exits 0 with a clean
     summary when only the amendable shelf changed and 4 when at least one
     finding exists. A comparison that cannot be made at all — no epic in the
-    work tree, no epic at the merge-base, an unresolvable base ref, a root
-    outside any git work tree — is the CLI's ordinary error (1), deliberately
-    distinct from the findings exit. Never writes."""
+    work tree, no epic at the merge-base, an unresolvable base ref, an epic
+    directory outside any git work tree — is the CLI's ordinary error (1),
+    deliberately distinct from the findings exit. Never writes."""
     path = _epic_path(root, slug)
     if not os.path.isfile(path):
         raise StatusError("epic '%s' not found (%s)" % (slug, path))
     with open(path, encoding="utf-8") as fh:
         work_text = fh.read()
 
-    toplevel = _git_capture(root, "rev-parse", "--show-toplevel").strip()
+    anchor = os.path.dirname(path)
+    try:
+        toplevel = _git_capture(anchor, "rev-parse", "--show-toplevel").strip()
+    except StatusError as exc:
+        raise StatusError(
+            "the epic's directory '%s' is not inside a git work tree (%s)"
+            % (anchor, exc))
     if not toplevel:
-        raise StatusError("'%s' is not inside a git work tree" % root)
-    merge_base = _git_capture(root, "merge-base", "HEAD", base).strip()
+        raise StatusError(
+            "the epic's directory '%s' is not inside a git work tree" % anchor)
+    merge_base = _git_capture(anchor, "merge-base", "HEAD", base).strip()
     # git reports the top level with every symlink resolved (on macOS, /var vs
     # /private/var), so both sides are realpath'd before the relative path
     # git's object lookup needs is derived.
@@ -2434,7 +2446,7 @@ def cmd_epic_amend_check(root, slug, base=DEFAULT_AMEND_BASE):
         os.path.realpath(path), os.path.realpath(toplevel))
     try:
         base_text = _git_capture(
-            root, "show", "%s:%s" % (merge_base, relpath))
+            anchor, "show", "%s:%s" % (merge_base, relpath))
     except StatusError:
         raise StatusError(
             "epic '%s' does not exist at the base (%s in %s) — an amendment "

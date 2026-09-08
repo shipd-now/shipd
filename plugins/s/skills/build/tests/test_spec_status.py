@@ -5962,6 +5962,44 @@ class EpicAmendCheckTest(SpecStatusTestBase):
         self._commit_all("baseline")
         self._git("-C", self.root, "checkout", "-q", "-b", "amend")
 
+    # -- store fixtures ----------------------------------------------------
+
+    def write_store_epic(self, text):
+        """Overwrite the store-resident epic seeded by
+        :meth:`seed_store_base` — the working-tree side of the comparison."""
+        with open(os.path.join(self.store_epic_dir, "epic.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(text)
+
+    def seed_store_base(self, git_store=True):
+        """Lay out the store-backed case: ``self.root`` is the consuming git
+        repo, and a **separate** repo holds the content directory an absolute
+        ``store_root`` points into, so the epic lives at
+        ``<store>/specs/<consumer basename>/epics/<slug>/epic.md``. The epic is
+        committed in the store alone, never in the consumer, so a base read
+        from the consuming repo cannot succeed. With ``git_store=False`` the
+        store stays a plain directory outside any git work tree. Returns the
+        store's root directory."""
+        self._init_repo(self.root)
+        store = tempfile.mkdtemp(prefix="spec-status-store-")
+        self.addCleanup(shutil.rmtree, store, ignore_errors=True)
+        store_root = os.path.join(store, "specs")
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"store_root": store_root}, fh)
+        self._commit_all("consumer baseline")
+        # `repo_store_folder` names the per-repo folder after the consuming
+        # checkout's own directory, so the store mirrors that basename.
+        self.store_epic_dir = os.path.join(
+            store_root, os.path.basename(self.root), "epics", self.SLUG)
+        os.makedirs(self.store_epic_dir)
+        self.write_store_epic(self.epic_text())
+        if git_store:
+            self._init_repo(store)
+            self._git("-C", store, "add", "-A")
+            self._git("-C", store, "commit", "-q", "-m", "store baseline")
+        return store
+
     def snapshot_tree(self):
         """A {path: bytes} snapshot of every tracked-tree file (``.git``
         excluded) so a test can assert the verb wrote nothing."""
@@ -6055,6 +6093,43 @@ class EpicAmendCheckTest(SpecStatusTestBase):
         self.assertNotEqual(r.returncode, 0, r.stdout)
         self.assertNotEqual(r.returncode, 4, r.stdout)
         self.assertIn("Error:", r.stderr)
+
+    # -- store-resident epics ----------------------------------------------
+
+    def test_store_resident_amendable_edit_passes(self):
+        """Under a declared ``store_root`` the base version is read from the
+        store's own repository, so an uncommitted amendable edit there is
+        clean even though the consuming repo never tracked the epic."""
+        self.seed_store_base()
+        self.write_store_epic(self.epic_text(
+            decisions=("- Ship the exporter behind the report seam.\n"
+                       "- Stream rows rather than buffering "
+                       "*(amended 2026-09-06: memory ceiling)*")))
+        r = self.cli("epic-amend-check", self.SLUG)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.findings(r.stdout), [])
+        self.assertIn("clean", r.stdout)
+
+    def test_store_resident_protected_edit_is_a_finding(self):
+        """The store-side comparison still reports protected regions."""
+        self.seed_store_base()
+        self.write_store_epic(self.epic_text(
+            design="A streaming writer behind the report seam."))
+        r = self.cli("epic-amend-check", self.SLUG)
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertEqual(self.findings(r.stdout),
+                         ["protected-section ## Design"])
+
+    def test_non_git_store_errors_naming_the_epic_directory(self):
+        """A store outside any git work tree is an error — never a finding —
+        and names the epic's directory rather than the invocation root."""
+        self.seed_store_base(git_store=False)
+        r = self.cli("epic-amend-check", self.SLUG)
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertNotEqual(r.returncode, 4, r.stdout)
+        self.assertIn("Error:", r.stderr)
+        self.assertIn(self.store_epic_dir, r.stderr)
+        self.assertNotIn(self.root, r.stderr)
 
     # -- read-only ---------------------------------------------------------
 

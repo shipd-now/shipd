@@ -255,6 +255,18 @@ the amendment and point at the epic's authoring worktree instead. The flow
 SHALL NOT edit `## Introduction`, `## Design`, the `## Changes` stub table,
 or the epic's header metadata.
 
+Where the consuming repository's configuration resolves the epic into an
+external store (`store_root` declared), the flow SHALL NOT create a
+worktree, branch, or pull request: it SHALL edit the epic in place in the
+store's working tree, SHALL pass both gates against the uncommitted edit —
+with `--root` naming the consuming repository, never the store — before any
+commit, and SHALL then ship the amendment as one local git commit in the
+store's repository scoped to the epic file alone, subject
+`shipd: amend epic <slug>`, never pushing, reporting the commit hash in
+place of a PR URL. If the gates fail — including a store outside any git
+work tree, where `epic-amend-check` errors because no base is readable —
+then the flow SHALL report the failure and stop without committing.
+
 #### Scenario: A binding decision is amended in
 - **GIVEN** an active epic and mid-delivery binding information routed to
   the epic by the capture rubric
@@ -282,3 +294,18 @@ or the epic's header metadata.
 - **WHEN** the flow classifies it against the capture rubric
 - **THEN** the document is installed via `spec_emit.py docs` and linked from
   `## References`, and `## Decisions` gains no copy of its content
+
+#### Scenario: A store-resident amendment ships as a scoped local commit
+- **GIVEN** an active epic resolving into an external git-backed store
+- **WHEN** `/s:epic <slug> amend` runs
+- **THEN** no worktree, branch, or PR is created in either repository, both
+  gates run against the uncommitted store edit with `--root` naming the
+  consuming repository, and the amendment lands as one local commit in the
+  store repository scoped to the epic file, unpushed, its hash reported in
+  place of a PR URL
+
+#### Scenario: A non-git store stops the amendment ungated
+- **GIVEN** an epic resolving into a store outside any git work tree
+- **WHEN** the flow runs `epic-amend-check`
+- **THEN** the verb's error is reported and the flow stops without
+  committing anything

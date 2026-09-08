@@ -1543,9 +1543,13 @@ SHALL skip the installation, and SHALL leave its exit code unchanged.
 id: epic-amend-check-verb
 
 The status CLI SHALL provide `epic-amend-check <slug> [--base <ref>]`
-comparing the invocation root's `epics/<slug>/epic.md` against its content at
-the merge-base of `HEAD` and the base ref (default `main`), read through git
-(`merge-base`, then `show <sha>:<relpath>`), without writing anything. The
+comparing the invocation root's resolved `epics/<slug>/epic.md` — which
+under a declared `store_root` lives in an external store's repository —
+against its content at the merge-base of `HEAD` and the base ref (default
+`main`), read through git (`merge-base`, then `show <sha>:<relpath>`),
+without writing anything. The verb SHALL anchor every git invocation on the
+directory holding the epic file, never on the invocation root, so the base
+version is always read from the repository actually tracking the epic. The
 verb SHALL treat the bodies of `## Decisions`, `## References`,
 `## Research`, and `## Video` as amendable, and everything else as
 protected: the pre-section header block (title and metadata lines),
@@ -1557,9 +1561,9 @@ protected section added or removed — the verb SHALL print one
 pre-section block) followed by a summary line, and SHALL exit 4; when only
 amendable bodies changed, or nothing changed, it SHALL report clean and exit
 0. If the epic file is missing from the working tree, absent at the
-merge-base, the base ref is unresolvable, or the root is not inside a git
-work tree, then the verb SHALL exit non-zero with an error naming the cause,
-distinct from the findings exit.
+merge-base, the base ref is unresolvable, or the epic's directory is not
+inside a git work tree, then the verb SHALL exit non-zero with an error
+naming the cause, distinct from the findings exit.
 
 #### Scenario: Decisions-only amendment passes
 - **GIVEN** a branch whose only epic edit adds a stamped bullet to
@@ -1590,6 +1594,29 @@ distinct from the findings exit.
 #### Scenario: The verb never writes
 - **WHEN** `epic-amend-check <slug>` runs with any mix of findings
 - **THEN** no file under the repository is modified
+
+#### Scenario: Store-resident epic is read from the store's repository
+- **GIVEN** a consuming repo whose `store_root` resolves the epic into a
+  separate git repository, with an uncommitted amendable edit to the store's
+  epic file
+- **WHEN** `epic-amend-check <slug>` runs with `--root` naming the consuming
+  repo
+- **THEN** the base version is read from the store repository's history and
+  the verb reports clean with exit 0
+
+#### Scenario: Store-side protected edit is still a finding
+- **GIVEN** the same store layout with an uncommitted edit to the store
+  epic's `## Design`
+- **WHEN** `epic-amend-check <slug>` runs with `--root` naming the consuming
+  repo
+- **THEN** a `protected-section ## Design` finding line prints and the exit
+  code is 4
+
+#### Scenario: Non-git store is an error naming the epic's directory
+- **GIVEN** a `store_root` resolving the epic outside any git work tree
+- **WHEN** `epic-amend-check <slug>` runs
+- **THEN** the verb exits non-zero, not 4, with an error naming the epic's
+  directory rather than the invocation root
 
 ### Requirement: Superset search verb
 id: search-verb
