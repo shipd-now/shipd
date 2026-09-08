@@ -16,8 +16,14 @@ anchored grammar. The
 (`- [ ]`) to in-progress (`- [~]`) and print its ID and text. A pending task is
 ready when every earlier group and barrier before its group is done, per the
 parallel task group format; `claim` SHALL never hand out a task whose group is
-not yet ready. The script SHALL resolve the change's `tasks.md` under
-`.shipd/planned/<change>/`. Every successful claim SHALL record the claim's
+not yet ready. The script SHALL resolve the change's `tasks.md` under the
+resolved content directory's `planned/<change>/`: it SHALL read the engine's
+`config-show` output once per invocation, taking the `store:` line's path
+when one prints (the fully resolved external per-repo content directory
+under a declared `store_root`), else the `content-dir:` line's value; if the
+resolution fails or prints neither line, then the script SHALL fall back to
+the literal `.shipd`, so it never resolves less than the default
+configuration. Every successful claim SHALL record the claim's
 holder and a timestamp in a sidecar claim record beside the tasks file,
 written under the same lock as the checkbox transition — the holder being the
 label given via `claim --as <label>`, defaulting to the caller's session id
@@ -79,6 +85,27 @@ established empty-stdout contract for "nothing claimed".
 - **WHEN** `claim --wait` runs and no `- [ ]` task remains
 - **THEN** it returns at once with empty stdout and the no-pending message,
   not after the timeout
+
+#### Scenario: A store-resident change is coordinated
+- **GIVEN** a repo whose configuration declares `store_root`, with the
+  change's `tasks.md` under the store's per-repo `planned/<change>/`
+- **WHEN** `status` and `claim` run from the repo root
+- **THEN** they operate on the store's tasks file — counts, claims, and the
+  sidecar record all land there — instead of dying on a missing
+  `.shipd/planned` path
+
+#### Scenario: A renamed content directory is coordinated
+- **GIVEN** a repo whose config declares `dir: ".agents/.shipd"` with the
+  change parked under `.agents/.shipd/planned/<change>/`
+- **WHEN** any coordinator verb runs
+- **THEN** it resolves and operates on that directory
+
+#### Scenario: Resolution failure falls back to .shipd
+- **GIVEN** a repo whose `.shipd-config.json` is malformed JSON and whose
+  change sits under `.shipd/planned/<change>/`
+- **WHEN** `status` runs
+- **THEN** it operates on `.shipd/planned/<change>/tasks.md` exactly as
+  before the resolution existed
 
 ### Requirement: Completion and release without tracking line numbers
 id: completion-and-release-without-tracking-line-numbers
