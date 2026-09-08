@@ -648,6 +648,132 @@ class WorkspaceChainFacilitiesTest(unittest.TestCase):
                 self.assertIsNone(sc.registry_root(start))
 
 
+class PrdStoreTest(unittest.TestCase):
+    """The PRD store's vocabulary, tier registry, and path helpers
+    (shipd-prd prd-store-format, prd-tier-registry). ``$HOME`` is overridden
+    wherever the workspace chain is walked, so the real home config never
+    masquerades as an ancestor workspace."""
+
+    def test_statuses_are_the_document_vocabulary(self):
+        self.assertEqual(
+            sc.PRD_STATUSES, ("draft", "approved", "superseded"))
+
+    def test_template_tiers(self):
+        self.assertEqual(
+            sc.PRD_TEMPLATE_TIERS, ("basic", "standard", "comprehensive"))
+
+    def test_metadata_keys(self):
+        self.assertEqual(sc.PRD_METADATA_KEYS, ("Initiative",))
+
+    def test_tier_sections_cover_every_tier(self):
+        self.assertEqual(
+            sorted(sc.PRD_TIER_SECTIONS), sorted(sc.PRD_TEMPLATE_TIERS))
+
+    def test_tier_sections_are_the_house_style_lists(self):
+        self.assertEqual(
+            sc.PRD_TIER_SECTIONS["basic"],
+            ("## Problem", "## Solution", "## Success criteria"))
+        self.assertEqual(
+            sc.PRD_TIER_SECTIONS["standard"],
+            ("## Problem", "## Solution", "## Success criteria",
+             "## Users", "## Requirements", "## Non-goals"))
+        self.assertEqual(
+            sc.PRD_TIER_SECTIONS["comprehensive"],
+            ("## Problem", "## Solution", "## Success criteria",
+             "## Users", "## Requirements", "## Non-goals",
+             "## Risks", "## Rollout", "## Open questions"))
+
+    def test_tier_sections_nest_additively(self):
+        basic = set(sc.PRD_TIER_SECTIONS["basic"])
+        standard = set(sc.PRD_TIER_SECTIONS["standard"])
+        comprehensive = set(sc.PRD_TIER_SECTIONS["comprehensive"])
+        self.assertLess(basic, standard)
+        self.assertLess(standard, comprehensive)
+
+    def test_tier_section_tuples_carry_no_duplicates(self):
+        for tier, sections in sc.PRD_TIER_SECTIONS.items():
+            self.assertEqual(
+                len(sections), len(set(sections)),
+                "tier %s repeats a section" % tier)
+
+    def test_prds_dir_and_prd_path_use_the_default_content_dir(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.prds_dir(ws), os.path.join(ws, ".shipd", "prds"))
+                self.assertEqual(
+                    sc.prd_path(ws, "mobile-push"),
+                    os.path.join(ws, ".shipd", "prds", "mobile-push",
+                                 "prd.md"))
+
+    def test_prds_dir_honors_a_configured_content_dir(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            _write_ws_config(ws, {}, extra={"dir": "specs"})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.prds_dir(ws), os.path.join(ws, "specs", "prds"))
+                self.assertEqual(
+                    sc.prd_path(ws, "mobile-push"),
+                    os.path.join(ws, "specs", "prds", "mobile-push", "prd.md"))
+
+    def test_resolve_prd_finds_nearest_member_holding_it(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            outer = os.path.realpath(tmp)
+            _write_ws_config(outer, {})
+            prd = sc.prd_path(outer, "mobile-push")
+            os.makedirs(os.path.dirname(prd), exist_ok=True)
+            with open(prd, "w", encoding="utf-8") as fh:
+                fh.write("# mobile-push\n")
+            inner = os.path.join(outer, "nested")
+            _write_ws_config(inner, {})
+            start = os.path.join(inner, "repo")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.resolve_prd(start, "mobile-push"), prd)
+
+    def test_resolve_prd_prefers_the_nearer_chain_member(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            outer = os.path.realpath(tmp)
+            _write_ws_config(outer, {})
+            inner = os.path.join(outer, "nested")
+            _write_ws_config(inner, {})
+            for root in (outer, inner):
+                prd = sc.prd_path(root, "mobile-push")
+                os.makedirs(os.path.dirname(prd), exist_ok=True)
+                with open(prd, "w", encoding="utf-8") as fh:
+                    fh.write("# mobile-push\n")
+            start = os.path.join(inner, "repo")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.resolve_prd(start, "mobile-push"),
+                    sc.prd_path(inner, "mobile-push"))
+
+    def test_resolve_prd_none_when_no_member_holds_it(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            _write_ws_config(ws, {})
+            start = os.path.join(ws, "repo")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertIsNone(sc.resolve_prd(start, "mobile-push"))
+
+    def test_resolve_prd_empty_chain_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            start = os.path.join(os.path.realpath(tmp), "a", "b")
+            os.makedirs(start, exist_ok=True)
+            with home_set_to(os.path.realpath(home)):
+                self.assertIsNone(sc.resolve_prd(start, "mobile-push"))
+
+
 class ResolveWikiRootTest(unittest.TestCase):
     """resolve_wiki_root: the single seam every workspace-store wiki consumer
     resolves through — the chain's nearest member, else the repo-local fallback

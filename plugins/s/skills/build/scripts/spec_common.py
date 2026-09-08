@@ -1308,6 +1308,86 @@ def project_context_path(ws_root, slug):
 
 
 # ---------------------------------------------------------------------------
+# PRD store (shipd-prd prd-store-format, prd-tier-registry)
+# ---------------------------------------------------------------------------
+
+# A PRD's ``Status:`` vocabulary: a PRD is a document, not a change — ``draft``
+# while it is being written, ``approved`` once it is signed off, ``superseded``
+# when a later PRD replaces it. Deliberately *not* the five change statuses.
+PRD_STATUSES = ("draft", "approved", "superseded")
+
+# The template tiers a PRD may declare on its ``Template:`` line.
+PRD_TEMPLATE_TIERS = ("basic", "standard", "comprehensive")
+
+# The required level-2 sections per template tier, each tuple *complete* rather
+# than an increment, and additively nested (basic ⊂ standard ⊂ comprehensive) so
+# escalating a tier mid-interview never invalidates an answered section. Storing
+# the full list per tier keeps every consumer to one membership walk instead of
+# re-deriving the union. The registry is a floor, not a ceiling: a PRD may carry
+# sections beyond its tier's list.
+PRD_TIER_SECTIONS = {
+    "basic": (
+        "## Problem",
+        "## Solution",
+        "## Success criteria",
+    ),
+    "standard": (
+        "## Problem",
+        "## Solution",
+        "## Success criteria",
+        "## Users",
+        "## Requirements",
+        "## Non-goals",
+    ),
+    "comprehensive": (
+        "## Problem",
+        "## Solution",
+        "## Success criteria",
+        "## Users",
+        "## Requirements",
+        "## Non-goals",
+        "## Risks",
+        "## Rollout",
+        "## Open questions",
+    ),
+}
+
+# The only metadata key recognized in a PRD header, mirroring
+# ``BRIEF_METADATA_KEYS``. An ``Initiative:`` value must resolve to an existing
+# brief across the workspace chain.
+PRD_METADATA_KEYS = ("Initiative",)
+
+
+def prds_dir(ws_root):
+    """Return the PRD directory under the workspace's resolved content
+    directory: ``<ws_root>/<content-dir>/prds``."""
+    return os.path.join(specs_dir(ws_root), "prds")
+
+
+def prd_path(ws_root, slug):
+    """Return the on-disk path of a PRD:
+    ``<ws_root>/<content-dir>/prds/<slug>/prd.md`` (shipd-prd
+    prd-store-format), the content directory resolved from the workspace root's
+    configuration (default ``.shipd``)."""
+    return os.path.join(prds_dir(ws_root), slug, "prd.md")
+
+
+def resolve_prd(start, slug):
+    """Return the on-disk path of a PRD named ``slug`` at the nearest
+    workspace-chain member holding it, resolved from ``start`` (shipd-prd
+    prd-store-format), exactly as :func:`resolve_initiative_brief` resolves a
+    brief.
+
+    Returns ``None`` when no chain member holds the PRD, including when the
+    chain is empty."""
+    for root in workspace_chain(start):
+        path = prd_path(root, slug)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Wiki store (shipd-wiki wiki-store-layout, wiki-page-grammar, wiki-index-and-log,
 # wiki-question-queue)
 # ---------------------------------------------------------------------------
