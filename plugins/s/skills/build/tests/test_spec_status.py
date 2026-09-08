@@ -3347,6 +3347,68 @@ class CatTest(SpecStatusTestBase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("## Requirements", r.stdout)
 
+    def make_prd_at(self, root, slug, body):
+        """Write `<root>/.shipd/prds/<slug>/prd.md`, creating parents."""
+        pdir = os.path.join(root, ".shipd", "prds", slug)
+        os.makedirs(pdir, exist_ok=True)
+        path = os.path.join(pdir, "prd.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        return path
+
+    def test_cat_prd(self):
+        """A PRD hosted by the nearest workspace-chain member prints with its
+        `--- <path>` separator (spec-io mediated-read-verb)."""
+        self.declare_workspace()
+        self.make_prd_at(
+            self.root, "mobile-push",
+            "# mobile-push\nStatus: draft\nTemplate: basic\n\n"
+            "## Problem\n\nUsers miss updates.\n")
+        r = self.cli("cat", "prd", "mobile-push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        sep = "--- " + os.path.join(
+            ".shipd", "prds", "mobile-push", "prd.md")
+        self.assertIn(sep, r.stdout)
+        # Exactly one separator line precedes the single PRD file.
+        self.assertEqual(
+            len([ln for ln in r.stdout.splitlines()
+                 if ln.startswith("--- ")]), 1)
+        self.assertIn("Users miss updates.", r.stdout)
+
+    def test_cat_prd_reads_the_nearest_chain_member(self):
+        """With the same slug in an outer and an inner workspace, the nearest
+        chain member wins (shipd-workspace workspace-chain-facilities)."""
+        self.declare_workspace()
+        self.make_prd_at(self.root, "mobile-push",
+                         "# mobile-push\nStatus: draft\n\nOuter copy.\n")
+        inner = os.path.join(self.root, "nested")
+        os.makedirs(inner, exist_ok=True)
+        with open(os.path.join(inner, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"workspace": {}}, fh)
+        self.make_prd_at(inner, "mobile-push",
+                         "# mobile-push\nStatus: draft\n\nInner copy.\n")
+        repo = os.path.join(inner, "repo")
+        os.makedirs(repo, exist_ok=True)
+
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        r = subprocess.run(
+            ["python3", SCRIPT, "--root", repo, "cat", "prd", "mobile-push"],
+            capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Inner copy.", r.stdout)
+        self.assertNotIn("Outer copy.", r.stdout)
+
+    def test_cat_unknown_prd_errors_naming_the_expected_path(self):
+        self.declare_workspace()
+        r = self.cli("cat", "prd", "no-such-prd")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no-such-prd", r.stderr)
+        self.assertIn(
+            os.path.join(self.root, ".shipd", "prds", "no-such-prd", "prd.md"),
+            r.stderr)
+
     def test_cat_research(self):
         rdir = os.path.join(self.root, ".shipd", "research", "payment-apis")
         os.makedirs(rdir)
@@ -5304,6 +5366,10 @@ class SearchTest(SpecStatusTestBase):
         return self.write_text(
             os.path.join(".shipd", "initiatives", slug, "brief.md"), text)
 
+    def make_prd(self, slug, text):
+        return self.write_text(
+            os.path.join(".shipd", "prds", slug, "prd.md"), text)
+
     def git(self, *args):
         subprocess.run(["git", "-C", self.root, *args],
                        capture_output=True, text=True, check=True)
@@ -5368,6 +5434,35 @@ class SearchTest(SpecStatusTestBase):
         self.assertEqual(blocks[0]["slug"], "faster-onboarding")
         self.assertEqual(blocks[0]["score"], "2")
         self.assertEqual(blocks[0]["path"], ipath)
+
+    # -- the PRD surface ---------------------------------------------------
+
+    def test_prds_are_searched(self):
+        self.declare_workspace()
+        ppath = self.make_prd(
+            "mobile-push",
+            "# mobile-push\nStatus: draft\nTemplate: basic\n\n"
+            "## Problem\n\nNo push yet.\n")
+        r = self.cli("search", "push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blocks = self.blocks(r.stdout)
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0]["kind"], "prd")
+        self.assertEqual(blocks[0]["slug"], "mobile-push")
+        self.assertEqual(blocks[0]["score"], "2")
+        self.assertEqual(blocks[0]["path"], ppath)
+
+    def test_absent_prd_surface_degrades_silently(self):
+        """A root the PRD surface cannot resolve — no workspace declared and
+        no ``prds/`` directory — still searches every other surface, with no
+        error of its own."""
+        vpath = self.make_verified("reporting", "# reporting\n\nA push.\n")
+        r = self.cli("search", "push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr, "")
+        blocks = self.blocks(r.stdout)
+        self.assertEqual([b["kind"] for b in blocks], ["verified"])
+        self.assertEqual(blocks[0]["path"], vpath)
 
     # -- ranking across surfaces -------------------------------------------
 

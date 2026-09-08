@@ -21,6 +21,10 @@ Modes (all resolve locations through the layered configuration):
       brief.md`` and run the initiative checks. Requires a discoverable
       workspace.
 
+  prd <slug> --from <file> [--replace]
+      Install a PRD to the workspace's ``<content-dir>/prds/<slug>/prd.md``
+      and run the PRD checks. Requires a discoverable workspace.
+
   epic <slug> --from <file> [--replace]
       Install an epic to ``<content-dir>/epics/<slug>/epic.md`` and run the
       epic checks.
@@ -172,6 +176,31 @@ def emit_initiative(root, slug, src, replace):
 
     _install_dir(root, False, src, dest_dir, replace, validate, copy)
     print("installed initiative %s at %s" % (slug, brief_path))
+    return 0
+
+
+def emit_prd(root, slug, src, replace):
+    if not os.path.isfile(src):
+        raise EmitError("prd file not found: %s" % src)
+    ws_root = sc.find_workspace_root(root)
+    if ws_root is None:
+        raise EmitError(
+            "no workspace found from %s; `prd` requires a discoverable "
+            "workspace root" % os.path.abspath(root))
+    prd_path = sc.prd_path(ws_root, slug)
+    dest_dir = os.path.dirname(prd_path)
+
+    def copy():
+        os.makedirs(dest_dir, exist_ok=True)
+        shutil.copyfile(src, prd_path)
+
+    def validate():
+        errors = []
+        sl.lint_prd(ws_root, slug, errors)
+        return errors
+
+    _install_dir(root, False, src, dest_dir, replace, validate, copy)
+    print("installed prd %s at %s" % (slug, prd_path))
     return 0
 
 
@@ -408,6 +437,11 @@ def main(argv=None):
     p_init.add_argument("--from", dest="src", required=True)
     p_init.add_argument("--replace", action="store_true")
 
+    p_prd = sub.add_parser("prd", help="install a workspace PRD")
+    p_prd.add_argument("slug")
+    p_prd.add_argument("--from", dest="src", required=True)
+    p_prd.add_argument("--replace", action="store_true")
+
     p_epic = sub.add_parser("epic", help="install an epic")
     p_epic.add_argument("slug")
     p_epic.add_argument("--from", dest="src", required=True)
@@ -452,6 +486,8 @@ def main(argv=None):
             return emit_change(root, args.name, args.src, args.replace)
         if args.mode == "initiative":
             return emit_initiative(root, args.slug, args.src, args.replace)
+        if args.mode == "prd":
+            return emit_prd(root, args.slug, args.src, args.replace)
         if args.mode == "epic":
             return emit_epic(root, args.slug, args.src, args.replace)
         if args.mode == "research":

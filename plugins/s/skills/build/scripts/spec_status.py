@@ -1098,6 +1098,31 @@ def _search_initiative_artifacts(root):
     return artifacts
 
 
+def _search_prd_artifacts(root):
+    """The workspace's ``prds/<slug>/prd.md`` documents as corpus records
+    (spec-status search-verb, shipd-prd prd-store-format).
+
+    The anchor resolves through the same :func:`spec_common.resolve_wiki_root`
+    seam the wiki and initiative surfaces use, so the workspace-level surfaces
+    can never disagree about which workspace they read. Any resolution failure
+    — nothing discoverable, a malformed config, no ``prds/`` directory —
+    yields no records, so the surface degrades silently while every other
+    surface still searches."""
+    artifacts = []
+    try:
+        resolved = sc.resolve_wiki_root(root)
+        if resolved is None:
+            return []
+        anchor = resolved[0]
+        for slug in sorted(os.listdir(sc.prds_dir(anchor))):
+            path = sc.prd_path(anchor, slug)
+            if os.path.isfile(path):
+                artifacts.append(("prd", slug, path, [path]))
+    except (sc.ConfigError, OSError):
+        return []
+    return artifacts
+
+
 def _search_is_readable_text(path):
     """True when a tracked file is small enough and textual enough to search:
     at most :data:`SEARCH_MAX_CODE_BYTES`, no NUL byte in its first
@@ -1152,8 +1177,9 @@ def cmd_search(root, terms, as_json=False):
 
     The corpus is ``related``'s exactly (:func:`_related_corpus`: the root and
     its worktrees, deduped root-first, plus the workspace wiki), extended with
-    the workspace's initiative briefs and the invocation root's git-tracked
-    files. The two new surfaces append after it, and the shared
+    the workspace's initiative briefs, the workspace's PRDs, and the invocation
+    root's git-tracked files. The three new surfaces append after it, and the
+    shared
     rank-and-render tail (:func:`_render_ranked_matches`) sorts the whole,
     so ordering, the ten-block cap, ``--json``, and the no-match error are
     ``related``'s own — this verb only widens what is searched, and leaves
@@ -1161,6 +1187,7 @@ def cmd_search(root, terms, as_json=False):
     ``git ls-files``; no model or network calls."""
     corpus = (_related_corpus(root)
               + _search_initiative_artifacts(root)
+              + _search_prd_artifacts(root)
               + _search_code_artifacts(root))
     return _render_ranked_matches(root, corpus, terms, as_json)
 
@@ -2742,8 +2769,8 @@ def cmd_cat(root, kind, slug, personal=False):
     (spec-io mediated-read-verb). The kinds ``change``, ``verified``, ``epic``,
     ``research``, ``video`` and ``docs`` resolve across the universes and
     candidate roots :func:`_cat_resolve` walks — the invocation root first, so
-    it shadows a worktree's copy of the same slug — while ``initiative`` and
-    ``wiki`` resolve through the workspace chain. For a change: its
+    it shadows a worktree's copy of the same slug — while ``initiative``,
+    ``prd`` and ``wiki`` resolve through the workspace chain. For a change: its
     ``plan.md``, every
     delta spec, and ``tasks.md``, resolved from the hosting candidate's
     ``planned/<slug>/`` and falling back to that candidate's newest archived
@@ -2785,6 +2812,17 @@ def cmd_cat(root, kind, slug, personal=False):
             expected = sc.initiative_brief_path(ws_root, slug)
             raise StatusError(
                 "initiative '%s' not found (%s)" % (slug, expected))
+        _cat_files(root, [path])
+        return 0
+    if kind == "prd":
+        ws_root = _resolve_workspace(root)
+        # Same chain resolution as `initiative`: the nearest workspace-chain
+        # member holding `prds/<slug>/prd.md` wins (shipd-prd
+        # prd-store-format), not the nearest workspace root alone.
+        path = sc.resolve_prd(root, slug)
+        if path is None:
+            expected = sc.prd_path(ws_root, slug)
+            raise StatusError("prd '%s' not found (%s)" % (slug, expected))
         _cat_files(root, [path])
         return 0
     if kind == "wiki":
@@ -2851,7 +2889,7 @@ def cmd_cat(root, kind, slug, personal=False):
         return 0
     raise StatusError(
         "unknown cat kind '%s' (expected "
-        "change|verified|epic|initiative|research|video|docs|wiki)" % kind)
+        "change|verified|epic|initiative|prd|research|video|docs|wiki)" % kind)
 
 
 def _lint_epic_errors(root, slug):
@@ -4055,7 +4093,7 @@ def main(argv=None):
         help="print an artifact's content with `--- <relpath>` separators")
     p_cat.add_argument("kind",
                        choices=("change", "verified", "epic", "initiative",
-                                "research", "video", "docs", "wiki"))
+                                "prd", "research", "video", "docs", "wiki"))
     p_cat.add_argument("slug")
     p_cat.add_argument(
         "--personal", action="store_true",
