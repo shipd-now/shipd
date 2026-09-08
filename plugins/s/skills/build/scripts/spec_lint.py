@@ -28,12 +28,15 @@ Checks (see the shipd-spec-lint capability for the behavioral contract):
     (estimated as one token per four characters); oversized files print a
     `WARNING: ...` to stderr without affecting the exit code.
 
-CLI:  spec_lint.py [<change>] [--epic <slug>] [--initiative <slug>] [--root DIR]
+CLI:  spec_lint.py [<change>] [--epic <slug>] [--initiative <slug>]
+      [--prd <slug>] [--root DIR]
       With a change name, lints that change's deltas. With --epic, lints one
       epic under .shipd/epics/<slug>/. With --initiative, lints one brief under the
       discoverable workspace's initiatives/<slug>/ (non-zero when no workspace
-      is found). Without any, lints the whole master library under .shipd/verified/
-      plus every epic under .shipd/epics/.
+      is found). With --prd, lints one PRD under the discoverable workspace's
+      prds/<slug>/ (likewise non-zero when no workspace is found). Without any,
+      lints the whole master library under .shipd/verified/ plus every epic
+      under .shipd/epics/.
 
       With --json, the findings are emitted as one JSON object on stdout —
       `ok`, `errors`, `warnings` — carrying the same strings the text mode
@@ -60,6 +63,10 @@ SHALL_MUST_RE = re.compile(r"\b(SHALL|MUST)\b")
 VALID_STATUSES = ("draft", "ready", "active", "complete", "verified",
                   "rejected")
 STATUS_LINE_RE = re.compile(r"^Status:\s*(.*)$")
+
+# A PRD's mandatory ``Template:`` header line, whose value names a template tier
+# (shipd-prd prd-store-format).
+PRD_TEMPLATE_LINE_RE = re.compile(r"^Template:\s*(.*)$")
 
 # The level-2 sections every plan.md must carry, in order.
 REQUIRED_PLAN_SECTIONS = ("## Idea", "## Implementation")
@@ -877,6 +884,98 @@ def lint_initiative(ws_root, slug, errors):
             "(at least one `- [ ]` required)", path))
 
 
+def lint_prd(ws_root, slug, errors):
+    """Validate the PRD at ``<ws_root>/<content-dir>/prds/<slug>/prd.md``
+    (shipd-prd prd-store-format, prd-tier-registry): a ``# <slug>`` title
+    matching the directory, a ``Status:`` line whose value is one of the three
+    PRD statuses, a mandatory ``Template:`` line whose value names a template
+    tier (an absent or unknown value is an error, never a default), a header
+    metadata block whose only recognized key is ``Initiative:`` (a kebab value
+    resolving to an existing brief across the workspace chain), and every
+    level-2 section its tier requires. Sections beyond the tier's list are
+    allowed — the registry is a floor, not a ceiling. Appends a
+    :class:`LintError` for each violation."""
+    path = sc.prd_path(ws_root, slug)
+    if not os.path.isfile(path):
+        errors.append(LintError(
+            "prd '%s' has no document (%s not found)" % (slug, path), path))
+        return
+
+    text = _read(path)
+    lines = text.splitlines()
+
+    first_line = lines[0].rstrip() if lines else ""
+    expected_title = "# %s" % slug
+    if first_line != expected_title:
+        errors.append(LintError(
+            "prd.md line 1 is '%s', expected title '%s'"
+            % (first_line, expected_title), path))
+
+    non_blank = [ln for ln in lines if ln.strip()][:5]
+    status_value = None
+    template_value = None
+    for ln in non_blank:
+        m = STATUS_LINE_RE.match(ln.strip())
+        if m and status_value is None:
+            status_value = m.group(1).strip()
+            continue
+        m = PRD_TEMPLATE_LINE_RE.match(ln.strip())
+        if m and template_value is None:
+            template_value = m.group(1).strip()
+    if status_value is None:
+        errors.append(LintError(
+            "prd.md has no `Status:` line in its first five non-blank lines",
+            path))
+    elif status_value not in sc.PRD_STATUSES:
+        errors.append(LintError(
+            "prd.md status value '%s' is not one of: %s"
+            % (status_value, ", ".join(sc.PRD_STATUSES)), path))
+
+    if template_value is None:
+        errors.append(LintError(
+            "prd.md has no `Template:` line in its first five non-blank lines "
+            "(one of: %s — an absent tier is never defaulted)"
+            % ", ".join(sc.PRD_TEMPLATE_TIERS), path))
+    elif template_value not in sc.PRD_TEMPLATE_TIERS:
+        errors.append(LintError(
+            "prd.md template value '%s' is not one of: %s"
+            % (template_value, ", ".join(sc.PRD_TEMPLATE_TIERS)), path))
+
+    for key, value in sc.parse_plan_metadata(text):
+        # `Template:` is a header line in its own right, validated above; it
+        # lands in the metadata block whenever it follows `Status:`, so the
+        # metadata walk steps over it rather than calling it unrecognized.
+        if key == "Template":
+            continue
+        if key not in sc.PRD_METADATA_KEYS:
+            errors.append(LintError(
+                "prd.md metadata has unrecognized key '%s' (recognized keys: "
+                "%s)" % (key, ", ".join(sc.PRD_METADATA_KEYS)), path))
+            continue
+        if not sc.KEBAB_RE.match(value):
+            errors.append(LintError(
+                "prd.md metadata `%s: %s` value is not a kebab-case slug"
+                % (key, value), path))
+            continue
+        if key == "Initiative" and sc.resolve_initiative_brief(
+                ws_root, value) is None:
+            errors.append(LintError(
+                "prd.md `Initiative: %s` does not resolve to a brief "
+                "(%s not found; workspace root %s)"
+                % (value, sc.initiative_brief_path(ws_root, value), ws_root),
+                path))
+
+    # Section contract: only a PRD declaring a known tier has one to check.
+    if template_value not in sc.PRD_TIER_SECTIONS:
+        return
+    headings = {ln.rstrip() for ln in lines if ln.rstrip().startswith("## ")}
+    for section in sc.PRD_TIER_SECTIONS[template_value]:
+        if section not in headings:
+            errors.append(LintError(
+                "prd.md (`Template: %s`) has no level-2 `%s` section"
+                % (template_value, section), path))
+
+
 # ---------------------------------------------------------------------------
 # Research report validation (shipd-spec-lint research-report-validation,
 # shipd-spec-format research-report-format)
@@ -1476,6 +1575,8 @@ def main(argv=None):
     parser.add_argument("--initiative", default=None,
                         help="lint a single initiative brief in the "
                              "discoverable workspace")
+    parser.add_argument("--prd", default=None,
+                        help="lint a single PRD in the discoverable workspace")
     parser.add_argument("--workspace", action="store_true",
                         help="lint the discoverable workspace's registry "
                              "(.shipd-config.json workspace registry)")
@@ -1534,6 +1635,17 @@ def main(argv=None):
             else:
                 lint_initiative(ws_root, args.initiative, errors)
             target = "initiative '%s'" % args.initiative
+        elif args.prd:
+            errors = []
+            ws_root = sc.find_workspace_root(args.root)
+            if ws_root is None:
+                errors.append(LintError(
+                    "no workspace found from %s; `--prd` requires a "
+                    "discoverable workspace root"
+                    % os.path.abspath(args.root)))
+            else:
+                lint_prd(ws_root, args.prd, errors)
+            target = "prd '%s'" % args.prd
         elif args.epic:
             errors = []
             lint_epic(args.root, args.epic, errors, warnings)

@@ -2295,6 +2295,203 @@ class InitiativeBriefLintTest(unittest.TestCase):
         self.assertEqual([str(e) for e in sl.lint_library(self.root)], [])
 
 
+class PrdLintTest(unittest.TestCase):
+    """PRD structural validation and the ``--prd <slug>`` mode (shipd-prd
+    prd-store-format, prd-tier-registry; shipd-spec-lint prd-lint-mode).
+
+    The repo fixture lives *inside* a fake workspace (``<tmp>/repo`` with the
+    marker at ``<tmp>/.shipd-config.json`` declaring ``workspace``) so
+    ``find_workspace_root`` walking up from the repo finds the temp marker and
+    never escapes into the real filesystem. PRDs live at
+    ``<tmp>/.shipd/prds/<slug>/prd.md``. ``$HOME`` is overridden so the real
+    home config never leaks into resolution."""
+
+    SLUG = "mobile-push"
+
+    def setUp(self):
+        self.ws = tempfile.mkdtemp()
+        self.root = os.path.join(self.ws, "repo")
+        os.makedirs(self.root, exist_ok=True)
+        self.home = tempfile.mkdtemp()
+        self._old_home = os.environ.get("HOME")
+        os.environ["HOME"] = self.home
+        declare_workspace(self.ws)
+
+    def tearDown(self):
+        if self._old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self._old_home
+        shutil.rmtree(self.ws, ignore_errors=True)
+        shutil.rmtree(self.home, ignore_errors=True)
+
+    def _prd_text(self, tier="standard", slug=None, status="draft",
+                  metadata="", sections=None, template_line=None):
+        """Compose a PRD body: the header, then one level-2 section per entry
+        in ``sections`` (default: exactly the tier's required sections)."""
+        if sections is None:
+            sections = sc.PRD_TIER_SECTIONS[tier]
+        if template_line is None:
+            template_line = "Template: %s\n" % tier
+        body = "".join(
+            "%s\n\nProse for %s.\n\n" % (heading, heading) for heading in sections)
+        return (
+            "# %s\n" % (slug or self.SLUG)
+            + "Status: %s\n" % status
+            + template_line
+            + metadata
+            + "\n"
+            + body)
+
+    def _write_prd(self, text, slug=None):
+        pdir = os.path.join(self.ws, ".shipd", "prds", slug or self.SLUG)
+        os.makedirs(pdir, exist_ok=True)
+        path = os.path.join(pdir, "prd.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def _write_brief(self, slug):
+        bdir = os.path.join(self.ws, ".shipd", "initiatives", slug)
+        os.makedirs(bdir, exist_ok=True)
+        with open(os.path.join(bdir, "brief.md"), "w", encoding="utf-8") as fh:
+            fh.write("# %s\nStatus: open\n\n## Requirements\n\n- [ ] Ship\n"
+                     % slug)
+
+    def _errors(self, slug=None):
+        errors = []
+        sl.lint_prd(self.ws, slug or self.SLUG, errors)
+        return [str(e) for e in errors]
+
+    def _run_cli(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+            code = sl.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_conforming_prd_lints_clean_at_every_tier(self):
+        for tier in sc.PRD_TEMPLATE_TIERS:
+            with self.subTest(tier=tier):
+                self._write_prd(self._prd_text(tier=tier))
+                self.assertEqual(self._errors(), [])
+                code, out, _err = self._run_cli(
+                    ["--prd", self.SLUG, "--root", self.root])
+                self.assertEqual(code, 0)
+                self.assertIn("OK", out)
+
+    def test_missing_prd_is_reported(self):
+        errors = self._errors()
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(has(errors, self.SLUG))
+        self.assertTrue(has(errors, "prd.md"))
+
+    def test_title_must_match_the_directory(self):
+        path = self._write_prd(self._prd_text(slug="push-notifications"))
+        errors = self._errors()
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(has(errors, "expected title"))
+        self.assertTrue(has(errors, path))
+
+    def test_unknown_status_reports_the_vocabulary(self):
+        path = self._write_prd(self._prd_text(status="shipped"))
+        errors = self._errors()
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(has(errors, "shipped"))
+        self.assertTrue(has(errors, "superseded"))
+        self.assertTrue(has(errors, path))
+
+    def test_missing_template_line_is_not_defaulted(self):
+        path = self._write_prd(self._prd_text(template_line=""))
+        errors = self._errors()
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(has(errors, "Template"))
+        self.assertTrue(has(errors, path))
+
+    def test_unknown_template_value_errors(self):
+        path = self._write_prd(
+            self._prd_text(template_line="Template: exhaustive\n"))
+        errors = self._errors()
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(has(errors, "exhaustive"))
+        self.assertTrue(has(errors, "comprehensive"))
+        self.assertTrue(has(errors, path))
+
+    def test_unrecognized_metadata_key_errors(self):
+        path = self._write_prd(self._prd_text(metadata="Project: alpha\n"))
+        errors = self._errors()
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(has(errors, "Project"))
+        self.assertTrue(has(errors, "unrecognized"))
+        self.assertTrue(has(errors, path))
+
+    def test_resolvable_initiative_passes(self):
+        self._write_brief("mvp-readiness")
+        self._write_prd(self._prd_text(metadata="Initiative: mvp-readiness\n"))
+        self.assertEqual(self._errors(), [])
+
+    def test_unresolvable_initiative_errors(self):
+        path = self._write_prd(self._prd_text(metadata="Initiative: no-such-goal\n"))
+        errors = self._errors()
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(has(errors, "no-such-goal"))
+        self.assertTrue(has(errors, path))
+
+    def test_missing_tier_section_errors(self):
+        sections = [s for s in sc.PRD_TIER_SECTIONS["standard"]
+                    if s != "## Non-goals"]
+        path = self._write_prd(self._prd_text(sections=sections))
+        errors = self._errors()
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(has(errors, "## Non-goals"))
+        self.assertTrue(has(errors, path))
+
+    def test_lower_tier_is_not_held_to_higher_sections(self):
+        # The basic tier's three sections only — no `## Users`, no
+        # `## Requirements`, no `## Non-goals`.
+        self._write_prd(self._prd_text(tier="basic"))
+        self.assertEqual(self._errors(), [])
+
+    def test_extra_sections_are_allowed(self):
+        sections = list(sc.PRD_TIER_SECTIONS["comprehensive"]) + ["## Pricing"]
+        self._write_prd(self._prd_text(tier="comprehensive", sections=sections))
+        self.assertEqual(self._errors(), [])
+
+    def test_cli_reports_the_finding_and_exits_non_zero(self):
+        sections = [s for s in sc.PRD_TIER_SECTIONS["standard"]
+                    if s != "## Non-goals"]
+        path = self._write_prd(self._prd_text(sections=sections))
+        code, _out, err = self._run_cli(
+            ["--prd", self.SLUG, "--root", self.root])
+        self.assertNotEqual(code, 0)
+        self.assertIn("## Non-goals", err)
+        self.assertIn(path, err)
+        self.assertIn(self.SLUG, err)
+
+    def test_no_workspace_fails_the_mode(self):
+        bare = tempfile.mkdtemp()
+        try:
+            code, _out, err = self._run_cli(["--prd", self.SLUG, "--root", bare])
+            self.assertNotEqual(code, 0)
+            self.assertIn("no workspace", err.lower())
+            self.assertIn("--prd", err)
+        finally:
+            shutil.rmtree(bare, ignore_errors=True)
+
+    def test_library_lint_ignores_prds(self):
+        # A malformed PRD must not surface in library lint (library lint never
+        # walks the workspace's prds/ directory).
+        self._write_prd("# wrong-title\nStatus: bogus\nnonsense\n")
+        specs = os.path.join(self.root, ".shipd", "verified", "auth")
+        os.makedirs(specs, exist_ok=True)
+        with open(os.path.join(specs, "spec.md"), "w", encoding="utf-8") as fh:
+            fh.write(
+                "# auth\n\n"
+                "### Requirement: Good\nid: good\n\n"
+                "The system SHALL be good.\n\n"
+                "#### Scenario: s\n- **WHEN** a\n- **THEN** b\n")
+        self.assertEqual([str(e) for e in sl.lint_library(self.root)], [])
+
+
 class WorkspaceLintModeTest(unittest.TestCase):
     """The ``--workspace`` lint mode (shipd-spec-lint workspace-lint-mode): resolves
     the workspace from ``--root`` and reports ``validate_workspace`` findings
