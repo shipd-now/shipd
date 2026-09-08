@@ -787,8 +787,8 @@ def _check_brief_project(ws_root, project_value, path, errors):
     ``Project:`` line — a brief without one never loads the registry. Surfaces
     the registry's own :func:`spec_common.validate_workspace` findings first (a
     broken registry must not silently pass a brief), then requires the value to
-    name a declared project slug; with no projects declared, any ``Project:``
-    line is an error."""
+    name a declared project — matched exactly, case-sensitively; with no
+    projects declared, any ``Project:`` line is an error."""
     reg_loc = sc.CONFIG_FILENAME
     try:
         registry = sc.load_workspace(ws_root)
@@ -814,7 +814,8 @@ def lint_initiative(ws_root, slug, errors):
     (shipd-workspace initiative-brief-format): a ``# <slug>`` title matching the
     directory, a ``Status:`` line whose value is one of the three initiative
     statuses, a header metadata block whose only recognized key is ``Project:``
-    (a kebab value naming a declared project slug), and a ``## Requirements``
+    (a valid project name — ``spec_common.PROJECT_NAME_RE`` — exactly naming a
+    declared project), and a ``## Requirements``
     section carrying at least one checkbox requirement. Appends a
     :class:`LintError` for each violation."""
     path = sc.initiative_brief_path(ws_root, slug)
@@ -856,9 +857,9 @@ def lint_initiative(ws_root, slug, errors):
                 "brief.md metadata has unrecognized key '%s' (recognized keys: "
                 "%s)" % (key, ", ".join(sc.BRIEF_METADATA_KEYS)), path))
             continue
-        if not sc.KEBAB_RE.match(value):
+        if not sc.PROJECT_NAME_RE.match(value):
             errors.append(LintError(
-                "brief.md metadata `%s: %s` value is not a kebab-case slug"
+                "brief.md metadata `%s: %s` value is not a valid project name"
                 % (key, value), path))
             continue
         if key == "Project":

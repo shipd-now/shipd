@@ -117,8 +117,9 @@ section below:
 
    Rules the linter enforces (get them right up front):
    - `# <slug>` title matching the directory; `Status: open` (new briefs open).
-   - The only recognized metadata key is `Project:`, kebab-case, naming a
-     project slug declared in the workspace registry. Omit it entirely when the
+   - The only recognized metadata key is `Project:`, a project name (ASCII
+     letters and digits joined by '-', '_' or '.'), naming a
+     project declared in the workspace registry. Omit it entirely when the
      initiative is unscoped. Where the registry declares no projects, a
      `Project:` line is an error.
    - A `## Requirements` section with **at least one** `- [ ]` checkbox. Phrase

@@ -62,6 +62,13 @@ RENAME_TO_RE = re.compile(r"^\s*TO:\s*(.*?)\s*$")
 
 KEBAB_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
+# Workspace project names only (shipd-workspace project-registry-semantics):
+# ASCII letters and digits joined by single ``-``, ``_`` or ``.`` separators, so
+# a name is always a safe ``projects/<name>/`` directory component. Every other
+# id family — change ids, epic slugs, initiative slugs, wiki and queue slugs —
+# stays strictly kebab and keeps using ``KEBAB_RE``.
+PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$")
+
 # Plan header metadata (shipd-spec-format plan-header-metadata-lines): the optional
 # block is the contiguous run of ``<Key>: <value>`` lines immediately after the
 # ``Status:`` line, recognizing exactly these five keys; ``Profile`` accepts
@@ -1275,7 +1282,8 @@ def load_workspace(ws_root):
 INITIATIVE_STATUSES = ("open", "achieved", "dropped")
 
 # The only metadata key recognized in a brief header. ``Project:`` is parsed and
-# lints as a kebab slug now; registry-existence validation is the project-groups
+# lints as a project name (``PROJECT_NAME_RE``); registry-existence validation
+# is the project-groups
 # member's job (workspace-discovery's tolerant-registry seam).
 BRIEF_METADATA_KEYS = ("Project",)
 
@@ -1631,16 +1639,21 @@ def validate_workspace(registry):
     existence-checked — registries travel across machines (shipd-workspace
     project-registry-semantics, workspace-focus).
 
-    ``projects`` (when present) must be a JSON object mapping kebab-case project
-    slugs to objects whose ``repos`` is a list of entries, each entry either a
-    non-empty workspace-root-relative path string or an object carrying a
-    required non-empty string ``path`` and optional non-empty string ``url`` and
-    ``branch``. A duplicate resolved repo path across two projects, regardless of
-    entry shape, is an ambiguous-ownership error naming the path. When present,
-    ``focus`` must be a kebab-case slug naming a declared project (a same-file
-    consistency check, never disk-consulted). Returns strings (not raising) so
-    ``spec_lint.py`` can wrap them as ``LintError``s and the status CLI can print
-    them — one implementation, two consumers."""
+    ``projects`` (when present) must be a JSON object mapping project names —
+    ASCII letters and digits joined by single ``-``, ``_`` or ``.`` separators
+    (``PROJECT_NAME_RE``) — to objects whose ``repos`` is a list of entries,
+    each entry either a non-empty workspace-root-relative path string or an
+    object carrying a required non-empty string ``path`` and optional non-empty
+    string ``url`` and ``branch``. Two declared names equal under case folding
+    are a duplicate-name error naming both, since they would collide as
+    ``projects/<name>/`` directories on a case-insensitive filesystem. A
+    duplicate resolved repo path across two projects, regardless of entry
+    shape, is an ambiguous-ownership error naming the path. When present,
+    ``focus`` must be a valid project name naming a declared project (a
+    same-file consistency check, never disk-consulted), matched exactly and
+    case-sensitively. Returns strings (not raising) so ``spec_lint.py`` can
+    wrap them as ``LintError``s and the status CLI can print them — one
+    implementation, two consumers."""
     errors = []
     projects = registry.get("projects")
     project_slugs = []
@@ -1655,9 +1668,10 @@ def validate_workspace(registry):
     if projects_map is not None:
         for slug, entry in projects_map.items():
             project_slugs.append(slug)
-            if not KEBAB_RE.match(slug):
+            if not PROJECT_NAME_RE.match(slug):
                 errors.append(
-                    "project slug '%s' is not a kebab-case slug" % slug)
+                    "project name '%s' is not a valid project name (ASCII "
+                    "letters and digits joined by '-', '_' or '.')" % slug)
             if not isinstance(entry, dict):
                 errors.append(
                     "project '%s' must map to a JSON object" % slug)
@@ -1693,12 +1707,23 @@ def validate_workspace(registry):
                         "'%s' (ambiguous ownership)" % (path, seen[path], slug))
                 else:
                     seen[path] = slug
+        # Case-folded collisions would land in one ``projects/<name>/``
+        # directory on a case-insensitive filesystem.
+        folded = {}  # casefolded name -> name that first declared it
+        for slug in project_slugs:
+            key = slug.casefold()
+            if key in folded:
+                errors.append(
+                    "project names '%s' and '%s' collide under case folding"
+                    % (folded[key], slug))
+            else:
+                folded[key] = slug
     focus = registry.get("focus")
     if focus is not None:
         declared = ", ".join(sorted(project_slugs)) or "(none)"
-        if not isinstance(focus, str) or not KEBAB_RE.match(focus):
+        if not isinstance(focus, str) or not PROJECT_NAME_RE.match(focus):
             errors.append(
-                "workspace `focus` must be a kebab-case project slug, got %r "
+                "workspace `focus` must be a valid project name, got %r "
                 "(declared projects: %s)" % (focus, declared))
         elif focus not in project_slugs:
             errors.append(

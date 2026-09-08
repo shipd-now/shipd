@@ -1045,10 +1045,23 @@ class ValidateWorkspaceTest(unittest.TestCase):
         errors = sc.validate_workspace({"projects": []})
         self.assertTrue(errors)
 
-    def test_non_kebab_slug_errors(self):
+    def test_identifier_style_names_validate_clean(self):
         errors = sc.validate_workspace(
-            {"projects": {"Alpha_1": {"repos": ["shipd"]}}})
-        self.assertTrue(any("Alpha_1" in e for e in errors))
+            {"projects": {"APISchema": {"repos": ["r1"]},
+                          "api_schema2": {"repos": ["r2"]}}})
+        self.assertEqual(errors, [])
+
+    def test_name_with_whitespace_errors(self):
+        errors = sc.validate_workspace(
+            {"projects": {"API Schema": {"repos": ["shipd"]}}})
+        self.assertTrue(any("API Schema" in e for e in errors))
+
+    def test_casefold_duplicate_names_error(self):
+        errors = sc.validate_workspace(
+            {"projects": {"APISchema": {"repos": ["r1"]},
+                          "apischema": {"repos": ["r2"]}}})
+        self.assertTrue(
+            any("APISchema" in e and "apischema" in e for e in errors))
 
     def test_non_list_repos_errors(self):
         errors = sc.validate_workspace(
@@ -1115,6 +1128,12 @@ class ValidateWorkspaceTest(unittest.TestCase):
              "projects": {"documents": {"repos": ["shipd"]}}})
         self.assertEqual(errors, [])
 
+    def test_mixed_case_focus_validates_clean(self):
+        errors = sc.validate_workspace(
+            {"focus": "APISchema",
+             "projects": {"APISchema": {"repos": ["r"]}}})
+        self.assertEqual(errors, [])
+
     def test_unknown_focus_errors_naming_slugs(self):
         errors = sc.validate_workspace(
             {"focus": "missing",
@@ -1122,11 +1141,12 @@ class ValidateWorkspaceTest(unittest.TestCase):
         self.assertTrue(errors)
         self.assertTrue(any("alpha" in e for e in errors))
 
-    def test_non_kebab_focus_errors(self):
+    def test_malformed_focus_errors(self):
         errors = sc.validate_workspace(
-            {"focus": "Not_Kebab",
+            {"focus": "not valid",
              "projects": {"alpha": {"repos": ["shipd"]}}})
         self.assertTrue(errors)
+        self.assertTrue(any("alpha" in e for e in errors))
 
 
 class RepoEntryPathTest(unittest.TestCase):
