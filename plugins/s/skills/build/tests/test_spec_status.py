@@ -3624,6 +3624,155 @@ class WikiVerbTest(SpecStatusTestBase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("no workspace", r.stderr.lower())
 
+    # -- wiki-show --json --------------------------------------------------
+
+    WELCOME_BODY = "# Welcome\n\nHello.\n"
+    DRAFT_BODY = "# Draft\n\nNot yet catalogued.\n"
+
+    def populate_store(self):
+        """Scaffold the workspace store and fill it with one indexed page, one
+        unindexed page, one pending queue block carrying all five fields, and a
+        single dated log entry — the fixture the ``--json`` document and the
+        flagless text report are both read from."""
+        self.declare_workspace()
+        self.assertEqual(self.cli("wiki-init").returncode, 0)
+        self.write_page("welcome", self.WELCOME_BODY)
+        self.write_page("draft", self.DRAFT_BODY)
+        self.write_wiki_file(
+            "index.md", "# Index\n\n- [[welcome]] — The welcome page.\n")
+        self.write_wiki_file(
+            "queue.md",
+            "# Queue\n\n## q-stale-cache\n"
+            "- Asked: 2026-07-30 teach-session\n"
+            "- Question: Is it stale?\n"
+            "- Options: yes | no\n"
+            "- Recommendation: yes\n"
+            "- Answer: pending\n")
+        self.write_wiki_file(
+            "log.md", "# Log\n\n## [2026-07-30] seed | Scaffolded the store.\n")
+
+    def test_wiki_show_json_describes_the_whole_store(self):
+        self.populate_store()
+        r = self.cli("wiki-show", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        doc = json.loads(r.stdout)
+        self.assertEqual(doc["store"], self.wiki())
+        self.assertTrue(doc["present"])
+        self.assertFalse(doc["fallback"])
+        self.assertFalse(doc["personal"])
+        self.assertEqual(doc["chain"], [])
+        self.assertIsNone(doc["base"])
+        self.assertEqual(
+            doc["pages"],
+            [{"slug": "draft", "summary": None, "body": self.DRAFT_BODY},
+             {"slug": "welcome", "summary": "The welcome page.",
+              "body": self.WELCOME_BODY}])
+        self.assertEqual(
+            doc["coverage"], {"unindexed": ["draft"], "orphaned": []})
+        self.assertEqual(
+            doc["queue"],
+            [{"id": "q-stale-cache",
+              "fields": {"Asked": "2026-07-30 teach-session",
+                         "Question": "Is it stale?",
+                         "Options": "yes | no",
+                         "Recommendation": "yes",
+                         "Answer": "pending"}}])
+        self.assertEqual(
+            doc["log"],
+            [{"date": "2026-07-30", "op": "seed",
+              "subject": "Scaffolded the store."}])
+
+    def expected_health_report(self):
+        """The exact flagless ``wiki-show`` rendering of ``populate_store``'s
+        fixture — the pre-flag byte sequence every text-mode assertion pins."""
+        return ("wiki: %s\n"
+                "chain: none\n"
+                "base: none\n"
+                "pages: 2\n"
+                "coverage: 1 unindexed page(s), 0 orphaned entry(ies)\n"
+                "pending questions: 1\n"
+                "last log: ## [2026-07-30] seed | Scaffolded the store.\n"
+                % self.wiki())
+
+    def write_page_bytes(self, slug, raw):
+        """Write a page file's raw bytes, bypassing the UTF-8 text helper — the
+        fixture for a store holding a page the engine cannot decode."""
+        pages = os.path.join(self.wiki(), "wiki")
+        os.makedirs(pages, exist_ok=True)
+        with open(os.path.join(pages, slug + ".md"), "wb") as fh:
+            fh.write(raw)
+
+    def test_wiki_show_flagless_output_is_byte_identical(self):
+        # The refactor behind `--json` must not drift the text rendering by a
+        # single byte (spec-status json-output), so pin the whole sequence.
+        self.populate_store()
+        r = self.cli("wiki-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, self.expected_health_report())
+
+    def test_wiki_show_tolerates_an_undecodable_page(self):
+        # A page holding non-UTF-8 bytes is the store's own unhealth — exactly
+        # what the health report exists to survive, so the flagless rendering
+        # must not open page files at all, and the JSON body decodes with
+        # U+FFFD replacement rather than failing the whole read.
+        self.populate_store()
+        self.write_page_bytes("draft", "# Draft\n\nCafé.\n".encode("latin-1"))
+
+        plain = self.cli("wiki-show")
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        self.assertEqual(plain.stdout, self.expected_health_report())
+
+        r = self.cli("wiki-show", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        doc = json.loads(r.stdout)
+        body = next(p["body"] for p in doc["pages"] if p["slug"] == "draft")
+        self.assertIn("�", body)
+        self.assertEqual(body, "# Draft\n\nCaf�.\n")
+
+    @unittest.skipIf(getattr(os, "geteuid", lambda: 1)() == 0,
+                     "root reads a chmod-000 file regardless of its mode")
+    def test_wiki_show_unreadable_page_errors_only_under_json(self):
+        self.populate_store()
+        page = os.path.join(self.wiki(), "wiki", "draft.md")
+        os.chmod(page, 0o000)
+        try:
+            plain = self.cli("wiki-show")
+            self.assertEqual(plain.returncode, 0, plain.stderr)
+            self.assertEqual(plain.stdout, self.expected_health_report())
+
+            r = self.cli("wiki-show", "--json")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("Error:", r.stderr)
+            self.assertIn(page, r.stderr)
+            self.assertEqual(r.stdout, "")
+        finally:
+            # Restored here rather than via addCleanup, which would run after
+            # tearDown has already removed the temp tree.
+            os.chmod(page, 0o644)
+
+    def test_wiki_show_json_composes_with_personal(self):
+        # The personal memory store participates in no chain or base layering,
+        # so the document mirrors the text form's `chain: none` / `base: none`.
+        self.assertEqual(
+            self.cli("wiki-init", "--personal").returncode, 0)
+        r = self.cli("wiki-show", "--personal", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        doc = json.loads(r.stdout)
+        self.assertTrue(doc["personal"])
+        self.assertFalse(doc["fallback"])
+        self.assertTrue(doc["present"])
+        self.assertEqual(doc["chain"], [])
+        self.assertIsNone(doc["base"])
+
+    def test_wiki_show_json_errors_match_the_flagless_form(self):
+        plain = self.cli("wiki-show")
+        as_json = self.cli("wiki-show", "--json")
+        self.assertNotEqual(as_json.returncode, 0)
+        self.assertEqual(as_json.returncode, plain.returncode)
+        self.assertEqual(as_json.stderr, plain.stderr)
+        self.assertIn("Error:", as_json.stderr)
+        self.assertEqual(as_json.stdout, "")
+
     # -- wiki-show base: line ---------------------------------------------
 
     def declare_with_base(self, wiki_base):

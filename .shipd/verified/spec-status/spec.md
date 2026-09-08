@@ -792,6 +792,27 @@ workspace discovery and the chain, and operate on it instead of the workspace
 store. Under `--personal`, `wiki-show` SHALL report `chain: none` and `base:
 none` (a personal store participates in no chain or base layering).
 
+`wiki-show` SHALL additionally accept a `--json` flag emitting exactly one
+JSON object describing the resolved store's full state, derived from the
+same reads as the text report: `store` (the absolute store path), `present`
+(whether the store directory exists), `fallback` and `personal` booleans
+naming the resolution, `chain` (the inherited chain store paths nearest
+first, an empty list where the text form prints `chain: none`), `base`
+(`null` where the text form prints `base: none`, else an object with `path`
+and `present`), `pages` (sorted by slug, each with `slug`, `summary` — the
+store's `index.md` entry summary or `null` when unindexed — and `body`, the
+page file's raw markdown), `coverage` (an object with sorted `unindexed`
+and `orphaned` slug lists), `queue` (the `queue.md` blocks in document
+order, each with `id` and a `fields` object of its present field values),
+and `log` (the `log.md` entries in document order, each with `date`, `op`,
+and `subject`). While `--json` is set, the flag SHALL compose with
+`--personal` and with the fallback resolution unchanged, and the no-store
+error SHALL be identical to the flagless form's. Page bodies are a JSON-only
+read: the flagless rendering SHALL NOT open page files, undecodable bytes in
+a page body SHALL be replaced with U+FFFD rather than failing the read, and
+if a page file cannot be read, then `wiki-show --json` SHALL exit non-zero
+with an `Error:` line naming the file.
+
 #### Scenario: Scaffold once
 - **WHEN** `wiki-init` runs in a workspace with no wiki, then runs again
 - **THEN** the first run creates the seeded layout and the second exits
@@ -882,6 +903,31 @@ none` (a personal store participates in no chain or base layering).
 - **THEN** the store is scaffolded at `<memory_dir>/wiki` (default
   `~/.shipd-memory/wiki`) without workspace discovery, and `wiki-show --personal`
   reports that store's health with `chain: none` and `base: none`
+
+#### Scenario: Store state is machine-readable
+- **WHEN** `wiki-show --json` runs against a store holding an indexed page,
+  an unindexed page, a pending queue block, and a log entry
+- **THEN** stdout parses as one JSON object whose `pages` carry each page's
+  slug, index summary (or null), and raw markdown body, whose `coverage`
+  names the unindexed slug, whose `queue` carries the block's id and field
+  values, and whose `log` carries the entry's date, op, and subject
+
+#### Scenario: Flagless output is unchanged by the flag's existence
+- **WHEN** `wiki-show` runs without `--json` against the same store
+- **THEN** the output is byte-identical to the pre-flag text rendering
+
+#### Scenario: Personal store composes with the flag
+- **WHEN** `wiki-show --personal --json` runs against an existing personal
+  store
+- **THEN** the object's `personal` is true, `chain` is empty, and `base` is
+  null
+
+#### Scenario: Page bodies are a JSON-only read
+- **GIVEN** a store whose page file holds non-UTF-8 bytes
+- **WHEN** `wiki-show` runs flagless and then with `--json`
+- **THEN** the flagless report renders exactly as it did before the flag
+  existed, and the JSON document carries that page's body with undecodable
+  bytes replaced
 
 ### Requirement: Locate verb
 id: locate-verb
@@ -1220,8 +1266,8 @@ skipped, never raised.
 ### Requirement: JSON output mode
 id: json-output
 
-The status CLI's read verbs — `show`, `status`, `locate`, `epic-show`, and
-`workspace-show` — SHALL accept a `--json` flag that emits exactly one JSON
+The status CLI's read verbs — `show`, `status`, `locate`, `epic-show`,
+`workspace-show`, and `wiki-show` — SHALL accept a `--json` flag that emits exactly one JSON
 document on stdout and nothing else, derived from the same data as the text
 rendering: `status` an object with `name`, `kind` (`change` or `epic`), and
 `status`; `show` on a change an object with `name`, `kind`, `status`,
@@ -1237,11 +1283,15 @@ rows each carry a `project` field — the owning declared project's slug for
 a row aggregated from a project universe, `null` for a row from the
 invocation root's own universe; `locate` an array of objects with `change`,
 `root`, `dir`, `status`, and `project` (the owning declared project's slug,
-or `null` for a match from the invocation root's own universe); and
-`workspace-show` an object mirroring the text report's fields. Without the
-flag, the text output SHALL stay byte-identical to its pre-flag behavior,
-and error handling (stderr `Error:` lines, exit codes) SHALL be unchanged in
-both modes.
+or `null` for a match from the invocation root's own universe);
+`workspace-show` an object mirroring the text report's fields; and
+`wiki-show` the store-state document its own requirement
+(`wiki-status-verbs`) defines. Without the
+flag, the text output SHALL stay byte-identical to its pre-flag behavior on
+every input the pre-flag verb rendered successfully, and error handling
+(stderr `Error:` lines, exit codes) SHALL be unchanged in both modes; on an
+input the verb rejects, partial stdout the pre-flag rendering emitted before
+failing MAY be omitted.
 
 #### Scenario: Status of a change is machine-readable
 - **WHEN** `status <change> --json` runs on an existing change
@@ -1276,7 +1326,7 @@ both modes.
   dir, status, and a null `project`
 
 #### Scenario: Text mode is unchanged without the flag
-- **WHEN** any of the five verbs runs without `--json`
+- **WHEN** any of the six verbs runs without `--json`
 - **THEN** the output is byte-identical to the pre-change text rendering
 
 #### Scenario: Errors are unaffected by the flag

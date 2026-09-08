@@ -3380,67 +3380,64 @@ def cmd_wiki_init(root, personal=False):
     return 0
 
 
-def cmd_wiki_show(root, personal=False):
-    """Print the wiki store's health (spec-status wiki-status-verbs): the store
-    root, a ``chain:`` line naming the inherited chain stores that exist
-    (nearest first, or ``chain: none``), a ``base:`` line reporting the
-    resolved ``wiki_base`` store, the page count, index-coverage health, the
-    pending-question count, and the last log entry. Resolves the workspace
-    store by default, or the personal memory store under ``personal``. Under
-    ``personal`` the store participates in no chain or base layering, so
-    ``chain:`` and ``base:`` are always ``none``, and it errors when that
-    store does not exist. For the workspace store, the nearest workspace's
-    store may be absent while an enclosing chain member's is not: in that case
-    the nearest store is reported absent rather than erroring, and the verb
-    errors only when no chain member holds a store at all. Where no workspace
-    is discoverable at all and the repo's content directory exists, the store
-    is the repo-local fallback (shipd-wiki wiki-store-layout): its store line
-    carries a ``(repo-local fallback)`` marker, the chain is always ``none``,
-    and the ``base:`` line resolves from the root's own layered
-    configuration."""
+def _wiki_show_data(root, personal=False, bodies=False):
+    """The resolved wiki store's full state as a JSON-ready dict (spec-status
+    wiki-status-verbs, json-output), plus the raw last ``log.md`` header line
+    the text report echoes verbatim. Returns ``(doc, last_log)``.
+
+    ``bodies`` requests the page-body read, which is JSON-only: with it unset
+    each ``pages`` entry carries ``slug`` and ``summary`` alone and no page
+    file is opened at all. Only the JSON mode sets it, and only that mode
+    serializes the document, so an emitted document always carries ``body``.
+
+    ``doc`` carries ``store`` (the store path), ``present``/``fallback``/
+    ``personal`` naming the resolution, ``chain`` (the inherited chain stores,
+    nearest first — empty for a personal or single-member resolution),
+    ``base`` (``None``, else the resolved ``wiki_base`` store's ``path`` and
+    ``present``), ``pages`` (sorted by slug, each with its ``index.md``
+    ``summary`` or ``None`` and, under ``bodies``, its raw markdown ``body``
+    decoded as UTF-8 with U+FFFD replacement), ``coverage`` (the
+    sorted ``unindexed`` and ``orphaned`` slugs), ``queue`` (the ``queue.md``
+    blocks in document order, each with its ``id`` and present ``fields``),
+    and ``log`` (the ``log.md`` entries in document order, each with ``date``,
+    ``op``, and ``subject``). Counts the text report prints — pages, pending
+    questions — are derivable from it and are not duplicated.
+
+    Resolution and its errors live here, ahead of either rendering, so both
+    modes inherit them unchanged: the personal store resolves by fixed path
+    and errors when absent; the workspace store may be absent while an
+    enclosing chain member's is not (reported ``present`` false rather than
+    erroring), and errors only when no chain member holds a store at all;
+    where no workspace is discoverable and the repo's content directory
+    exists, the store is the repo-local fallback (shipd-wiki
+    wiki-store-layout). A malformed ``wiki_base`` surfaces as a ConfigError →
+    the verb's error exit."""
     if personal:
         wiki = _wiki_store(root, personal)
         anchor, is_fallback = None, False
     else:
         anchor, is_fallback = _resolve_wiki_anchor(root)
         wiki = sc.wiki_dir(anchor)
-    marker = " (repo-local fallback)" if is_fallback else ""
     chain_stores = [] if personal else sc.resolve_wiki_stores(root)
-    if not os.path.isdir(wiki):
-        if personal or not chain_stores:
-            raise StatusError("no wiki store at %s (run `wiki-init`)" % wiki)
-        print("wiki: %s (absent)%s" % (wiki, marker))
-    else:
-        print("wiki: %s%s" % (wiki, marker))
+    present = os.path.isdir(wiki)
+    if not present and (personal or not chain_stores):
+        raise StatusError("no wiki store at %s (run `wiki-init`)" % wiki)
 
     # The chain's remaining (inherited) stores, nearest first — every chain
     # store that is not this store itself (shipd-wiki wiki-store-layout). A
-    # personal store participates in no chain, so it always reports
-    # `chain: none`.
-    if personal:
-        print("chain: none")
-    else:
-        inherited = [s for s in chain_stores
-                     if os.path.realpath(s) != os.path.realpath(wiki)]
-        print("chain: %s" % (", ".join(inherited) if inherited else "none"))
+    # personal store participates in no chain, so its chain is always empty.
+    inherited = [s for s in chain_stores
+                 if os.path.realpath(s) != os.path.realpath(wiki)]
 
-    # The layered `wiki_base` store, if declared (shipd-config wiki-base-key). A
-    # malformed value surfaces as a ConfigError → the verb's error exit.
+    # The layered `wiki_base` store, if declared (shipd-config wiki-base-key).
     # `wiki_base_dir` itself treats a base resolving to any workspace-chain
     # member's store directory — or, under a fallback resolution, the fallback
     # store's own directory — as undeclared, so running inside the base
     # workspace itself (or an enclosing one) never double-layers. The personal
-    # store participates in no base layering, so it always reports `base: none`.
-    if personal:
-        print("base: none")
-    else:
-        base = sc.wiki_base_dir(anchor)
-        if base is None:
-            print("base: none")
-        elif os.path.isdir(base):
-            print("base: %s (present)" % base)
-        else:
-            print("base: %s (absent)" % base)
+    # store participates in no base layering, so its base is always None.
+    base = None if personal else sc.wiki_base_dir(anchor)
+    base_doc = (None if base is None
+                else {"path": base, "present": os.path.isdir(base)})
 
     pages_dir = os.path.join(wiki, "wiki")
     page_slugs = set()
@@ -3449,40 +3446,119 @@ def cmd_wiki_show(root, personal=False):
             if fname.endswith(".md") and os.path.isfile(
                     os.path.join(pages_dir, fname)):
                 page_slugs.add(fname[:-3])
-    print("pages: %d" % len(page_slugs))
 
     index_path = os.path.join(wiki, "index.md")
-    entry_slugs = set()
+    summaries = {}
     if os.path.isfile(index_path):
         with open(index_path, encoding="utf-8") as fh:
-            for slug, _summary in sc.parse_index_entries(fh.read()):
-                entry_slugs.add(slug)
-    unindexed = page_slugs - entry_slugs
-    orphaned = entry_slugs - page_slugs
-    if not unindexed and not orphaned:
-        print("coverage: ok")
-    else:
-        print("coverage: %d unindexed page(s), %d orphaned entry(ies)"
-              % (len(unindexed), len(orphaned)))
+            for slug, summary in sc.parse_index_entries(fh.read()):
+                summaries[slug] = summary
+    entry_slugs = set(summaries)
+
+    # Page bodies are a JSON-only read. The pre-flag text report never opened
+    # a page file, and it must not start: a store's own unhealth — a page
+    # holding non-UTF-8 bytes, or one the process cannot read — would turn the
+    # health report that exists to surface such trouble into a crash. So the
+    # text pass collects slugs alone, and only the JSON pass reads bodies,
+    # decoding with U+FFFD replacement so one undecodable page cannot fail the
+    # whole store read.
+    pages = []
+    for slug in sorted(page_slugs):
+        page = {"slug": slug, "summary": summaries.get(slug)}
+        if bodies:
+            page_path = os.path.join(pages_dir, slug + ".md")
+            try:
+                with open(page_path, encoding="utf-8", errors="replace") as fh:
+                    page["body"] = fh.read()
+            except OSError as exc:
+                raise StatusError(
+                    "cannot read wiki page %s: %s"
+                    % (page_path, exc.strerror or exc))
+        pages.append(page)
 
     queue_path = os.path.join(wiki, "queue.md")
-    pending = 0
+    queue = []
     if os.path.isfile(queue_path):
         with open(queue_path, encoding="utf-8") as fh:
-            for _qid, fields in sc.parse_queue_blocks(fh.read()):
-                if fields.get("Answer", "").strip() == "pending":
-                    pending += 1
-    print("pending questions: %d" % pending)
+            for qid, fields in sc.parse_queue_blocks(fh.read()):
+                queue.append({"id": qid, "fields": dict(fields)})
 
     log_path = os.path.join(wiki, "log.md")
-    last = None
+    log, last_log = [], None
     if os.path.isfile(log_path):
         with open(log_path, encoding="utf-8") as fh:
             for line in fh.read().splitlines():
-                if sc.WIKI_LOG_HEADER_RE.match(line):
-                    last = line.strip()
-    print("last log: %s" % (last if last else "(none)"))
-    return 0
+                m = sc.WIKI_LOG_HEADER_RE.match(line)
+                if m:
+                    log.append({"date": m.group(1), "op": m.group(2),
+                                "subject": m.group(3)})
+                    last_log = line.strip()
+
+    doc = {
+        "store": wiki,
+        "present": present,
+        "fallback": is_fallback,
+        "personal": personal,
+        "chain": inherited,
+        "base": base_doc,
+        "pages": pages,
+        "coverage": {"unindexed": sorted(page_slugs - entry_slugs),
+                     "orphaned": sorted(entry_slugs - page_slugs)},
+        "queue": queue,
+        "log": log,
+    }
+    return doc, last_log
+
+
+def _wiki_show_lines(doc, last_log):
+    """The ``wiki-show`` text report's lines, rendered from the same document
+    the ``--json`` mode prints (spec-status json-output): the store root with
+    its ``(absent)`` and ``(repo-local fallback)`` markers, the ``chain:`` and
+    ``base:`` lines, the page count, index-coverage health, the
+    pending-question count, and the last log entry echoed verbatim."""
+    marker = " (repo-local fallback)" if doc["fallback"] else ""
+    absent = "" if doc["present"] else " (absent)"
+    lines = ["wiki: %s%s%s" % (doc["store"], absent, marker)]
+    lines.append("chain: %s"
+                 % (", ".join(doc["chain"]) if doc["chain"] else "none"))
+    base = doc["base"]
+    if base is None:
+        lines.append("base: none")
+    else:
+        lines.append("base: %s (%s)"
+                     % (base["path"], "present" if base["present"]
+                        else "absent"))
+    lines.append("pages: %d" % len(doc["pages"]))
+    coverage = doc["coverage"]
+    if not coverage["unindexed"] and not coverage["orphaned"]:
+        lines.append("coverage: ok")
+    else:
+        lines.append("coverage: %d unindexed page(s), %d orphaned entry(ies)"
+                     % (len(coverage["unindexed"]),
+                        len(coverage["orphaned"])))
+    pending = sum(1 for block in doc["queue"]
+                  if block["fields"].get("Answer", "").strip() == "pending")
+    lines.append("pending questions: %d" % pending)
+    lines.append("last log: %s" % (last_log if last_log else "(none)"))
+    return lines
+
+
+def cmd_wiki_show(root, personal=False, as_json=False):
+    """Report the wiki store's state (spec-status wiki-status-verbs): the text
+    health report by default — the store root, a ``chain:`` line naming the
+    inherited chain stores that exist (nearest first, or ``chain: none``), a
+    ``base:`` line reporting the resolved ``wiki_base`` store, the page count,
+    index-coverage health, the pending-question count, and the last log entry
+    — or, under ``as_json``, one JSON document describing the store's full
+    content (page bodies, index summaries, queue fields, log entries) so a
+    consumer never parses the store's markdown itself. Both modes read the
+    store once, through :func:`_wiki_show_data`, so they can never disagree
+    and the resolution errors are shared rather than duplicated. Page bodies
+    are the one read the modes do not share: only the JSON document carries
+    them, so the health report stays readable for a store holding a page this
+    process cannot read or decode."""
+    doc, last_log = _wiki_show_data(root, personal, bodies=as_json)
+    return _emit(doc, _wiki_show_lines(doc, last_log), as_json)
 
 
 def _validate_queue_text(text):
@@ -3823,8 +3899,9 @@ def cmd_wiki_remove(root, slug, personal=False):
 
 def _add_json_flag(subparser, help_text=None):
     """Give one read verb's subparser the ``--json`` machine-output flag
-    (spec-status json-output). The six read verbs and ``pipeline-show`` get it
-    — the mutating and guarded verbs stay text-only. ``help_text`` overrides the
+    (spec-status json-output). The read verbs — ``wiki-show`` included — and
+    ``pipeline-show`` get it — the mutating and guarded verbs stay text-only.
+    ``help_text`` overrides the
     generic help for a verb whose JSON document warrants describing."""
     subparser.add_argument(
         "--json", action="store_true", dest="json",
@@ -4042,6 +4119,11 @@ def main(argv=None):
         "--personal", action="store_true",
         help="report the personal memory store (<memory_dir>/wiki) instead of "
              "the workspace store")
+    _add_json_flag(
+        p_wiki_show,
+        "emit one JSON document describing the store's full state — pages "
+        "with their index summaries and raw bodies, coverage, queue blocks, "
+        "and log entries — instead of the text health report")
 
     p_wiki_remove = sub.add_parser(
         "wiki-remove",
@@ -4154,7 +4236,7 @@ def main(argv=None):
         if args.verb == "wiki-init":
             return cmd_wiki_init(root, args.personal)
         if args.verb == "wiki-show":
-            return cmd_wiki_show(root, args.personal)
+            return cmd_wiki_show(root, args.personal, as_json=args.json)
         if args.verb == "wiki-remove":
             return cmd_wiki_remove(root, args.slug, args.personal)
         if args.verb == "wiki-queue-add":
