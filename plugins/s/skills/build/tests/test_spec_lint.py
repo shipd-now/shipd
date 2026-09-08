@@ -2228,6 +2228,17 @@ class InitiativeBriefLintTest(unittest.TestCase):
                 "Status: open\n", "Status: open\nProject: alpha\n"))
         self.assertEqual(self._errors("mvp-readiness"), [])
 
+    def test_mixed_case_project_name_passes(self):
+        # Project names are identifier-style, not kebab (shipd-workspace
+        # project-registry-semantics): `APISchema` is declared, so a brief
+        # scoped to it lints clean.
+        self._write_registry({"projects": {"APISchema": {"repos": ["repo"]}}})
+        self._write_brief(
+            "mvp-readiness",
+            self.VALID_BRIEF.replace(
+                "Status: open\n", "Status: open\nProject: APISchema\n"))
+        self.assertEqual(self._errors("mvp-readiness"), [])
+
     def test_project_not_declared_errors_listing_slugs(self):
         self._write_registry({"projects": {"alpha": {"repos": ["repo"]}}})
         self._write_brief(
