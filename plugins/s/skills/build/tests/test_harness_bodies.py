@@ -236,8 +236,14 @@ class ShippedTemplateTest(unittest.TestCase):
     """Structural properties of ``plugins/s/harness/`` itself."""
 
     def test_every_command_has_exactly_one_body_template(self):
-        skills = sorted(name for name in os.listdir(SKILLS_DIR)
-                        if os.path.isdir(os.path.join(SKILLS_DIR, name)))
+        """Body template ids match the ``SKILL.md``-bearing directories under
+        ``plugins/s/skills/``. A directory carrying no ``SKILL.md`` ships
+        reference data rather than a command — ``prd/references/`` landing
+        ahead of its own skill is the case in point — so it is not a `/s:`
+        command and needs no body template."""
+        skills = sorted(
+            name for name in os.listdir(SKILLS_DIR)
+            if os.path.isfile(os.path.join(SKILLS_DIR, name, "SKILL.md")))
         self.assertEqual(list(hb.commands()), skills)
 
     def test_every_gate_name_is_in_the_feature_vocabulary(self):

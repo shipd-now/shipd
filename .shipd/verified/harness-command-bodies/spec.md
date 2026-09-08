@@ -5,7 +5,9 @@ id: body-templates
 
 The plugin SHALL carry one body template per `/s:` command at
 `plugins/s/harness/bodies/<command>.md`, whose ids exactly match the
-directory names under `plugins/s/skills/`, plus a shared
+skill directories under `plugins/s/skills/` — the directories carrying a
+`SKILL.md`; a directory without one (shipped reference data, not a command)
+is excluded from the match — plus a shared
 `bodies/_preamble.md` partial. Every body template SHALL open with a
 `<!-- description: <one line> -->` marker carrying the command's one-line
 description. Templates SHALL express feature-conditional
@@ -19,8 +21,12 @@ reference template SHALL exist at
 
 #### Scenario: Every command has a template
 - **WHEN** the bodies directory listing (ignoring `_`-prefixed partials) is
-  compared to the `plugins/s/skills/` directory listing
+  compared to the `SKILL.md`-bearing directories under `plugins/s/skills/`
 - **THEN** the two id sets are equal
+
+#### Scenario: A skill-less directory needs no template
+- **WHEN** a directory under `plugins/s/skills/` carries no `SKILL.md`
+- **THEN** the template match ignores it and the guard still passes
 
 #### Scenario: Gate names are vocabulary members
 - **WHEN** the test suite scans every template's `if:` markers
