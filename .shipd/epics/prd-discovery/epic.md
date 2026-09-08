@@ -1,5 +1,5 @@
 # prd-discovery
-Status: ready
+Status: active
 Theme: developer-experience
 
 ## Introduction
@@ -148,3 +148,14 @@ one branch, one PR, and each `plugins/s/` PR carries its own version bump.
 | epic-prd-link | Optional `PRD: <slug>` epic metadata line: linter acceptance + workspace-chain resolution check, `epic-show` reporting, `/s:epic` contract note | low | medium | low | low |
 | prd-skill | `/s:prd` SKILL.md + harness body: search-first investigation, multi-round tier-aware interview contract, template escalation rules, emit + lint gate ending | medium | medium | medium | medium |
 | prd-doc | Documentation: the discover phase and PRD artifact in the workspace docs (concept, storage, lifecycle, `shipd search` usage) | low | low | low | low |
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 93 | 18.3k |
+| Edit | 16 | 4.7k |
+| Read | 13 | 4.6k |
+| (no tool) | 0 | 4.1k |
+| Agent | 2 | 1.3k |
+| **Total** | 124 | 33.0k |
