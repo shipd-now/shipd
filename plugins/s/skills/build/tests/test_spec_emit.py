@@ -110,6 +110,28 @@ CLEAN_DOC = (
 )
 
 
+# A lint-clean `basic`-tier PRD: the title matching its slug, the two header
+# lines, and the three sections the tier registry requires (shipd-prd
+# prd-store-format, prd-tier-registry).
+CLEAN_PRD = (
+    "# mobile-push\n"
+    "Status: draft\n"
+    "Template: basic\n"
+    "\n"
+    "## Problem\n"
+    "\n"
+    "Users miss time-critical updates.\n"
+    "\n"
+    "## Solution\n"
+    "\n"
+    "Deliver them as push notifications.\n"
+    "\n"
+    "## Success criteria\n"
+    "\n"
+    "- Opt-in rate above 40%\n"
+)
+
+
 class SpecEmitTestBase(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="spec-emit-test-")
@@ -311,6 +333,72 @@ class InitiativeEmitTest(SpecEmitTestBase):
             self.root, ".shipd", "initiatives", "my-goal", "brief.md")
         self.assertTrue(os.path.isfile(inner_brief))
         self.assertFalse(os.path.exists(outer_brief))
+
+
+class PrdEmitTest(SpecEmitTestBase):
+    """The staged ``prd`` emit subcommand (spec-io staged-emission),
+    installing a PRD at the workspace's ``<content-dir>/prds/<slug>/prd.md``
+    under the validate-then-install rule and refusing outright where no
+    workspace is discoverable.
+
+    Written test-first; expected to FAIL until ``prd`` lands in
+    ``spec_emit.py`` (task 1.2)."""
+
+    def _prd_path(self, slug):
+        return os.path.join(self.root, ".shipd", "prds", slug, "prd.md")
+
+    def test_clean_prd_installs(self):
+        self.declare_workspace()
+        src = self.stage_file(CLEAN_PRD)
+        r = self.cli("prd", "mobile-push", "--from", src)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        path = self._prd_path("mobile-push")
+        self.assertTrue(os.path.isfile(path))
+        self.assertIn("installed prd mobile-push at %s" % path, r.stdout)
+
+    def test_prd_missing_a_tier_section_leaves_no_file(self):
+        self.declare_workspace()
+        bad = CLEAN_PRD[:CLEAN_PRD.index("## Success criteria")]
+        src = self.stage_file(bad)
+        r = self.cli("prd", "mobile-push", "--from", src)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("## Success criteria", r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(
+            os.path.join(self.root, ".shipd", "prds", "mobile-push")))
+
+    def test_existing_destination_refused_without_replace(self):
+        self.declare_workspace()
+        src = self.stage_file(CLEAN_PRD)
+        self.assertEqual(
+            self.cli("prd", "mobile-push", "--from", src).returncode, 0)
+        sentinel = os.path.join(
+            os.path.dirname(self._prd_path("mobile-push")), "sentinel")
+        with open(sentinel, "w", encoding="utf-8") as fh:
+            fh.write("keep")
+        r = self.cli("prd", "mobile-push", "--from", src)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue(os.path.isfile(sentinel))
+
+    def test_existing_destination_replaced_with_flag(self):
+        self.declare_workspace()
+        src = self.stage_file(CLEAN_PRD)
+        self.assertEqual(
+            self.cli("prd", "mobile-push", "--from", src).returncode, 0)
+        fresh = self.stage_file(CLEAN_PRD + "\n## Rollout\n\nStaged.\n")
+        r = self.cli("prd", "mobile-push", "--from", fresh, "--replace")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(self._prd_path("mobile-push"), encoding="utf-8") as fh:
+            self.assertIn("## Rollout", fh.read())
+
+    def test_no_workspace_is_an_error(self):
+        # No `.shipd-config.json` declaring a workspace anywhere up the chain
+        # ($HOME is isolated), so the install refuses before anything lands.
+        src = self.stage_file(CLEAN_PRD)
+        r = self.cli("prd", "mobile-push", "--from", src)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no workspace found", r.stderr)
+        self.assertFalse(os.path.exists(
+            os.path.join(self.root, ".shipd", "prds")))
 
 
 class EpicEmitTest(SpecEmitTestBase):

@@ -1625,11 +1625,12 @@ The status CLI SHALL provide `search <term> [<term>...]` ranking a superset
 corpus by the same case-insensitive term-hit scoring as `related`: every
 surface and record the `related` corpus yields (verified, planned, completed,
 research, docs, epic, wiki — root plus worktrees, deduped root-first),
-extended with two additional surfaces. Where a workspace anchor resolves
+extended with additional surfaces. Where a workspace anchor resolves
 (through the same resolution seam the wiki surface uses), the CLI SHALL
 search each `initiatives/<slug>/brief.md` under the anchor's resolved content
-directory as kind `initiative`; any anchor-resolution failure SHALL skip the
-surface silently. Where the invocation root is a git work tree, the CLI SHALL
+directory as kind `initiative`, and each `prds/<slug>/prd.md` there as kind
+`prd`; any anchor-resolution failure SHALL skip these workspace surfaces
+silently. Where the invocation root is a git work tree, the CLI SHALL
 search the files `git ls-files` enumerates at the invocation root as kind
 `code`, each record's slug its root-relative path — skipping files under the
 invocation root's resolved content directory, files whose first 8192 bytes
@@ -1695,3 +1696,9 @@ remain unchanged by this verb.
 - **WHEN** `search zzz-no-such-term` runs and nothing contains the term
 - **THEN** the CLI prints a single `Error:` line to stderr and exits
   non-zero
+
+#### Scenario: PRDs are searched
+- **WHEN** `search push` runs where the resolved workspace anchor's
+  `prds/mobile-push/prd.md` contains `push`
+- **THEN** a block prints with `kind: prd` and `slug: mobile-push`, its
+  `path:` naming the PRD
