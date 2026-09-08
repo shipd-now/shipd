@@ -2,13 +2,16 @@
 """Tests for claim_task.sh group-aware claiming: parallel groups, barrier
 blocking, unready-group emptiness, untagged (fully sequential) behavior, and
 claim liveness — holder-stamped claim records, blocking `claim --wait`,
-state-guarded `complete`/`release`, claim lines in `status`, and
-`release --stale`.
+state-guarded `complete`/`release`, claim lines in `status`,
+`release --stale`, and base-directory resolution through the engine (an
+external `store_root`, a renamed `dir`, and the literal-`.shipd` fallback).
 
 The script is driven as a black box via subprocess against a throwaway temp
 directory laid out as ``.shipd/planned/<change>/tasks.md`` (run with that temp
-root as cwd) — never against the real repo change dirs."""
+root as cwd) — never against the real repo change dirs. Fixtures that need a
+repository use local git only (init + in-repo identity), never the network."""
 
+import json
 import os
 import re
 import shutil
@@ -721,6 +724,153 @@ class AnchoredGrammarTest(ClaimScriptTestBase):
                          "1.2 indented second")
         # The rewrite lands on that line and preserves its leading blanks.
         self.assertEqual(self.lines()[2], "  " + WIP + " 1.2 indented second")
+
+
+class ContentDirResolutionTestBase(ClaimScriptTestBase):
+    """Shared fixture for the base-directory resolution legs: a decoy checklist
+    always sits at the literal `.shipd/planned/<change>/`, so a test that finds
+    the *real* checklist elsewhere proves resolution actually moved."""
+
+    # The decoy carries three tasks; every real checklist carries two, so the
+    # `pending=` count alone distinguishes which file a verb operated on.
+    DECOY = ("## 1. Decoy\n"
+             "- [ ] 1.1 decoy a\n"
+             "- [ ] 1.2 decoy b\n"
+             "- [ ] 1.3 decoy c\n")
+    REAL = ("## 1. Steps\n"
+            "- [ ] 1.1 first\n"
+            "- [ ] 1.2 second\n")
+
+    def setUp(self):
+        super().setUp()
+        self.write_tasks(self.DECOY)
+
+    def init_repo(self):
+        """A local git repo with an in-repo identity — no network, and no
+        `change/<CHANGE>` branch, so the branch guard stays a no-op."""
+        for args in (("init", "-q"),
+                     ("config", "user.email", "test@example.com"),
+                     ("config", "user.name", "Test"),
+                     ("config", "commit.gpgsign", "false")):
+            subprocess.run(["git", *args], cwd=self.root,
+                           capture_output=True, text=True, check=True)
+
+    def write_config(self, text):
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(text)
+
+    def make_checklist(self, change_dir, body=None):
+        """Create `<change_dir>/tasks.md` and remember its sidecar paths."""
+        os.makedirs(change_dir, exist_ok=True)
+        self.real_tasks = os.path.join(change_dir, "tasks.md")
+        self.real_claims = os.path.join(change_dir, ".tasks.claims")
+        with open(self.real_tasks, "w", encoding="utf-8") as fh:
+            fh.write(self.REAL if body is None else body)
+
+    def real_boxes(self):
+        with open(self.real_tasks, encoding="utf-8") as fh:
+            return "".join(re.findall(r"- \[([ ~x])\]", fh.read()))
+
+    def assert_decoy_untouched(self):
+        with open(self.tasks, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), self.DECOY)
+        self.assertFalse(os.path.exists(self.claims),
+                         "a claim record landed beside the decoy checklist")
+
+
+class StoreResolutionTest(ContentDirResolutionTestBase):
+    """A change parked in an external store (`store_root`) is coordinated
+    there: the script reads the engine's `store:` line and resolves its tasks
+    file, lock, and claim sidecar under the store's per-repo `planned/<change>/`
+    (build-task-coordination atomic-task-claiming-with-stable-ids)."""
+
+    def setUp(self):
+        super().setUp()
+        self.store = tempfile.mkdtemp(prefix="claim-store-")
+        self.addCleanup(shutil.rmtree, self.store, ignore_errors=True)
+        self.init_repo()
+        self.write_config(json.dumps({"store_root": self.store}) + "\n")
+        # The engine's per-repo store folder is the checkout's basename.
+        self.make_checklist(os.path.join(
+            self.store, os.path.basename(self.root), "planned", CHANGE))
+
+    def test_status_counts_the_stores_checklist(self):
+        r = self.cmd("status")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.rstrip("\n").split("\n")[0],
+                         "pending=2 in_progress=0 done=0")
+
+    def test_claim_marks_the_store_checklist_and_records_beside_it(self):
+        r = self.cmd("claim", "--as", "builder-9")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.id_of(r), "1")
+        self.assertEqual(self.real_boxes(), "~ ")
+        with open(self.real_claims, encoding="utf-8") as fh:
+            record = fh.read().rstrip("\n").split("\t")
+        self.assertEqual(record[0], "1")
+        self.assertEqual(record[1], "builder-9")
+        self.assert_decoy_untouched()
+
+    def test_complete_marks_the_store_checklist_done(self):
+        self.assertEqual(self.id_of(self.cmd("claim")), "1")
+        r = self.cmd("complete", "1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.real_boxes(), "x ")
+        self.assertFalse(os.path.exists(self.real_claims))
+        self.assert_decoy_untouched()
+
+    def test_next_peeks_at_the_store_checklist(self):
+        r = self.cmd("next")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.rstrip("\n").split("\t", 1)[1], "1.1 first")
+
+
+class RenamedContentDirTest(ContentDirResolutionTestBase):
+    """A repo that renames its content directory (`dir`) is coordinated at the
+    engine's `content-dir:` value, not at the literal `.shipd`."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_config('{"dir": ".agents/.shipd"}\n')
+        self.make_checklist(os.path.join(
+            self.root, ".agents", ".shipd", "planned", CHANGE))
+
+    def test_status_counts_the_renamed_dirs_checklist(self):
+        r = self.cmd("status")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.rstrip("\n").split("\n")[0],
+                         "pending=2 in_progress=0 done=0")
+
+    def test_claim_and_complete_land_in_the_renamed_dir(self):
+        self.assertEqual(self.id_of(self.cmd("claim")), "1")
+        self.assertEqual(self.real_boxes(), "~ ")
+        self.assertEqual(self.cmd("complete", "1").returncode, 0)
+        self.assertEqual(self.real_boxes(), "x ")
+        self.assert_decoy_untouched()
+
+
+class ResolutionFallbackTest(ContentDirResolutionTestBase):
+    """Resolution failure degrades to exactly the pre-resolution behavior: a
+    malformed config leaves the script operating on the literal `.shipd`."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_config("NOT JSON\n")
+        # No separate real checklist: `.shipd/planned/<change>/tasks.md` is it.
+        self.write_tasks(self.REAL)
+        self.real_tasks = self.tasks
+        self.real_claims = self.claims
+
+    def test_status_operates_on_dot_shipd(self):
+        r = self.cmd("status")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.rstrip("\n").split("\n")[0],
+                         "pending=2 in_progress=0 done=0")
+
+    def test_claim_operates_on_dot_shipd(self):
+        self.assertEqual(self.id_of(self.cmd("claim")), "1")
+        self.assertEqual(self.real_boxes(), "~ ")
 
 
 if __name__ == "__main__":

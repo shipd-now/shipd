@@ -7,6 +7,7 @@ repo. Mirrors ``test_claim_task.py``'s fixture style. The helper makes no
 assumption about the repository beyond git itself, so the fixture carries no
 shipd layout."""
 
+import json
 import os
 import shutil
 import subprocess
@@ -717,6 +718,86 @@ class RemoveWorktreeTest(WorktreeScriptTestBase):
         out = self.combined(r)
         self.assertIn("unshipped change", out)
         self.assertIn(".shipd/planned", out)
+
+    # --- store-resident guards (build-spec-lifecycle
+    # worktree-guard-content-dir) ----------------------------------------
+
+    def store_worktree(self, name="my-change"):
+        """A worktree whose configuration resolves the content directory into
+        an external store; returns `(worktree, store content dir)`. The store
+        folder is named for the *main* checkout, exactly as the engine resolves
+        it for every linked worktree."""
+        wt = self.make_worktree(name)
+        store = tempfile.mkdtemp(prefix="worktree-store-")
+        self._extra_dirs.append(store)
+        with open(os.path.join(wt, ".shipd-config.json"), "w") as fh:
+            fh.write('{"store_root": %s}\n' % json.dumps(store))
+        # Commit so only the store guards can fire, never the dirty-tree one.
+        self.git_in(wt, "add", "-A")
+        self.git_in(wt, "commit", "-q", "-m", "store-backed config")
+        self.age_tree(wt)
+        return wt, os.path.join(store, os.path.basename(self.root))
+
+    def store_planned(self, content_dir, change):
+        """Create `<store content dir>/planned/<change>/` and return its path."""
+        d = os.path.join(content_dir, "planned", change)
+        os.makedirs(d)
+        return d
+
+    def test_store_resident_change_refuses_removal(self):
+        wt, content = self.store_worktree("my-change")
+        planned = self.store_planned(content, "my-change")
+        with open(os.path.join(planned, "spec.md"), "w") as fh:
+            fh.write("# spec\n")
+        r = self.run_helper("remove", "my-change")
+        self.assertEqual(r.returncode, 2, self.combined(r))
+        self.assertTrue(os.path.isdir(wt))
+        out = self.combined(r)
+        self.assertIn("unshipped change", out)
+        self.assertIn(planned, out)
+
+    def test_store_resident_claim_refuses_removal(self):
+        wt, content = self.store_worktree("my-change")
+        planned = self.store_planned(content, "my-change")
+        tasks = os.path.join(planned, "tasks.md")
+        with open(tasks, "w") as fh:
+            fh.write("# Tasks\n\n- [~] 1.1 claimed by a live session\n")
+        r = self.run_helper("remove", "my-change")
+        self.assertEqual(r.returncode, 2, self.combined(r))
+        self.assertTrue(os.path.isdir(wt))
+        out = self.combined(r)
+        self.assertIn("claim", out.lower())
+        self.assertIn(tasks, out)
+
+    def test_store_resident_lock_refuses_removal(self):
+        wt, content = self.store_worktree("my-change")
+        planned = self.store_planned(content, "my-change")
+        lock = os.path.join(planned, ".tasks.lock")
+        os.makedirs(lock)  # the coordinator's lock is a directory
+        r = self.run_helper("remove", "my-change")
+        self.assertEqual(r.returncode, 2, self.combined(r))
+        self.assertTrue(os.path.isdir(wt))
+        out = self.combined(r)
+        self.assertIn(".tasks.lock", out)
+        self.assertIn(lock, out)
+
+    def test_unrelated_store_change_never_blocks(self):
+        # The store is shared by every worktree of the repo, so only the change
+        # under removal is checked — another change in flight must not block.
+        wt, content = self.store_worktree("my-change")
+        other = self.store_planned(content, "other-change")
+        with open(os.path.join(other, "tasks.md"), "w") as fh:
+            fh.write("# Tasks\n\n- [~] 1.1 claimed elsewhere\n")
+        os.makedirs(os.path.join(other, ".tasks.lock"))
+        r = self.run_helper("remove", "my-change")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertFalse(os.path.exists(wt))
+
+    def test_clean_store_lets_removal_proceed(self):
+        wt, _content = self.store_worktree("my-change")
+        r = self.run_helper("remove", "my-change")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertFalse(os.path.exists(wt))
 
     def test_non_kebab_name_refused(self):
         # A path-ish name must not escape .worktrees/ (see the remove verb's

@@ -25,7 +25,12 @@
 # rewrite, the marker strip). This matches `spec_lint.py` and `spec_status.py`,
 # so the linter's ordinals, these IDs, and the status CLI's counts agree.
 #
-# Task line conventions (.shipd/planned tasks.md checklists):
+# The change's `planned/<change>/` directory is resolved through the engine
+# (`spec_status.py config-show`), not hardcoded: the `store:` line when a
+# `store_root` relocates the content directory into an external store, else the
+# `content-dir:` line, else the literal `.shipd` when resolution fails.
+#
+# Task line conventions (planned/<change>/tasks.md checklists):
 #   - [ ] pending      - [~] in progress      - [x] done
 # A task's text may carry a parallel group tag `[P<n>]` (see first_ready_line).
 #
@@ -34,7 +39,8 @@
 # rewritten only under the same lock that flips the checkbox, and it is deleted
 # when its last record goes. `tasks.md`'s own grammar never carries a holder.
 #
-# Usage (run from the project root, where ./.shipd lives):
+# Usage (run from the project root, whose layered config resolves the content
+# directory):
 #   claim_task.sh next     <change-name>
 #       peek: print "ID\tTEXT" of the next ready pending task, or nothing
 #   claim_task.sh claim    <change-name> [--as <label>] [--wait [--timeout <secs>]]
@@ -58,6 +64,10 @@
 # soft: they refuse only when the record names a holder AND the caller passed a
 # *different* --as label; a bare call acts regardless of the recorded holder.
 set -euo pipefail
+
+# This script's own directory, so the base-directory resolution below can reach
+# the engine beside it. Resolved without `readlink -f`, which BSD/macOS lacks.
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 TAB="$(printf '\t')"
 
@@ -136,9 +146,26 @@ if [ -n "$STALE_MINS" ]; then
   fi
 fi
 
-TASKS=".shipd/planned/${CHANGE}/tasks.md"
-LOCK=".shipd/planned/${CHANGE}/.tasks.lock"
-CLAIMS=".shipd/planned/${CHANGE}/.tasks.claims"
+# The change's content directory, resolved through the engine rather than
+# hardcoded, so a change parked in an external store (`store_root`) or under a
+# renamed `dir` is coordinated where it actually lives. One `config-show` per
+# invocation, read once and parsed twice: a `store:` line (the fully resolved
+# external per-repo content directory) wins when present, else the
+# `content-dir:` line. Any failure — python3 absent, malformed config, neither
+# line printed — falls back to the literal `.shipd`, so resolution never
+# resolves less than the default configuration.
+CONFIG_SHOW="$(python3 "$SCRIPT_DIR/spec_status.py" config-show 2>/dev/null || true)"
+BASE="$(printf '%s\n' "$CONFIG_SHOW" | sed -n 's/^store: //p' | head -n 1 || true)"
+if [ -z "$BASE" ]; then
+  BASE="$(printf '%s\n' "$CONFIG_SHOW" | sed -n 's/^content-dir: //p' | head -n 1 || true)"
+fi
+if [ -z "$BASE" ]; then
+  BASE=".shipd"
+fi
+
+TASKS="$BASE/planned/${CHANGE}/tasks.md"
+LOCK="$BASE/planned/${CHANGE}/.tasks.lock"
+CLAIMS="$BASE/planned/${CHANGE}/.tasks.claims"
 
 [ -f "$TASKS" ] || die "tasks file not found: $TASKS"
 

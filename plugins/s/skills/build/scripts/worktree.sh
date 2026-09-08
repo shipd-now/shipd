@@ -22,6 +22,11 @@
 # unshipped-change guard skips a planned change that is base content — tracked,
 # locally clean, and identical to the base branch — since that is not the
 # worktree's own work; the claim/lock guard still scans every planned checklist.
+# Where the configuration relocates the content directory into an external
+# store (`store_root`), both guards additionally check the store's
+# `planned/<change>` — the change under removal and only that one, since the
+# store is shared by every worktree of the repository — with no base-content
+# carve-out there.
 #
 # Shipped as a plugin engine script — invocable by plugin path from any git
 # repository. It assumes nothing about the repository beyond git itself: no shipd
@@ -223,13 +228,28 @@ cmd_remove() {
   # config, no `content-dir:` line — falls back to the literal `.shipd`, so the
   # guard never scans less than it does under the default configuration and the
   # helper still runs in repositories with nothing but git.
-  content_dir=$(python3 "$SCRIPT_DIR/spec_status.py" --root "$WORKTREE" \
-    config-show 2>/dev/null | sed -n 's/^content-dir: //p' | head -n 1)
+  #
+  # The same output additionally carries a `store:` line when the layered
+  # configuration relocates the content directory into an external store
+  # (`store_root`); guards 2 and 3 then also check the store, scoped to the
+  # change under removal.
+  config_show=$(python3 "$SCRIPT_DIR/spec_status.py" --root "$WORKTREE" \
+    config-show 2>/dev/null || true)
+  content_dir=$(printf '%s\n' "$config_show" \
+    | sed -n 's/^content-dir: //p' | head -n 1)
   if [ -z "$content_dir" ]; then
     content_dir=".shipd"
   fi
+  store_dir=$(printf '%s\n' "$config_show" | sed -n 's/^store: //p' | head -n 1)
 
   planned="$WORKTREE/$content_dir/planned"
+  # Only this change's directory in the store: the store is shared by every
+  # worktree of the repository, so scanning the whole `planned/` would block
+  # removing any worktree while any change is in flight.
+  store_planned=""
+  if [ -n "$store_dir" ]; then
+    store_planned="$store_dir/planned/$CHANGE"
+  fi
 
   # 2. Unshipped changes still parked under <content-dir>/planned/ — except the
   # ones that are base content rather than this worktree's own work (a planned
@@ -246,6 +266,12 @@ cmd_remove() {
       reasons+=("unshipped change under $content_dir/planned: $dir")
     done
   fi
+  # The store's copy of *this* change. The base-content carve-out does not
+  # apply: a change present in the store's `planned/` is in flight by
+  # definition — the store carries no branch to have shipped it on.
+  if [ -n "$store_planned" ] && [ -d "$store_planned" ]; then
+    reasons+=("unshipped change in the store: $store_planned")
+  fi
 
   # 3. Coordination in progress: a `[~]` task claim or a `.tasks.lock`. This
   # guard scans every planned checklist, base-tracked or not — a `[~]` mark is
@@ -261,6 +287,15 @@ cmd_remove() {
       [ -e "$l" ] || continue
       reasons+=("coordination lock present: $l")
     done
+  fi
+  if [ -n "$store_planned" ]; then
+    if [ -f "$store_planned/tasks.md" ] \
+       && grep -q -- '- \[~\]' "$store_planned/tasks.md" 2>/dev/null; then
+      reasons+=("in-progress task claim ([~]) in $store_planned/tasks.md")
+    fi
+    if [ -e "$store_planned/.tasks.lock" ]; then
+      reasons+=("coordination lock present: $store_planned/.tasks.lock")
+    fi
   fi
 
   # 4. Recent activity inside the idle window (skipped when IDLE=0), and only
