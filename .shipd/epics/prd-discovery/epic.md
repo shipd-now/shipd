@@ -153,9 +153,11 @@ one branch, one PR, and each `plugins/s/` PR carries its own version bump.
 
 | Tool | Calls | Output tokens |
 | --- | --- | --- |
-| Bash | 93 | 18.3k |
-| Edit | 16 | 4.7k |
-| Read | 13 | 4.6k |
-| (no tool) | 0 | 4.1k |
-| Agent | 2 | 1.3k |
-| **Total** | 124 | 33.0k |
+| Bash | 154 | 29.4k |
+| Edit | 25 | 10.1k |
+| Read | 33 | 5.4k |
+| (no tool) | 0 | 4.2k |
+| Agent | 4 | 2.0k |
+| Monitor | 1 | 17 |
+| ToolSearch | 1 | 6 |
+| **Total** | 218 | 51.2k |
