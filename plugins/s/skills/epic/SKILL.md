@@ -6,8 +6,10 @@ description: >-
   and Design, and emit the stub table of member changes with complexity ratings
   — then stop. Member changes are planned later, one at a time, via /s:plan.
   Invoked as `/s:epic <slug> amend`, runs the amendment flow on a live epic
-  instead: a fresh `epic-amend-<slug>` worktree, stamped Decisions and shelf
-  edits only, gated by the linter and `epic-amend-check`, shipped as a PR. Use
+  instead: stamped Decisions and shelf edits only, gated by the linter and
+  `epic-amend-check`, then shipped as a PR from a fresh `epic-amend-<slug>`
+  worktree — or, where the epic resolves into an external store, as one scoped
+  local commit in the store's repository. Use
   when asked to "create an epic", "decompose a feature", "group changes", "amend
   an epic", or plan a multi-change initiative before spec'ing the individual
   changes. Trigger phrases: "epic", "create an epic", "decompose", "amend the
@@ -77,7 +79,23 @@ an amendment; say so and stop.
    so it is edited in its own `epic-<slug>` authoring worktree, not amended.
    Say that and stop.
 
-2. **Work in a fresh worktree.** Create it and make every edit inside it, so the
+   **Then detect the store case**, because it decides which of the two
+   shipping paths the rest of the flow takes:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" --root <repo-root> config-show
+   ```
+
+   A `store:` line prints exactly when the configuration declares
+   `store_root` — the content directory, and with it the epic, lives in an
+   **external store** that is a different git repository from the consuming
+   repo. That is the **store path**, flagged inside steps 2, 5 and 6 below;
+   the `store:` line's value is the store's content directory, so the epic
+   sits at `<store content dir>/epics/<slug>/epic.md`. With no `store:` line
+   the steps run exactly as written.
+
+2. **Work in a fresh worktree** — the in-repo case, where the epic is tracked
+   in the consuming repository. Create it and make every edit inside it, so the
    amendment is born on `change/epic-amend-<slug>` and ships in one PR:
 
    ```
@@ -86,6 +104,14 @@ an amendment; say so and stop.
 
    `--fresh` is not optional: it guarantees the worktree is cut from the root
    checkout's HEAD rather than adopting a stale amendment branch.
+
+   **Store path:** skip this step entirely. Under a store there is no
+   amendment worktree, no `change/epic-amend-<slug>` branch, and no pull
+   request in *either* repository — the consuming repo is not the one holding
+   the epic, and the store's working tree is shared by every repo pointed at
+   it, so it is never flipped onto a branch. Make the steps 3 and 4 edits
+   directly in the store's working tree, exactly as written, and leave them
+   **uncommitted** — the gates in step 5 run against that uncommitted edit.
 
 3. **Classify the amendment's substance** against the capture rubric
    (`references/capture-rubric.md`) before writing anything, and route it:
@@ -126,12 +152,41 @@ an amendment; say so and stop.
    non-zero exit that is not `4` is an error (no epic at the base, an
    unresolvable ref, no git work tree); report it and stop.
 
-6. **Ship it as a PR**, per the repository's workflow — commit the epic edit on
-   `change/epic-amend-<slug>`, push, `gh pr create`, post the semantic-review
-   gate, and let it auto-merge. Report the PR with its **full clickable URL**.
-   Never edit a live epic on `main` and never push directly.
+   **Store path:** both commands are unchanged, and `--root` still names the
+   **consuming repository**, never the store — the engine resolves the store
+   from that repo's configuration, and `epic-amend-check` anchors its git
+   lookups on the directory holding the epic, so the base is read from the
+   store's own history. Because the store edit is still uncommitted, the gates
+   compare it against the store's last committed state, which is exactly the
+   accretion check. Run them **before** the step 6 commit: a store that is not
+   inside any git work tree has no base to read, so `epic-amend-check` errors
+   naming the epic's directory — a non-zero exit that is not `4`, which stops
+   the flow under the rule above with nothing committed.
 
-7. **Summarize and stop** — what was amended, its tier, and the PR URL. Amend
+6. **Ship it as a PR — in the in-repo case**, per the repository's workflow:
+   commit the epic edit on `change/epic-amend-<slug>`, push, `gh pr create`,
+   post the semantic-review gate, and let it auto-merge. Report the PR with its
+   **full clickable URL**. Never edit a live epic on `main` and never push
+   directly.
+
+   **Store path — one scoped local commit instead.** There is no PR to open.
+   Once both gates pass, commit the epic file **alone** in the store's own
+   repository, mirroring the engine's local-commit-never-push discipline for
+   writes into an external store:
+
+   ```
+   git -C <store repo root> add <store content dir>/epics/<slug>/epic.md
+   git -C <store repo root> commit -m "shipd: amend epic <slug>"
+   git -C <store repo root> rev-parse --short HEAD
+   ```
+
+   Stage that one path only — never `add -A`, never `commit -a` — so an
+   unrelated edit sitting in the shared store's working tree is not swept in.
+   **Never push**, and never create a branch there. Report the commit hash in
+   place of a PR URL.
+
+7. **Summarize and stop** — what was amended, its tier, and how it shipped: the
+   PR URL in the in-repo case, the store commit's hash on the store path. Amend
    mode plans no member change and re-decomposes nothing.
 
 ## Codebase-first rule (non-negotiable)
