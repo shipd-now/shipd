@@ -5541,6 +5541,245 @@ class SearchTest(SpecStatusTestBase):
         self.assertIn("zzz-no-such-term", lines[0])
 
 
+class PrdShowTest(SpecStatusTestBase):
+    """``prd-show [slug]`` — the PRD inspection verb (shipd-prd
+    prd-show-verb). With a slug it prints the PRD's report (status, template
+    tier, optional initiative, resolved path, citing epics); bare it lists the
+    workspace chain's PRD roster. Both accept ``--json``.
+
+    Driven as a black box through the CLI against temp workspaces, exactly as
+    :class:`CatTest` drives the mediated reads."""
+
+    # -- fixture helpers ---------------------------------------------------
+
+    def make_prd_at(self, root, slug, status="draft", template="standard",
+                    initiative=None, body="\n## Problem\n\nUsers wait.\n"):
+        """Write ``<root>/.shipd/prds/<slug>/prd.md`` with a PRD header."""
+        pdir = os.path.join(root, ".shipd", "prds", slug)
+        os.makedirs(pdir, exist_ok=True)
+        header = "# %s\nStatus: %s\nTemplate: %s\n" % (slug, status, template)
+        if initiative is not None:
+            header += "Initiative: %s\n" % initiative
+        path = os.path.join(pdir, "prd.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(header + body)
+        return path
+
+    def make_epic_at(self, root, slug, status="active", prd=None):
+        """Write ``<root>/.shipd/epics/<slug>/epic.md``, optionally citing a
+        PRD through the header's ``PRD:`` metadata line."""
+        edir = os.path.join(root, ".shipd", "epics", slug)
+        os.makedirs(edir, exist_ok=True)
+        header = "# %s\nStatus: %s\n" % (slug, status)
+        if prd is not None:
+            header += "PRD: %s\n" % prd
+        path = os.path.join(edir, "epic.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(header + "\n## Introduction\n\nWhy.\n\n## Changes\n")
+        return path
+
+    def worktree(self, name):
+        """Create ``<root>/.worktrees/<name>`` and return it — a second
+        candidate root of the invocation root's own universe."""
+        wt = os.path.join(self.root, ".worktrees", name)
+        os.makedirs(wt, exist_ok=True)
+        return wt
+
+    def field(self, stdout, key):
+        """The value of the first ``<key>: <value>`` report line."""
+        for line in stdout.splitlines():
+            if line.startswith(key + ": "):
+                return line[len(key) + 2:]
+        return None
+
+    def cited(self, stdout):
+        """Every ``cited-by:`` line's value, in report order."""
+        return [line[len("cited-by: "):] for line in stdout.splitlines()
+                if line.startswith("cited-by: ")]
+
+    # -- the slugged report -------------------------------------------------
+
+    def test_report_prints_status_template_and_path(self):
+        self.declare_workspace()
+        self.make_prd_at(self.root, "mobile-push", status="approved",
+                         template="comprehensive")
+        r = self.cli("prd-show", "mobile-push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[0], "mobile-push: approved")
+        self.assertEqual(self.field(r.stdout, "Template"), "comprehensive")
+        self.assertEqual(
+            self.field(r.stdout, "path"),
+            os.path.join(".shipd", "prds", "mobile-push", "prd.md"))
+
+    def test_report_carries_the_initiative_line_only_when_present(self):
+        self.declare_workspace()
+        self.make_prd_at(self.root, "mobile-push", initiative="q3-growth")
+        self.make_prd_at(self.root, "web-push")
+        with_init = self.cli("prd-show", "mobile-push")
+        self.assertEqual(with_init.returncode, 0, with_init.stderr)
+        self.assertEqual(self.field(with_init.stdout, "Initiative"),
+                         "q3-growth")
+        without = self.cli("prd-show", "web-push")
+        self.assertEqual(without.returncode, 0, without.stderr)
+        self.assertIsNone(self.field(without.stdout, "Initiative"))
+
+    def test_report_names_a_worktree_hosted_citing_epic(self):
+        """The reverse lookup spans the invocation root's universe — the root
+        and its worktrees — so an epic authored in a worktree still cites."""
+        self.declare_workspace()
+        self.make_prd_at(self.root, "mobile-push")
+        wt = self.worktree("reporting")
+        self.make_epic_at(wt, "reporting-overhaul", status="active",
+                          prd="mobile-push")
+        r = self.cli("prd-show", "mobile-push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.cited(r.stdout),
+                         ["reporting-overhaul (active)"])
+
+    def test_report_lists_citing_epics_sorted_and_deduped_root_first(self):
+        self.declare_workspace()
+        self.make_prd_at(self.root, "mobile-push")
+        self.make_epic_at(self.root, "zeta-epic", status="draft",
+                          prd="mobile-push")
+        self.make_epic_at(self.root, "alpha-epic", status="complete",
+                          prd="mobile-push")
+        # The same slug in a worktree is the root copy's shadow, not a
+        # second row, and an epic citing another PRD never appears.
+        wt = self.worktree("dup")
+        self.make_epic_at(wt, "alpha-epic", status="ready", prd="mobile-push")
+        self.make_epic_at(wt, "other-epic", status="active", prd="web-push")
+        r = self.cli("prd-show", "mobile-push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.cited(r.stdout),
+                         ["alpha-epic (complete)", "zeta-epic (draft)"])
+
+    def test_uncited_prd_reports_none(self):
+        self.declare_workspace()
+        self.make_prd_at(self.root, "mobile-push")
+        self.make_epic_at(self.root, "reporting-overhaul", status="active")
+        r = self.cli("prd-show", "mobile-push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.cited(r.stdout), ["none"])
+
+    def test_unknown_slug_errors_naming_the_expected_path(self):
+        self.declare_workspace()
+        r = self.cli("prd-show", "no-such-prd")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no-such-prd", r.stderr)
+        self.assertIn(
+            os.path.join(self.root, ".shipd", "prds", "no-such-prd", "prd.md"),
+            r.stderr)
+
+    def test_no_workspace_is_an_error(self):
+        # No `.shipd-config.json` declaring `workspace` anywhere above the
+        # temp root, so the PRD store cannot resolve at all.
+        r = self.cli("prd-show", "mobile-push")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no workspace found", r.stderr)
+
+    def test_bare_no_workspace_is_an_error(self):
+        r = self.cli("prd-show")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no workspace found", r.stderr)
+
+    # -- the bare roster ----------------------------------------------------
+
+    def test_bare_roster_lists_every_prd_sorted(self):
+        self.declare_workspace()
+        self.make_prd_at(self.root, "web-push", status="approved",
+                         template="basic")
+        self.make_prd_at(self.root, "mobile-push", status="draft",
+                         template="standard")
+        r = self.cli("prd-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            [ln for ln in r.stdout.splitlines() if ln.strip()],
+            ["mobile-push: draft (standard)", "web-push: approved (basic)"])
+
+    def test_bare_roster_inner_chain_member_shadows_the_outer_copy(self):
+        """Two chain members holding the same slug print one row — the
+        nearest member's, matching ``resolve_prd``'s shadowing."""
+        self.declare_workspace()
+        self.make_prd_at(self.root, "mobile-push", status="draft",
+                         template="basic")
+        self.make_prd_at(self.root, "outer-only", status="approved",
+                         template="basic")
+        inner = os.path.join(self.root, "nested")
+        os.makedirs(inner, exist_ok=True)
+        self.declare_workspace(root=inner)
+        self.make_prd_at(inner, "mobile-push", status="approved",
+                         template="comprehensive")
+        repo = os.path.join(inner, "repo")
+        os.makedirs(repo, exist_ok=True)
+        r = subprocess.run(
+            ["python3", SCRIPT, "--root", repo, "prd-show"],
+            capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            [ln for ln in r.stdout.splitlines() if ln.strip()],
+            ["mobile-push: approved (comprehensive)",
+             "outer-only: approved (basic)"])
+
+    def test_empty_store_reports_no_prds_and_exits_zero(self):
+        self.declare_workspace()
+        r = self.cli("prd-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("no PRDs", r.stdout)
+        self.assertIn(os.path.join(self.root, ".shipd", "prds"), r.stdout)
+
+    def test_unparseable_header_renders_as_question_marks(self):
+        self.declare_workspace()
+        pdir = os.path.join(self.root, ".shipd", "prds", "broken")
+        os.makedirs(pdir)
+        with open(os.path.join(pdir, "prd.md"), "w", encoding="utf-8") as fh:
+            fh.write("nothing resembling a header\n")
+        r = self.cli("prd-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("broken: ? (?)", r.stdout)
+
+    # -- JSON ---------------------------------------------------------------
+
+    def test_json_report_shape(self):
+        self.declare_workspace()
+        self.make_prd_at(self.root, "mobile-push", status="approved",
+                         template="basic", initiative="q3-growth")
+        self.make_epic_at(self.root, "reporting-overhaul", status="active",
+                          prd="mobile-push")
+        r = self.cli("prd-show", "mobile-push", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            json.loads(r.stdout),
+            {"slug": "mobile-push", "status": "approved", "template": "basic",
+             "initiative": "q3-growth",
+             "path": os.path.join(".shipd", "prds", "mobile-push", "prd.md"),
+             "cited_by": [{"slug": "reporting-overhaul",
+                           "status": "active"}]})
+
+    def test_json_report_carries_null_initiative_and_empty_citations(self):
+        self.declare_workspace()
+        self.make_prd_at(self.root, "mobile-push")
+        r = self.cli("prd-show", "mobile-push", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data = json.loads(r.stdout)
+        self.assertIsNone(data["initiative"])
+        self.assertEqual(data["cited_by"], [])
+
+    def test_json_roster_shape(self):
+        self.declare_workspace()
+        self.make_prd_at(self.root, "web-push", status="approved",
+                         template="basic")
+        self.make_prd_at(self.root, "mobile-push", status="draft",
+                         template="standard")
+        r = self.cli("prd-show", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            json.loads(r.stdout),
+            [{"slug": "mobile-push", "status": "draft",
+              "template": "standard"},
+             {"slug": "web-push", "status": "approved", "template": "basic"}])
+
+
 class ListRowsTest(SpecStatusTestBase):
     """``spec_status.list_rows`` — the shared discovery seam ``shipd list``
     renders (shipd-cli cli-list). Called in-process: the rows, not their

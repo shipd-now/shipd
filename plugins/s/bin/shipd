@@ -77,6 +77,7 @@ VERB_TABLE = {
     "locate": ("spec_status.py", ["locate"]),
     "related": ("spec_status.py", ["related"]),
     "search": ("spec_status.py", ["search"]),
+    "prd": ("spec_status.py", ["prd-show"]),
     "epic": ("spec_status.py", ["epic-show"]),
     "workspace": ("spec_status.py", ["workspace-show"]),
     "wiki": ("spec_status.py", ["wiki-show"]),
@@ -144,6 +145,8 @@ verbs:
                              related surface plus initiative briefs and this
                              repo's git-tracked files
   epic <slug>                an epic's status, metadata, and member states
+  prd [slug]                 a PRD's report and citing epics; bare: the
+                             workspace's PRD roster
   workspace [init|sync]      the workspace root, its projects, and initiatives
                              (init: create one; sync: materialize its members)
   wiki [init]                the wiki store (init: scaffold it)
@@ -171,9 +174,9 @@ options:
   -h, --help                 print this banner
   --version                  print the plugin version
 
-The read verbs list, status, locate, related, search, epic, workspace, lint,
-and harness accept --json, emitting one machine-readable JSON document instead
-of the text report.
+The read verbs list, status, locate, related, search, prd, epic, workspace,
+lint, and harness accept --json, emitting one machine-readable JSON document
+instead of the text report.
 """
 
 

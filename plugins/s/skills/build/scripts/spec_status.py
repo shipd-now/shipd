@@ -3072,6 +3072,175 @@ def cmd_initiative_set_status(root, status, slug):
 
 
 # ---------------------------------------------------------------------------
+# PRD status verb (shipd-prd prd-show-verb)
+# ---------------------------------------------------------------------------
+
+# The PRD header's mandatory tier line, matched exactly as the linter matches
+# it (``spec_lint.PRD_TEMPLATE_LINE_RE``), with the trailing-space trimming
+# this module's own :data:`STATUS_LINE_RE` applies.
+PRD_TEMPLATE_LINE_RE = re.compile(r"^Template:\s*(.*?)\s*$")
+
+
+def _read_text_or_empty(path):
+    """A store file's text, or the empty string when it cannot be read — a
+    malformed or unreadable PRD is a lint problem, never a listing crash."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+def _prd_header_fields(text):
+    """Return ``(status, template, initiative)`` from a PRD's header, each
+    ``None`` when the header does not carry it.
+
+    ``Status:`` and ``Template:`` are read from the first five non-blank lines
+    — the same window :func:`spec_lint.lint_prd` validates over, so the report
+    and the linter can never disagree about which lines are the header's —
+    and ``Initiative:`` from the header metadata block
+    (:func:`spec_common.parse_plan_metadata`). Nothing here validates: an
+    unknown status or tier is reported verbatim and an absent one as ``None``,
+    which the report renders ``?``."""
+    status = template = None
+    for line in [ln for ln in text.splitlines() if ln.strip()][:5]:
+        m = STATUS_LINE_RE.match(line.strip())
+        if m and status is None:
+            status = m.group(1)
+            continue
+        m = PRD_TEMPLATE_LINE_RE.match(line.strip())
+        if m and template is None:
+            template = m.group(1)
+    initiative = None
+    for key, value in sc.parse_plan_metadata(text):
+        if key == "Initiative":
+            initiative = value
+            break
+    return (status or None, template or None, initiative or None)
+
+
+def _prd_citing_epics(root, slug):
+    """The epics citing this PRD as ``{"slug", "status"}`` rows sorted by slug
+    (shipd-prd prd-show-verb) — the reverse of the epic header's ``PRD:`` link,
+    which points only one way.
+
+    The universe walked is :func:`candidate_roots` — the invocation root, then
+    each ``.worktrees/<name>`` under it — with epics enumerated exactly where
+    :func:`_related_candidate_artifacts` finds them, so an epic authored in a
+    worktree cites from the main checkout too. An epic slug hosted by more than
+    one candidate is counted once, the invocation root winning, matching every
+    other read-side probe; a candidate whose configuration is unreadable is
+    skipped silently. The lookup stops at that universe: like ``related``'s
+    corpus it never spans declared project repos."""
+    rows = []
+    seen = set()
+    for candidate in candidate_roots(root):
+        try:
+            epics_dir = os.path.join(sc.specs_dir(candidate), "epics")
+        except sc.ConfigError:
+            continue
+        for eslug in _dir_names(epics_dir):
+            path = os.path.join(epics_dir, eslug, "epic.md")
+            if eslug in seen or not os.path.isfile(path):
+                continue
+            seen.add(eslug)
+            cites = any(key == "PRD" and value == slug for key, value
+                        in sc.parse_plan_metadata(_read_text_or_empty(path)))
+            if cites:
+                rows.append({
+                    "slug": eslug,
+                    "status": read_epic_status(candidate, eslug) or "?"})
+    rows.sort(key=lambda row: row["slug"])
+    return rows
+
+
+def _prd_report_data(root, slug, path):
+    """One PRD's report as a JSON-ready dict (shipd-prd prd-show-verb): its
+    ``slug`` and ``status``, the ``template`` tier, the ``initiative`` it links
+    (``None`` when it links none), the resolved ``path`` under the
+    :func:`_related_path` convention, and the ``cited_by`` rows."""
+    status, template, initiative = _prd_header_fields(
+        _read_text_or_empty(path))
+    return {
+        "slug": slug,
+        "status": status or "?",
+        "template": template or "?",
+        "initiative": initiative,
+        "path": _related_path(root, path),
+        "cited_by": _prd_citing_epics(root, slug),
+    }
+
+
+def _prd_report_lines(data):
+    """One PRD's report as a list of lines, rendered from
+    :func:`_prd_report_data`: the ``<slug>: <status>`` line, the ``Template:``
+    tier, an ``Initiative:`` line only when the header carries one, the
+    resolved ``path:``, and one ``cited-by: <epic> (<status>)`` line per citing
+    epic — an explicit ``cited-by: none`` when no epic cites it, so an uncited
+    PRD reads as a fact rather than as a missing line."""
+    lines = ["%s: %s" % (data["slug"], data["status"]),
+             "Template: %s" % data["template"]]
+    if data["initiative"] is not None:
+        lines.append("Initiative: %s" % data["initiative"])
+    lines.append("path: %s" % data["path"])
+    if not data["cited_by"]:
+        lines.append("cited-by: none")
+    for row in data["cited_by"]:
+        lines.append("cited-by: %s (%s)" % (row["slug"], row["status"]))
+    return lines
+
+
+def _prd_roster_rows(root):
+    """Every PRD across the workspace chain as ``{"slug", "status",
+    "template"}`` rows sorted by slug.
+
+    The chain is walked nearest member first and a slug is taken from the first
+    member holding it, so the roster shadows exactly as
+    :func:`spec_common.resolve_prd` resolves one slug. A chain member whose
+    configuration is unreadable contributes nothing rather than raising."""
+    rows = {}
+    for ws_root in sc.workspace_chain(root):
+        try:
+            pdir = sc.prds_dir(ws_root)
+        except sc.ConfigError:
+            continue
+        for slug in _dir_names(pdir):
+            path = os.path.join(pdir, slug, "prd.md")
+            if slug in rows or not os.path.isfile(path):
+                continue
+            status, template, _initiative = _prd_header_fields(
+                _read_text_or_empty(path))
+            rows[slug] = {"slug": slug, "status": status or "?",
+                          "template": template or "?"}
+    return [rows[slug] for slug in sorted(rows)]
+
+
+def cmd_prd_show(root, slug=None, as_json=False):
+    """Print a PRD's report, or — with no slug — the workspace chain's PRD
+    roster (shipd-prd prd-show-verb). Read-only.
+
+    Both forms need a discoverable workspace, resolved exactly as ``cat prd``
+    resolves one, so no workspace is the same error there and here. A slug that
+    resolves to no chain member is an error naming the expected ``prd.md`` path
+    under the nearest workspace, while a chain holding no PRD at all is a
+    report, not an error — an empty store is a legitimate state."""
+    ws_root = _resolve_workspace(root)
+    if slug is None:
+        rows = _prd_roster_rows(root)
+        lines = ["%s: %s (%s)" % (row["slug"], row["status"], row["template"])
+                 for row in rows]
+        if not rows:
+            lines = ["no PRDs (%s)" % sc.prds_dir(ws_root)]
+        return _emit(rows, lines, as_json)
+    path = sc.resolve_prd(root, slug)
+    if path is None:
+        raise StatusError(
+            "prd '%s' not found (%s)" % (slug, sc.prd_path(ws_root, slug)))
+    data = _prd_report_data(root, slug, path)
+    return _emit(data, _prd_report_lines(data), as_json)
+
+
+# ---------------------------------------------------------------------------
 # Workspace / project status verbs (spec-status workspace-status-verbs)
 # ---------------------------------------------------------------------------
 
@@ -4043,6 +4212,14 @@ def main(argv=None):
     p_epic_show.add_argument("slug")
     _add_json_flag(p_epic_show)
 
+    p_prd_show = sub.add_parser(
+        "prd-show",
+        help="print a PRD's report (status, template tier, initiative, "
+             "resolved path, citing epics); with no slug, the workspace "
+             "chain's PRD roster")
+    p_prd_show.add_argument("slug", nargs="?", default=None)
+    _add_json_flag(p_prd_show)
+
     p_epic_sync = sub.add_parser(
         "epic-sync", help="re-derive an epic's status from member states")
     p_epic_sync.add_argument("slug")
@@ -4252,6 +4429,8 @@ def main(argv=None):
             return cmd_check_base(root, args.change)
         if args.verb == "epic-show":
             return cmd_epic_show(root, args.slug, as_json=args.json)
+        if args.verb == "prd-show":
+            return cmd_prd_show(root, args.slug, as_json=args.json)
         if args.verb == "epic-sync":
             return cmd_epic_sync(root, args.slug)
         if args.verb == "epic-amend-check":

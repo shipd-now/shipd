@@ -39,7 +39,8 @@ BIN = os.path.join(PLUGIN_ROOT, "bin", "shipd")
 MANIFEST = os.path.join(PLUGIN_ROOT, ".claude-plugin", "plugin.json")
 
 # The curated verb table the usage banner must name (shipd-cli cli-dispatch).
-VERBS = ("init", "list", "status", "locate", "related", "search", "epic",
+VERBS = ("init", "list", "status", "locate", "related", "search", "prd",
+         "epic",
          "workspace", "wiki", "config", "board", "render", "metrics", "lint",
          "worktree",
          "doctor", "statusline", "copilot", "vendor", "harness", "install",
@@ -450,6 +451,45 @@ class DispatchTest(ShipdCliTestBase):
         self.assertEqual(r.returncode, direct.returncode)
         self.assertEqual(r.stderr, direct.stderr)
         self.assertIn("Error:", r.stderr)
+
+    def test_prd_is_a_curated_verb_mapped_to_the_status_script(self):
+        """The `prd` row delegates to ``spec_status.py prd-show``
+        (shipd-cli cli-dispatch)."""
+        self.assertEqual(shipd.VERB_TABLE.get("prd"),
+                         ("spec_status.py", ["prd-show"]))
+
+    def test_the_banner_lists_prd_as_a_verb(self):
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        rows = [line.strip() for line in r.stdout.splitlines()
+                if line.strip().startswith("prd ")]
+        self.assertEqual(len(rows), 1, r.stdout)
+
+    def test_the_banner_names_prd_as_json_capable(self):
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        note = [para for para in r.stdout.split("\n\n") if "--json" in para]
+        self.assertEqual(len(note), 1, r.stdout)
+        self.assertIn("prd", note[0])
+
+    def test_prd_unknown_slug_preserves_output_and_exit_code(self):
+        # A workspace so the verb reaches its not-found path rather than the
+        # no-workspace one; the delegation is what is under test either way.
+        self.write(os.path.join(self.root, ".shipd-config.json"),
+                   json.dumps({"workspace": {}}))
+        # The error names the expected path, and the binary — given no
+        # ``--root`` — resolves it from the cwd, which the OS reports resolved
+        # through its symlinks; the direct run is handed the same resolved
+        # root so the two messages are comparable byte for byte.
+        direct = self.script("spec_status.py", "--root",
+                             os.path.realpath(self.root),
+                             "prd-show", "no-such-prd")
+        r = self.cli("prd", "no-such-prd")
+        self.assertNotEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, direct.returncode)
+        self.assertEqual(r.stderr, direct.stderr)
+        self.assertIn("Error:", r.stderr)
+        self.assertIn("no-such-prd", r.stderr)
 
     def test_init_is_a_curated_verb_mapped_to_the_status_script(self):
         """The `init` row delegates to ``spec_status.py init``
