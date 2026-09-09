@@ -247,8 +247,67 @@ are counted on the trailing line. Add `--json` for the same rows as one
 machine-readable document.
 
 Note that the workspace roster report — `shipd workspace` — lists the
-workspace's projects and initiatives, but **not** its PRDs. `search` is the
-surface that finds those.
+workspace's projects and initiatives, but **not** its PRDs. `search` finds a
+PRD by what it says; `shipd prd`, below, lists and reports on them by slug.
+
+## Inspecting PRDs
+
+`shipd prd <slug>` prints one PRD's report — its header facts, where the slug
+resolved, and which epics cite it:
+
+```sh
+shipd prd mobile-push
+```
+
+```
+mobile-push: approved
+Template: standard
+Initiative: q3-activation
+path: /Users/you/workspaces/notifications/.shipd/prds/mobile-push/prd.md
+cited-by: push-delivery (active)
+cited-by: push-analytics (draft)
+```
+
+The `Initiative:` line prints only when the header carries one. The `path:` is
+where the slug actually resolved on the workspace chain — relative when it
+lives inside the invocation root, absolute otherwise, which is the usual case
+for a workspace PRD read from a member repo.
+
+The `cited-by:` lines are the reverse of the epic header's `PRD:` link, which
+the PRD itself does not record. They are derived by reading the epics of the
+repository you invoke from — that repo and its worktrees, so an epic still
+sitting on a branch counts — and no further: epics in *other* repos of the
+workspace are not scanned. A PRD no epic cites prints one explicit line:
+
+```
+cited-by: none
+```
+
+Bare `shipd prd` lists the roster instead — every PRD the workspace chain
+holds, one line per slug, sorted:
+
+```sh
+shipd prd
+```
+
+```
+mobile-push: approved (standard)
+quiet-hours: draft (basic)
+weekly-digest: superseded (comprehensive)
+```
+
+A slug held by more than one chain member appears once, showing the nearest
+member's copy — the same shadowing that decides which document `shipd prd
+<slug>` reports on. A chain holding no PRDs at all reports the empty store
+rather than failing. Both forms accept `--json` for the same facts as one
+machine-readable document.
+
+The report is a set of facts, not the document: to read the PRD itself, hand
+the report's `path:` line to the markdown viewer.
+
+```sh
+shipd render ~/workspaces/notifications/.shipd/prds/mobile-push/prd.md
+```
 
 ## FAQ
 
@@ -256,7 +315,9 @@ surface that finds those.
 `<workspace-root>/<content-dir>/prds/<slug>/prd.md` — `.shipd/prds/<slug>/prd.md`
 with the default content directory. Not in the member repo, and not on a
 branch. Resolution walks the workspace chain, so a nested job workspace also
-sees the PRDs of the workspace it is nested under.
+sees the PRDs of the workspace it is nested under. To see what that resolves to
+from where you stand, `shipd prd` lists the roster and `shipd prd <slug>`
+reports the resolved path; `shipd search` ranks the same store by content.
 
 **Is a PRD always tied to an epic?** No, and the direction matters: an epic
 cites a PRD by carrying `PRD: <slug>` in its own header, but a PRD holds no
