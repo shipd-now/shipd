@@ -1,5 +1,5 @@
 # prd-discovery
-Status: active
+Status: complete
 Theme: developer-experience
 
 ## Introduction
@@ -153,13 +153,13 @@ one branch, one PR, and each `plugins/s/` PR carries its own version bump.
 
 | Tool | Calls | Output tokens |
 | --- | --- | --- |
-| Bash | 463 | 104.8k |
+| Bash | 549 | 130.5k |
 | Edit | 70 | 21.2k |
-| (no tool) | 0 | 12.8k |
-| Read | 83 | 10.0k |
-| Agent | 12 | 4.7k |
+| (no tool) | 0 | 12.9k |
+| Read | 94 | 10.3k |
+| Write | 9 | 5.7k |
+| Agent | 14 | 5.4k |
 | SendMessage | 3 | 1.8k |
-| Write | 8 | 1.0k |
 | ToolSearch | 3 | 192 |
 | Monitor | 1 | 17 |
-| **Total** | 643 | 156.6k |
+| **Total** | 743 | 188.1k |
