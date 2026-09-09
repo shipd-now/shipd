@@ -1001,6 +1001,21 @@ class EpicLintTest(unittest.TestCase):
         self.assertTrue(has(errors, "Profile"))
         self.assertTrue(has(errors, "unrecognized"))
 
+    def test_non_kebab_prd_value_errors(self):
+        self._write_epic(
+            "reporting-overhaul",
+            self.VALID_EPIC.replace("Status: draft\n",
+                                    "Status: draft\nPRD: Mobile_Push\n"))
+        errors = self._epic_errors("reporting-overhaul")
+        self.assertTrue(has(errors, "Mobile_Push"))
+        self.assertTrue(has(errors, "kebab"))
+
+    def test_epic_without_a_prd_line_lints_as_before(self):
+        # Regression: recognizing the new key leaves an epic carrying no `PRD:`
+        # line untouched — no resolution runs, no new error.
+        self._write_epic("reporting-overhaul", self.VALID_EPIC)
+        self.assertEqual(self._epic_errors("reporting-overhaul"), [])
+
     def test_theme_outside_vocabulary_errors(self):
         self._write_config('{"valid_themes": ["reliability"]}')
         self._write_epic(
@@ -2747,6 +2762,141 @@ class InitiativeReferenceLintTest(unittest.TestCase):
         errors = []
         fn(errors)
         return errors
+
+
+class EpicPrdReferenceLintTest(unittest.TestCase):
+    """``PRD:`` reference resolution on epics (shipd-spec-format
+    epic-header-metadata; shipd-prd prd-store-format).
+
+    The repo fixture lives inside a fake workspace so the workspace is
+    discoverable from ``self.root``; PRDs live at
+    ``<ws>/.shipd/prds/<slug>/prd.md``. ``$HOME`` is overridden so the real
+    home config never leaks into resolution."""
+
+    EPIC = (
+        "# reporting-overhaul\n"
+        "Status: draft\n"
+        "PRD: mobile-push\n"
+        "\n"
+        "## Introduction\n\nWhy it matters.\n\n### Non-goals\n\n- Not that.\n\n"
+        "## Decisions\n\nWhy.\n\n"
+        "## Design\n\nHow.\n\n"
+        "## Changes\n\n"
+        "| Change | Description | Code | Integration | Unknowns | Risk |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| csv-export | Export as CSV | low | medium | low | low |\n"
+    )
+
+    def setUp(self):
+        self.ws = tempfile.mkdtemp()
+        self.root = os.path.join(self.ws, "repo")
+        os.makedirs(self.root, exist_ok=True)
+        self.home = tempfile.mkdtemp()
+        self._old_home = os.environ.get("HOME")
+        os.environ["HOME"] = self.home
+        declare_workspace(self.ws)
+
+    def tearDown(self):
+        if self._old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self._old_home
+        shutil.rmtree(self.ws, ignore_errors=True)
+        shutil.rmtree(self.home, ignore_errors=True)
+
+    def _write_prd(self, slug, ws=None):
+        pdir = os.path.join(ws or self.ws, ".shipd", "prds", slug)
+        os.makedirs(pdir, exist_ok=True)
+        with open(os.path.join(pdir, "prd.md"), "w", encoding="utf-8") as fh:
+            fh.write("# %s\nStatus: draft\nTemplate: standard\n\n"
+                     "## Problem\n\nProse.\n" % slug)
+
+    def _write_epic(self, slug, text, root=None):
+        edir = os.path.join(root or self.root, ".shipd", "epics", slug)
+        os.makedirs(edir, exist_ok=True)
+        with open(os.path.join(edir, "epic.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def _epic_errors(self, slug, root=None):
+        errors = []
+        sl.lint_epic(root or self.root, slug, errors)
+        return [str(e) for e in errors]
+
+    def _run_cli(self, argv):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = sl.main(argv)
+        return code, err.getvalue()
+
+    def _ref_errors(self, metadata, root=None):
+        errors = []
+        sl.check_prd_reference(root or self.root, metadata, errors)
+        return [str(e) for e in errors]
+
+    def test_resolved_prd_passes(self):
+        self._write_prd("mobile-push")
+        self.assertEqual(self._ref_errors([("PRD", "mobile-push")]), [])
+
+    def test_missing_prd_errors_naming_the_path(self):
+        errors = self._ref_errors([("PRD", "mobile-push")])
+        self.assertTrue(has(errors, "mobile-push"))
+        self.assertTrue(has(errors, "prd.md"))
+
+    def test_no_prd_line_is_a_no_op(self):
+        self.assertEqual(self._ref_errors([("Theme", "reliability")]), [])
+
+    def test_epic_carrying_a_resolving_prd_lints_clean(self):
+        self._write_prd("mobile-push")
+        self._write_epic("reporting-overhaul", self.EPIC)
+        self.assertEqual(self._epic_errors("reporting-overhaul"), [])
+        code, _err = self._run_cli(["--epic", "reporting-overhaul",
+                                    "--root", self.root])
+        self.assertEqual(code, 0)
+
+    def test_epic_with_an_unresolvable_prd_errors_naming_the_path(self):
+        self._write_epic(
+            "reporting-overhaul",
+            self.EPIC.replace("PRD: mobile-push", "PRD: no-such-prd"))
+        errors = self._epic_errors("reporting-overhaul")
+        self.assertTrue(has(errors, "no-such-prd"))
+        self.assertTrue(has(errors, "prd.md"))
+        code, _err = self._run_cli(["--epic", "reporting-overhaul",
+                                    "--root", self.root])
+        self.assertNotEqual(code, 0)
+
+    def test_inherited_prd_from_enclosing_workspace_resolves_clean(self):
+        # Only the enclosing workspace holds the PRD; the epic lives under a
+        # nested workspace that holds none of its own.
+        self._write_prd("mobile-push")
+        inner = os.path.join(self.ws, "nested")
+        os.makedirs(inner, exist_ok=True)
+        declare_workspace(inner)
+        repo = os.path.join(inner, "repo")
+        os.makedirs(repo, exist_ok=True)
+        self._write_epic("reporting-overhaul", self.EPIC, root=repo)
+        self.assertEqual(self._epic_errors("reporting-overhaul", root=repo), [])
+
+    def test_no_workspace_skips_silently(self):
+        # CI-safe, exactly as `Initiative:` is: a bare checkout (a GitHub
+        # runner) has no workspace, so resolution is skipped rather than
+        # failing the required `ci` check on files outside the repository.
+        bare = tempfile.mkdtemp()
+        try:
+            self.assertEqual(
+                self._ref_errors([("PRD", "mobile-push")], root=bare), [])
+        finally:
+            shutil.rmtree(bare, ignore_errors=True)
+
+    def test_epic_in_a_workspace_less_checkout_carries_no_prd_error(self):
+        bare = tempfile.mkdtemp()
+        try:
+            self._write_epic("reporting-overhaul", self.EPIC, root=bare)
+            errors = self._epic_errors("reporting-overhaul", root=bare)
+            self.assertFalse(has(errors, "prd.md"))
+            self.assertEqual(errors, [])
+        finally:
+            shutil.rmtree(bare, ignore_errors=True)
 
 
 class WikiLintModeTest(unittest.TestCase):

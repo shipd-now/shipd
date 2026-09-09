@@ -705,6 +705,7 @@ epic.
 Status: draft
 Theme: reliability
 Initiative: mvp-readiness
+PRD: mobile-push
 
 ## Introduction
 
@@ -749,11 +750,18 @@ Rules the linter enforces (in library lint and via `spec_lint.py --epic <slug>`)
   whose value is one of `draft`, `ready`, `active`, `complete`. There is **no**
   epic-level `verified` and no epic archival move — an epic stays under
   `.shipd/epics/` with a derived `complete` status.
-- **Metadata.** The optional header metadata block recognizes exactly two keys,
-  `Theme:` and `Initiative:` (kebab-case values). `Profile:` and `Epic:` are
-  **not** valid on an epic (a profile is change-level; epics do not nest), so
-  they lint as unrecognized keys. `Theme:` is validated against
-  `.shipd-config.json`'s `valid_themes` exactly as on a plan.
+- **Metadata.** The optional header metadata block recognizes exactly three
+  keys, `Theme:`, `Initiative:` and `PRD:` (kebab-case values). `Profile:` and
+  `Epic:` are **not** valid on an epic (a profile is change-level; epics do not
+  nest), so they lint as unrecognized keys. `Theme:` is validated against
+  `.shipd-config.json`'s `valid_themes` exactly as on a plan. `PRD:` cites the
+  discover-phase PRD this epic decomposes — closing
+  Initiative → PRD → Epic → Change. Whenever a workspace root is discoverable
+  it must resolve to an existing `prds/<slug>/prd.md` across the workspace
+  chain, an unresolvable value erroring with the expected path; in a checkout
+  with no discoverable workspace (a CI runner) the resolution is skipped
+  silently, exactly as `Initiative:`'s is, so repo lint never depends on files
+  outside the repository.
 - **Sections.** All four of `## Introduction`, `## Decisions`, `## Design`,
   `## Changes` are required, and `## Introduction` must be the **first** level-2
   section — the why-first narrative opens the document ahead of any technical

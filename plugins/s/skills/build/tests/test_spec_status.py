@@ -615,6 +615,20 @@ class EpicVerbTest(SpecStatusTestBase):
         self.assertEqual(lines[1], "Theme: reliability")
         self.assertEqual(lines[2], "Initiative: mvp-readiness")
 
+    def test_epic_show_renders_the_prd_metadata_line(self):
+        # `PRD:` is a recognized epic metadata key, so the generic metadata
+        # rendering carries it through untouched.
+        self.make_epic(
+            "reporting-overhaul", status="active",
+            metadata=["Theme: reliability", "PRD: mobile-push"],
+            rows=[("csv-export", "CSV", ("low",) * 4)])
+        r = self.cli("epic-show", "reporting-overhaul")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[0], "reporting-overhaul: active")
+        self.assertEqual(lines[1], "Theme: reliability")
+        self.assertEqual(lines[2], "PRD: mobile-push")
+
     def test_epic_show_groups_members_into_board_lanes(self):
         self.make_epic(
             "reporting-overhaul", status="active",

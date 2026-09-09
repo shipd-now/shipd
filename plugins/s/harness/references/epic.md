@@ -7,6 +7,7 @@
 Status: draft
 Theme: <kebab-theme>            (optional)
 Initiative: <kebab-initiative>  (optional)
+PRD: <kebab-prd>                (optional; must resolve to a workspace PRD)
 
 ## Introduction
 
@@ -50,9 +51,12 @@ decomposition follows.
 
 - **Header.** `# <slug>` matches the directory. `Status:` is one of `draft`,
   `ready`, `active`, `complete` — there is no epic-level `verified`. The
-  metadata block recognizes only `Theme:` and `Initiative:`, both kebab-case;
-  `Profile:` and `Epic:` are not valid on an epic. Where the config declares a
-  non-empty `valid_themes`, `Theme:` must be one of them.
+  metadata block recognizes only `Theme:`, `Initiative:` and `PRD:`, all
+  kebab-case; `Profile:` and `Epic:` are not valid on an epic. Where the config
+  declares a non-empty `valid_themes`, `Theme:` must be one of them. `PRD:`
+  cites the discover-phase PRD this epic decomposes and must resolve to a PRD
+  across the workspace chain wherever a workspace is discoverable (skipped
+  silently in a workspace-less checkout) — write it only when that PRD exists.
 - **Sections.** `## Introduction`, `## Decisions`, `## Design`, `## Changes`
   are all required, and `## Introduction` must be the first level-2 section and
   carry a `### Non-goals` subsection.
@@ -84,7 +88,8 @@ A `draft` epic is not amended at all — it is edited in its authoring worktree.
   `docs` kind and linked from `## References`; its content is never pasted into
   `## Decisions`.
 - **Protected.** Everything else: the pre-section header block (title,
-  `Status:`, `Theme:`, `Initiative:`), `## Introduction` and its subsections,
+  `Status:`, `Theme:`, `Initiative:`, `PRD:`), `## Introduction` and its
+  subsections,
   `## Design`, the `## Changes` stub table, the machine-owned
   `## Token usage breakdown`, and any unrecognized level-2 section. An
   amendment that needs one of these is a re-decomposition, not an amendment.

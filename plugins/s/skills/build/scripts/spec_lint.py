@@ -504,10 +504,11 @@ def check_epic_reference(root, change, errors, warnings=None):
 def _check_epic_metadata(root, path, text, errors):
     """Validate an epic's optional header metadata block, reusing the plan
     header grammar (:func:`spec_common.parse_plan_metadata`) against the epic
-    key set (``Theme``, ``Initiative``). ``Profile:`` and ``Epic:`` are not
-    recognized on an epic, so they surface as unrecognized-key errors. ``Theme:``
-    is validated against a non-empty ``valid_themes`` in the resolved layered
-    configuration."""
+    key set (``Theme``, ``Initiative``, ``PRD``). ``Profile:`` and ``Epic:`` are
+    not recognized on an epic, so they surface as unrecognized-key errors.
+    ``Theme:`` is validated against a non-empty ``valid_themes`` in the resolved
+    layered configuration; ``PRD:`` is resolved separately by
+    :func:`check_prd_reference`."""
     pairs = sc.parse_plan_metadata(text)
     keys = [k for k, _ in pairs]
 
@@ -712,6 +713,7 @@ def lint_epic(root, slug, errors, warnings=None):
 
     _check_epic_metadata(root, path, text, errors)
     check_initiative_reference(root, sc.parse_plan_metadata(text), errors)
+    check_prd_reference(root, sc.parse_plan_metadata(text), errors)
 
     stripped = [ln.rstrip() for ln in lines]
     for section in REQUIRED_EPIC_SECTIONS:
@@ -779,6 +781,39 @@ def check_initiative_reference(root, metadata, errors):
         errors.append(LintError(
             "`Initiative: %s` does not resolve to a brief (%s not found; "
             "workspace root %s)" % (slug, expected, ws_root), expected))
+
+
+def check_prd_reference(root, metadata, errors):
+    """Resolve a ``PRD:`` reference carried in ``metadata`` (the ordered
+    ``(key, value)`` pairs parsed from an epic header), closing the
+    Initiative → PRD → Epic → Change hierarchy (shipd-spec-format
+    epic-header-metadata).
+
+    When a workspace root is discoverable from ``root``, a ``PRD: <slug>`` line
+    SHALL resolve to an existing PRD in the nearest workspace-chain member
+    holding one (:func:`spec_common.resolve_prd`, shipd-prd prd-store-format) —
+    an unresolvable value is an error naming both the nearest workspace root and
+    the expected ``prd.md`` path there. When no workspace is discoverable (a
+    bare CI checkout), the check is skipped silently, exactly as
+    :func:`check_initiative_reference` skips, so repo lint never depends on
+    files outside the repository. A metadata block with no ``PRD:`` line is a
+    no-op: the line is optional, and an epic only carries it once the PRD
+    exists."""
+    slug = None
+    for key, value in metadata:
+        if key == "PRD":
+            slug = value
+            break
+    if not slug:
+        return
+    ws_root = sc.find_workspace_root(root)
+    if ws_root is None:
+        return
+    if sc.resolve_prd(root, slug) is None:
+        expected = sc.prd_path(ws_root, slug)
+        errors.append(LintError(
+            "`PRD: %s` does not resolve to a PRD (%s not found; workspace "
+            "root %s)" % (slug, expected, ws_root), expected))
 
 
 def _check_brief_project(ws_root, project_value, path, errors):

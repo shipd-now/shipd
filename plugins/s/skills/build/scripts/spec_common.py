@@ -82,9 +82,11 @@ PROFILES = ("full", "lite")
 # plan header grammar (title / ``Status:`` / metadata block) but recognizes a
 # smaller key set and its own status vocabulary. ``Profile:`` and ``Epic:`` are
 # deliberately *not* recognized on an epic (a profile is change-level; epics do
-# not nest), so they lint as unrecognized keys.
+# not nest), so they lint as unrecognized keys. ``PRD:`` cites the discover-phase
+# PRD the epic decomposes, closing Initiative → PRD → Epic → Change; its value
+# must resolve to a PRD across the workspace chain (:func:`resolve_prd`).
 EPIC_STATUSES = ("draft", "ready", "active", "complete")
-EPIC_METADATA_KEYS = ("Theme", "Initiative")
+EPIC_METADATA_KEYS = ("Theme", "Initiative", "PRD")
 
 # Epic document sections (shipd-spec-format epic-artifact-layout): the four
 # required level-2 sections, in reader order, with ``## Introduction`` mandated

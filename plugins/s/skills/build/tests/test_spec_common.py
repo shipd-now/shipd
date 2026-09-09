@@ -294,7 +294,8 @@ class EpicChangesParserTest(unittest.TestCase):
     def test_epic_constants(self):
         self.assertEqual(
             sc.EPIC_STATUSES, ("draft", "ready", "active", "complete"))
-        self.assertEqual(sc.EPIC_METADATA_KEYS, ("Theme", "Initiative"))
+        self.assertEqual(
+            sc.EPIC_METADATA_KEYS, ("Theme", "Initiative", "PRD"))
         self.assertEqual(sc.EPIC_RATINGS, ("low", "medium", "high"))
         self.assertEqual(
             sc.EPIC_CHANGES_COLUMNS,
