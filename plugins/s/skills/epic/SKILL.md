@@ -327,6 +327,7 @@ directory:
 Status: draft
 Theme: <kebab-theme>            (optional)
 Initiative: <kebab-initiative>  (optional)
+PRD: <kebab-prd>                (optional; must resolve to a workspace PRD)
 
 ## Introduction
 
@@ -372,10 +373,12 @@ Rules the linter enforces (so get them right up front):
 
 - **Header.** `# <slug>` title matching the directory; `Status:` one of `draft`,
   `ready`, `active`, `complete` (there is **no** epic-level `verified`). The
-  optional metadata block recognizes only `Theme:` and `Initiative:`
+  optional metadata block recognizes only `Theme:`, `Initiative:` and `PRD:`
   (kebab-case); `Profile:` and `Epic:` are **not** valid on an epic. When
   `.shipd-config.json` declares a non-empty `valid_themes`, `Theme:` must be one of
-  them.
+  them. `PRD:` names the discover-phase PRD this epic decomposes and must
+  resolve to a PRD across the workspace chain — write it only when that PRD
+  exists.
 - **Sections.** All four of `## Introduction`, `## Decisions`, `## Design`,
   `## Changes` are required, and `## Introduction` must be the **first** level-2
   section — the why-first narrative precedes any technical content. The
