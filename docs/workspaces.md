@@ -137,3 +137,107 @@ What the planner does with a mapped member:
 A malformed map *does* fail the verb reading it, naming the file: invalid JSON, a
 non-object top level or `repos` value, or a mapping value that is not a non-empty
 string.
+
+## Resolving from outside the workspace
+
+Mapping a member solves the workspace's side of the problem: the workspace now
+knows the checkout is `~/projects/shipd`. This section solves the other side —
+running a shipd verb *inside* `~/projects/shipd`, which lives nowhere near
+`~/workspaces/documents-linking`, and still landing in the workspace's wiki,
+registry, and initiatives instead of a repo-local fallback.
+
+Discovery walks a three-rung ladder, and stops at the first rung that resolves:
+
+1. **The ancestor search.** Every directory from the starting one up to `/`
+   whose own `.shipd-config.json` declares `workspace`. A checkout materialized
+   under the workspace root resolves here, exactly as it always has — the rungs
+   below never run, and never cost a `git` probe.
+2. **The pointer.** A `workspace_root` declared in the checkout's own
+   `.shipd-workspace.local.json`.
+3. **The origin-URL scan.** The workspaces under `workspaces_root` that declare
+   this checkout's `origin` as a member `url`.
+
+### The pointer
+
+The explicit rung, and the one to reach for when the scan is ambiguous or your
+workspaces do not live under a single parent. It reuses the machine-local
+dotfile from the previous section — same filename, disjoint fields: a workspace
+root declares `repos`, a member checkout declares `workspace_root`.
+
+`~/projects/shipd/.shipd-workspace.local.json`:
+
+```json
+{
+  "workspace_root": "~/workspaces/documents-linking"
+}
+```
+
+A leading `~` is expanded, and a relative value resolves against the file's own
+directory. Written at the repo root, it governs the whole repo — the pointer is
+found from any subdirectory you run a verb in.
+
+The pointer is **decisive, and reported when wrong**. If it names a directory
+that does not itself declare a `workspace`, discovery resolves *nothing* and
+prints one warning naming the pointer file and the target, rather than quietly
+falling through to the scan — a deliberate declaration that is wrong is a thing
+to fix, not to work around.
+
+### The origin-URL scan
+
+With no pointer declared, and `workspaces_root` (see
+[getting started](workspaces/getting-started.md)) naming an existing directory,
+the engine reads the checkout's `origin` with one local `git remote get-url`
+and matches it against the member `url`s declared by each workspace directly
+under that parent. No declaration is needed anywhere: the manifest already
+carries every member's clone URL.
+
+URLs are compared in a normalized form, so the spelling in the manifest need
+not match the spelling of your remote. Scheme and `user@` prefix are stripped,
+a `host:path` colon reads as `host/path`, one trailing `.git` and any trailing
+slashes are dropped, and the result is case-folded — so all four of these are
+one repository:
+
+```
+git@github.com:acme/repo.git
+https://github.com/Acme/Repo
+ssh://git@github.com/acme/repo/
+github.com/acme/repo
+```
+
+What normalization does *not* do is resolve an **SSH host alias**. If your
+remote is `git@github-acme:acme/repo.git`, where `github-acme` is a `Host`
+entry in your `~/.ssh/config`, its normalized host is `github-acme` — which
+differs from the `github.com` the manifest declares, so the scan will not match
+it. The engine reads no SSH configuration, deliberately: a hostname that only
+your machine can resolve is not something a workspace manifest can be expected
+to know about. Use the `workspace_root` pointer for those checkouts.
+
+Exactly one matching workspace resolves the chain from that workspace — and it
+is the *full* chain, so a base workspace enclosing the matched one is still a
+member. Two or more matching workspaces resolve nothing and print one warning
+naming every match, because guessing between them would silently write a job's
+knowledge into the wrong workspace:
+
+```
+warning: this checkout's origin is declared by 2 workspaces
+(/Users/you/workspaces/documents-linking, /Users/you/workspaces/tasks-rollout);
+declare `workspace_root` in /Users/you/projects/shipd/.shipd-workspace.local.json
+to choose one
+```
+
+The remedy is rung 2: name the one you mean.
+
+### What stays exactly as it was
+
+- **Nothing changes for a start that already resolves an ancestor.** The rungs
+  run only on an empty chain.
+- **A bare checkout stays silent.** No pointer, no `workspaces_root`, no
+  readable `origin`, or no match — the chain is empty, with no warning and no
+  error, exactly as before. CI and headless consumers with no machine config
+  never leave rung 1.
+- **Nothing is written.** Both rungs only read; no verb creates the pointer
+  file for you, and neither warning is ever an error — no verb's exit code
+  changes.
+- **The network is never touched.** The scan's one `git` call is a local
+  remote-URL read, bounded by a short timeout, and any failure simply disables
+  the rung.
