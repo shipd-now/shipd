@@ -387,6 +387,7 @@ RECOGNIZED_CONFIG_KEYS = (
     "pr-mode",
     "store_root",
     "valid_themes",
+    "voice",
     "wiki_base",
     "workspace",
     "workspaces_root",

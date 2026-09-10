@@ -78,6 +78,20 @@ class TestConfigSample(unittest.TestCase):
             extra, [],
             "config example documents unregistered top-level keys: %s" % extra)
 
+    def test_voice_key_is_registered_and_documented(self):
+        """Scenario: Every recognized key is documented (the ``voice`` clause).
+
+        The generic drift guards above pass whenever the registry and the
+        sample agree, so they would also pass if both dropped ``voice``. This
+        pins the key itself, and pins its comment to the two facts the
+        requirement names: what it gates, and its default.
+        """
+        self.assertIn("voice", sc.RECOGNIZED_CONFIG_KEYS)
+        comment = load_sample()["// voice"]
+        self.assertIn("voice digest", comment.lower())
+        self.assertIn("session-start", comment.lower())
+        self.assertIn("true", comment.lower())
+
     def test_key_constants_stay_in_the_registry(self):
         """Scenario: Key constants stay in the registry."""
         registry = set(sc.RECOGNIZED_CONFIG_KEYS)

@@ -733,11 +733,14 @@ class HookRegistration(unittest.TestCase):
 
     COMMAND = ('python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/'
                'guardrails.py"')
+    VOICE_COMMAND = ('python3 "${CLAUDE_PLUGIN_ROOT}/skills/document/'
+                     'scripts/voice_digest.py"')
 
-    def test_hooks_json_declares_both_events(self):
+    def test_hooks_json_declares_the_three_events(self):
         with open(HOOKS_JSON, encoding="utf-8") as fh:
             hooks = json.load(fh)["hooks"]
-        self.assertEqual(sorted(hooks), ["PostToolUse", "PreToolUse"])
+        self.assertEqual(
+            sorted(hooks), ["PostToolUse", "PreToolUse", "SessionStart"])
         for event in ("PreToolUse", "PostToolUse"):
             self.assertEqual(len(hooks[event]), 1, event)
             entry = hooks[event][0]
@@ -746,6 +749,16 @@ class HookRegistration(unittest.TestCase):
             command = entry["hooks"][0]
             self.assertEqual(command["type"], "command", event)
             self.assertEqual(command["command"], self.COMMAND, event)
+
+    def test_hooks_json_declares_the_voice_digest_session_start(self):
+        with open(HOOKS_JSON, encoding="utf-8") as fh:
+            hooks = json.load(fh)["hooks"]
+        self.assertEqual(len(hooks["SessionStart"]), 1)
+        entry = hooks["SessionStart"][0]
+        self.assertEqual(len(entry["hooks"]), 1)
+        command = entry["hooks"][0]
+        self.assertEqual(command["type"], "command")
+        self.assertEqual(command["command"], self.VOICE_COMMAND)
 
 
 if __name__ == "__main__":
