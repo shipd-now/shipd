@@ -117,6 +117,13 @@ It then ships one local commit in the store scoped to the epic file alone,
 subject `shipd: amend epic <slug>`, never pushed. A draft epic is not amended
 at all; it is edited in its authoring worktree.
 
+**Documentation under `docs/` is authored and revised through `/s:document`.**
+That skill carries the shipd documentation standard — the one canonical rules
+file, `plugins/s/skills/document/references/standard.md` — and the stdlib-only
+lint that enforces its mechanical rules. Write a new doc or revise an existing
+one through the skill, and fix every lint finding before the change ships.
+Never hand-write `docs/` prose against a private idea of the house style.
+
 **Conventions live here (or in the specs), never only in an assistant's private
 memory** — a durable rule is checked into this file or the spec library so
 every session inherits it.
@@ -137,7 +144,9 @@ repository's merge gate (and `/s:gate update` to refresh an already-gated
 repository's managed files to the running plugin version),
 `/s:status` for lifecycle status,
 `/s:epic` to decompose features, `/s:explain` to read a shipd epic and explain
-it in under 100 lines plus at-most-necessary diagrams, `/s:research` to produce
+it in under 100 lines plus at-most-necessary diagrams, `/s:document` to author
+and revise `docs/` documentation against the shipd documentation standard,
+`/s:research` to produce
 a cited research report an epic can link, `/s:workspace` to set up and inspect the
 workspace, `/s:initiative` to run workspace initiatives, `/s:ask` to
 query the oracle before interrupting the user, `/s:teach` to

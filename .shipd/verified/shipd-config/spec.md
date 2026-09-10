@@ -792,7 +792,8 @@ The engine SHALL define the recognized top-level configuration keys in a
 single registry constant in `spec_common.py`
 (`autonomous-pipeline`, `build`, `clone_sources`, `completed_retention_days`,
 `dir`, `guardrails`, `memory_dir`, `post-worktree-scripts`, `pr-mode`,
-`store_root`, `valid_themes`, `wiki_base`, `workspace`, `workspaces_root`).
+`store_root`, `valid_themes`, `voice`, `wiki_base`, `workspace`,
+`workspaces_root`).
 The copyable config
 example JSON shipped in the plugin's build references SHALL be strict JSON
 parseable by the stdlib `json` module and SHALL document every registry key —
@@ -806,26 +807,13 @@ differs from the engine's built-in defaults.
 - **WHEN** the test suite compares the registry constant against the keys the
   example documents (declared keys plus the names parsed from `// <key>`
   comment entries)
-- **THEN** every registry key is documented in the example
+- **THEN** the two sets are equal, and `voice` is among them with a comment
+  stating it gates the session-start voice digest and defaults to true
 
-#### Scenario: No unrecognized key is documented
-- **WHEN** the same comparison runs in the other direction
-- **THEN** the example documents no top-level key absent from the registry,
-  the bare `//` header entry excepted
-
-#### Scenario: The sample stays strict JSON
-- **WHEN** the example file is parsed with the stdlib `json` module
-- **THEN** parsing succeeds and yields a JSON object
-
-#### Scenario: Key constants stay in the registry
-- **WHEN** the test suite inspects every module-level `*_KEY` string constant
-  in `spec_common`
-- **THEN** each constant's value is a member of the registry constant
-
-#### Scenario: Copying the sample changes no behavior
-- **WHEN** the example file's declared (non-comment) keys are compared against
-  the engine's built-in defaults
-- **THEN** every declared value equals its documented default
+#### Scenario: Verbatim copy changes nothing
+- **WHEN** the example file is copied as `.shipd-config.json` and the
+  configuration is resolved
+- **THEN** every resolved value equals the engine's built-in default
 
 ### Requirement: Skill prompt path notation
 id: skill-prompt-path-notation
@@ -893,3 +881,20 @@ SHALL behave exactly as it does without the key.
 - **WHEN** `workspaces_root` is declared as a relative path, an empty string,
   or a non-string and a consuming verb runs
 - **THEN** the verb exits non-zero with an error naming `workspaces_root`
+
+### Requirement: Voice key
+id: voice-key
+
+The engine SHALL recognize a top-level `voice` boolean in the layered
+configuration, resolved nearest-layer-wins like every other key, defaulting
+to true when no layer declares it. The key SHALL gate the plugin's
+`SessionStart` voice-digest hook and nothing else.
+
+#### Scenario: The key is a registry member
+- **WHEN** `spec_common.py`'s recognized-keys registry constant is read
+- **THEN** it contains `voice`
+
+#### Scenario: Nearest layer wins
+- **WHEN** an outer layer declares `voice: false` and a nearer layer
+  declares `voice: true`
+- **THEN** the resolved value is true
