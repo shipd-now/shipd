@@ -5,3 +5,6 @@ __pycache__/
 .shipd/autopilot/
 .venv/
 .worktrees/
+
+# Machine-local workspace files (member map / workspace_root pointer)
+.shipd-workspace.local.json
