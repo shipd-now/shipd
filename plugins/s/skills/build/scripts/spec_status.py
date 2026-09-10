@@ -125,6 +125,19 @@ Verbs (see the spec-status + statusline capabilities for the contract):
                      malformed `clone_sources` value exits non-zero. With
                      --write-gitignore, rewrites only the marked member-repos
                      .gitignore block to match the manifest's member paths
+  workspace-map [set <member-path> <local-path> | remove <member-path>]
+                     the engine-owned writer for the machine-local member map
+                     (.shipd-workspace.local.json), so it is never hand-authored.
+                     Bare, list each entry as
+                     `<member-path> -> <value> (<resolved absolute>)` plus a note
+                     per key matching no declared member path. `set` refuses an
+                     undeclared member path (naming the declared ones) and writes
+                     nothing, otherwise stores <local-path> verbatim, preserves
+                     every other top-level key of the map file, and ensures the
+                     workspace root's .gitignore carries the map filename outside
+                     the marked member block; a target that is missing or is not
+                     a git work tree warns on stderr but still writes. `remove`
+                     deletes the entry, erroring when none exists
 
 The six read verbs — ``show``, ``status``, ``locate``, ``related``,
 ``epic-show``, and
@@ -3563,6 +3576,103 @@ def cmd_workspace_sync(root, as_json=False, write_gitignore=False):
     return 0
 
 
+def _declared_member_paths(ws_root):
+    """The manifest's declared member paths in registry order (deduplicated),
+    read from the workspace root's own registry — exactly the members
+    :func:`spec_common.plan_workspace_sync` plans for, so the map verb and the
+    sync plan can never disagree about what is declared."""
+    try:
+        registry = sc.load_workspace(ws_root)
+    except sc.ConfigError as exc:
+        raise StatusError(str(exc))
+    paths = []
+    projects = registry.get("projects")
+    if isinstance(projects, dict):
+        for entry in projects.values():
+            repos = entry.get("repos") if isinstance(entry, dict) else None
+            if not isinstance(repos, list):
+                continue
+            for repo in repos:
+                path = sc.repo_entry_path(repo)
+                if path is not None and path not in paths:
+                    paths.append(path)
+    return paths
+
+
+def _map_entry_line(ws_root, path, value):
+    """One ``workspace-map`` listing line: the stored value verbatim plus the
+    absolute destination :func:`spec_common.member_dest` resolves it to."""
+    return "%s -> %s (%s)" % (path, value, sc.member_dest(ws_root, path))
+
+
+def cmd_workspace_map(root, member=None, local=None, remove=False):
+    """List, set, or remove entries of the machine-local member map
+    (shipd-workspace workspace-map-verbs) — the engine-owned writer, so the map
+    file is never hand-authored.
+
+    Resolves the workspace from ``root`` (the standard no-workspace error
+    otherwise) and reads/writes ``<ws_root>/.shipd-workspace.local.json``. The
+    bare form lists each entry as ``<member-path> -> <value> (<resolved>)``
+    followed by the unknown-key note ``workspace-show`` already prints for a
+    key matching no declared member path. ``set`` requires ``member`` to be a
+    declared manifest member path — erroring and writing nothing otherwise,
+    naming the declared paths — stores ``local`` verbatim (``~`` and relative
+    forms resolve at read time, so what the user typed is what the file says),
+    and ensures the workspace root's ``.gitignore`` carries the map filename
+    outside the marked member block. A target that does not exist or is not a
+    git work tree is a stderr warning, never a refusal: pre-declaring a
+    checkout you are about to move into place is legitimate. ``remove`` deletes
+    the entry, erroring when none exists, and leaves the gitignore line alone.
+    A malformed map file fails every form with the load's own error, never
+    repaired."""
+    ws_root = _resolve_workspace(root)
+    try:
+        repos = sc.load_repo_map(ws_root)
+    except sc.ConfigError as exc:
+        raise StatusError(str(exc))
+
+    if member is None:
+        declared = _declared_member_paths(ws_root)
+        if not repos:
+            print("(no entries)")
+        for path, value in repos.items():
+            print(_map_entry_line(ws_root, path, value))
+        for path in repos:
+            if path not in declared:
+                print("note: member map key '%s' matches no declared member "
+                      "path (%s)" % (path, sc.REPO_MAP_FILENAME))
+        return 0
+
+    if remove:
+        if member not in repos:
+            held = ", ".join(repos) or "(none)"
+            raise StatusError(
+                "no member map entry for '%s' (mapped member paths: %s)"
+                % (member, held))
+        del repos[member]
+        sc.save_repo_map(ws_root, repos)
+        print("removed %s" % member)
+        return 0
+
+    declared = _declared_member_paths(ws_root)
+    if member not in declared:
+        raise StatusError(
+            "'%s' is not a declared member path (declared: %s)"
+            % (member, ", ".join(declared) or "(none)"))
+    repos[member] = local
+    sc.save_repo_map(ws_root, repos)
+    sc.ensure_gitignore_line(ws_root, sc.REPO_MAP_FILENAME)
+    dest = sc.member_dest(ws_root, member)
+    if not os.path.isdir(dest):
+        sys.stderr.write(
+            "warning: target does not exist: %s\n" % dest)
+    elif not sc.inside_git_work_tree(dest):
+        sys.stderr.write(
+            "warning: target is not a git work tree: %s\n" % dest)
+    print(_map_entry_line(ws_root, member, local))
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Wiki status verbs (spec-status wiki-status-verbs)
 # ---------------------------------------------------------------------------
@@ -4364,6 +4474,15 @@ def main(argv=None):
         help="rewrite only the marked member-repos .gitignore block to match "
              "the manifest's member paths")
 
+    p_ws_map = sub.add_parser(
+        "workspace-map",
+        help="list the machine-local member map, or `set <member-path> "
+             "<local-path>` / `remove <member-path>` an entry")
+    p_ws_map.add_argument(
+        "args", nargs="*",
+        help="no arguments lists the map; `set <member-path> <local-path>` "
+             "writes one entry; `remove <member-path>` deletes one")
+
     p_wiki_init = sub.add_parser(
         "wiki-init",
         help="scaffold the workspace wiki store layout")
@@ -4495,6 +4614,20 @@ def main(argv=None):
             return cmd_workspace_sync(
                 root, as_json=args.json,
                 write_gitignore=args.write_gitignore)
+        if args.verb == "workspace-map":
+            rest = list(args.args)
+            if not rest:
+                return cmd_workspace_map(root)
+            action, operands = rest[0], rest[1:]
+            if action == "set" and len(operands) == 2:
+                return cmd_workspace_map(
+                    root, member=operands[0], local=operands[1])
+            if action == "remove" and len(operands) == 1:
+                return cmd_workspace_map(
+                    root, member=operands[0], remove=True)
+            raise StatusError(
+                "usage: workspace-map [set <member-path> <local-path> | "
+                "remove <member-path>]")
         if args.verb == "wiki-init":
             return cmd_wiki_init(root, args.personal)
         if args.verb == "wiki-show":

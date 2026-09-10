@@ -6136,6 +6136,228 @@ class WorkspaceSyncTest(SpecStatusTestBase):
         self.assertIn("no workspace", r.stderr.lower())
 
 
+class WorkspaceMapTest(SpecStatusTestBase):
+    """The ``workspace-map`` verb — list/set/remove (shipd-workspace
+    workspace-map-verbs): the engine-owned writer for the machine-local member
+    map, so the file is never hand-authored. ``self.root`` doubles as the
+    workspace root; mapped checkouts live in ``self.outside`` so they genuinely
+    lie outside it."""
+
+    MEMBERS_BEGIN = "# >>> shipd-workspace members"
+    MEMBERS_END = "# <<< shipd-workspace members"
+    MAP_FILENAME = ".shipd-workspace.local.json"
+
+    def setUp(self):
+        super().setUp()
+        self.outside = tempfile.mkdtemp(prefix="spec-status-outside-")
+        self.addCleanup(shutil.rmtree, self.outside, True)
+
+    def declare_members(self, *paths):
+        """Declare one project whose repos are ``paths``."""
+        self.declare_workspace(
+            {"projects": {"alpha": {"repos": list(paths)}}})
+
+    def checkout(self, name, create=True):
+        path = os.path.join(self.outside, name)
+        if create:
+            os.makedirs(path, exist_ok=True)
+        return path
+
+    def map_path(self):
+        return os.path.join(self.root, self.MAP_FILENAME)
+
+    def read_map_file(self):
+        with open(self.map_path(), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def write_raw_map(self, payload):
+        with open(self.map_path(), "w", encoding="utf-8") as fh:
+            fh.write(payload)
+
+    def gitignore(self):
+        path = os.path.join(self.root, ".gitignore")
+        if not os.path.isfile(path):
+            return None
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+
+    # -- list --------------------------------------------------------------
+
+    def test_bare_form_lists_stored_value_and_resolved_destination(self):
+        target = self.checkout("shipd")
+        self.declare_members("shipd")
+        self.write_raw_map(json.dumps({"repos": {"shipd": target}}))
+        r = self.cli("workspace-map")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("shipd -> %s (%s)" % (target, target), r.stdout)
+
+    def test_bare_form_resolves_a_relative_value(self):
+        self.declare_members("shipd")
+        self.write_raw_map(json.dumps({"repos": {"shipd": "../checkout"}}))
+        r = self.cli("workspace-map")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("shipd -> ../checkout (", r.stdout)
+        self.assertIn(
+            os.path.normpath(os.path.join(self.root, "..", "checkout")),
+            r.stdout)
+
+    def test_bare_form_notes_an_unknown_map_key(self):
+        self.declare_members("shipd")
+        self.write_raw_map(json.dumps(
+            {"repos": {"gone-member": self.checkout("gone-member")}}))
+        r = self.cli("workspace-map")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("note", r.stdout)
+        self.assertIn("gone-member", r.stdout)
+
+    def test_bare_form_on_an_empty_map_exits_zero(self):
+        self.declare_members("shipd")
+        r = self.cli("workspace-map")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_bare_form_fails_on_a_malformed_map_naming_the_file(self):
+        self.declare_members("shipd")
+        self.write_raw_map(json.dumps({"repos": []}))
+        r = self.cli("workspace-map")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn(self.MAP_FILENAME, r.stderr)
+
+    # -- set ---------------------------------------------------------------
+
+    def test_set_writes_the_value_verbatim_and_ignores_the_map_file(self):
+        self.declare_members("shipd")
+        r = self.cli("workspace-map", "set", "shipd", "~/projects/shipd")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read_map_file()["repos"],
+                         {"shipd": "~/projects/shipd"})
+        body = self.gitignore()
+        self.assertIsNotNone(body)
+        self.assertIn(self.MAP_FILENAME, body)
+
+    def test_set_ignore_line_lands_outside_the_marked_member_block(self):
+        self.declare_members("shipd")
+        gi_path = os.path.join(self.root, ".gitignore")
+        with open(gi_path, "w", encoding="utf-8") as fh:
+            fh.write("node_modules/\n\n%s\nshipd\n%s\n"
+                     % (self.MEMBERS_BEGIN, self.MEMBERS_END))
+        r = self.cli("workspace-map", "set", "shipd",
+                     self.checkout("shipd"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        body = self.gitignore()
+        block = body.split(self.MEMBERS_BEGIN)[1].split(self.MEMBERS_END)[0]
+        self.assertNotIn(self.MAP_FILENAME, block)
+        self.assertIn(self.MAP_FILENAME, body)
+
+    def test_set_is_idempotent_about_the_ignore_line(self):
+        self.declare_members("shipd", "web")
+        self.cli("workspace-map", "set", "shipd", self.checkout("shipd"))
+        first = self.gitignore()
+        r = self.cli("workspace-map", "set", "web", self.checkout("web"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        second = self.gitignore()
+        self.assertEqual(second, first)
+        self.assertEqual(second.count(self.MAP_FILENAME), 1)
+
+    def test_set_preserves_foreign_top_level_keys(self):
+        self.declare_members("shipd")
+        self.write_raw_map(json.dumps({"workspace_root": "/elsewhere/ws"}))
+        r = self.cli("workspace-map", "set", "shipd", self.checkout("shipd"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data = self.read_map_file()
+        self.assertEqual(data["workspace_root"], "/elsewhere/ws")
+        self.assertIn("shipd", data["repos"])
+
+    def test_set_replaces_only_the_named_entry(self):
+        self.declare_members("shipd", "web")
+        self.cli("workspace-map", "set", "shipd", "/old/shipd")
+        self.cli("workspace-map", "set", "web", "/checkout/web")
+        r = self.cli("workspace-map", "set", "shipd", "/new/shipd")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read_map_file()["repos"],
+                         {"shipd": "/new/shipd", "web": "/checkout/web"})
+
+    def test_set_refuses_an_undeclared_member_path_and_writes_nothing(self):
+        self.declare_members("shipd")
+        r = self.cli("workspace-map", "set", "web", "../web")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("shipd", r.stderr)       # names the declared paths
+        self.assertFalse(os.path.exists(self.map_path()))
+        self.assertIsNone(self.gitignore())
+
+    def test_set_warns_on_a_missing_target_but_still_writes(self):
+        self.declare_members("shipd")
+        target = self.checkout("gone", create=False)
+        r = self.cli("workspace-map", "set", "shipd", target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("warning", r.stderr.lower())
+        self.assertIn(target, r.stderr)
+        self.assertEqual(self.read_map_file()["repos"], {"shipd": target})
+
+    def test_set_warns_when_the_target_is_not_a_git_work_tree(self):
+        self.declare_members("shipd")
+        target = self.checkout("plain")
+        r = self.cli("workspace-map", "set", "shipd", target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("git", r.stderr.lower())
+        self.assertEqual(self.read_map_file()["repos"], {"shipd": target})
+
+    def test_set_fails_on_a_malformed_map_naming_the_file(self):
+        self.declare_members("shipd")
+        self.write_raw_map("{ not json")
+        r = self.cli("workspace-map", "set", "shipd", self.checkout("shipd"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn(self.MAP_FILENAME, r.stderr)
+        with open(self.map_path(), encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "{ not json")
+
+    # -- remove ------------------------------------------------------------
+
+    def test_remove_deletes_exactly_its_entry(self):
+        self.declare_members("shipd", "web")
+        self.cli("workspace-map", "set", "shipd", self.checkout("shipd"))
+        self.cli("workspace-map", "set", "web", self.checkout("web"))
+        r = self.cli("workspace-map", "remove", "shipd")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(list(self.read_map_file()["repos"]), ["web"])
+
+    def test_second_identical_remove_exits_non_zero(self):
+        self.declare_members("shipd")
+        self.cli("workspace-map", "set", "shipd", self.checkout("shipd"))
+        self.assertEqual(
+            self.cli("workspace-map", "remove", "shipd").returncode, 0)
+        r = self.cli("workspace-map", "remove", "shipd")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("shipd", r.stderr)
+
+    def test_remove_leaves_the_ignore_line_in_place(self):
+        self.declare_members("shipd")
+        self.cli("workspace-map", "set", "shipd", self.checkout("shipd"))
+        r = self.cli("workspace-map", "remove", "shipd")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(self.MAP_FILENAME, self.gitignore())
+
+    def test_remove_preserves_foreign_top_level_keys(self):
+        self.declare_members("shipd")
+        self.cli("workspace-map", "set", "shipd", self.checkout("shipd"))
+        data = self.read_map_file()
+        data["workspace_root"] = "/elsewhere/ws"
+        self.write_raw_map(json.dumps(data))
+        r = self.cli("workspace-map", "remove", "shipd")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            self.read_map_file()["workspace_root"], "/elsewhere/ws")
+
+    # -- no workspace ------------------------------------------------------
+
+    def test_every_form_requires_a_workspace(self):
+        for argv in (["workspace-map"],
+                     ["workspace-map", "set", "shipd", "../shipd"],
+                     ["workspace-map", "remove", "shipd"]):
+            r = self.cli(*argv)
+            self.assertNotEqual(r.returncode, 0, argv)
+            self.assertIn("no workspace", r.stderr.lower(), argv)
+
+
 class CheckBaseTest(SpecStatusTestBase):
     """`check-base [change]` compares a planned change's delta specs against the
     current master library (spec-status check-base-verb): read-only, one

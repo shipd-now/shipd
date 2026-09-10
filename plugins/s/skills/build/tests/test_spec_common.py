@@ -1569,6 +1569,90 @@ class RepoMapTest(unittest.TestCase):
                 os.path.join(os.path.realpath(tmp), "checkout", "shipd"))
 
 
+class SaveRepoMapTest(unittest.TestCase):
+    """save_repo_map: the engine-owned writer beside load_repo_map
+    (shipd-workspace workspace-map-verbs).
+
+    It replaces only the ``repos`` key of
+    ``<ws_root>/.shipd-workspace.local.json``, preserving every other top-level
+    key (the reverse-lookup ``workspace_root`` pointer included), and never
+    repairs a malformed file — the load's own ``ConfigError`` propagates."""
+
+    def _read_raw(self, ws):
+        with open(os.path.join(ws, sc.REPO_MAP_FILENAME),
+                  encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_absent_file_is_created_with_only_the_repos_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            sc.save_repo_map(ws, {"shipd": "~/projects/shipd"})
+            self.assertEqual(
+                json.loads(self._read_raw(ws)),
+                {"repos": {"shipd": "~/projects/shipd"}})
+
+    def test_output_is_pretty_printed_with_a_trailing_newline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            sc.save_repo_map(ws, {"shipd": "../checkout/shipd"})
+            body = self._read_raw(ws)
+            self.assertTrue(body.endswith("\n"), body)
+            self.assertIn("\n  ", body)
+
+    def test_round_trips_through_load_repo_map(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            repos = {"shipd": "~/projects/shipd",
+                     "apps/backend": "../outside/backend"}
+            sc.save_repo_map(ws, repos)
+            self.assertEqual(sc.load_repo_map(ws), repos)
+
+    def test_replaces_only_the_repos_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_repo_map(ws, {"shipd": "/old/shipd", "web": "/old/web"})
+            sc.save_repo_map(ws, {"shipd": "/new/shipd"})
+            self.assertEqual(sc.load_repo_map(ws), {"shipd": "/new/shipd"})
+
+    def test_foreign_top_level_keys_are_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_raw_repo_map(ws, json.dumps(
+                {sc.WORKSPACE_POINTER_FIELD: "/elsewhere/ws",
+                 "future-key": {"nested": [1, 2]}}))
+            sc.save_repo_map(ws, {"shipd": "/checkout/shipd"})
+            data = json.loads(self._read_raw(ws))
+            self.assertEqual(data[sc.WORKSPACE_POINTER_FIELD], "/elsewhere/ws")
+            self.assertEqual(data["future-key"], {"nested": [1, 2]})
+            self.assertEqual(data["repos"], {"shipd": "/checkout/shipd"})
+
+    def test_an_empty_map_writes_an_empty_repos_object(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_repo_map(ws, {"shipd": "/old/shipd"})
+            sc.save_repo_map(ws, {})
+            self.assertEqual(json.loads(self._read_raw(ws)), {"repos": {}})
+            self.assertEqual(sc.load_repo_map(ws), {})
+
+    def test_malformed_existing_file_errors_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_raw_repo_map(ws, "{ not json")
+            with self.assertRaises(sc.ConfigError) as ctx:
+                sc.save_repo_map(ws, {"shipd": "/checkout/shipd"})
+            self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
+            self.assertEqual(self._read_raw(ws), "{ not json")
+
+    def test_malformed_repos_value_errors_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_raw_repo_map(ws, json.dumps({"repos": []}))
+            with self.assertRaises(sc.ConfigError) as ctx:
+                sc.save_repo_map(ws, {"shipd": "/checkout/shipd"})
+            self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
+            self.assertEqual(json.loads(self._read_raw(ws)), {"repos": []})
+
+
 class ProjectOfTest(unittest.TestCase):
     """project_of containment resolution (shipd-workspace project-resolution):
     the longest (most specific) matching entry wins across projects; an

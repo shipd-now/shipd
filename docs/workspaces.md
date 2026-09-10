@@ -106,8 +106,48 @@ comments:
   stored verbatim and resolved on every read.
 - The file is **machine-local and never committed** — it maps *this* machine's
   checkouts, so it sits beside the tracked `.shipd-config.json` manifest rather
-  than inside it. Add it to your ignore rules; nothing in the engine writes it
-  for you.
+  than inside it. The `set` verb below adds it to the workspace root's
+  `.gitignore` for you on first write.
+
+You do not hand-author that file. The engine owns it, through three verb forms:
+
+```sh
+# list every entry: stored value, then the absolute path it resolves to
+python3 <plugin>/skills/build/scripts/spec_status.py workspace-map
+
+# map a declared member to a checkout you already have
+python3 <plugin>/skills/build/scripts/spec_status.py \
+    workspace-map set shipd ~/projects/shipd
+
+# unmap it again
+python3 <plugin>/skills/build/scripts/spec_status.py workspace-map remove shipd
+```
+
+- **`set` validates the member path.** It must be a member path the manifest
+  declares; anything else exits non-zero naming the declared paths and writes
+  nothing. The *local* path is stored **verbatim** — a `~` or a relative form is
+  resolved on every read, so what you typed is what the file says.
+- **`set` never repairs, and never refuses over the target.** A target that does
+  not exist, or that is not a git work tree, is a warning on stderr and the
+  entry is still written: pre-declaring a checkout you are about to move into
+  place is legitimate.
+- **`set` ensures the ignore line.** On a successful write it appends
+  `.shipd-workspace.local.json` to the workspace root's `.gitignore` —
+  idempotently, creating the file when absent, and deliberately **outside** the
+  marked member-repos block, which `workspace sync --write-gitignore` rewrites
+  to exactly the manifest's member paths and would otherwise drop it.
+- **Every other top-level key survives.** Only `repos` is replaced, so the
+  `workspace_root` pointer described in the next section can share the file.
+- **`remove` deletes exactly its entry** and exits non-zero when there is none.
+  It leaves the ignore line alone.
+- **A malformed file fails both writers** with the same error the readers
+  raise, naming the file. The verbs never repair a broken map.
+
+The guided front door is **`/s:workspace map`**: it reads the sync plan,
+proposes for each unmapped member the local checkout the `clone_sources` scan
+matched (or invites a path), asks in a single round, and drives
+`workspace-map set` per member you accept — already-mapped members are reported,
+never re-asked. `sync` and `clone` stay question-free.
 
 Once mapped, the member *is* that checkout for every workspace read: the report
 probes it there, and board aggregation, `locate`, and epic discovery read its
