@@ -106,9 +106,11 @@ Verbs (see the spec-status + statusline capabilities for the contract):
                      require (or resolve) an existing workspace
   workspace-show     print the workspace root, the declared focus project (when
                      set), each declared project (repos annotated present/absent
-                     and [url] when a clone URL is declared, context.md
-                     presence), and each initiative with its status and
-                     Project: scope
+                     and [url] when a clone URL is declared, plus
+                     [mapped -> <path>] when .shipd-workspace.local.json points
+                     the member at a local checkout, context.md presence), each
+                     initiative with its status and Project: scope, and a note
+                     per member map key matching no declared member path
   project-show <slug>
                      print one declared project's repos (annotated the same
                      way), its context.md presence, and the initiatives scoped
@@ -3261,28 +3263,41 @@ def _load_projects(ws_root):
 def _repo_entry_data(ws_root, repo):
     """One repo registry entry as a JSON-ready dict — its ``path``, whether it
     is ``present`` (a directory on this machine; absence is never an error),
-    and its declared clone ``url`` (``None`` when it declares none) — or
-    ``None`` when the entry declares no path at all. Paths are read uniformly
-    from string and object entry shapes via ``repo_entry_path``."""
+    its declared clone ``url`` (``None`` when it declares none), and — only
+    where the machine-local member map relocates it (shipd-workspace
+    workspace-member-map) — the resolved ``mapped`` destination — or ``None``
+    when the entry declares no path at all. Presence is probed at the
+    destination :func:`spec_common.member_dest` resolves, so a mapped member
+    reports on the checkout it really lives in. Paths are read uniformly from
+    string and object entry shapes via ``repo_entry_path``. A malformed member
+    map raises :class:`spec_common.ConfigError` naming the file, failing the
+    consuming verb."""
     path = sc.repo_entry_path(repo)
     if path is None:
         return None
     url = repo.get("url") if isinstance(repo, dict) else None
-    return {
+    dest = sc.member_dest(ws_root, path)
+    record = {
         "path": path,
-        "present": os.path.isdir(os.path.join(ws_root, path)),
+        "present": os.path.isdir(dest),
         "url": url if url else None,
     }
+    if path in sc.load_repo_map(ws_root):
+        record["mapped"] = dest
+    return record
 
 
 def _repo_display(entry):
     """Annotate a :func:`_repo_entry_data` record for display: ``(absent)``
-    when its path is not a directory on this machine, and ``[url]`` when the
-    entry carries a clone URL (both display-only)."""
+    when its destination is not a directory on this machine, ``[url]`` when the
+    entry carries a clone URL, and ``[mapped -> <path>]`` when the member map
+    relocates it (all display-only)."""
     text = entry["path"] if entry["present"] \
         else "%s (absent)" % entry["path"]
     if entry["url"]:
         text = "%s [url]" % text
+    if entry.get("mapped"):
+        text = "%s [mapped -> %s]" % (text, entry["mapped"])
     return text
 
 
@@ -3331,13 +3346,24 @@ def _iter_initiatives(ws_root):
         yield slug, status, project
 
 
+def _unknown_map_keys(ws_root, project_rows):
+    """The machine-local member map's keys matching no declared member path, in
+    map order (shipd-workspace workspace-member-map), read off the report's
+    already-built ``project_rows``. A stale entry is a note, never an error — it
+    must not brick the workspace verbs."""
+    declared = {repo["path"] for row in project_rows for repo in row["repos"]}
+    return [key for key in sc.load_repo_map(ws_root) if key not in declared]
+
+
 def _workspace_show_data(root):
     """The ``workspace-show`` report as a JSON-ready dict (spec-status
     workspace-status-verbs, json-output): the resolved ``workspace`` root, the
     declared ``focus`` project (``None`` when undeclared), each declared
     ``project`` in slug order with its repo records and ``context`` presence,
     each ``initiative`` in slug order with its status and ``Project:`` scope,
-    and whether this repository falls under the implicit default project. The
+    the member-map keys matching no declared member path
+    (``unknown_map_keys``), and whether this repository falls under the implicit
+    default project. The
     registry (projects, focus, repos, context) resolves from the workspace
     chain's ``registry_root`` — the nearest chain member declaring ``projects``,
     falling back to the workspace root when none does (shipd-workspace
@@ -3353,18 +3379,20 @@ def _workspace_show_data(root):
         registry = {}
     focus = registry.get("focus")
     projects = _load_projects(reg_root)
+    project_rows = [
+        {"slug": slug,
+         "repos": list(_project_repo_entries(reg_root, projects[slug])),
+         "context": os.path.isfile(_context_path(reg_root, slug))}
+        for slug in sorted(projects)]
     return {
         "workspace": ws_root,
         "registry": reg_root if reg_root != ws_root else None,
         "focus": focus if isinstance(focus, str) and focus else None,
-        "projects": [
-            {"slug": slug,
-             "repos": list(_project_repo_entries(reg_root, projects[slug])),
-             "context": os.path.isfile(_context_path(reg_root, slug))}
-            for slug in sorted(projects)],
+        "projects": project_rows,
         "initiatives": [
             {"slug": slug, "status": status, "project": project}
             for slug, status, project in _iter_initiatives(ws_root)],
+        "unknown_map_keys": _unknown_map_keys(reg_root, project_rows),
         "implicit_default_project": sc.project_of(reg_root, root) is None,
     }
 
@@ -3389,6 +3417,10 @@ def _workspace_show_lines(data):
                      if initiative["project"] else "unscoped")
             lines.append("  %s: %s (%s)"
                          % (initiative["slug"], initiative["status"], scope))
+    for key in data.get("unknown_map_keys", ()):
+        lines.append(
+            "note: member map key '%s' matches no declared member path (%s)"
+            % (key, sc.REPO_MAP_FILENAME))
     if data["implicit_default_project"]:
         lines.append(
             "(this repository falls under the implicit default project)")
@@ -3473,7 +3505,8 @@ def _render_member_block(record):
     print("  path: %s" % record["path"])
     print("  state: %s" % record["state"])
     print("  action: %s" % record["action"])
-    for key in ("source", "url", "branch", "command", "drift", "reason"):
+    for key in ("mapped", "source", "url", "branch", "command", "drift",
+                "reason"):
         if key in record:
             print("  %s: %s" % (key, record[key]))
 

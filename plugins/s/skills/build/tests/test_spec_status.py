@@ -2416,6 +2416,91 @@ class WorkspaceShowTest(SpecStatusTestBase):
             self.assertIn("no workspace", r.stderr.lower())
 
 
+class WorkspaceShowMemberMapTest(SpecStatusTestBase):
+    """``workspace-show`` with the machine-local member map at
+    ``.shipd-workspace.local.json`` (shipd-workspace workspace-member-map): a
+    mapped member is probed at — and annotated with — its mapped destination, a
+    map key matching no manifest member path is a note rather than an error, and
+    a malformed map fails the verb naming the file.
+
+    ``self.outside`` is a second temporary directory, so every mapped checkout
+    genuinely lies outside the workspace root."""
+
+    def setUp(self):
+        super().setUp()
+        self.outside = tempfile.mkdtemp(prefix="spec-status-outside-")
+        self.addCleanup(shutil.rmtree, self.outside, True)
+
+    def write_repo_map(self, repos):
+        """Declare ``repos`` as the workspace root's machine-local member map."""
+        self.write_raw_repo_map(json.dumps({"repos": repos}))
+
+    def write_raw_repo_map(self, payload):
+        with open(os.path.join(self.root, ".shipd-workspace.local.json"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(payload)
+
+    def checkout(self, name, create=True):
+        """An ``outside`` path, created on disk unless ``create`` is false."""
+        path = os.path.join(self.outside, name)
+        if create:
+            os.makedirs(path, exist_ok=True)
+        return path
+
+    def test_mapped_member_is_present_via_its_mapped_destination(self):
+        target = self.checkout("shipd")
+        self.declare_workspace({"projects": {"alpha": {"repos": ["shipd"]}}})
+        self.write_repo_map({"shipd": target})
+        r = self.cli("workspace-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("[mapped -> %s]" % target, r.stdout)
+        self.assertNotIn("(absent)", r.stdout)
+
+    def test_mapped_member_with_a_missing_destination_is_absent(self):
+        target = self.checkout("gone", create=False)
+        self.declare_workspace({"projects": {"alpha": {"repos": ["shipd"]}}})
+        self.write_repo_map({"shipd": target})
+        r = self.cli("workspace-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("(absent)", r.stdout)
+        self.assertIn("[mapped -> %s]" % target, r.stdout)
+
+    def test_mapped_member_json_carries_the_resolved_destination(self):
+        target = self.checkout("shipd")
+        self.declare_workspace({"projects": {"alpha": {"repos": [
+            "shipd", "in-workspace"]}}})
+        self.write_repo_map({"shipd": target})
+        r = self.cli("workspace-show", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        repos = json.loads(r.stdout)["projects"][0]["repos"]
+        self.assertEqual(repos, [
+            {"path": "shipd", "present": True, "url": None, "mapped": target},
+            {"path": "in-workspace", "present": False, "url": None}])
+
+    def test_unknown_map_key_is_a_note_and_exits_zero(self):
+        self.declare_workspace({"projects": {"alpha": {"repos": ["shipd"]}}})
+        self.write_repo_map({"gone-member": self.checkout("gone-member")})
+        r = self.cli("workspace-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("gone-member", r.stdout)
+        self.assertIn("note", r.stdout)
+
+    def test_unknown_map_key_surfaces_in_the_json_report(self):
+        self.declare_workspace({"projects": {"alpha": {"repos": ["shipd"]}}})
+        self.write_repo_map({"gone-member": self.checkout("gone-member")})
+        r = self.cli("workspace-show", "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            json.loads(r.stdout)["unknown_map_keys"], ["gone-member"])
+
+    def test_malformed_map_fails_naming_the_file(self):
+        self.declare_workspace({"projects": {"alpha": {"repos": ["shipd"]}}})
+        self.write_raw_repo_map(json.dumps({"repos": []}))
+        r = self.cli("workspace-show")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn(".shipd-workspace.local.json", r.stderr)
+
+
 class WorkspaceShowChainTest(SpecStatusTestBase):
     """``workspace-show``'s registry provenance when the project registry
     falls through the workspace chain (spec-status workspace-status-verbs,
