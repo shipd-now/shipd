@@ -371,6 +371,22 @@ def _write_raw_config(root, payload):
     return root
 
 
+def _write_raw_repo_map(root, payload):
+    """Write raw text as ``<root>/.shipd-workspace.local.json`` — the
+    machine-local member map — and return ``root``."""
+    os.makedirs(root, exist_ok=True)
+    with open(os.path.join(root, sc.REPO_MAP_FILENAME), "w",
+              encoding="utf-8") as fh:
+        fh.write(payload)
+    return root
+
+
+def _write_repo_map(root, repos):
+    """Write ``<root>/.shipd-workspace.local.json`` declaring ``repos`` as its
+    member map and return ``root``."""
+    return _write_raw_repo_map(root, json.dumps({"repos": repos}))
+
+
 class WorkspaceDiscoveryTest(unittest.TestCase):
     """find_workspace_root and load_workspace on the ``.shipd-config.json``
     ``workspace``-key convention (shipd-workspace workspace-root-discovery,
@@ -1176,6 +1192,122 @@ class RepoEntryPathTest(unittest.TestCase):
         self.assertIsNone(sc.repo_entry_path(5))
 
 
+class RepoMapTest(unittest.TestCase):
+    """load_repo_map and member_dest: the optional machine-local member map at
+    ``<ws_root>/.shipd-workspace.local.json`` and the single member-destination
+    seam every join site routes through (shipd-workspace workspace-member-map).
+
+    The map is read per call from the workspace root alone — no config
+    discovery, so no ``$HOME`` isolation is needed except where a ``~`` value
+    is expanded."""
+
+    # -- load_repo_map -----------------------------------------------------
+
+    def test_absent_file_is_an_empty_map(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            self.assertEqual(sc.load_repo_map(ws), {})
+
+    def test_valid_map_loads_values_verbatim(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_repo_map(ws, {"shipd": "~/projects/shipd",
+                                 "apps/backend": "../outside/backend"})
+            self.assertEqual(
+                sc.load_repo_map(ws),
+                {"shipd": "~/projects/shipd",
+                 "apps/backend": "../outside/backend"})
+
+    def test_absent_repos_key_is_an_empty_map(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_raw_repo_map(ws, json.dumps({"future-key": 1}))
+            self.assertEqual(sc.load_repo_map(ws), {})
+
+    def test_invalid_json_errors_naming_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_raw_repo_map(ws, "{ not json")
+            with self.assertRaises(sc.ConfigError) as ctx:
+                sc.load_repo_map(ws)
+            self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
+
+    def test_non_object_top_level_errors_naming_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_raw_repo_map(ws, "[]")
+            with self.assertRaises(sc.ConfigError) as ctx:
+                sc.load_repo_map(ws)
+            self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
+
+    def test_non_object_repos_errors_naming_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_raw_repo_map(ws, json.dumps({"repos": []}))
+            with self.assertRaises(sc.ConfigError) as ctx:
+                sc.load_repo_map(ws)
+            self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
+
+    def test_empty_string_value_errors_naming_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_repo_map(ws, {"shipd": ""})
+            with self.assertRaises(sc.ConfigError) as ctx:
+                sc.load_repo_map(ws)
+            self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
+
+    def test_non_string_value_errors_naming_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_repo_map(ws, {"shipd": 5})
+            with self.assertRaises(sc.ConfigError) as ctx:
+                sc.load_repo_map(ws)
+            self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
+
+    # -- member_dest -------------------------------------------------------
+
+    def test_unmapped_path_joins_the_workspace_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_repo_map(ws, {"other": "/elsewhere/other"})
+            self.assertEqual(sc.member_dest(ws, "shipd"),
+                             os.path.join(ws, "shipd"))
+
+    def test_no_map_file_joins_the_workspace_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            self.assertEqual(sc.member_dest(ws, "apps/backend"),
+                             os.path.join(ws, "apps/backend"))
+
+    def test_mapped_path_returns_the_mapped_destination(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            outside = os.path.join(os.path.realpath(tmp), "..", "checkout")
+            target = os.path.normpath(outside)
+            _write_repo_map(ws, {"shipd": target})
+            self.assertEqual(sc.member_dest(ws, "shipd"), target)
+
+    def test_tilde_value_is_expanded(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            real_home = os.path.realpath(home)
+            _write_repo_map(ws, {"shipd": "~/projects/shipd"})
+            with home_set_to(real_home):
+                self.assertEqual(
+                    sc.member_dest(ws, "shipd"),
+                    os.path.join(real_home, "projects", "shipd"))
+
+    def test_relative_value_resolves_against_the_workspace_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.join(os.path.realpath(tmp), "ws")
+            os.makedirs(ws)
+            _write_repo_map(ws, {"shipd": "../checkout/shipd"})
+            self.assertEqual(
+                sc.member_dest(ws, "shipd"),
+                os.path.join(os.path.realpath(tmp), "checkout", "shipd"))
+
+
 class ProjectOfTest(unittest.TestCase):
     """project_of containment resolution (shipd-workspace project-resolution):
     the longest (most specific) matching entry wins across projects; an
@@ -1226,6 +1358,80 @@ class ProjectOfTest(unittest.TestCase):
                 "beta": {"repos": [{"path": "apps/backend"}]}}})
             self.assertEqual(
                 sc.project_of(ws, "apps/backend/repo-x"), "beta")
+
+    # -- mapped members (shipd-workspace workspace-member-map) -------------
+
+    def _mapped_workspace(self, tmp, projects, repos_map, created=()):
+        """A workspace root under ``tmp`` declaring ``projects`` plus the
+        machine-local map ``repos_map`` — whose values name directories
+        *relative to* ``outside``, a sibling of the workspace root, so every
+        mapped target lies outside it. ``created`` names the ``outside``-relative
+        directories to create on disk. Returns ``(ws, outside)``."""
+        ws = os.path.join(os.path.realpath(tmp), "ws")
+        outside = os.path.join(os.path.realpath(tmp), "outside")
+        os.makedirs(ws, exist_ok=True)
+        os.makedirs(outside, exist_ok=True)
+        for name in created:
+            os.makedirs(os.path.join(outside, name), exist_ok=True)
+        _write_ws_config(ws, {"projects": projects})
+        _write_repo_map(
+            ws, {key: os.path.join(outside, value)
+                 for key, value in repos_map.items()})
+        return ws, outside
+
+    def test_path_inside_a_mapped_checkout_resolves_to_its_project(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws, outside = self._mapped_workspace(
+                tmp, {"alpha": {"repos": ["shipd"]}},
+                {"shipd": "shipd"}, created=("shipd",))
+            self.assertEqual(
+                sc.project_of(
+                    ws, os.path.join(outside, "shipd", "plugins", "s")),
+                "alpha")
+
+    def test_the_mapped_checkout_itself_resolves_to_its_project(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws, outside = self._mapped_workspace(
+                tmp, {"alpha": {"repos": [{"path": "shipd"}]}},
+                {"shipd": "shipd"}, created=("shipd",))
+            self.assertEqual(
+                sc.project_of(ws, os.path.join(outside, "shipd")), "alpha")
+
+    def test_mapped_member_still_matches_its_workspace_relative_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws, _outside = self._mapped_workspace(
+                tmp, {"alpha": {"repos": ["shipd"]}},
+                {"shipd": "shipd"}, created=("shipd",))
+            self.assertEqual(sc.project_of(ws, "shipd/plugins"), "alpha")
+
+    def test_path_outside_every_mapped_checkout_is_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws, outside = self._mapped_workspace(
+                tmp, {"alpha": {"repos": ["shipd"]}},
+                {"shipd": "shipd"}, created=("shipd",))
+            self.assertIsNone(
+                sc.project_of(ws, os.path.join(outside, "unrelated", "x")))
+
+    def test_most_specific_manifest_path_wins_among_mapped_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws, outside = self._mapped_workspace(
+                tmp,
+                {"alpha": {"repos": ["apps"]},
+                 "beta": {"repos": ["apps/backend"]}},
+                {"apps": "apps", "apps/backend": "apps/backend"},
+                created=("apps/backend",))
+            self.assertEqual(
+                sc.project_of(
+                    ws, os.path.join(outside, "apps", "backend", "repo-x")),
+                "beta")
+
+    def test_malformed_map_never_crashes_resolution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.join(os.path.realpath(tmp), "ws")
+            os.makedirs(ws)
+            _write_ws_config(ws, {"projects": {"alpha": {"repos": ["apps"]}}})
+            _write_raw_repo_map(ws, "{ not json")
+            self.assertEqual(sc.project_of(ws, "apps/repo-x"), "alpha")
 
 
 class WorkspaceUniverseSeamTest(unittest.TestCase):
@@ -1348,6 +1554,48 @@ class WorkspaceUniverseSeamTest(unittest.TestCase):
                 "alpha": {"repos": [5, {"url": "x"}, "repos/alpha"]},
                 "listless": {"repos": "repos/alpha"},
             }, ("repos/alpha",))
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.workspace_project_roots(ws),
+                    [("alpha", os.path.join(ws, "repos/alpha"))])
+
+    def test_mapped_member_yields_its_external_checkout(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home, \
+                tempfile.TemporaryDirectory() as outside:
+            # The member path is deliberately NOT created under the workspace
+            # root: only the map's destination exists, so the pair can only come
+            # from the mapped resolution.
+            ws = self._workspace(tmp, {"alpha": {"repos": ["shipd"]}})
+            checkout = os.path.join(os.path.realpath(outside), "shipd")
+            os.makedirs(checkout)
+            _write_repo_map(ws, {"shipd": checkout})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.workspace_project_roots(ws),
+                                 [("alpha", checkout)])
+                self.assertEqual(sc.aggregation_universes(ws),
+                                 [(None, ws), ("alpha", checkout)])
+
+    def test_mapped_member_with_an_absent_destination_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home, \
+                tempfile.TemporaryDirectory() as outside:
+            ws = self._workspace(tmp, {
+                "alpha": {"repos": ["repos/alpha"]},
+                "gone": {"repos": ["shipd"]}}, ("repos/alpha",))
+            _write_repo_map(
+                ws, {"shipd": os.path.join(os.path.realpath(outside), "gone")})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.workspace_project_roots(ws),
+                    [("alpha", os.path.join(ws, "repos/alpha"))])
+
+    def test_malformed_map_never_breaks_the_seam(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = self._workspace(tmp, {
+                "alpha": {"repos": ["repos/alpha"]}}, ("repos/alpha",))
+            _write_raw_repo_map(ws, "{ not json")
             with home_set_to(os.path.realpath(home)):
                 self.assertEqual(
                     sc.workspace_project_roots(ws),
@@ -2898,6 +3146,80 @@ class WorkspaceSyncPlanTest(unittest.TestCase):
         config, _ = sc.resolve_config(self.ws)
         rec = _one(sc.plan_workspace_sync(self.ws, config), "backend")
         self.assertEqual(rec["source"], first)
+
+    # -- mapped members (shipd-workspace workspace-member-map) -------------
+
+    def _map(self, repos):
+        """Write the workspace's machine-local member map."""
+        _write_repo_map(self.ws, repos)
+
+    def test_mapped_member_plans_none_with_the_mapped_destination(self):
+        url = "https://example.invalid/backend.git"
+        outside = _make_worktree_repo(
+            os.path.join(self.tmp, "outside", "backend"), url)
+        self._declare({"projects": {"alpha": {"repos": [
+            {"path": "backend", "url": url}]}}})
+        self._map({"backend": outside})
+        rec = _one(sc.plan_workspace_sync(self.ws, {}), "backend")
+        self.assertEqual(rec["state"], "present")
+        self.assertEqual(rec["action"], "none")
+        self.assertEqual(rec["mapped"], outside)
+        self.assertNotIn("command", rec)
+        self.assertNotIn("drift", rec)
+
+    def test_mapped_member_with_absent_destination_drifts(self):
+        # A matching candidate sits in a declared clone_sources directory: the
+        # ladder must stay bypassed for a mapped member, so no command is ever
+        # emitted against a path the user owns outside the workspace.
+        url = "https://example.invalid/backend.git"
+        _make_worktree_repo(os.path.join(self.tmp, "src", "backend"), url)
+        gone = os.path.join(self.tmp, "outside", "gone")
+        self._declare(
+            {"projects": {"alpha": {"repos": [
+                {"path": "backend", "url": url}]}}},
+            extra={"clone_sources": [os.path.join(self.tmp, "src")]})
+        self._map({"backend": gone})
+        config, _ = sc.resolve_config(self.ws)
+        rec = _one(sc.plan_workspace_sync(self.ws, config), "backend")
+        self.assertEqual(rec["state"], "absent")
+        self.assertEqual(rec["action"], "none")
+        self.assertEqual(rec["mapped"], gone)
+        self.assertNotIn("command", rec)
+        self.assertIn("drift", rec)
+        self.assertIn(gone, rec["drift"])
+
+    def test_mapped_member_keeps_the_origin_drift_check(self):
+        outside = _make_worktree_repo(
+            os.path.join(self.tmp, "outside", "backend"),
+            "https://example.invalid/OTHER.git")
+        manifest_url = "https://example.invalid/backend.git"
+        self._declare({"projects": {"alpha": {"repos": [
+            {"path": "backend", "url": manifest_url}]}}})
+        self._map({"backend": outside})
+        rec = _one(sc.plan_workspace_sync(self.ws, {}), "backend")
+        self.assertEqual(rec["state"], "present")
+        self.assertEqual(rec["action"], "none")
+        self.assertEqual(rec["mapped"], outside)
+        self.assertIn("https://example.invalid/OTHER.git", rec["drift"])
+        self.assertIn(manifest_url, rec["drift"])
+
+    def test_unmapped_member_carries_no_mapped_field(self):
+        url = "https://example.invalid/backend.git"
+        _make_worktree_repo(os.path.join(self.ws, "backend"), url)
+        self._declare({"projects": {"alpha": {"repos": [
+            {"path": "backend", "url": url},
+            {"path": "other", "url": url}]}}})
+        self._map({"other": os.path.join(self.tmp, "outside", "other")})
+        rec = _one(sc.plan_workspace_sync(self.ws, {}), "backend")
+        self.assertNotIn("mapped", rec)
+        self.assertEqual(rec["action"], "none")
+
+    def test_malformed_map_fails_the_plan_naming_the_file(self):
+        self._declare({"projects": {"alpha": {"repos": ["backend"]}}})
+        _write_raw_repo_map(self.ws, json.dumps({"repos": []}))
+        with self.assertRaises(sc.ConfigError) as ctx:
+            sc.plan_workspace_sync(self.ws, {})
+        self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
 
     def test_gitignore_record_reports_missing_and_stale(self):
         self._declare({"projects": {"alpha": {"repos": [

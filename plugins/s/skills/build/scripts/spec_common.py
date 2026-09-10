@@ -404,9 +404,9 @@ DEFAULT_COMPLETED_RETENTION_DAYS = 30
 
 
 def _load_config_file(path):
-    """Parse one ``.shipd-config.json`` file. Raises :class:`ConfigError` naming
-    ``path`` when it is not parseable JSON or its top level is not a JSON
-    object."""
+    """Parse one JSON-object file — a ``.shipd-config.json`` layer, or the
+    machine-local member map. Raises :class:`ConfigError` naming ``path`` when
+    it is not parseable JSON or its top level is not a JSON object."""
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
@@ -1635,6 +1635,65 @@ def repo_entry_path(entry):
     return None
 
 
+# The machine-local member map (shipd-workspace workspace-member-map). Never
+# committed: it maps this machine's checkouts, so it sits beside — not inside —
+# the committed ``.shipd-config.json`` registry.
+REPO_MAP_FILENAME = ".shipd-workspace.local.json"
+
+
+def load_repo_map(ws_root):
+    """Load the machine-local member map from
+    ``<ws_root>/.shipd-workspace.local.json`` (shipd-workspace
+    workspace-member-map).
+
+    Returns the file's ``repos`` object — manifest member path -> local checkout
+    path, values preserved verbatim (``~`` and relative forms are resolved at
+    read time by :func:`member_dest`). An absent file, or a file declaring no
+    ``repos`` key, is the empty map, so behavior is unchanged where no map
+    exists. A malformed file raises :class:`ConfigError` naming it: invalid
+    JSON, a non-object top level, a non-object ``repos`` value, or a mapping
+    value that is not a non-empty string. Keys matching no manifest member path
+    are preserved here and surfaced as a note by the report — never an error, so
+    a stale entry cannot brick every workspace verb.
+
+    Read per call (like :func:`load_workspace`), never cached — a verb's view of
+    the map is always the file on disk."""
+    path = os.path.join(ws_root, REPO_MAP_FILENAME)
+    if not os.path.isfile(path):
+        return {}
+    data = _load_config_file(path)
+    repos = data.get("repos")
+    if repos is None:
+        return {}
+    if not isinstance(repos, dict):
+        raise ConfigError(
+            "%s `repos` must be a JSON object mapping member paths to local "
+            "checkout paths, got %r" % (path, repos))
+    for key, value in repos.items():
+        if not isinstance(value, str) or not value:
+            raise ConfigError(
+                "%s `repos` entry '%s' must be a non-empty path string, got %r"
+                % (path, key, value))
+    return repos
+
+
+def member_dest(ws_root, path):
+    """Resolve where a manifest member ``path`` lives on this machine — the one
+    seam every member-destination join routes through (shipd-workspace
+    workspace-member-map).
+
+    Returns the machine-local map's destination for ``path`` when the map holds
+    an entry for it (``~`` expanded, a relative value resolved against
+    ``ws_root``), else ``<ws_root>/<path>`` exactly as the containment-only
+    join always produced. Raises :class:`ConfigError` naming the map file when
+    it is malformed; fail-soft callers (:func:`project_of`,
+    :func:`workspace_project_roots`) catch it."""
+    mapped = load_repo_map(ws_root).get(path)
+    if mapped is None:
+        return os.path.join(ws_root, path)
+    return os.path.normpath(os.path.join(ws_root, os.path.expanduser(mapped)))
+
+
 def validate_workspace(registry):
     """Validate a workspace registry's ``projects`` map and optional ``focus``,
     returning a list of error strings (empty when valid). Shape-only, never
@@ -1743,17 +1802,32 @@ def _ws_relative_parts(ws_root, path):
     return [p for p in norm.split("/") if p not in ("", ".")]
 
 
+def _contains_path(base, target):
+    """True when ``target`` equals or lies under ``base`` — both absolute, both
+    already real paths. A target on another filesystem root (no common prefix)
+    reads as no match rather than raising."""
+    try:
+        return os.path.commonpath([base, target]) == base
+    except ValueError:
+        return False
+
+
 def project_of(ws_root, path):
     """Resolve which project owns ``path`` (shipd-workspace project-resolution).
 
     Loads the registry from ``ws_root``, normalizes ``path`` relative to it, and
     returns the slug of the project whose repo entry equals or contains the path,
-    the longest (most specific) matching entry winning across projects. Ties
-    (an exact duplicate path, which ``validate_workspace`` flags) break on
-    first-declaration order, so display code never crashes on an invalid
-    registry. Returns ``None`` when nothing matches — the anonymous implicit
-    default project — or when the registry is unloadable or declares no
-    projects."""
+    the longest (most specific) matching entry winning across projects. Where the
+    machine-local member map (:func:`load_repo_map`) holds an entry for a repo's
+    manifest path, the path is *additionally* matched against that mapped
+    destination's real path under the same equality-or-containment rule, so a
+    mapped external checkout resolves to its declaring project; specificity is
+    scored by the manifest path's part count either way. Ties (an exact duplicate
+    path, which ``validate_workspace`` flags) break on first-declaration order,
+    so display code never crashes on an invalid registry. Returns ``None`` when
+    nothing matches — the anonymous implicit default project — or when the
+    registry is unloadable or declares no projects. A malformed member map is
+    ignored here (the report verbs raise on it), keeping resolution fail-soft."""
     try:
         registry = load_workspace(ws_root)
     except ConfigError:
@@ -1761,7 +1835,13 @@ def project_of(ws_root, path):
     projects = registry.get("projects")
     if not isinstance(projects, dict):
         return None
+    try:
+        repo_map = load_repo_map(ws_root)
+    except ConfigError:
+        repo_map = {}
     target = _ws_relative_parts(ws_root, path)
+    target_real = os.path.realpath(
+        path if os.path.isabs(path) else os.path.join(ws_root, path))
     best_slug = None
     best_len = -1
     for slug, entry in projects.items():
@@ -1771,11 +1851,17 @@ def project_of(ws_root, path):
         if not isinstance(repos, list):
             continue
         for repo in repos:
-            path = repo_entry_path(repo)
-            if path is None:
+            rel = repo_entry_path(repo)
+            if rel is None:
                 continue
-            parts = _ws_relative_parts(ws_root, path)
-            if parts and target[:len(parts)] == parts and len(parts) > best_len:
+            parts = _ws_relative_parts(ws_root, rel)
+            if not parts or len(parts) <= best_len:
+                continue
+            matched = target[:len(parts)] == parts
+            if not matched and rel in repo_map:
+                matched = _contains_path(
+                    os.path.realpath(member_dest(ws_root, rel)), target_real)
+            if matched:
                 best_len = len(parts)
                 best_slug = slug
     return best_slug
@@ -1804,13 +1890,16 @@ def workspace_project_roots(root):
     consumer stays the single-universe, per-repo surface it has always been.
 
     Pairs come out in projects' slug order, each project's repos in declaration
-    order, every path resolved against the registry root.
+    order, every path resolved through :func:`member_dest` against the registry
+    root — so a member the machine-local map points at an existing checkout is
+    aggregated from that checkout, not from an empty workspace-relative path.
 
     Fail-soft throughout — display never crashes on an invalid registry: an
-    unloadable registry, a non-object project or repo entry, an entry whose
-    path is not a directory on this machine, an entry duplicating an earlier
-    one's real path, and an entry resolving to the invocation root itself are
-    all skipped silently, never raised."""
+    unloadable registry, a malformed member map (ignored, leaving
+    workspace-relative resolution), a non-object project or repo entry, an entry
+    whose path is not a directory on this machine, an entry duplicating an
+    earlier one's real path, and an entry resolving to the invocation root itself
+    are all skipped silently, never raised."""
     try:
         reg_root = registry_root(root)
         if reg_root is None or project_of(reg_root, root) is not None:
@@ -1818,6 +1907,10 @@ def workspace_project_roots(root):
         registry = load_workspace(reg_root)
     except ConfigError:
         return []
+    try:
+        repo_map = load_repo_map(reg_root)
+    except ConfigError:
+        repo_map = {}
     projects = registry.get("projects")
     if not isinstance(projects, dict):
         return []
@@ -1834,7 +1927,8 @@ def workspace_project_roots(root):
             path = repo_entry_path(repo)
             if path is None:
                 continue
-            repo_root = os.path.join(reg_root, path)
+            repo_root = (member_dest(reg_root, path) if path in repo_map
+                         else os.path.join(reg_root, path))
             if not os.path.isdir(repo_root):
                 continue
             real = os.path.realpath(repo_root)
@@ -1962,9 +2056,21 @@ def _find_clone_candidate(source_dirs, url):
 def _plan_member(ws_root, slug, path, url, branch, source_dirs):
     """Compute one member's materialization record (shipd-workspace
     sync-materialization-planning). Pure but for local git probes of the
-    destination and the candidate source directories — never the network."""
-    dest = os.path.join(ws_root, path)
+    destination and the candidate source directories — never the network.
+
+    The destination resolves through :func:`member_dest`, so a member the
+    machine-local map points at an existing checkout is planned where it really
+    lives: the record carries that resolved ``mapped`` destination, the
+    materialization ladder is bypassed (action always ``none``), and no advisory
+    command is ever emitted against it — materializing into a directory the user
+    owns outside the workspace is the one repair this engine must never attempt.
+    A mapped destination that does not exist is recorded ``absent`` with a drift
+    note naming it, for the human to fix or unmap."""
+    mapped = path in load_repo_map(ws_root)
+    dest = member_dest(ws_root, path)
     record = {"kind": "member", "member": slug, "path": path}
+    if mapped:
+        record["mapped"] = dest
     if url:
         record["url"] = url
     if branch:
@@ -1990,8 +2096,16 @@ def _plan_member(ws_root, slug, path, url, branch, source_dirs):
                 "%s exists but is not a git work tree; left unmodified" % path)
         return record
 
-    # Absent destination: descend the cheapest-first ladder.
     record["state"] = "absent"
+    if mapped:
+        # Never materialize into a mapped path: report it and stop.
+        record["action"] = "none"
+        record["drift"] = (
+            "mapped path %s does not exist; fix or remove the map entry for "
+            "'%s' in %s" % (dest, path, REPO_MAP_FILENAME))
+        return record
+
+    # Absent destination: descend the cheapest-first ladder.
     candidate = _find_clone_candidate(source_dirs, url)
     branch_opt = " --branch %s" % branch if branch else ""
     if candidate is not None:
@@ -2076,10 +2190,11 @@ def plan_workspace_sync(ws_root, config):
     git probes and never the network. Returns one ``member`` record per manifest
     repo entry (in registry order) followed by a single ``gitignore`` record.
     Each member record carries ``kind``/``member``/``path``/``state``/``action``
-    plus ``source``/``url``/``branch``/``command``/``drift``/``reason`` as
-    applicable; the ``gitignore`` record carries ``missing`` and ``stale`` line
-    lists. Raises :class:`ConfigError` (naming the key) when ``clone_sources`` is
-    malformed."""
+    plus ``mapped``/``source``/``url``/``branch``/``command``/``drift``/``reason``
+    as applicable (``mapped`` exactly for a member the machine-local member map
+    relocates); the ``gitignore`` record carries ``missing`` and ``stale`` line
+    lists. Raises :class:`ConfigError` naming the offending file when
+    ``clone_sources`` or the member map is malformed."""
     registry = load_workspace(ws_root)
     source_dirs = resolve_clone_sources(config)
     records = []
