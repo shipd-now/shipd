@@ -532,6 +532,267 @@ class WorkspaceChainTest(unittest.TestCase):
                 self.assertIsNone(sc.find_workspace_root(start))
 
 
+def _write_ws_pointer(root, target):
+    """Write ``<root>/.shipd-workspace.local.json`` declaring ``workspace_root``
+    — the reverse-lookup pointer — and return the file's path."""
+    os.makedirs(root, exist_ok=True)
+    path = os.path.join(root, sc.REPO_MAP_FILENAME)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"workspace_root": target}, fh)
+    return path
+
+
+def _write_member_workspace(root, url, path="repo", project="proj"):
+    """Write a workspace config at ``root`` declaring one project member at
+    ``path`` with clone ``url``, and return ``root``."""
+    return _write_ws_config(root, {
+        "projects": {project: {"repos": [{"path": path, "url": url}]}},
+    })
+
+
+@contextlib.contextmanager
+def _git_probe_poisoned():
+    """Make any origin probe raise for the duration of the block, so a test can
+    assert the scan rung was never consulted at all."""
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("the scan rung probed git when it must not have")
+    old = sc._git_origin_url
+    sc._git_origin_url = _boom
+    try:
+        yield
+    finally:
+        sc._git_origin_url = old
+
+
+class WorkspaceReverseLookupTest(unittest.TestCase):
+    """workspace_chain's fallback rungs below the ancestor search — the repo
+    pointer, then the origin-URL scan under ``workspaces_root`` (shipd-workspace
+    workspace-reverse-lookup, workspace-root-discovery).
+
+    Every fixture is a throwaway tree with ``$HOME`` overridden onto it, so the
+    real home config never supplies ``workspaces_root`` and the real checkout
+    never masquerades as a candidate. Git use is local ``init`` /
+    ``remote add`` only — never the network."""
+
+    ORIGIN = "git@github.com:acme/repo.git"
+    DECLARED = "https://github.com/Acme/Repo"
+    OTHER = "git@github.com:acme/other.git"
+
+    @contextlib.contextmanager
+    def _tree(self, workspaces_root=True):
+        """Yield ``(tmp, home, workspaces, checkout)``: a home layer optionally
+        declaring ``workspaces_root``, an empty workspaces parent, and a git
+        checkout outside every workspace whose origin is :data:`ORIGIN`."""
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = os.path.realpath(raw)
+            home = os.path.join(tmp, "home")
+            workspaces = os.path.join(tmp, "workspaces")
+            os.makedirs(workspaces, exist_ok=True)
+            extra = {sc.WORKSPACES_ROOT_KEY: workspaces} if workspaces_root else {}
+            _write_ws_config(home, None, extra)
+            checkout = _make_worktree_repo(
+                os.path.join(tmp, "checkout"), self.ORIGIN)
+            with home_set_to(home):
+                yield tmp, home, workspaces, checkout
+
+    @staticmethod
+    def _chain(start):
+        """Resolve the chain from ``start``, returning ``(chain, stderr)``."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            chain = sc.workspace_chain(start)
+        return chain, err.getvalue()
+
+    def _one_warning(self, stderr):
+        lines = [ln for ln in stderr.splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 1, stderr)
+        self.assertTrue(lines[0].startswith("warning:"), lines[0])
+        return lines[0]
+
+    # -- the scan rung ----------------------------------------------------
+
+    def test_unique_origin_match_resolves_that_workspace(self):
+        with self._tree() as (_tmp, _home, workspaces, checkout):
+            ws_a = _write_member_workspace(
+                os.path.join(workspaces, "ws-a"), self.DECLARED)
+            _write_member_workspace(
+                os.path.join(workspaces, "ws-b"), self.OTHER)
+            chain, stderr = self._chain(checkout)
+            self.assertEqual(chain, [ws_a])
+            self.assertEqual(stderr, "")
+
+    def test_a_fallback_resolved_root_resolves_the_same_chain_from_itself(self):
+        """The recursion guard, by construction: the resolved root declares a
+        workspace, so its own upward search is non-empty and never re-enters
+        the rungs."""
+        with self._tree() as (_tmp, _home, workspaces, checkout):
+            ws_a = _write_member_workspace(
+                os.path.join(workspaces, "ws-a"), self.DECLARED)
+            chain, _stderr = self._chain(checkout)
+            self.assertEqual(chain, [ws_a])
+            self.assertEqual(self._chain(ws_a)[0], chain)
+
+    def test_fallback_chain_carries_the_enclosing_declaring_directory(self):
+        with self._tree() as (_tmp, _home, workspaces, checkout):
+            _write_ws_config(workspaces, {})
+            ws_a = _write_member_workspace(
+                os.path.join(workspaces, "ws-a"), self.DECLARED)
+            chain, stderr = self._chain(checkout)
+            self.assertEqual(chain, [ws_a, workspaces])
+            self.assertEqual(stderr, "")
+
+    def test_two_matching_workspaces_resolve_nothing_and_name_the_remedy(self):
+        with self._tree() as (_tmp, _home, workspaces, checkout):
+            ws_a = _write_member_workspace(
+                os.path.join(workspaces, "ws-a"), self.DECLARED)
+            ws_b = _write_member_workspace(
+                os.path.join(workspaces, "ws-b"), self.ORIGIN)
+            chain, stderr = self._chain(checkout)
+            self.assertEqual(chain, [])
+            line = self._one_warning(stderr)
+            self.assertIn(ws_a, line)
+            self.assertIn(ws_b, line)
+            self.assertIn("workspace_root", line)
+            self.assertIn(sc.REPO_MAP_FILENAME, line)
+
+    def test_no_matching_workspace_stays_empty_and_silent(self):
+        with self._tree() as (_tmp, _home, workspaces, checkout):
+            _write_member_workspace(
+                os.path.join(workspaces, "ws-a"), self.OTHER)
+            self.assertEqual(self._chain(checkout), ([], ""))
+
+    def test_a_child_declaring_no_workspace_is_not_a_candidate(self):
+        with self._tree() as (_tmp, _home, workspaces, checkout):
+            _write_ws_config(os.path.join(workspaces, "plain"), None,
+                             {"dir": ".shipd"})
+            self.assertEqual(self._chain(checkout), ([], ""))
+
+    def test_no_workspaces_root_stays_empty_and_silent(self):
+        with self._tree(workspaces_root=False) as (_t, _h, workspaces, checkout):
+            _write_member_workspace(
+                os.path.join(workspaces, "ws-a"), self.DECLARED)
+            self.assertEqual(self._chain(checkout), ([], ""))
+
+    def test_a_non_git_start_stays_empty_and_silent(self):
+        with self._tree() as (tmp, _home, workspaces, checkout):
+            del checkout
+            _write_member_workspace(
+                os.path.join(workspaces, "ws-a"), self.DECLARED)
+            plain = os.path.join(tmp, "plain")
+            os.makedirs(plain, exist_ok=True)
+            self.assertEqual(self._chain(plain), ([], ""))
+
+    # -- the pointer rung -------------------------------------------------
+
+    def test_pointer_beats_the_scan(self):
+        with self._tree() as (_tmp, _home, workspaces, checkout):
+            _write_member_workspace(
+                os.path.join(workspaces, "ws-a"), self.DECLARED)
+            ws_b = _write_ws_config(os.path.join(workspaces, "ws-b"), {})
+            _write_ws_pointer(checkout, ws_b)
+            chain, stderr = self._chain(checkout)
+            self.assertEqual(chain, [ws_b])
+            self.assertEqual(stderr, "")
+
+    def test_pointer_is_found_from_a_subdirectory_of_the_repo(self):
+        with self._tree() as (_tmp, _home, workspaces, checkout):
+            ws_b = _write_ws_config(os.path.join(workspaces, "ws-b"), {})
+            _write_ws_pointer(checkout, ws_b)
+            deep = os.path.join(checkout, "src", "pkg")
+            os.makedirs(deep, exist_ok=True)
+            self.assertEqual(self._chain(deep), ([ws_b], ""))
+
+    def test_a_relative_pointer_resolves_against_the_pointer_file(self):
+        with self._tree() as (tmp, _home, workspaces, checkout):
+            ws_b = _write_ws_config(os.path.join(workspaces, "ws-b"), {})
+            rel = os.path.relpath(ws_b, checkout)
+            _write_ws_pointer(checkout, rel)
+            self.assertEqual(self._chain(checkout), ([ws_b], ""))
+            del tmp
+
+    def test_pointer_at_a_non_declaring_target_warns_and_resolves_nothing(self):
+        with self._tree() as (tmp, _home, workspaces, checkout):
+            _write_member_workspace(
+                os.path.join(workspaces, "ws-a"), self.DECLARED)
+            target = os.path.join(tmp, "not-a-workspace")
+            os.makedirs(target, exist_ok=True)
+            pointer = _write_ws_pointer(checkout, target)
+            chain, stderr = self._chain(checkout)
+            self.assertEqual(chain, [])
+            line = self._one_warning(stderr)
+            self.assertIn(pointer, line)
+            self.assertIn(target, line)
+
+    def test_a_member_map_without_the_pointer_key_falls_through_to_the_scan(self):
+        with self._tree() as (_tmp, _home, workspaces, checkout):
+            ws_a = _write_member_workspace(
+                os.path.join(workspaces, "ws-a"), self.DECLARED)
+            _write_repo_map(checkout, {"repo": "~/elsewhere"})
+            self.assertEqual(self._chain(checkout), ([ws_a], ""))
+
+    # -- the ancestor search still wins outright --------------------------
+
+    def test_an_ancestor_resolvable_start_never_consults_the_rungs(self):
+        with self._tree() as (tmp, _home, workspaces, _checkout):
+            _write_member_workspace(
+                os.path.join(workspaces, "ws-a"), self.DECLARED)
+            ws_b = _write_ws_config(os.path.join(workspaces, "ws-b"), {})
+            enclosing = _write_ws_config(os.path.join(tmp, "ws"), {})
+            inside = _make_worktree_repo(
+                os.path.join(enclosing, "repo"), self.ORIGIN)
+            _write_ws_pointer(inside, ws_b)
+            with _git_probe_poisoned():
+                self.assertEqual(self._chain(inside), ([enclosing], ""))
+
+
+class NormalizeRepoUrlTest(unittest.TestCase):
+    """normalize_repo_url, the comparison form the reverse-lookup scan matches
+    an origin URL against declared member urls with (shipd-workspace
+    workspace-reverse-lookup). Pure string work — no git, no disk."""
+
+    EQUIVALENT = (
+        "git@github.com:acme/repo.git",
+        "https://github.com/Acme/Repo",
+        "ssh://git@github.com/acme/repo/",
+        "github.com/acme/repo",
+    )
+
+    def test_every_spelling_of_one_repo_normalizes_alike(self):
+        forms = {sc.normalize_repo_url(u) for u in self.EQUIVALENT}
+        self.assertEqual(len(forms), 1, forms)
+        self.assertEqual(forms.pop(), "github.com/acme/repo")
+
+    def test_scp_form_reads_its_colon_as_a_path_separator(self):
+        self.assertEqual(
+            sc.normalize_repo_url("git@github.com:acme/repo.git"),
+            "github.com/acme/repo")
+
+    def test_scheme_user_dotgit_and_trailing_slash_are_stripped(self):
+        self.assertEqual(
+            sc.normalize_repo_url("ssh://git@github.com/acme/repo.git//"),
+            "github.com/acme/repo")
+
+    def test_a_different_host_does_not_normalize_equal(self):
+        self.assertNotEqual(
+            sc.normalize_repo_url("git@github.com:acme/repo.git"),
+            sc.normalize_repo_url("git@gitlab.com:acme/repo.git"))
+
+    def test_a_different_path_does_not_normalize_equal(self):
+        self.assertNotEqual(
+            sc.normalize_repo_url("git@github.com:acme/repo.git"),
+            sc.normalize_repo_url("git@github.com:acme/other.git"))
+
+    def test_only_one_trailing_dotgit_suffix_is_stripped(self):
+        self.assertEqual(
+            sc.normalize_repo_url("https://github.com/acme/repo.git.git"),
+            "github.com/acme/repo.git")
+
+    def test_an_absent_url_normalizes_to_the_empty_string(self):
+        self.assertEqual(sc.normalize_repo_url(None), "")
+        self.assertEqual(sc.normalize_repo_url(""), "")
+        self.assertEqual(sc.normalize_repo_url("   "), "")
+
+
 class WorkspaceChainFacilitiesTest(unittest.TestCase):
     """resolve_wiki_stores, resolve_initiative_brief, and registry_root, each
     built on workspace_chain (shipd-workspace workspace-chain-facilities).

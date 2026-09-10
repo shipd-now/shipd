@@ -948,9 +948,18 @@ def workspace_chain(start):
     Walk from ``os.path.abspath(start)`` parent-by-parent to the filesystem
     root, collecting every directory whose own ``.shipd-config.json`` declares
     a ``workspace`` key — ``start`` itself included — ordered nearest first.
-    Returns an empty list when no ancestor declares one. Makes no git
-    assumptions and consults no ``.shipd/`` marker. A malformed config file in
-    the chain raises :class:`ConfigError` naming it."""
+    The upward search itself makes no git assumptions and consults no
+    ``.shipd/`` marker; a malformed config file in the chain raises
+    :class:`ConfigError` naming it.
+
+    When — and only when — that search yields nothing, descend the two
+    reverse-lookup rungs (:func:`_workspace_chain_fallback`, shipd-workspace
+    workspace-reverse-lookup): the starting repo's ``workspace_root`` pointer,
+    then an origin-URL match against the workspaces under ``workspaces_root``.
+    A chain resolved that way is the full upward chain from the resolved root,
+    so enclosing workspaces above it are still members, and the chain stays
+    empty (silently) when neither rung resolves. A start that already resolves
+    an ancestor never reaches the rungs, so it never costs a git probe."""
     chain = []
     cur = os.path.abspath(start)
     while True:
@@ -961,8 +970,177 @@ def workspace_chain(start):
                 chain.append(cur)
         parent = os.path.dirname(cur)
         if parent == cur:
-            return chain
+            return chain if chain else _workspace_chain_fallback(start)
         cur = parent
+
+
+# ---------------------------------------------------------------------------
+# Reverse lookup (shipd-workspace workspace-reverse-lookup)
+# ---------------------------------------------------------------------------
+
+# The reverse-lookup pointer field, read from the machine-local dotfile
+# (:data:`REPO_MAP_FILENAME`) — deliberately *not* a `.shipd-config.json` key,
+# hence no ``_KEY`` name: this change declares no new config key. The dotfile's
+# two fields are disjoint by role — a workspace root declares ``repos``, a
+# member checkout declares ``workspace_root`` — so one never-committed
+# filename, and one ``.gitignore`` line, covers both.
+WORKSPACE_POINTER_FIELD = "workspace_root"
+
+# The ceiling on the scan rung's single local ``git`` probe. The rungs run only
+# on an empty chain — but that is every no-workspace verb call, so a hung git
+# must never become a hung engine. A timeout reads as "rung disabled".
+GIT_PROBE_TIMEOUT = 5
+
+
+def _declares_workspace(directory):
+    """True when ``directory``'s own ``.shipd-config.json`` declares a
+    ``workspace`` key. Tolerant by design — a malformed or unreadable config
+    reads as "not a workspace", so one broken sibling under ``workspaces_root``
+    cannot brick discovery for every other checkout."""
+    path = os.path.join(directory, CONFIG_FILENAME)
+    if not os.path.isfile(path):
+        return False
+    try:
+        return "workspace" in _load_config_file(path)
+    except ConfigError:
+        return False
+
+
+def _read_workspace_pointer(start):
+    """Return ``(pointer_file, target_dir)`` for the ``workspace_root`` pointer
+    governing ``start``, or ``None`` when none is declared.
+
+    Walks upward from ``start`` exactly as :func:`workspace_chain` does, so a
+    pointer written at a repo's root is found from anywhere inside it without
+    costing a git probe; the first file declaring the key wins. The value is a
+    path: ``~`` is expanded and a relative value resolves against the pointer
+    file's own directory. Tolerant like :func:`load_repo_map`'s neighbours — an
+    unparseable file, or a ``workspace_root`` that is not a non-empty string,
+    reads as *no pointer declared* and falls through to the scan rung, since a
+    member map declaring only ``repos`` is the common case here."""
+    cur = os.path.abspath(start)
+    while True:
+        path = os.path.join(cur, REPO_MAP_FILENAME)
+        if os.path.isfile(path):
+            try:
+                data = _load_config_file(path)
+            except ConfigError:
+                data = {}
+            raw = data.get(WORKSPACE_POINTER_FIELD)
+            if isinstance(raw, str) and raw.strip():
+                target = os.path.expanduser(raw.strip())
+                if not os.path.isabs(target):
+                    target = os.path.join(cur, target)
+                return path, os.path.normpath(target)
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return None
+        cur = parent
+
+
+def _registry_member_urls(registry):
+    """Yield every declared member clone ``url`` in a workspace ``registry``,
+    skipping entries that declare none. Shape-tolerant: a malformed project or
+    repo entry is skipped rather than raised on."""
+    projects = registry.get("projects")
+    if not isinstance(projects, dict):
+        return
+    for entry in projects.values():
+        if not isinstance(entry, dict):
+            continue
+        repos = entry.get("repos")
+        if not isinstance(repos, list):
+            continue
+        for repo in repos:
+            url = repo.get("url") if isinstance(repo, dict) else None
+            if isinstance(url, str) and url:
+                yield url
+
+
+def _scan_workspaces_for_origin(start):
+    """Return every workspace under the declared ``workspaces_root`` that claims
+    ``start``'s ``origin`` URL as a member, in sorted order.
+
+    The rung exists only when the layered configuration resolved from ``start``
+    declares ``workspaces_root`` (shipd-config workspaces-root-key) naming an
+    existing directory *and* one local ``git remote get-url origin`` probe of
+    ``start`` succeeds. Candidates are the immediate children of that directory
+    whose own config declares ``workspace``; a candidate matches when any of its
+    declared member ``url``s equals the origin under
+    :func:`normalize_repo_url`. Every failure — undeclared key, malformed
+    config, missing directory, absent git, no origin, a timed-out probe —
+    disables the rung silently and returns ``[]``. Local probes only; never the
+    network."""
+    try:
+        config, _prov = resolve_config(start)
+        parent = _workspaces_root_from_config(config)
+    except ConfigError:
+        return []
+    if parent is None or not os.path.isdir(parent):
+        return []
+    origin = normalize_repo_url(
+        _git_origin_url(start, timeout=GIT_PROBE_TIMEOUT))
+    if not origin:
+        return []
+    try:
+        children = sorted(os.listdir(parent))
+    except OSError:
+        return []
+    matches = []
+    for child in children:
+        candidate = os.path.join(parent, child)
+        if not os.path.isdir(candidate) or not _declares_workspace(candidate):
+            continue
+        try:
+            registry = load_workspace(candidate)
+        except ConfigError:
+            continue
+        for url in _registry_member_urls(registry):
+            if normalize_repo_url(url) == origin:
+                matches.append(candidate)
+                break
+    return matches
+
+
+def _workspace_chain_fallback(start):
+    """Resolve the workspace chain for a ``start`` no ancestor declares, by
+    descending the two reverse-lookup rungs in order (shipd-workspace
+    workspace-reverse-lookup).
+
+    The explicit beats the inferred, so the pointer rung goes first and is
+    decisive: a declared ``workspace_root`` naming a directory that declares a
+    workspace resolves the chain from there, and one naming a directory that
+    does not resolves *nothing*, warning once — a deliberate declaration that
+    is wrong is reported, never quietly worked around by the scan. With no
+    pointer declared, exactly one origin-URL match under ``workspaces_root``
+    resolves the chain from that workspace; two or more resolve nothing and
+    warn once, naming every match and the pointer remedy. Anything else leaves
+    the chain empty and silent, exactly as before this rung existed.
+
+    Never raises: a warning is a warning, so no consuming verb changes its exit
+    behavior. Cannot recurse — both rungs re-enter :func:`workspace_chain` at a
+    directory that declares a workspace, whose upward search is therefore
+    non-empty."""
+    pointer = _read_workspace_pointer(start)
+    if pointer is not None:
+        path, target = pointer
+        if _declares_workspace(target):
+            return workspace_chain(target)
+        sys.stderr.write(
+            "warning: %s declares `%s` %s, which declares no `workspace` in "
+            "its %s; ignoring the pointer\n"
+            % (path, WORKSPACE_POINTER_FIELD, target, CONFIG_FILENAME))
+        return []
+    matches = _scan_workspaces_for_origin(start)
+    if len(matches) == 1:
+        return workspace_chain(matches[0])
+    if len(matches) > 1:
+        sys.stderr.write(
+            "warning: this checkout's origin is declared by %d workspaces "
+            "(%s); declare `%s` in %s to choose one\n"
+            % (len(matches), ", ".join(matches), WORKSPACE_POINTER_FIELD,
+               os.path.join(os.path.abspath(start), REPO_MAP_FILENAME)))
+    return []
 
 
 def find_workspace_root(start):
@@ -1986,25 +2164,63 @@ def resolve_clone_sources(config):
     return [os.path.expanduser(item) for item in raw]
 
 
-def _git_probe(target, *args):
+def _git_probe(target, *args, timeout=None):
     """Run ``git -C <target> <args>`` locally and return stripped stdout on a
     zero exit, else ``None``. Never the network — the caller passes only
     read-only local probes (``rev-parse``, ``remote get-url``). A missing git
-    binary or a non-repository target reads as ``None``."""
+    binary or a non-repository target reads as ``None``. An optional ``timeout``
+    (seconds) bounds the wait for a caller on a hot path; expiring it reads as
+    ``None`` too, so a wedged git degrades the caller instead of hanging it."""
     try:
         result = subprocess.run(
-            ["git", "-C", target, *args], capture_output=True, text=True)
-    except OSError:
+            ["git", "-C", target, *args], capture_output=True, text=True,
+            timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
         return None
     if result.returncode != 0:
         return None
     return result.stdout.strip()
 
 
-def _git_origin_url(target):
+def _git_origin_url(target, timeout=None):
     """Return ``target``'s ``origin`` remote URL via a local probe, or ``None``
-    when unset or unreadable."""
-    return _git_probe(target, "remote", "get-url", "origin")
+    when unset or unreadable. ``timeout`` bounds the probe as in
+    :func:`_git_probe`."""
+    return _git_probe(target, "remote", "get-url", "origin", timeout=timeout)
+
+
+def normalize_repo_url(url):
+    """Return the comparison form of a git remote ``url`` (shipd-workspace
+    workspace-reverse-lookup).
+
+    One spelling for every way the same repository is named, so
+    ``git@github.com:acme/repo.git`` and ``https://github.com/Acme/Repo``
+    compare equal: strip a ``<scheme>://`` prefix, then a ``<user>@`` prefix,
+    read a host-leading ``host:path`` colon as a ``/`` separator, drop trailing
+    slashes and one trailing ``.git``, and case-fold. Pure string work — never
+    a disk or network probe. An absent, empty, or whitespace-only ``url``
+    normalizes to ``""``, so callers matching real URLs guard on truthiness
+    rather than letting two undeclared urls compare equal."""
+    if not isinstance(url, str):
+        return ""
+    text = url.strip()
+    if not text:
+        return ""
+    scheme = text.find("://")
+    if scheme != -1:
+        text = text[scheme + 3:]
+    at = text.find("@")
+    slash = text.find("/")
+    if at != -1 and (slash == -1 or at < slash):
+        text = text[at + 1:]
+    colon = text.find(":")
+    slash = text.find("/")
+    if colon != -1 and (slash == -1 or colon < slash):
+        text = text[:colon] + "/" + text[colon + 1:]
+    text = text.rstrip("/")
+    if text.endswith(".git"):
+        text = text[:-len(".git")]
+    return text.rstrip("/").casefold()
 
 
 def _classify_git_repo(path):
