@@ -4,13 +4,14 @@ description: >-
   Set up and inspect the shipd workspace through its CLI: create the
   workspace marker with a guided target-root choice (init), report the
   workspace roster of projects and initiatives (show), bootstrap a job
-  workspace from its repository URL (clone), or materialize its members by
-  executing the engine's plan with real git (sync). Use when asked to "set up
+  workspace from its repository URL (clone), materialize its members by
+  executing the engine's plan with real git (sync), or map members to the
+  checkouts they already have on this machine (map). Use when asked to "set up
   a workspace", "create a workspace", "initialize a workspace", "clone a
-  workspace", "sync the workspace", "materialize members", or to see what a
-  workspace contains. Trigger phrases: "workspace", "set up a workspace",
-  "workspace init", "clone a workspace", "sync the workspace", "materialize
-  members", "/s:workspace".
+  workspace", "sync the workspace", "materialize members", "map a member", or
+  to see what a workspace contains. Trigger phrases: "workspace", "set up a
+  workspace", "workspace init", "clone a workspace", "sync the workspace",
+  "materialize members", "map the workspace", "/s:workspace".
 ---
 
 # /s:workspace — Guided workspace setup & roster
@@ -19,8 +20,10 @@ You are the **Workspace steward**. Your job is to wrap the workspace CLI in a
 guided flow so a workspace is created and inspected without hand-editing config
 files. You do **not** hand-write the workspace declaration — creation goes
 through the CLI's `workspace-init` verb, which owns the `.shipd-config.json`
-declaration and its refusal guard. You interview only where a decision cannot be
-inferred, drive the exact commands, and stop.
+declaration and its refusal guard — and you do **not** hand-write the
+machine-local member map: mapping goes through the CLI's `workspace-map` verb,
+which owns `.shipd-workspace.local.json` and its validation. You interview only
+where a decision cannot be inferred, drive the exact commands, and stop.
 
 **What a workspace is.** A workspace is the grouping root above repositories: it
 declares a `workspace` key in its `.shipd-config.json` and is discovered by
@@ -33,11 +36,12 @@ project status verbs) resolves it by that marker; without one, they dead-end —
 
 Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 - Status CLI: `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py`
-  (all four verbs drive this — `init` runs `workspace-init`, `show` runs
-  `workspace-show`, `clone` and `sync` run `workspace-sync`)
+  (all five verbs drive this — `init` runs `workspace-init`, `show` runs
+  `workspace-show`, `clone` and `sync` run `workspace-sync`, `map` runs
+  `workspace-sync --json` then `workspace-map`)
 
 Run the CLIs from the workspace root (so `--root` may be omitted, defaulting to
-the cwd); `show` and `sync` resolve the workspace from there. `init` is the
+the cwd); `show`, `sync`, and `map` resolve the workspace from there. `init` is the
 exception: it takes an **explicit target path** and runs precisely when no
 workspace resolves. `clone` runs `git clone` first, then hands into the `sync`
 flow from inside the created root.
@@ -60,6 +64,9 @@ section below:
   real git, then run the `sync` flow from inside the created root.
 - **`/s:workspace sync`** → materialize the workspace's members by executing
   the engine's `workspace-sync` plan.
+- **`/s:workspace map`** → guided member mapping: point unmapped members at
+  the checkouts they already have on this machine, through the engine's
+  `workspace-map set` verb.
 
 ---
 
@@ -288,11 +295,77 @@ unattended bootstrap. Run from the workspace root (or from inside it).
 
    Summarize the members now present on disk plainly.
 
+## `map` — guided member mapping
+
+Point declared members at the checkouts they **already have** on this machine,
+so `sync` leaves them alone and every workspace verb resolves them where they
+really live. This is the one verb that interviews besides `init`. It writes
+through the engine's `workspace-map set` verb — **never** hand-edit
+`.shipd-workspace.local.json`. Run from the workspace root (or inside it).
+
+1. **Get the plan.** The same planner `sync` reads gives you the member list
+   and, for each member, the local candidate the `clone_sources` scan found:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-sync --json
+   ```
+
+   If it exits non-zero with the no-workspace error, **report that error
+   verbatim** and point the user at `/s:workspace init` or
+   `/s:workspace clone` — there is no workspace to map. Otherwise parse one
+   JSON record per line and keep the `member` records.
+
+2. **Split the members.** A member record carrying a `mapped:` field is
+   **already mapped** — report it and **never re-ask** about it. Every other
+   member is a mapping candidate:
+   - A record whose `source:` field names a local checkout (the planner's
+     `clone_sources` scan matched its origin to the member's `url`) → propose
+     that path as the recommended mapping.
+   - A record with no `source:` → invite a typed path instead; offer skipping
+     as the recommended default, since a member without a local checkout is
+     `sync`'s job, not the map's. When such a record is already
+     `state: present`, say so in the question — it is materialized inside the
+     workspace, so mapping it is a relocation the user must actually want.
+
+3. **Ask once.** Issue a **single AskUserQuestion round** covering every
+   unmapped member — one question per member, each offering its proposed path
+   (when the plan found one), "type a path", and "skip". Never drip a question
+   per member across rounds, and never ask about an already-mapped member.
+
+4. **Drive `workspace-map set` per accepted member** — one call each, the
+   value exactly as the user accepted or typed (a `~` or relative form is
+   resolved at read time by the engine, so store what they gave you):
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-map set <member-path> <local-path>
+   ```
+
+   The verb refuses an undeclared member path (naming the declared ones) and
+   writes nothing — report such a refusal verbatim rather than retrying against
+   a guessed path. A **warning** on stderr (the target does not exist, or is
+   not a git work tree) is not a failure: the entry was written. Report the
+   warning and continue with the remaining members. A skipped member is left
+   unmapped; change nothing for it.
+
+5. **Report the map.** Finish on the bare listing, which shows each entry's
+   stored value and the absolute destination it resolves to:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-map
+   ```
+
+   Summarize it plainly, alongside the members you left unmapped. To undo an
+   entry later, `workspace-map remove <member-path>` is the counterpart — again
+   the engine's verb, never a hand edit.
+
 ## The question contract (AskUserQuestion)
 
-`init` is the only verb that interviews, and only when no workspace is
-discoverable — `clone` and `sync` **ask nothing** (the invocation is the
-consent; a question would break unattended bootstrap):
+`init` and `map` are the only verbs that interview — `init` only when no
+workspace is discoverable, `map` only about members the map does not already
+carry. `clone` and `sync` **ask nothing** (the invocation is the consent; a
+question would break unattended bootstrap).
+
+For `init`:
 
 - **One call, two questions.** Issue a *single* AskUserQuestion carrying both
   the target-root choice and the portable-git-seeding choice; never drip
@@ -310,6 +383,19 @@ consent; a question would break unattended bootstrap):
 - **Ask once, then converge.** Fold both answers in and drive `workspace-init`
   immediately — with `--git` when git seeding was chosen.
 
+For `map`:
+
+- **One call, one question per unmapped member.** Issue a *single*
+  AskUserQuestion covering every member the plan reports without a `mapped:`
+  field; never drip a question per member across rounds.
+- **Concrete options, plan-derived default.** Offer the plan's `source:`
+  checkout (recommended) when it found one, plus "type a path" and "skip";
+  where the plan found none, "skip" is the recommended default.
+- **Never re-ask a mapped member.** A member carrying `mapped:` is reported,
+  not questioned — re-asking would invite an accidental remap.
+- **Ask once, then converge.** Drive `workspace-map set` per accepted member
+  immediately, then report the listing.
+
 ## Ending — report and stop
 
 Each verb ends the moment its work is done and self-consistent:
@@ -326,7 +412,12 @@ Each verb ends the moment its work is done and self-consistent:
 - **`sync`** — the plan's per-member actions were executed (failures reported
   and skipped, drift reported never repaired), the marked ignore block was
   reconciled with `--write-gitignore`, and the roster was reported.
+- **`map`** — the single question round ran over the unmapped members,
+  `workspace-map set` was driven once per accepted member (refusals and
+  warnings reported verbatim, skipped members left unmapped, already-mapped
+  members reported never re-asked), and the map listing was reported.
 
 Then **stop** — this skill does no other work. It never hand-writes the
-declaration or the gitignore block, never seeds the registry, never nests a
-workspace under an existing one, and never repairs drift.
+declaration, the gitignore block, or the member map file, never seeds the
+registry, never nests a workspace under an existing one, and never repairs
+drift.

@@ -1236,7 +1236,7 @@ GITIGNORE_MEMBERS_BEGIN = "# >>> shipd-workspace members"
 GITIGNORE_MEMBERS_END = "# <<< shipd-workspace members"
 
 
-def _inside_git_work_tree(target):
+def inside_git_work_tree(target):
     """True when ``target`` is already inside a git work tree, probed with a
     local ``git rev-parse`` (no network). Any git failure (git absent, not a
     repository) reads as ``False``."""
@@ -1264,7 +1264,7 @@ def wiki_autocommit(store_dir, paths, subject):
     ``warning: wiki auto-commit skipped: …`` line to stderr and returns False —
     the write already succeeded, so its exit code stays zero. Local git only
     (``status``, ``add``, ``commit``) — never the network."""
-    if not _inside_git_work_tree(store_dir):
+    if not inside_git_work_tree(store_dir):
         return False
     paths = list(paths)
     try:
@@ -1327,6 +1327,39 @@ def _ensure_members_gitignore_block(target):
             GITIGNORE_MEMBERS_BEGIN, GITIGNORE_MEMBERS_END)
     with open(gi_path, "w", encoding="utf-8") as fh:
         fh.write(new_body)
+
+
+def ensure_gitignore_line(target, line):
+    """Ensure ``<target>/.gitignore`` carries ``line`` *outside* the marked
+    member-repos block, appending it at the end of the file only when it is
+    absent there (shipd-workspace workspace-map-verbs). Creates the file when
+    absent; returns True only when the line was appended.
+
+    Deliberately outside the markers: the sync reconciler rewrites the marked
+    block to exactly the manifest's member paths
+    (:func:`write_members_gitignore_block`), so a line parked inside it would
+    be dropped on the next sync. A line that exists only inside the block is
+    therefore treated as absent."""
+    gi_path = os.path.join(target, ".gitignore")
+    body = ""
+    if os.path.isfile(gi_path):
+        with open(gi_path, encoding="utf-8") as fh:
+            body = fh.read()
+    lines = body.split("\n")
+    inside = set()
+    try:
+        begin = lines.index(GITIGNORE_MEMBERS_BEGIN)
+        end = lines.index(GITIGNORE_MEMBERS_END)
+        inside = set(range(begin, end + 1))
+    except ValueError:
+        pass
+    for i, existing in enumerate(lines):
+        if i not in inside and existing.strip() == line:
+            return False
+    prefix = body if body.endswith("\n") or body == "" else body + "\n"
+    with open(gi_path, "w", encoding="utf-8") as fh:
+        fh.write("%s%s\n" % (prefix, line))
+    return True
 
 
 def _is_bare_name(path):
@@ -1422,7 +1455,7 @@ def init_workspace(path, git=False, nested=False):
         json.dump(data, fh, indent=2)
         fh.write("\n")
     if git:
-        if not _inside_git_work_tree(target):
+        if not inside_git_work_tree(target):
             subprocess.run(["git", "init", target],
                            capture_output=True, text=True)
         _ensure_members_gitignore_block(target)
@@ -1853,6 +1886,31 @@ def load_repo_map(ws_root):
                 "%s `repos` entry '%s' must be a non-empty path string, got %r"
                 % (path, key, value))
     return repos
+
+
+def save_repo_map(ws_root, repos):
+    """Write the machine-local member map's ``repos`` object to
+    ``<ws_root>/.shipd-workspace.local.json`` (shipd-workspace
+    workspace-map-verbs) — the engine-owned writer beside :func:`load_repo_map`,
+    so the map is never hand-authored.
+
+    Replaces *only* the ``repos`` key: every other top-level key the file
+    already carries survives unchanged, the reverse-lookup
+    ``workspace_root`` pointer (``WORKSPACE_POINTER_FIELD``) included, so the
+    two conventions can share one file. An absent file is created carrying
+    ``repos`` alone. Output is pretty-printed JSON with a trailing newline, so
+    the file stays hand-readable and diffs cleanly.
+
+    Validates the existing file through :func:`load_repo_map` before writing:
+    a malformed map raises that load's own :class:`ConfigError` and nothing is
+    written — the writer never repairs a broken file."""
+    path = os.path.join(ws_root, REPO_MAP_FILENAME)
+    load_repo_map(ws_root)
+    data = _load_config_file(path) if os.path.isfile(path) else {}
+    data["repos"] = dict(repos)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
 
 
 def member_dest(ws_root, path):
