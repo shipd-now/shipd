@@ -1,5 +1,5 @@
 # docs-rewrite
-Status: ready
+Status: active
 Theme: developer-experience
 
 ## Introduction
@@ -96,3 +96,18 @@ switches the CI step from marker-scoped to full-scope (all of `docs/` minus
 | docs-copilot-review-split | Split the 711-line `copilot-review.md` into a how-to and a reference, each under its cap | low | low | medium | medium |
 | docs-feature-guides | Rewrite `oracle.md`, `prd.md`, `guardrails.md`, `supersession-gate.md` to the standard; re-classify or split `prd.md` | low | low | low | low |
 | docs-full-enforcement | Flip the CI gate to full scope over `docs/` (minus `retros/`); sweep and fix any straggler | low | low | low | low |
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 45 | 10.3k |
+| Write | 1 | 6.5k |
+| Read | 23 | 1.3k |
+| Monitor | 2 | 399 |
+| Agent | 2 | 313 |
+| (no tool) | 0 | 105 |
+| ToolSearch | 2 | 30 |
+| Edit | 2 | 20 |
+| TaskStop | 1 | 17 |
+| **Total** | 78 | 19.0k |
