@@ -274,6 +274,39 @@ def _lang_for(path):
     return EXT_LANG.get(os.path.splitext(path)[1].lower())
 
 
+# An added file with no hunks is otherwise reviewed on its path and line
+# count alone; inlining its numbered body (capped) lets the skill judge new
+# code with the same rigour it applies to a hunk, without letting a vendored
+# blob swamp the review.
+ADDED_CONTENT_MAX_LINES = 600
+ADDED_CONTENT_MAX_BYTES = 60_000
+
+
+def _inline_content(text):
+    """A line-numbered rendering of `text`, each line prefixed with its
+    1-based line number, capped at ADDED_CONTENT_MAX_LINES lines and
+    ADDED_CONTENT_MAX_BYTES bytes.
+
+    Returns (content, content_truncated)."""
+    lines = text.splitlines()
+    truncated = len(lines) > ADDED_CONTENT_MAX_LINES
+    if truncated:
+        lines = lines[:ADDED_CONTENT_MAX_LINES]
+    numbered = []
+    total_bytes = 0
+    for i, line in enumerate(lines, start=1):
+        entry = f"{i}: {line}"
+        entry_bytes = len(entry.encode("utf-8"))
+        added_bytes = entry_bytes + (1 if numbered else 0)  # "\n" join separator
+        if total_bytes + added_bytes > ADDED_CONTENT_MAX_BYTES:
+            truncated = True
+            break
+        numbered.append(entry)
+        total_bytes += added_bytes
+    content = "\n".join(numbered)
+    return content, truncated
+
+
 # -- difft engine -----------------------------------------------------------
 
 
@@ -301,9 +334,12 @@ def summarize_chunks(chunks):
                 if not changes:
                     continue
                 snippet = "".join(c.get("content", "") for c in changes)
+                line_number = info.get("line_number")
                 hunks.append({
                     "side": "before" if side == "lhs" else "after",
-                    "line": info.get("line_number"),
+                    # difftastic reports a 0-based line_number; normalize to
+                    # 1-based so both engines agree with `grep -n` truth.
+                    "line": line_number + 1 if line_number is not None else None,
                     "snippet": snippet,
                 })
     return hunks
@@ -331,14 +367,14 @@ def difft_json(old_text, new_text, name):
 
 def _touches_declaration_difft(new_text, hunks):
     """True if any 'after' difft hunk lands on a line that looks like a
-    declaration. difft line_number is 0-based; snippets are token-level, so we
-    match against the full new-file line."""
+    declaration. Hunk `line` is 1-based (normalized in summarize_chunks);
+    snippets are token-level, so we match against the full new-file line."""
     lines = new_text.splitlines()
     for h in hunks:
         if h.get("side") != "after" or h.get("line") is None:
             continue
         ln = h["line"]
-        if 0 <= ln < len(lines) and any(m in lines[ln] for m in DECL_MARKERS):
+        if 1 <= ln <= len(lines) and any(m in lines[ln - 1] for m in DECL_MARKERS):
             return True
     return False
 
@@ -373,6 +409,8 @@ def _difft_entry(old, new, path, kind):
     }
     if kind in ("added", "deleted") and not hunks:
         entry["lines"] = (new if kind == "added" else old).count("\n") + 1
+        if kind == "added":
+            entry["content"], entry["content_truncated"] = _inline_content(new)
     touch = kind != "deleted" and _touches_declaration_difft(new, hunks)
     return "ok", entry, touch
 
@@ -449,6 +487,8 @@ def _text_entry(old, new, path, diff_spec, kind):
         # Whole-file add/delete: no per-line hunks; carry a size so the skill
         # can decide whether to read the file itself.
         entry["lines"] = (new if kind == "added" else old).count("\n") + 1
+        if kind == "added":
+            entry["content"], entry["content_truncated"] = _inline_content(new)
         touch = False
         return "ok", entry, touch
     # Modified: filter whitespace-only edits, then parse real hunks.
