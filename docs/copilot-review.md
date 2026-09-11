@@ -1,75 +1,26 @@
-# The shipd review inside GitHub Copilot code review
+<!-- doc-type: how-to -->
+
+# Install the Copilot review gate
 
 `shipd copilot` installs the shipd semantic review into a repository as a
-GitHub Copilot **agent skill**, so Copilot's own pull-request review runs the
-same engine and the same rubric as `/s:review` — cohort by cohort, over a
-syntax-aware structural diff, with a high/medium/low severity rubric and a
-ship-it/fix-required verdict.
-
-A fourth managed file — the gate workflow — turns that review into the
-`semantic-review` commit status, so the same check `/s:review` posts is
-satisfied without a session. It has two reviewer modes: with a
-`COPILOT_GITHUB_TOKEN` secret it **runs the review itself** through headless
-GitHub Copilot CLI, and without one it falls back to **waiting for GitHub's own
-Copilot code review** and classifying whatever that wrote. See
-[The merge gate](#3-the-merge-gate) and
-[Scope and limits](#scope-and-limits).
+GitHub Copilot agent skill. A gate workflow turns that review into the
+`semantic-review` commit status. [Copilot review
+reference](copilot-review-reference.md) covers the two reviewer modes, the
+verdict rules, the trust boundary, and the limits.
 
 ## Prerequisites
 
-- A **paid Copilot plan** — Pro, Pro+, Business, or Enterprise. Agent skills
-  and MCP for Copilot code review became generally available on those plans on
-  July 29, 2026.
-- The repository is **hosted on GitHub**, and you can push a branch and open a
-  pull request against it.
+- A **paid Copilot plan** — Pro, Pro+, Business, or Enterprise.
+- The repository **hosted on GitHub**, with rights to push a branch.
 - `shipd` on your PATH (see [getting started](getting-started.md#1-install)).
 
-Nothing else. The review runs on GitHub Actions runners, which already provide
-`git` and Python 3 — all the engine needs.
-
-**On a private repository, prefer the gate's CLI reviewer mode.** GitHub runs
-its Copilot review in a dynamic Actions run that checks the repository out for
-itself, and on a private repository that checkout has been observed to fail
-(`repository not found`, on a private individual-account repo). When it fails,
-nothing under `.github/skills` is on disk for the review: the skill never
-loads, the review is Copilot's generic one, it carries no verdict marker, and
-every review of that repository classifies by the
-[strictness knob](#strictness-shipd_gate_fail_open) — by default **fail-open**,
-`success` described as *no verdict marker was parsed*; with
-`SHIPD_GATE_FAIL_OPEN=false`, a `semantic-review` left `pending` on every pull
-request. Nothing here can fix that from the repository side; it is decided in
-Copilot's own runner.
-
-**The setup workflow is fail-soft about it.** `copilot-code-review.yml` checks
-the repository out `continue-on-error`, and runs its `difft`/`ripgrep` installs
-only where that checkout succeeded. So on a repository the review runner cannot
-check out, the setup job **completes** with the installs skipped rather than
-failing — which is what GitHub's PR-visible `ccr-setup-step-failure` notice
-keys on — and the review is the same one that repository was already getting.
-On a public repository the checkout succeeds and the toolchain lands exactly as
-before.
-
-That limit belongs to the [poll fallback mode](#the-poll-fallback-mode) alone.
-The [CLI reviewer mode](#the-cli-reviewer-mode) is **unaffected on private
-repositories**: it reviews from the gate's own Actions job, with the ordinary
-`actions/checkout` and the workflow's own token, which checks a private
-repository out normally. If you do stay on the poll fallback, open the Copilot
-code review run's log once and confirm its checkout step succeeded; where it
-did not, treat the session flow (`/s:review` plus `review_gate.py post`) as the
-working gate and do not rely on the Copilot verdict.
+**In a Claude Code session, `/s:gate` runs this whole guide for you.** It
+preflights the prerequisites, runs `shipd copilot add`, and offers to commit
+and push. It then takes one batched consent round over the repository settings,
+relays the token recipe, and verifies with `shipd doctor`. Read on to set the
+gate up by hand.
 
 ## 1. Install the files
-
-**In a Claude Code session, `/s:gate` does this whole guide's setup for
-you** — it preflights the prerequisites, runs `shipd copilot add`, offers to
-commit and push the four files, and then takes one batched consent round over
-the repository settings below (requiring the `semantic-review` check, enabling
-auto-merge, and the optional [strictness knob](#strictness-shipd_gate_fail_open)),
-relays [the reviewer token](#the-reviewer-token) recipe as a hand-off, and
-closes by verifying with `shipd doctor`. It changes nothing you did not
-approve. Everything from here on is the manual reference for the same steps —
-read it when you are setting the gate up by hand, or to understand what the
-skill just did.
 
 From the repository you want reviewed:
 
@@ -82,630 +33,116 @@ wrote .github/skills/code-review/SKILL.md
 wrote .github/skills/code-review/scripts/semdiff.py
 wrote .github/workflows/copilot-code-review.yml
 wrote .github/workflows/copilot-review-gate.yml
-Copilot code review reads these from a pull request's head branch. Enable automatic review with a GitHub branch ruleset.
+Copilot code review reads these from a pull request's head branch.
 ```
 
-Those four files are everything the verb manages, and it touches nothing else
-— no network, no `gh`, no other path:
+Those four files are everything the verb manages. The
+[reference](copilot-review-reference.md#the-managed-files) gives each file's
+role. Pass `--root ~/code/some-repo` to install into a repository you are not
+standing in.
 
-- **`.github/skills/code-review/SKILL.md`** — the review instructions Copilot
-  loads: what to run, how to order the work, the severity rubric, and the
-  verdict rule. The skill directory is named `code-review` because GitHub
-  recommends that name to make sure Copilot code review reads the skill.
-- **`.github/skills/code-review/scripts/semdiff.py`** — the review engine, a
-  byte-identical copy of the one `/s:review` uses. Stdlib-only Python 3, and
-  read-only: every subcommand it exposes to the review only reads the
-  repository and shells out to `git`.
-- **`.github/workflows/copilot-code-review.yml`** — the environment workflow
-  for the review runner. It installs `difft` (difftastic) and `ripgrep` so the
-  diff is syntax-aware and symbol lookups are fast. Both are optional; see
-  [Scope and limits](#scope-and-limits).
-- **`.github/workflows/copilot-review-gate.yml`** — the gate workflow. It
-  produces the `semantic-review` commit status your branch protection
-  requires: running the review itself through Copilot CLI where a secret
-  configures that, and otherwise bridging GitHub's own Copilot review into it.
-  See [The merge gate](#3-the-merge-gate).
-
-To install into a repository you are not standing in, pass `--root`:
+## 2. Commit and push the files
 
 ```bash
-shipd copilot add --root ~/code/some-repo
-```
-
-### Commit and push them
-
-```bash
-git add .github/skills/code-review \
-        .github/workflows/copilot-code-review.yml \
-        .github/workflows/copilot-review-gate.yml
+git add .github/skills/code-review .github/workflows/copilot-*review*.yml
 git commit -m "Install the shipd Copilot code-review skill"
 git push
 ```
 
-This step is not optional bookkeeping. **Copilot reads skills and workflows
-from the pull request's head branch**, not from your working tree and not from
-the base branch. Files that are only on disk are
-invisible to the review.
+This step is not bookkeeping. **Copilot reads skills and workflows from the
+pull request's head branch**, not from your working tree and not from the base
+branch. Files that sit only on disk are invisible to the review.
 
-One consequence, and its limit: on **GitHub's own Copilot code review** — and
-so on the gate's [poll fallback](#the-poll-fallback-mode), which classifies
-what that surface wrote — a pull request that changes the skill is reviewed by
-the changed skill. That is convenient when you are iterating on the rubric, and
-it is also why it does *not* hold for the [CLI reviewer](#the-cli-reviewer-mode):
-that mode pins the instructions to the **base** ref precisely so a change
-cannot rewrite the rules it is reviewed under. See
-[the trust boundary](#the-trust-boundary).
+One consequence lands on GitHub's review, and so on the gate's poll fallback:
+the changed skill reviews the pull request that changes it. That is convenient
+while you iterate on the rubric. It does not hold in CLI reviewer mode, which
+pins the instructions to the base ref.
 
-## 2. Enable reviews
+## 3. Enable reviews
 
-Installing the files makes the skill *available*. Asking for a review is a
-GitHub-side setting — `shipd copilot` cannot and does not touch it.
+Installing the files makes the skill available. Asking for a review is a
+GitHub-side setting, which `shipd copilot` never touches.
 
-**Per pull request.** Request **Copilot** as a reviewer from the pull
-request's Reviewers menu, the same way you would request a person. Copilot
-reviews that pull request once, picking up the skill from its head branch.
+- **Per pull request.** Request **Copilot** as a reviewer from the pull
+  request's Reviewers menu, as you would request a person.
+- **For every pull request.** Add a **branch ruleset** on the protected branch
+  requiring Copilot code review, under **Settings** → **Rules** → **Rulesets**.
 
-**Automatically, for every pull request.** Add a **branch ruleset** on the
-protected branch requiring Copilot code review (repository **Settings** →
-**Rules** → **Rulesets**). From then on Copilot reviews each pull request
-targeting that branch without anyone asking.
+The gate's poll fallback waits for that review. The CLI reviewer mode needs
+neither path, because it reviews every pull request from its own Actions job.
 
-This step is what the gate's **poll fallback** waits for. It is optional in the
-gate's [CLI reviewer mode](#the-cli-reviewer-mode), which reviews every pull
-request from its own Actions job without a review ever being requested — though
-a repository is free to run both surfaces.
+## 4. Set the reviewer token
 
-## 3. The merge gate
+`COPILOT_GITHUB_TOKEN` selects the CLI reviewer mode, and the only thing it
+must do is spend Copilot requests. Give it exactly that.
 
-`.github/workflows/copilot-review-gate.yml` turns the review into a real
-check. It posts the **`semantic-review`** commit status — the same context
-`/s:review`'s poster (`review_gate.py post`) sets — so a branch protection
-requiring `semantic-review` is satisfied by whichever of the two ran last, and
-a pull request no longer waits forever at *"Expected — waiting for status to be
-reported"*.
-
-The gate has **two reviewer modes**, and one repository secret decides which
-one a run takes:
-
-| | [CLI reviewer](#the-cli-reviewer-mode) | [Poll fallback](#the-poll-fallback-mode) |
-| --- | --- | --- |
-| Selected by | a `COPILOT_GITHUB_TOKEN` secret | no secret |
-| Who reviews | headless GitHub Copilot CLI, in the gate's own Actions job | GitHub's Copilot code review |
-| Runs the shipd engine | **yes** | no — its bash tool is disabled |
-| Verdict marker | authored by the reviewer | never authored today |
-| The status you get | strict: `fix-required` really blocks | fail-open in practice |
-| Private repositories | works | the skill never loads |
-| What it costs | Copilot AI credits per review | runner minutes spent waiting |
-
-Whichever mode runs, the gate posts `semantic-review` = `pending` on the head
-commit **first** — before it checks anything out or installs anything — so a
-review of an older commit never counts for a newer one, and a failure later in
-the job leaves the required check reading *pending* rather than unreported.
-
-### The CLI reviewer mode
-
-Give the gate a `COPILOT_GITHUB_TOKEN` and it stops waiting for anyone: it runs
-the shipd review itself, through GitHub Copilot CLI, on its own runner.
-
-**Set the secret** — a dedicated, minimally scoped fine-grained personal access
-token stored as `COPILOT_GITHUB_TOKEN`. That is a short job with a few sharp
-edges, so it has [its own section below](#the-reviewer-token). Nothing else
-changes: the same workflow file handles both modes, so there is nothing to
-re-install after adding or removing the secret.
-
-**What the job then does**, on every pull request opened, updated, or reopened:
-
-1. Posts `semantic-review` = `pending` on the head commit.
-2. Checks that commit out with its full history — the engine's diff uses
-   merge-base semantics, so it needs the history behind both ends.
-3. Installs `difft` and `ripgrep` for the engine, then the `@github/copilot`
-   CLI itself, **at an exact pinned version** (`npm install -g
-   @github/copilot@1.0.80`). The pin is deliberate: an unpinned install would
-   let the CLI vendor change what this gate runs, and so what it decides, on
-   their release schedule. Upgrading is a bump of that line in the plugin's
-   template, reviewed like any other change.
-4. Materializes the reviewer's instructions **from the base ref** — `git show
-   origin/<base>:.github/skills/code-review/SKILL.md` into a workspace file —
-   so the change under review cannot rewrite the rules it is reviewed under.
-   Where the base ref is confirmed not to carry that file (the pull request
-   that first installs the integration), the reviewed commit's own copy is
-   used and the job log says so. Any *other* failure to read it — an
-   unresolvable base ref, an unreadable copy — fails this step rather than
-   falling back, so `pending` stands instead of the gate reviewing under
-   instructions it did not pin.
-5. Runs the CLI non-interactively under a **10-minute timeout**, in a step
-   whose environment holds the reviewer secret and **no other credential**,
-   with its tools enabled so it can execute the engine. The prompt does not
-   restate the rubric: it points the CLI at the materialized instructions —
-   the same contract GitHub's review surface reads, taken from the base —
-   names the base and the reviewed commit, forbids the CLI from posting
-   anything itself, and requires the verdict marker as the last line of its
-   output. See [the trust boundary](#the-trust-boundary) for why that step
-   holds nothing else.
-6. Classifies the **last non-empty line** of what the CLI wrote, exactly as
-   below, in a *separate* step holding the workflow's own token and not the
-   secret, and posts the resulting `semantic-review` status. Because the CLI
-   really did run the engine and really did author the marker, a `fix-required`
-   verdict here **blocks the merge** — this is the strict mode.
-7. Posts the review text as a pull-request comment, so a human reads whatever
-   the gate just judged, whichever way it went — including the case where it
-   parsed no verdict and [strict mode](#strictness-shipd_gate_fail_open) left
-   the check `pending`.
-
-Only the CLI's standard output is captured. Its run statistics (duration, AI
-credits, tokens) go to standard error and stay in the job log, where they
-belong — folded into the review they would be the last line, and the verdict
-would be lost.
-
-**A failed or timed-out run leaves `pending`.** If the CLI exits nonzero or
-exceeds its timeout it judged nothing, so its partial output is discarded and
-the posting step finds nothing to classify: no terminal status and no comment,
-the `pending` from step 1 stands, exactly as a poll timeout does, and
-`review_gate.py post` from a session is the manual out.
-
-**Private repositories work.** This review runs in your repository's own Actions
-job with the workflow's token, so the checkout that fails for GitHub's review
-runner simply does not arise here.
-
-**What it costs.** Copilot AI credits, per review, against your Copilot
-subscription's monthly allowance — on the order of **ten credits** for a small
-change (a measured run: 6.64 credits in 16 seconds), plus a couple of runner
-minutes for the installs. One review per push: the concurrency group cancels
-the run a new push supersedes, so a rapid-fire branch does not stack up reviews.
-
-### The reviewer token
-
-`COPILOT_GITHUB_TOKEN` is the one secret this integration asks for, and the
-only thing it must be able to do is spend Copilot requests. Give it exactly
-that and nothing else.
-
-**Create a dedicated token.** **Settings** → **Developer settings** →
+**Create a dedicated token** under **Settings** → **Developer settings** →
 **Personal access tokens** → **Fine-grained tokens** → **Generate new token**:
 
-1. **Resource owner**: the account whose Copilot subscription pays for the
-   reviews.
-2. **Repository access**: **none**. Not "all repositories", not "only select
-   repositories" — the reviewer needs no repository permission at all. Every
-   repository operation in the gate (the checkout, the status post, the
-   comment) is done by the workflow's own `github.token`.
+1. **Resource owner**: the account whose Copilot subscription pays.
+2. **Repository access**: **none**. The reviewer needs no repository
+   permission; the workflow's own token does every repository operation.
 3. **Account permissions**: **"Copilot Requests"** → *Read and write*, and
-   nothing else. That permission alone is what lets a token drive Copilot
-   headlessly; without it the CLI refuses to start.
-4. **Expiration**: pick a bounded one (90 days is a sensible default). See the
-   rotation note below — an expired token here is fail-safe.
+   nothing else. Without it the CLI refuses to start.
+4. **Expiration**: pick a bounded one, such as 90 days.
 
 **Never reuse a broad-scope token.** Any workflow run in the repository can
-read its secrets, so a token stored here is a token every future workflow —
-including one added by a pull request you have not read closely — can use.
-A `repo`-scoped classic token or a fine-grained token with write access to your
-repositories would hand that reach to anything running in CI. The
-repository-access-free token above can do exactly one thing if it leaks: spend
-Copilot credits.
+read its secrets, including a run some unread pull request adds. The token
+above can do one thing if it leaks: spend Copilot credits.
 
 **Store it as a repository secret.**
 
 ```bash
 gh secret set COPILOT_GITHUB_TOKEN --repo <owner>/<repo>
-# paste the token at the prompt; it is never echoed
 ```
 
-(Or repository **Settings** → **Secrets and variables** → **Actions** → **New
-repository secret**.) Note that the identity running `gh secret set` needs
-**Secrets: read and write** on the repository — that is the permission of
-whoever manages the repository, a *different* credential from the reviewer
-token being stored, which needs no repository access whatsoever.
+Storing a secret needs **Secrets: read and write** on the repository. That is a
+different credential from the reviewer token you store.
 
-**Expiry is fail-safe; rotate by updating the secret.** When the token expires,
-the Copilot CLI refuses to start, the reviewer step exits nonzero, and the gate
-posts no terminal status: `semantic-review` stays `pending` on every pull
-request until you notice. An expired token can never turn into a passing check
-— the failure mode is a blocked merge, not a green one. To rotate, generate a
-new token the same way and re-run the same `gh secret set` command; no workflow
-change and no re-install is needed.
+**Expiry is fail-safe.** An expired token stops the CLI, so the gate posts no
+terminal status and `semantic-review` stays `pending`. An expired token can
+never green a check. To rotate, mint a new one and re-run `gh secret set`.
 
-**Removing the secret restores the poll fallback.** Delete
-`COPILOT_GITHUB_TOKEN` (`gh secret delete COPILOT_GITHUB_TOKEN`) and the very
-next run takes the [poll path](#the-poll-fallback-mode) instead — the workflow
-branches on the secret's presence at run time.
+**Removing the secret restores the poll fallback.** Run
+`gh secret delete COPILOT_GITHUB_TOKEN`, and the next run takes the poll path.
 
-**What it spends.** Reviews consume Copilot AI credits from the *token
-owner's* subscription allowance, not the repository's: about **7 credits** for
-a small change in the runs measured here. Budget it against the account that
-owns the token, and remember that the concurrency group caps this at one review
-per push.
+## 5. Verify
 
-### The trust boundary
+`shipd doctor` reads the three GitHub-side settings, read-only, and reports
+them as its last three lines.
 
-The CLI reviewer runs an LLM agent, with its tools enabled, over content that
-arrives in the pull request it is reviewing. Here is what that does and does
-not put at risk.
-
-**The baseline is GitHub's, not this template's.** On a same-repository branch
-pull request — the shipd `change/<name>` flow — GitHub already runs *the
-branch's own copy* of every workflow file, with the repository's secrets
-available to it. Anyone who can push a branch can therefore already run code
-in CI with those secrets, gate or no gate. Installing this workflow introduces
-no new class of actor. (On a fork's pull request the token is read-only and
-secrets are not passed at all, which is why [the gate cannot post
-there](#tokens-permissions-and-the-session-flow).)
-
-**The residual risk is content, not push access.** What the gate does add is a
-reviewer that *reads attacker-influenceable text* — a diff, a commit message, a
-file the change adds — and acts on it. No LLM reviewer is immune to being
-steered by such content: a change can try to talk the reviewer into a `ship-it`
-it did not earn, or into doing something with the tools it was given. That risk
-is real and is not eliminated here; it is **bounded**.
-
-**How it is bounded.**
-
-- **The reviewer holds no credential but its own.** The Copilot CLI runs in a
-  step whose environment binds `COPILOT_GITHUB_TOKEN` and nothing else — the
-  workflow's `github.token` is *not* there, and lives only in the following
-  step that classifies and posts. What the reviewer holds is the
-  [minimal PAT](#the-reviewer-token): no repository access, only "Copilot
-  Requests". So a steered reviewer has no credential with which to post the
-  status, comment as the workflow, or push; the worst case is spent credits
-  and a misleading review body — which the next step publishes as a comment
-  for a human to read.
-- **The posting step does not inherit the reviewer's leavings.** A step can
-  hand the steps after it a `$GITHUB_PATH` entry and `$GITHUB_ENV` variables,
-  which would be two ways around the split above: a shimmed `gh` earlier on
-  `PATH` would run the reviewer's own program *with* `github.token`, and an
-  injected `SHIPD_GATE_FAIL_OPEN=true` would green a strict repository's
-  marker-less outcome. So the posting step invokes `gh` by a **hardcoded**
-  absolute path (`/usr/bin/gh` — never a `PATH` lookup, and deliberately not
-  an overridable `${...:-/usr/bin/gh}`, since a variable an earlier step wrote
-  to `$GITHUB_ENV` would redirect the credentialed binary just as a shim
-  would) and re-binds the strictness knob in its own step-level `env:` from
-  the `vars` context — a step's `env:` is evaluated by the runner and no
-  earlier step can write to it. Those two close the `$GITHUB_PATH` and
-  `$GITHUB_ENV` routes specifically, which is what makes the credential split
-  hold against a reviewer that merely edits its environment.
-
-  **It is not a wall, and should not be read as one.** A GitHub-hosted runner
-  gives the job passwordless `sudo`, so a *fully* steered agent — one that has
-  stopped reviewing and started attacking — could overwrite `/usr/bin/gh`
-  itself, or anything else the later steps run. Nothing inside a single job
-  survives that. The in-job split raises the bar and removes the easy routes;
-  the hard floor underneath it is the reviewer's [credential
-  minimality](#the-reviewer-token) — the PAT it holds cannot touch the
-  repository no matter what the runner does — and, where you need assurance
-  rather than a raised bar, the session flow below.
-- **The instructions come from the base ref.** The rubric the reviewer follows
-  is `git show`n out of the base branch, not read off the ref under review, so
-  a change that edits `SKILL.md` is still reviewed under the rules it is asking
-  to change. Only a pull request that has already been merged into the base can
-  move that contract. The fallback to the head's copy is reached from exactly
-  one cause — the base tree not carrying the file, confirmed with `git
-  cat-file -e` — because a fallback on *any* failure would let an unreachable
-  base silently un-pin the instructions. A base ref that will not resolve, or
-  a copy that is there and cannot be read, fails the reviewer step instead and
-  leaves `pending`.
-- **The CLI version is pinned.** The gate runs an exact
-  `@github/copilot@<version>`, so the reviewer's behaviour changes when this
-  template changes, not when the vendor ships.
-- **The verdict is decided by the workflow, not the reviewer.** The reviewer
-  writes text; the posting step reads the text's last non-empty line and
-  applies this workflow's own rules to it. The reviewer never chooses a status.
-
-**Where you need assurance, review from a session.** `/s:review` followed by
-`review_gate.py post` is the high-assurance path: a human is in the loop, and
-the poster is a credential you are holding rather than one a runner handed to
-an agent. The gate is for the routine case; the session flow is the one to use
-when the change itself is the thing you are unsure about.
-
-### The poll fallback mode
-
-With no secret configured, the gate waits for GitHub's own Copilot code review
-of the head commit — polling the reviews API for it — and classifies whatever
-that review's body says.
-
-**Why it polls instead of waiting to be told.** Copilot submits its review from
-inside a dynamic Actions run, using the workflow-scoped token, and GitHub does
-not start workflow runs from events raised by such a token. So a
-Copilot-authored review submission triggers **no `pull_request_review` run at
-all** — measured twice on a dogfooding repository, against human reviews of the
-same pull requests that triggered gate runs within three seconds. A gate that
-only listened for that event posted `pending` and then never heard the one
-thing it existed to hear. The `pull_request` run is the one that reliably
-exists, so it is the one that waits: it polls the pull request's reviews
-through the REST API for the newest review by
-`copilot-pull-request-reviewer[bot]` whose `commit_id` is the head it was
-triggered for. The review-event path is kept because it costs nothing and
-still handles any submission GitHub does route.
-
-**What this mode actually guarantees today: fail-open.** GitHub's Copilot code
-review runs with its **bash tool disabled** and assembles the review body in
-its own pipeline. The shipd engine therefore never executes there, and the
-verdict marker is never authored — observed directly in a public-repository
-run log. So a poll-mode `success` means *"Copilot reviewed this commit; no
-verdict marker was parsed"*, not *"the review passed"*. The mode is worth
-keeping — it costs nothing, needs no secret, and Copilot's own findings still
-appear as a review on the pull request — but it is not a semantic gate. Where
-you want the verdict to bind, use the CLI reviewer mode above, or post from a
-session with `review_gate.py post`. That is also why the fail-open rule exists
-at all: failing closed on a missing marker would brick every merge.
-
-**The poll's bounds, and what a timeout means.** The poll runs every **20
-seconds for at most 15 minutes**. On the dogfooding repository Copilot's
-reviews landed two to three minutes after the request, so the window is
-generous rather than tight. Each cycle also re-reads the pull request's own
-head: once a new push has moved it, the poll exits quietly and that push's own
-run — which has already posted its own `pending` — owns the gate from there.
-
-If the window elapses with no Copilot review of that commit, the gate **leaves
-the status `pending` and posts nothing further**. No review happened, so no
-verdict is invented; a required `semantic-review` check simply stays unmet, and
-the manual out is the session flow's poster, `review_gate.py post`. The same is
-true if the poll is cancelled: the workflow keeps one concurrency group per
-pull request with `cancel-in-progress`, so a new push cancels the poll it
-supersedes.
-
-**What it costs.** Waiting occupies a runner: up to 15 runner-minutes per pull
-request update in the worst case, typically the two or three minutes until the
-review lands. The concurrency group caps that at one live poll per pull
-request, and public repositories bill nothing for it — on a private repository
-those are billable Actions minutes.
-
-### The verdict, in both modes
-
-The reviewed text carries a machine-readable marker, which the skill instructs
-the reviewer to emit as its last line. The gate reads **only that line** — it
-takes the text's last non-empty line (carriage returns and surrounding
-whitespace tolerated) and compares it for equality:
-
-| The reviewed text's last non-empty line | Status posted |
+| Check | `ok` when |
 | --- | --- |
-| `<!-- shipd-verdict: fix-required -->` | `failure` — the merge is blocked. |
-| `<!-- shipd-verdict: ship-it -->` | `success`. |
-| *anything else* | `success`, described as *no verdict marker was parsed* — unless the repository [turned strictness on](#strictness-shipd_gate_fail_open), in which case nothing is posted and the check stays `pending`. |
+| `protection` | the default branch requires the `semantic-review` status context |
+| `automerge` | the repository allows auto-merge, so `gh pr merge --auto` can arm |
+| `copilot-secret` | `COPILOT_GITHUB_TOKEN` is set, so runs take the CLI reviewer mode |
 
-**A marker quoted elsewhere in the text never counts.** A review that
-*describes* the markers — a pull request installing this very skill draws
-exactly that review — mentions both of them mid-text, and matching anywhere in
-the body would read the quote as a verdict and fail a passing pull request.
-Only the last line decides.
-
-That last row is the **fail-open** rule. In CLI reviewer mode it is a
-long-stop, for a review that came back malformed; in poll mode it is, today,
-the outcome you should expect (see above). Either way a review that *did* run
-the skill and found blocking problems posts `failure`.
-
-In poll mode the gate acts only on a review whose author is
-`copilot-pull-request-reviewer[bot]` and whose `commit_id` is the pull
-request's current head: someone else's review, or Copilot's review of a
-superseded commit, changes nothing. That holds on both of its paths — it is
-what the poll searches for, and what the review event is guarded on.
-
-### Strictness: `SHIPD_GATE_FAIL_OPEN`
-
-Some repositories have ruled the opposite: a review that produced no verdict
-must never green the required check, and a merge waiting on a human is the
-correct outcome. That is one repository Actions variable, read by the gate at
-classification time:
-
-```bash
-gh variable set SHIPD_GATE_FAIL_OPEN --body false
-```
-
-| `SHIPD_GATE_FAIL_OPEN` | A last line matching neither marker |
-| --- | --- |
-| unset (**the default**), or any value but `false` | `success`, described as *no verdict marker was parsed* — fail-open. |
-| `false` | Nothing is posted. The `pending` from the run's first step stands and the run logs that no verdict was parsed. |
-
-Strict mode changes **only** that case, and it changes it on every classify
-path alike — the CLI reviewer's own output, a polled review, and a review
-event. A real verdict still decides: `fix-required` posts `failure` and
-`ship-it` posts `success` exactly as before.
-
-**The manual out.** With the check left `pending`, a strict repository merges
-by reviewing from a session and posting the status by hand — `/s:review`, then
-`review_gate.py post` — or by pushing a commit whose review does end in a
-marker.
-
-**Pair the knob with the reviewer token.** Set the variable knowing that: on
-the poll fallback, where the marker is
-[never authored today](#the-poll-fallback-mode), `false` means *every*
-Copilot-reviewed pull request stalls at `pending` and waits on that manual
-session review. Strictness only pays for itself in
-[CLI reviewer mode](#the-cli-reviewer-mode), where the marker is genuinely
-produced and a missing one really is an anomaly — so configure
-[the reviewer token](#the-reviewer-token) first, then turn the knob. In strict
-mode that reviewer still posts the text it captured as a pull-request comment
-even when it parsed no verdict, so the review you have to act on is on the
-pull request rather than buried in a job log.
-
-Set it as a **variable**, not by editing the installed workflow: `shipd copilot
-add` reinstalls that file from the plugin's template and would revert a local
-edit on the next upgrade. The variable outlives every upgrade.
-
-### Tokens, permissions, and the session flow
-
-The workflow does all its repository work with its own `github.token`
-(`statuses: write` to post the status, `pull-requests: write` to poll the
-reviews and to leave the review comment). The **only** secret it ever reads is
-the optional `COPILOT_GITHUB_TOKEN`, and its value reaches nothing but the
-Copilot CLI's own environment — never a `gh` call, and never the step that
-posts (see [the trust boundary](#the-trust-boundary)). Nothing here *asks* for
-a Copilot review either; triggering that stays GitHub-side, per
-[step 2](#2-enable-reviews).
-
-**Coexisting with the session flow.** Running `/s:review` and posting the gate
-from a Claude session writes the same `semantic-review` context on the same
-commit. Neither poster excludes the other; the newest post on a commit is the
-one the check reflects.
-
-**Limit: pull requests from forks.** GitHub gives workflows triggered by a
-fork's pull request a **read-only** token, so the gate cannot post a status
-there and the check stays unreported — in either mode. Same-repository
-branches — the shipd `change/<name>` flow — are unaffected. On a fork PR, post
-the status from a session with `review_gate.py post`.
-
-**Retracted: the "bootstrap" limit.** An earlier version of this guide warned
-that the pull request installing the gate could not be bridged, on the belief
-that a review-triggered workflow only ever runs from the default branch's copy
-of the workflow file. Dogfooding disproved it: a gate workflow present only on
-the head branch started runs for both of its triggers, on the installing pull
-request itself. There is no bootstrap step — the pull request that installs
-the gate is gated by the gate it installs, exactly like every later one. What
-does not fire is a run for a *Copilot-authored* review submission, on any
-branch, which is what the poll above exists to absorb.
-
-### Preflight the GitHub settings
-
-Installing the files is only half of it: the gate is as strong as the
-repository settings around it, and every one of them lives on GitHub rather
-than in the checkout. `shipd doctor` reads all three, read-only, and reports
-them as its last three lines:
-
-| Check | `ok` when | `warn` when |
-| --- | --- | --- |
-| `protection` | the default branch requires the `semantic-review` status context | the branch is unprotected, or protected without that context — either way the gate's verdict is ignored at merge time |
-| `automerge` | the repository allows auto-merge | it does not, so `gh pr merge --auto` cannot arm (waived where the workspace declares `pr-mode: draft`, which never arms it) |
-| `copilot-secret` | `COPILOT_GITHUB_TOKEN` is set, so runs take the CLI reviewer mode | the gate workflow is installed without it, so runs degrade to the [poll fallback](#the-poll-fallback-mode) |
-
-```
-ok protection — `main` requires the `semantic-review` status context
-ok automerge — auto-merge is enabled on acme/widget
-warn copilot-secret — the review gate is installed but COPILOT_GITHUB_TOKEN is
-  not set on acme/widget — the gate degrades to the fail-open poll fallback
-```
-
-None of the three can fail the preflight. Where `gh` is missing or
-unauthenticated, the directory resolves no GitHub repository, or the API is
-unreachable, each reports `ok` with a note naming why it could not be checked —
-so `shipd doctor` still works offline.
-
-`/s:doctor` turns the two settings findings into consent-gated `gh api` fixes:
-requiring `semantic-review` on an unprotected branch, appending it to the
-checks a protected branch already requires, and enabling auto-merge. All three
-need admin permission on the repository; where the finding's detail says the
-token lacks it, the skill reports the finding and offers no remedy. The
-`copilot-secret` warning is always a hand-off — the token has to be minted by a
-human, per [the reviewer token](#the-reviewer-token) above — so the skill
-relays the recipe and leaves `gh secret set COPILOT_GITHUB_TOKEN` to you.
-
-## 4. Check and upgrade the install
-
-Run the verb bare. It reports and changes nothing:
+Each check warns rather than fails. `/s:doctor` turns the two settings warnings
+into consent-gated fixes; the `copilot-secret` one is a hand-off, because a
+human mints the token. Then run the verb bare, which changes nothing:
 
 ```bash
 shipd copilot
 ```
 
-```
-copilot review skill in /Users/you/code/some-repo (this install: v0.6.127)
-  installed .github/skills/code-review/SKILL.md — shipd-copilot v0.6.127
-  installed .github/skills/code-review/scripts/semdiff.py — byte-identical to the plugin's engine
-  installed .github/workflows/copilot-code-review.yml — shipd-copilot v0.6.127
-  installed .github/workflows/copilot-review-gate.yml — shipd-copilot v0.6.127
-`shipd copilot add` installs or refreshes those files; `shipd copilot remove` deletes the ones it owns.
-Automatic review is enabled on GitHub, not here — add a branch ruleset requiring Copilot code review on the protected branch.
-The Copilot code-review surface exposes no repository-side model selection, so nothing here pins a model.
-```
+The [reference](copilot-review-reference.md#report-states-and---force) explains
+the four states it reports.
 
-(The version shown is whichever shipd plugin you have installed.)
+## 6. Upgrade and uninstall
 
-Each managed file reports one of four states:
-
-| State | Meaning |
-| --- | --- |
-| `installed` | Written by this shipd version — the marker matches, and `semdiff.py` is byte-identical to the plugin's engine. |
-| `stale` | Written by an older shipd version, or a `semdiff.py` that has drifted from the plugin's copy. |
-| `foreign` | The file exists but carries no `shipd-copilot` ownership marker — something other than this verb wrote it. |
-| `absent` | Not installed. |
-
-Ownership is decided by a marker line the templates carry: `<!-- shipd-copilot
-v… -->` in `SKILL.md` and `# shipd-copilot v…` in each of the two workflows.
-The installed `semdiff.py` has no marker of its own — it counts as owned
-exactly when the `SKILL.md` beside it is owned.
-
-**To upgrade, run `add` again.** It is idempotent: it rewrites the files it
-owns at the current version, so a `stale` install becomes `installed` and an
-already-current one is simply refreshed. Do this after every
-`claude plugin update s@shipd` that moves the plugin version — then commit and
-push the refreshed files, since the review only ever sees what is on the
-branch.
-
-Edit the plugin's templates rather than the installed copies. A re-`add`
-overwrites them.
-
-## 5. Uninstall
-
-```bash
-shipd copilot remove
-```
-
-```
-removed .github/skills/code-review/SKILL.md
-removed .github/skills/code-review/scripts/semdiff.py
-removed .github/workflows/copilot-code-review.yml
-removed .github/workflows/copilot-review-gate.yml
-```
-
-It deletes only the files it owns, prunes the `.github/skills/code-review`
-directory tree once it is empty, and succeeds (saying `nothing to remove:`)
-when there is nothing there — running it twice is fine. Commit the deletions and push, as with the
-install.
-
-## Foreign files and `--force`
-
-If a managed path is `foreign`, both `add` and `remove` refuse, name the file,
-and change nothing:
-
-```
-Error: .github/workflows/copilot-code-review.yml: not written by shipd copilot (no ownership marker) — pass --force to add it anyway
-```
-
-That is the guard against clobbering a `copilot-code-review.yml` your team
-wrote by hand. When you have looked at the file and are content to lose it,
-`--force` overrides:
-
-```bash
-shipd copilot add --force        # replace the foreign file with the shipd template
-shipd copilot remove --force     # delete it along with the managed files
-```
-
-Everything else is refusal-by-default: without `--force`, no managed file is
-written or deleted when any one of them is foreign.
-
-## Scope and limits
-
-- **The gate is the workflow's, not Copilot's.** Nothing in Copilot code
-  review is documented to set a third-party commit status; a review only ever
-  posts a review. What satisfies a required `semantic-review` check is the
-  installed gate workflow posting the status from Actions — having either run
-  the review itself or read GitHub's — so drop `copilot-review-gate.yml` and
-  the Copilot run is once again purely advisory beside whatever check you
-  require. Its fail-open rule means a `success` can also mean "reviewed, no
-  verdict parsed"; the status description says which.
-- **No repository-side model selection.** The Copilot code-review surface
-  exposes no repository-side option to pin which model the review runs on, so
-  nothing installed here configures one. This is documented rather than faked,
-  and will be revisited if GitHub exposes a real option.
-- **Skill pickup is relevance-driven.** GitHub loads skills under
-  `.github/skills` when they are "relevant to the review". Naming the
-  directory `code-review` is GitHub's own recommendation for making that
-  likely, and it is what `add` installs — but there is no documented guarantee
-  the skill runs on every single review. Expect a good hit rate, not
-  determinism.
-- **`difft` and `ripgrep` are optional.** Both workflows install them — the
-  setup workflow for GitHub's review runner, the gate for its own CLI reviewer
-  job — because they make the review sharper, not because the engine needs
-  them.
-  Without `difft` the engine falls back to its structural text engine and
-  stamps `engine: "text"` on the affected entries (the skill tells the
-  reviewer to say so in the review); without `ripgrep`, symbol lookup falls
-  back to `git grep`. If the workflow fails or you drop it, the review still
-  runs.
-- **The review never writes.** The engine is read-only by construction and the
-  skill instructs the reviewer not to edit the repository.
+- **To upgrade, run `add` again.** It is idempotent, and rewrites the files it
+  owns at the current version. Run it after every `claude plugin update
+  s@shipd` that moves the plugin version, then commit and push the refreshed
+  files.
+- **Edit the plugin's templates, never the installed copies.** A re-`add`
+  overwrites them.
+- **To uninstall, run `shipd copilot remove`.** It deletes only the files it
+  owns, prunes the empty skill directory, and succeeds when nothing is there.
+  Commit the deletions and push, as with the install.
 
 ## See also
 
 - [`/s:review`](../README.md#skills) — the same review, run locally against a
   base ref before you push.
 - [`.shipd/research/copilot-code-review/report.md`](../.shipd/research/copilot-code-review/report.md)
-  — the cited research this integration was designed from, including the
-  GitHub sources for plan gating, the head-branch rule, and relevance-driven
-  skill pickup.
+  — the cited research behind this integration.
