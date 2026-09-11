@@ -22,13 +22,13 @@ an ordinary workspace directory beneath it, created exactly as
 ```
 ~/workspaces/company/             ← A PLAIN GIT REPO — its root declares
                                     no workspace, it only holds the two below
-  workspace-documents/            ← WORKSPACE — the documents-linking job
+  workspace-myapp/                ← WORKSPACE — the myapp job
     .shipd-config.json            ← this job's manifest                       (tracked)
     .gitignore                    ← this job's members block, engine-managed  (tracked)
     .shipd/
       wiki/                       ← this job's knowledge store                (tracked)
       initiatives/  projects/     ← this job's goals & context                (tracked)
-    documents/  tasks/            ← this job's member repos                   (ignored)
+    api/  web/                    ← this job's member repos                   (ignored)
   ws-tasks-management/            ← WORKSPACE — an unrelated job
     .shipd-config.json            ← its own manifest                          (tracked)
     .gitignore                    ← its own members block                     (tracked)
@@ -36,16 +36,16 @@ an ordinary workspace directory beneath it, created exactly as
     tasks/  incentives/           ← its own member repos                      (ignored)
 ```
 
-Discovery is nearest-ancestor. A session inside `workspace-documents/` never
+Discovery is nearest-ancestor. A session inside `workspace-myapp/` never
 sees `ws-tasks-management/`, so siblings neither interfere nor inherit.
 
 Create (or clone) the container repo, then initialize each workspace in it:
 
 ```sh
-mkdir -p ~/workspaces/company/workspace-documents
+mkdir -p ~/workspaces/company/workspace-myapp
 mkdir -p ~/workspaces/company/ws-tasks-management
 cd ~/workspaces/company && git init
-shipd workspace init ~/workspaces/company/workspace-documents
+shipd workspace init ~/workspaces/company/workspace-myapp
 shipd workspace init ~/workspaces/company/ws-tasks-management
 ```
 
@@ -69,11 +69,11 @@ workspace filed directly beneath it.
 ~/workspaces/acme-base/           ← THE BASE WORKSPACE REPO — clone this
   .shipd-config.json              ← the base manifest                         (tracked)
   .shipd/wiki/                    ← knowledge every job below inherits        (tracked)
-  documents-linking/              ← NESTED JOB WORKSPACE
+  myapp/                          ← NESTED JOB WORKSPACE
     .shipd-config.json            ← this job's own manifest                   (tracked)
     .gitignore                    ← this job's members block                  (tracked)
     .shipd/wiki/                  ← this job's own store — writes land here   (tracked)
-    documents/  tasks/            ← this job's member repos                   (ignored)
+    api/  web/                    ← this job's member repos                   (ignored)
   billing-rollout/                ← ANOTHER NESTED JOB WORKSPACE
     .shipd-config.json            ← its own manifest                          (tracked)
     .shipd/wiki/                  ← its own store, plus the base's by         (tracked)
@@ -82,9 +82,9 @@ workspace filed directly beneath it.
 ```
 
 ```sh
-mkdir -p ~/workspaces/acme-base/documents-linking
+mkdir -p ~/workspaces/acme-base/myapp
 mkdir -p ~/workspaces/acme-base/billing-rollout
-shipd workspace init ~/workspaces/acme-base/documents-linking --nested --git
+shipd workspace init ~/workspaces/acme-base/myapp --nested --git
 shipd workspace init ~/workspaces/acme-base/billing-rollout --nested --git
 ```
 
@@ -117,7 +117,7 @@ repository URL, so it is the wrong front door for a repo holding several:
 
 ```sh
 git clone git@github.com:acme/company-workspaces.git ~/workspaces/company
-cd ~/workspaces/company/workspace-documents
+cd ~/workspaces/company/workspace-myapp
 shipd workspace sync
 ```
 
