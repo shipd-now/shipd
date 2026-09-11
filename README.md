@@ -245,12 +245,13 @@ index — which you wire in by adding `read: shipd-conventions.md` to
 Branding stays additive: the animated wordmark appears only on the install
 surface, and ☕ remains the brand mark everywhere else.
 
-## Quickstart
+## Getting started
 
-New here? [**docs/quickstart.md**](docs/quickstart.md) walks from the install
-above to your first shipd-built change in six steps — `shipd doctor`, the
-guided `/s:onboard` tour, a first `/s:plan` and `/s:build` in your own
-repository, and watching the result on the delivery board.
+New here? [**docs/getting-started.md**](docs/getting-started.md) walks from
+the install above to your first shipd-built change in six steps: install,
+the `shipd doctor` preflight, the guided `/s:onboard` tour, a first
+`/s:plan` and `/s:build` in your own repository, and watching the result on
+the delivery board.
 
 ## Skills
 
