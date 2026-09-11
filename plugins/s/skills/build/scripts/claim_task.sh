@@ -48,7 +48,7 @@
 #       --as names the claim's holder (default: $CLAUDE_CODE_SESSION_ID, else
 #       `anon`). --wait blocks *inside this invocation*, retrying every few
 #       seconds until a task is won, nothing is pending, or --timeout seconds
-#       (default 600) pass; a timeout prints to stderr and exits 0 with empty
+#       (default 90) pass; a timeout prints to stderr and exits 0 with empty
 #       stdout, the established "nothing claimed" contract.
 #   claim_task.sh complete <change-name> [id] [--as <label>]
 #       mark task ID done -> [x]; ID optional if exactly one is in progress
@@ -100,7 +100,7 @@ CHANGE=""
 ID_ARG=""
 HOLDER_ARG=""
 WAIT=0
-TIMEOUT=600
+TIMEOUT=90
 STALE_MINS=""
 STALE_AFTER=30
 

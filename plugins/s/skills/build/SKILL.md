@@ -425,6 +425,15 @@ it, and `claim` only ever hands out tasks whose group is ready. So:
   loop, and never a backgrounded claim, whose `[~]` mark would outlive the
   agent's awareness of it.
 - Run sub-agents in the background so you stay responsive to their questions.
+- **Check for stale claims between fan-out rounds.** Before spawning the next
+  round, run
+  `bash <CLAIM_SCRIPT> status <change-name> --stale-after <mins>` and read its
+  `claimed:` lines. On a line marked `[stale]`, either resume that holder
+  (SendMessage, if it is a sub-agent you spawned and can still reach) or
+  reclaim the task with `bash <CLAIM_SCRIPT> release --stale <mins>` so another
+  sub-agent can claim it. `claim` never reclaims a stale task on its own —
+  reclamation stays operator-driven so a slow-but-alive worker is never robbed
+  of its task.
 
 ## Phase 4 — Q&A loop (you answer, definitively)
 
@@ -924,7 +933,7 @@ untouched:
 - `claim --wait` blocks **inside the single invocation**, retrying every few
   seconds without holding the lock, until it wins a task, nothing is pending
   (returns at once with `No pending tasks.`), or `--timeout <secs>` (default
-  600) passes — a timeout prints to stderr, nothing to stdout, and exits 0.
+  90) passes — a timeout prints to stderr, nothing to stdout, and exits 0.
   This is how an idle worker waits out a barrier: one tool call, not a poll
   loop.
 - `complete`/`release` refuse any task whose box is not `[~]`, naming its

@@ -427,6 +427,21 @@ class WaitTest(ClaimScriptTestBase):
         self.assertIn("No pending tasks.", r.stderr)
         self.assertLess(time.time() - started, 5)
 
+    def test_wait_default_is_90_seconds(self):
+        """The shipped --wait deadline fits inside a 120s default foreground
+        tool-call budget: pin claim_task.sh's own TIMEOUT= assignment and its
+        header/usage text to 90 (plan.md, claim-wait-foreground). The other
+        two sites naming the default — sub-agent.md and the build SKILL.md's
+        coordinator reference — are pinned separately in
+        test_subagent_contract.py."""
+        with open(SCRIPT, encoding="utf-8") as fh:
+            source = fh.read()
+        match = re.search(r"^TIMEOUT=(\d+)$", source, re.MULTILINE)
+        self.assertIsNotNone(match, "no TIMEOUT= assignment found in claim_task.sh")
+        self.assertEqual(match.group(1), "90")
+        self.assertIn("(default 90)", source)
+        self.assertNotIn("(default 600)", source)
+
 
 class StateGuardTest(ClaimScriptTestBase):
     """`complete` and `release` refuse any task that is not in progress."""
