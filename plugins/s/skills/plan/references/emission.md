@@ -302,23 +302,12 @@ empty.
 
 Every entry under `## MODIFIED Requirements` or `## REMOVED Requirements` needs a
 `base: <hash>` line — the content hash of the master requirement you are editing
-against. Read the current master through the engine (`cat verified`, never by
-opening a path) and hash the requirement:
+against. Get it through the engine's `base-hash` verb (never by opening a path
+or retyping the hash by hand):
 
 ```bash
 S="${CLAUDE_PLUGIN_ROOT}/skills/build/scripts"
-python3 "$S/spec_status.py" cat verified "$CAP" | python3 - "$CAP" "$ID" <<'PY'
-import sys
-sys.path.insert(0, __import__("os").environ["CLAUDE_PLUGIN_ROOT"] +
-                  "/skills/build/scripts")
-import spec_common as sc
-cap, rid = sys.argv[1], sys.argv[2]
-# `cat verified` prints a `--- <relpath>` separator first; drop it before parse.
-text = "".join(l for l in sys.stdin if not l.startswith("--- "))
-for r in sc.parse_spec(text).requirements:
-    if r.id == rid:
-        print(sc.content_hash(r))
-PY
+python3 "$S/spec_status.py" base-hash "$CAP" "$ID"
 ```
 
 REMOVED entries additionally need a `Reason:` and a `Migration:` line; RENAMED

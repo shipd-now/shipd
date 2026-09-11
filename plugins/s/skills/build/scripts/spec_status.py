@@ -53,6 +53,10 @@ Verbs (see the spec-status + statusline capabilities for the contract):
                      library (read-only), printing one finding line per
                      mismatched entry (stale-base/missing-master/id-collision)
                      plus a summary; exit 0 clean, 4 on findings
+  base-hash <capability> <requirement-id>
+                     print a master requirement's content hash (read-only),
+                     resolved and hashed through the same primitives
+                     check-base uses
   epic-show <slug>   print an epic's board-shaped report: status, metadata,
                      shipped progress, and its members grouped into the
                      board's lanes
@@ -1298,6 +1302,31 @@ def cmd_check_base(root, change):
         return 4
     print("check-base: clean (no findings).")
     return 0
+
+
+def cmd_base_hash(root, capability, requirement_id):
+    """Print a master requirement's content hash (spec-status base-hash-verb),
+    strictly read-only. Resolves the capability's master through
+    ``spec_merge.master_path`` and hashes the requirement through
+    ``sc.content_hash`` — the exact two primitives ``cmd_check_base`` uses —
+    so a hash this prints can never disagree with what the merge later
+    compares a delta's ``base:`` line against.
+
+    Reports a missing master file or a requirement id absent from it as a
+    single ``StatusError`` (rendered ``Error: <reason>`` on stderr, exit 1)."""
+    mpath = spec_merge.master_path(root, capability)
+    if not os.path.isfile(mpath):
+        raise StatusError(
+            "capability '%s' has no master spec (%s)" % (capability, mpath))
+    with open(mpath, encoding="utf-8") as fh:
+        master = sc.parse_spec(fh.read())
+    for req in master.requirements:
+        if req.id == requirement_id:
+            print(sc.content_hash(req))
+            return 0
+    raise StatusError(
+        "requirement '%s' not found in capability '%s' (%s)"
+        % (requirement_id, capability, mpath))
 
 
 # ---------------------------------------------------------------------------
@@ -4432,6 +4461,12 @@ def main(argv=None):
         help="compare a change's deltas against the master library (read-only)")
     p_check_base.add_argument("change", nargs="?", default=None)
 
+    p_base_hash = sub.add_parser(
+        "base-hash",
+        help="print a master requirement's content hash (read-only)")
+    p_base_hash.add_argument("capability")
+    p_base_hash.add_argument("requirement_id", metavar="requirement-id")
+
     p_epic_show = sub.add_parser(
         "epic-show",
         help="print an epic's board-shaped report (status, metadata, shipped "
@@ -4672,6 +4707,8 @@ def main(argv=None):
             return cmd_search(root, args.terms, as_json=args.json)
         if args.verb == "check-base":
             return cmd_check_base(root, args.change)
+        if args.verb == "base-hash":
+            return cmd_base_hash(root, args.capability, args.requirement_id)
         if args.verb == "epic-show":
             return cmd_epic_show(root, args.slug, as_json=args.json)
         if args.verb == "prd-show":
