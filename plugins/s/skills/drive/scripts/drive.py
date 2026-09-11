@@ -41,6 +41,27 @@ class DriveError(Exception):
     """A user-facing error: printed as ``Error: ...`` to stderr, exit 1."""
 
 
+# --- private-directory helper ---------------------------------------------
+
+
+def _ensure_private_dir(path):
+    """Create `path` (and any missing parents) and guarantee it ends up
+    owner-only (`0700`) — the session socket, and every credential-bearing
+    file under `~/.shipd/drive/`, must never sit inside a world-readable or
+    world-traversable directory (the auth cache holds live session cookies;
+    the session socket is an unauthenticated, arbitrary-JS-eval remote into
+    a logged-in browser).
+
+    `os.makedirs(..., mode=..., exist_ok=True)` only applies `mode` to a
+    directory it actually creates — an already-existing directory (e.g. one
+    left behind, world-readable, by a version of this script that predates
+    this fix) keeps whatever mode it already had. So this always `chmod`s
+    `path` to `0o700` after `makedirs`, regardless of whether this call
+    created it or found it already there."""
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    os.chmod(path, 0o700)
+
+
 # --- shared tool-presence helpers ---------------------------------------
 
 
@@ -302,12 +323,19 @@ def resolve_secret_command(argv, run=default_run):
     arrays whose stdout is the secret, trailing newline stripped"). Raises
     `DriveError` naming the failed command on a non-zero exit — the secret
     value itself never appears in the error message, only the argv that
-    failed to produce one."""
+    failed to produce one, plus that command's own `stderr`. `stdout` is
+    never included, even as a fallback when `stderr` is empty, since a
+    credential helper that prints the secret and exits non-zero would put
+    it exactly there; an empty `stderr` is reported as such rather than
+    falling back to it."""
     rc, out, err = run(argv)
     if rc != 0:
+        stderr_detail = err.strip()
+        detail = stderr_detail if stderr_detail else \
+            "the command produced no stderr output"
         raise DriveError(
             "auth command failed (%s): %s"
-            % (" ".join(str(a) for a in argv), (err or out).strip()))
+            % (" ".join(str(a) for a in argv), detail))
     if out.endswith("\n"):
         out = out[:-1]
     return out
@@ -463,7 +491,7 @@ def cmd_login(args, run=default_run):
     username, password = resolve_auth(entry, run=run)
     worker_env = worker_env_with_secrets(username, password)
 
-    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    _ensure_private_dir(os.path.dirname(cache_path))
     worker = os.path.join(HERE, "browser_worker.py")
     worker_argv = ["uv", "run", worker, "login",
                   "--url", url, "--out", cache_path]
@@ -507,7 +535,7 @@ def _read_session_state():
 
 
 def _write_session_state(target, pid, socket_path):
-    os.makedirs(SESSION_DIR, exist_ok=True)
+    _ensure_private_dir(SESSION_DIR)
     with open(SESSION_STATE_PATH, "w", encoding="utf-8") as fh:
         json.dump({"target": target, "pid": pid, "socket": socket_path}, fh)
 
@@ -629,7 +657,7 @@ def _session_start(args):
         _stop_running_session(existing)
         _remove_session_state()
 
-    os.makedirs(SESSION_DIR, exist_ok=True)
+    _ensure_private_dir(SESSION_DIR)
     if os.path.exists(SESSION_SOCKET_PATH):
         # A stale socket file from a session that did not clean up after
         # itself. The worker itself also reclaims this on its own start,

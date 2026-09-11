@@ -74,6 +74,26 @@ import postprocess as pp  # noqa: E402
 LOGIN_USERNAME_ENV = "DRIVE_LOGIN_USERNAME"
 LOGIN_PASSWORD_ENV = "DRIVE_LOGIN_PASSWORD"
 
+
+def _ensure_private_dir(path):
+    """Create `path` (and any missing parents) and guarantee it ends up
+    owner-only (`0700`) — duplicated from `drive.py`'s helper of the same
+    name rather than imported, the same split as `LOGIN_USERNAME_ENV` above:
+    this worker never imports `drive.py`. The session socket this worker
+    binds lives in this directory, and it is an unauthenticated,
+    arbitrary-JS-eval remote into a logged-in browser — it must never sit
+    inside a world-traversable directory.
+
+    `os.makedirs(..., mode=..., exist_ok=True)` only applies `mode` to a
+    directory it actually creates — an already-existing directory (e.g. one
+    left behind, world-readable, by a version of this script that predates
+    this fix) keeps whatever mode it already had. So this always `chmod`s
+    `path` to `0o700` after `makedirs`, regardless of whether this call
+    created it or found it already there."""
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    os.chmod(path, 0o700)
+
+
 # Candidate selectors for the generic login form, tried in order. Real apps
 # vary; this best-effort list covers the common identifier/password/submit
 # shapes without needing per-app configuration.
@@ -138,6 +158,18 @@ def _click_first(page, selectors, optional=False, timeout=5000):
         "no matching control for any of: %s" % ", ".join(selectors))
 
 
+def _write_storage_state_privately(context, out_path):
+    """Write `context`'s storage state to `out_path` and immediately lock
+    it down to `0600` — the file holds live session cookies, so it must
+    never be left world-readable under the process's umask. Takes a plain
+    `context` (anything with a Playwright-shaped `storage_state(path=...)`
+    method) rather than a full page/browser, so a test can exercise this
+    exact chmod behavior with a stand-in object, with no real Playwright
+    context or browser involved."""
+    context.storage_state(path=out_path)
+    os.chmod(out_path, 0o600)
+
+
 def cmd_login(args):
     """Log the target's storage state in, per drive-auth-cache.
 
@@ -190,7 +222,7 @@ def cmd_login(args):
             if current_host and current_host != target_host:
                 page.goto(args.url, wait_until="domcontentloaded")
 
-            page.context.storage_state(path=args.out)
+            _write_storage_state_privately(page.context, args.out)
         except Exception as exc:  # noqa: BLE001 - report any failure
             try:
                 page.screenshot(path=debug_shot)
@@ -358,6 +390,28 @@ def _serve_one(conn, handlers, ctx):
     conn.sendall((json.dumps(reply) + "\n").encode("utf-8"))
 
 
+def _bind_private_socket(server, socket_path):
+    """Bind `server` (an `AF_UNIX`/`SOCK_STREAM` socket) to `socket_path` as
+    owner-only, `0600`. This socket accepts unauthenticated `eval`/navigate/
+    click/type requests against an already-logged-in browser, so it must
+    never be connectable by another local user.
+
+    A restrictive umask for the duration of `bind()` is the strong
+    guarantee — the socket file never exists, even momentarily, with
+    group/other bits set — with a belt-and-braces `chmod` right after as a
+    second, redundant layer (a `chmod` alone would leave a brief window
+    between `bind` and `chmod` during which the socket is connectable by
+    anyone). Split out from `cmd_session` so this exact sequence is
+    directly testable with a plain `socket.socket`, with no real session
+    (and so no Playwright) involved."""
+    old_umask = os.umask(0o077)
+    try:
+        server.bind(socket_path)
+    finally:
+        os.umask(old_umask)
+    os.chmod(socket_path, 0o600)
+
+
 def cmd_session(args):
     """Own one browser and one page for the life of the session and serve
     the driving verbs over a Unix socket, per drive-session.
@@ -379,7 +433,7 @@ def cmd_session(args):
     socket_path = args.socket
     socket_dir = os.path.dirname(socket_path)
     if socket_dir:
-        os.makedirs(socket_dir, exist_ok=True)
+        _ensure_private_dir(socket_dir)
     # Reclaim a stale socket file left behind by a prior run — `session
     # start` (drive.py, task 4.2) already checked liveness before spawning
     # us, so any file still here is dead.
@@ -435,7 +489,7 @@ def cmd_session(args):
 
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            server.bind(socket_path)
+            _bind_private_socket(server, socket_path)
             server.listen(5)
             server.settimeout(1.0)
             while not ctx["closed"]:
