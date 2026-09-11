@@ -1,5 +1,5 @@
 # docs-rewrite
-Status: active
+Status: complete
 Theme: developer-experience
 
 ## Introduction
@@ -101,13 +101,14 @@ switches the CI step from marker-scoped to full-scope (all of `docs/` minus
 
 | Tool | Calls | Output tokens |
 | --- | --- | --- |
-| Bash | 45 | 10.3k |
+| Bash | 73 | 18.0k |
 | Write | 1 | 6.5k |
-| Read | 23 | 1.3k |
-| Monitor | 2 | 399 |
-| Agent | 2 | 313 |
-| (no tool) | 0 | 105 |
-| ToolSearch | 2 | 30 |
-| Edit | 2 | 20 |
-| TaskStop | 1 | 17 |
-| **Total** | 78 | 19.0k |
+| Edit | 10 | 2.8k |
+| Read | 31 | 1.9k |
+| SendMessage | 3 | 1.1k |
+| Monitor | 3 | 731 |
+| Agent | 3 | 721 |
+| ToolSearch | 5 | 398 |
+| (no tool) | 0 | 229 |
+| TaskStop | 2 | 74 |
+| **Total** | 131 | 32.5k |
