@@ -387,6 +387,15 @@ def _write_repo_map(root, repos):
     return _write_raw_repo_map(root, json.dumps({"repos": repos}))
 
 
+def _write_local_sources(root, sources, repos=None):
+    """Write ``<root>/.shipd-workspace.local.json`` declaring ``clone_sources``
+    (and optionally ``repos``) and return ``root``."""
+    data = {"clone_sources": sources}
+    if repos is not None:
+        data["repos"] = repos
+    return _write_raw_repo_map(root, json.dumps(data))
+
+
 class WorkspaceDiscoveryTest(unittest.TestCase):
     """find_workspace_root and load_workspace on the ``.shipd-config.json``
     ``workspace``-key convention (shipd-workspace workspace-root-discovery,
@@ -1651,6 +1660,152 @@ class SaveRepoMapTest(unittest.TestCase):
                 sc.save_repo_map(ws, {"shipd": "/checkout/shipd"})
             self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
             self.assertEqual(json.loads(self._read_raw(ws)), {"repos": []})
+
+
+class LocalCloneSourcesTest(unittest.TestCase):
+    """The map file's optional ``clone_sources`` key: the machine-local
+    directory list the candidate scan unions with the configuration key
+    (shipd-workspace workspace-member-map).
+
+    ``load_local_clone_sources`` returns the stored values verbatim, exactly as
+    ``load_repo_map`` does for ``repos``; ``local_clone_source_dirs`` is the
+    resolution seam — ``~`` expanded and a relative value resolved against the
+    workspace root."""
+
+    # -- load_local_clone_sources ------------------------------------------
+
+    def test_absent_file_is_an_empty_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            self.assertEqual(sc.load_local_clone_sources(ws), [])
+
+    def test_absent_key_is_an_empty_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_repo_map(ws, {"shipd": "/checkout/shipd"})
+            self.assertEqual(sc.load_local_clone_sources(ws), [])
+
+    def test_valid_list_loads_values_verbatim(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_local_sources(ws, ["~/projects", "../checkouts"])
+            self.assertEqual(sc.load_local_clone_sources(ws),
+                             ["~/projects", "../checkouts"])
+
+    def test_non_list_value_errors_naming_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_raw_repo_map(ws, json.dumps(
+                {"repos": {}, "clone_sources": "~/projects"}))
+            with self.assertRaises(sc.ConfigError) as ctx:
+                sc.load_local_clone_sources(ws)
+            self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
+
+    def test_non_string_entry_errors_naming_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_local_sources(ws, ["~/projects", 5])
+            with self.assertRaises(sc.ConfigError) as ctx:
+                sc.load_local_clone_sources(ws)
+            self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
+
+    def test_empty_string_entry_errors_naming_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_local_sources(ws, [""])
+            with self.assertRaises(sc.ConfigError) as ctx:
+                sc.load_local_clone_sources(ws)
+            self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
+
+    def test_malformed_sources_also_fail_the_member_map_read(self):
+        # One file, one malformed-ness: a broken clone_sources value fails
+        # every reader of the file, never only the one that wants the key.
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_raw_repo_map(ws, json.dumps(
+                {"repos": {}, "clone_sources": "~/projects"}))
+            with self.assertRaises(sc.ConfigError) as ctx:
+                sc.load_repo_map(ws)
+            self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
+
+    # -- local_clone_source_dirs -------------------------------------------
+
+    def test_absent_file_resolves_to_no_directories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            self.assertEqual(sc.local_clone_source_dirs(ws), [])
+
+    def test_tilde_entry_is_expanded(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            real_home = os.path.realpath(home)
+            _write_local_sources(ws, ["~/projects"])
+            with home_set_to(real_home):
+                self.assertEqual(
+                    sc.local_clone_source_dirs(ws),
+                    [os.path.join(real_home, "projects")])
+
+    def test_relative_entry_resolves_against_the_workspace_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.join(os.path.realpath(tmp), "ws")
+            os.makedirs(ws)
+            _write_local_sources(ws, ["../checkouts"])
+            self.assertEqual(
+                sc.local_clone_source_dirs(ws),
+                [os.path.join(os.path.realpath(tmp), "checkouts")])
+
+    def test_absolute_entry_is_returned_normalized(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            target = os.path.join(ws, "src")
+            _write_local_sources(ws, [target + "/"])
+            self.assertEqual(sc.local_clone_source_dirs(ws), [target])
+
+
+class SaveLocalCloneSourcesTest(unittest.TestCase):
+    """save_local_clone_sources: the engine-owned writer for the map file's
+    ``clone_sources`` key (shipd-workspace workspace-sources-verbs).
+
+    It mirrors :func:`save_repo_map` — it replaces only its own key, preserves
+    every other top-level key, and never repairs a malformed file."""
+
+    def _read_raw(self, ws):
+        with open(os.path.join(ws, sc.REPO_MAP_FILENAME),
+                  encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_absent_file_is_created_with_only_the_sources_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            sc.save_local_clone_sources(ws, ["~/projects"])
+            self.assertEqual(json.loads(self._read_raw(ws)),
+                             {"clone_sources": ["~/projects"]})
+
+    def test_the_member_map_is_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_repo_map(ws, {"shipd": "/checkout/shipd"})
+            sc.save_local_clone_sources(ws, ["~/projects"])
+            self.assertEqual(sc.load_repo_map(ws), {"shipd": "/checkout/shipd"})
+            self.assertEqual(sc.load_local_clone_sources(ws), ["~/projects"])
+
+    def test_output_is_pretty_printed_with_a_trailing_newline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            sc.save_local_clone_sources(ws, ["~/projects"])
+            body = self._read_raw(ws)
+            self.assertTrue(body.endswith("\n"), body)
+            self.assertIn("\n  ", body)
+
+    def test_malformed_existing_file_errors_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            _write_raw_repo_map(ws, "{ not json")
+            with self.assertRaises(sc.ConfigError) as ctx:
+                sc.save_local_clone_sources(ws, ["~/projects"])
+            self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
+            self.assertEqual(self._read_raw(ws), "{ not json")
 
 
 class ProjectOfTest(unittest.TestCase):
@@ -3370,6 +3525,58 @@ def _gitignore_record(records):
     return matches[0]
 
 
+class WorkspaceCloneSourceUnionTest(unittest.TestCase):
+    """workspace_clone_source_dirs unions the configuration's ``clone_sources``
+    with the workspace-local map file's — configuration entries first, then
+    local entries, duplicates removed after expansion (shipd-workspace
+    sync-materialization-planning)."""
+
+    def setUp(self):
+        self.tmp = os.path.realpath(
+            tempfile.mkdtemp(prefix="clone-source-union-test-"))
+        self.addCleanup(lambda: shutil.rmtree(self.tmp, ignore_errors=True))
+        self.ws = os.path.join(self.tmp, "ws")
+        os.makedirs(self.ws)
+
+    def test_no_sources_anywhere_is_empty(self):
+        self.assertEqual(sc.workspace_clone_source_dirs(self.ws, {}), [])
+
+    def test_config_only_passes_through(self):
+        cfg = {"clone_sources": [os.path.join(self.tmp, "cfg")]}
+        self.assertEqual(sc.workspace_clone_source_dirs(self.ws, cfg),
+                         [os.path.join(self.tmp, "cfg")])
+
+    def test_local_only_passes_through(self):
+        _write_local_sources(self.ws, [os.path.join(self.tmp, "local")])
+        self.assertEqual(sc.workspace_clone_source_dirs(self.ws, {}),
+                         [os.path.join(self.tmp, "local")])
+
+    def test_config_entries_come_first(self):
+        cfg = {"clone_sources": [os.path.join(self.tmp, "cfg")]}
+        _write_local_sources(self.ws, [os.path.join(self.tmp, "local")])
+        self.assertEqual(
+            sc.workspace_clone_source_dirs(self.ws, cfg),
+            [os.path.join(self.tmp, "cfg"), os.path.join(self.tmp, "local")])
+
+    def test_duplicates_are_removed_after_expansion(self):
+        # The config names the directory through ``~`` and the local file names
+        # the same directory absolutely: one expanded path, one scan.
+        home = os.path.join(self.tmp, "home")
+        os.makedirs(os.path.join(home, "projects"))
+        cfg = {"clone_sources": ["~/projects"]}
+        _write_local_sources(self.ws, [os.path.join(home, "projects")])
+        with home_set_to(home):
+            self.assertEqual(sc.workspace_clone_source_dirs(self.ws, cfg),
+                             [os.path.join(home, "projects")])
+
+    def test_malformed_local_sources_error_naming_the_file(self):
+        _write_raw_repo_map(self.ws, json.dumps(
+            {"repos": {}, "clone_sources": "~/projects"}))
+        with self.assertRaises(sc.ConfigError) as ctx:
+            sc.workspace_clone_source_dirs(self.ws, {})
+        self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
+
+
 class WorkspaceSyncPlanTest(unittest.TestCase):
     """plan_workspace_sync computes the per-member materialization plan from the
     manifest, resolved config, and local disk, using only local git probes
@@ -3491,6 +3698,55 @@ class WorkspaceSyncPlanTest(unittest.TestCase):
         config, _ = sc.resolve_config(self.ws)
         rec = _one(sc.plan_workspace_sync(self.ws, config), "backend")
         self.assertEqual(rec["source"], first)
+
+    # -- the clone-source union (shipd-workspace workspace-member-map) -----
+
+    def test_workspace_local_source_yields_a_candidate_on_its_own(self):
+        # No configuration layer declares clone_sources: the workspace-local
+        # key alone has to put the candidate in front of the planner.
+        url = "https://example.invalid/backend.git"
+        src = _make_worktree_repo(os.path.join(self.tmp, "local", "backend"),
+                                  url)
+        self._declare({"projects": {"alpha": {"repos": [
+            {"path": "backend", "url": url}]}}})
+        _write_local_sources(self.ws, [os.path.join(self.tmp, "local")])
+        config, _ = sc.resolve_config(self.ws)
+        rec = _one(sc.plan_workspace_sync(self.ws, config), "backend")
+        self.assertEqual(rec["action"], "worktree")
+        self.assertEqual(rec["source"], src)
+
+    def test_config_sources_are_scanned_before_local_sources(self):
+        url = "https://example.invalid/backend.git"
+        from_config = _make_worktree_repo(
+            os.path.join(self.tmp, "cfg", "backend"), url)
+        _make_worktree_repo(os.path.join(self.tmp, "local", "backend"), url)
+        self._declare(
+            {"projects": {"alpha": {"repos": [
+                {"path": "backend", "url": url}]}}},
+            extra={"clone_sources": [os.path.join(self.tmp, "cfg")]})
+        _write_local_sources(self.ws, [os.path.join(self.tmp, "local")])
+        config, _ = sc.resolve_config(self.ws)
+        rec = _one(sc.plan_workspace_sync(self.ws, config), "backend")
+        self.assertEqual(rec["source"], from_config)
+
+    def test_relative_local_source_resolves_against_the_workspace_root(self):
+        url = "https://example.invalid/backend.git"
+        src = _make_worktree_repo(os.path.join(self.tmp, "local", "backend"),
+                                  url)
+        self._declare({"projects": {"alpha": {"repos": [
+            {"path": "backend", "url": url}]}}})
+        _write_local_sources(self.ws, ["../local"])
+        config, _ = sc.resolve_config(self.ws)
+        rec = _one(sc.plan_workspace_sync(self.ws, config), "backend")
+        self.assertEqual(rec["source"], src)
+
+    def test_malformed_local_sources_fail_the_plan_naming_the_file(self):
+        self._declare({"projects": {"alpha": {"repos": ["backend"]}}})
+        _write_raw_repo_map(self.ws, json.dumps(
+            {"repos": {}, "clone_sources": "~/projects"}))
+        with self.assertRaises(sc.ConfigError) as ctx:
+            sc.plan_workspace_sync(self.ws, {})
+        self.assertIn(sc.REPO_MAP_FILENAME, str(ctx.exception))
 
     # -- mapped members (shipd-workspace workspace-member-map) -------------
 

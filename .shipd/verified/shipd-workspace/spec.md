@@ -337,21 +337,29 @@ with `--git` when seeding was chosen — reporting the created root; `show` —
 the workspace roster via the status CLI's `workspace-show` verb, reading
 only; `clone <url> [dest]` — bootstrap a job workspace from its repository
 URL; `sync` — materialize the workspace's members by executing the
-engine's plan; and `map` — a guided mapping round that reads the sync
-plan, proposes for each unmapped member an existing local checkout
+engine's plan under the single up-front consent round of
+workspace-clone-sync-flows; and `map` — a guided mapping round that reads
+the sync plan, proposes for each unmapped member an existing local checkout
 candidate (the plan's matching clone-source when one exists) or a
 user-supplied path, asks in a single round, drives the status CLI's
 `workspace-map set` verb per accepted member, and finishes by reporting
-the map listing; already-mapped members SHALL be reported, never re-asked,
-and `sync` and `clone` SHALL remain question-free. The skill SHALL NOT
-write the workspace declaration, the gitignore member block, or the member
-map file by hand — all go through the CLI verbs. Where the resolved
-configuration declares `workspaces_root` (shipd-config
-workspaces-root-key), the `init` round SHALL name the declared root and offer
-target candidates inside it — substituting `<workspaces_root>/<repo-name>`
-for a natural candidate that lies outside the root — and SHALL pass a chosen
-bare name through to the verb unchanged, the engine resolving it into the
-root.
+the map listing; already-mapped members SHALL be reported, never re-asked.
+`sync` SHALL open exactly one consent round per invocation and `clone`
+SHALL hand into that same consenting sync flow; outside a chosen
+member-by-member review, neither SHALL ask anything further once the round
+is answered, and neither SHALL execute a materialization command without
+it. Where no clone source resolves from the
+configuration or the workspace-local `clone_sources` key, `map` SHALL open
+its round with one question asking where existing checkouts live,
+persisting a given answer through `workspace-sources add` and re-reading
+the plan before proposing candidates. The skill SHALL NOT write the
+workspace declaration, the gitignore member block, or the member map file
+by hand — all go through the CLI verbs. Where the resolved configuration
+declares `workspaces_root` (shipd-config workspaces-root-key), the `init`
+round SHALL name the declared root and offer target candidates inside it —
+substituting `<workspaces_root>/<repo-name>` for a natural candidate that
+lies outside the root — and SHALL pass a chosen bare name through to the
+verb unchanged, the engine resolving it into the root.
 
 #### Scenario: Init on an existing workspace reports and stops
 
@@ -393,6 +401,15 @@ root.
 - **THEN** the skill runs `workspace-map set` for that member and reports
   the resulting map listing, having edited no file by hand
 
+#### Scenario: Sourceless map asks for checkout folders first
+
+- **GIVEN** no resolved clone source from configuration or the
+  workspace-local key
+- **WHEN** `/s:workspace map` opens its round
+- **THEN** the round carries one checkout-folder question, a given answer
+  is persisted via `workspace-sources add`, and candidates are proposed
+  from the re-read plan
+
 ### Requirement: Workspace focus declaration
 id: workspace-focus
 
@@ -427,21 +444,25 @@ state, using only local git probes and never the network. For a member
 whose destination exists as a git work tree the plan SHALL record action
 `none`, adding a drift note when the destination's origin URL differs from
 the manifest `url`; an existing non-git destination SHALL be recorded as
-occupied with a drift note and never modified. For an absent member the
-plan SHALL choose the cheapest rung: a work-tree candidate clone (an
-immediate child of a `clone_sources` directory whose origin URL equals the
-manifest `url`, first match in list order) yields action `worktree`; a bare
-candidate yields action `reference-clone`; no candidate with a `url` yields
-action `clone`; no `url` yields action `unmaterializable` with a reason.
-Actions carrying a rung SHALL include an advisory command string; the
-planner SHALL never execute one. Where the workspace member map holds an
-entry for a member, its destination SHALL be the mapped path, the record
-SHALL carry the resolved mapped destination, and the action SHALL always be
-`none` — the materialization ladder SHALL NOT run and no advisory command
-SHALL ever target a mapped path; an absent mapped destination SHALL be
-recorded state `absent` with a drift note naming the mapped path. The plan
-SHALL also compare the marked member-repos gitignore block against the
-manifest's member paths and record the missing or stale lines.
+occupied with a drift note and never modified. The candidate scan SHALL
+draw on the union of the configuration's `clone_sources` directories and
+the workspace-local map file's `clone_sources` directories — configuration
+entries first, then local entries, duplicates removed after expansion. For
+an absent member the plan SHALL choose the cheapest rung: a work-tree
+candidate clone (an immediate child of a scanned directory whose origin URL
+equals the manifest `url`, first match in scan order) yields action
+`worktree`; a bare candidate yields action `reference-clone`; no candidate
+with a `url` yields action `clone`; no `url` yields action
+`unmaterializable` with a reason. Actions carrying a rung SHALL include an
+advisory command string; the planner SHALL never execute one. Where the
+workspace member map holds an entry for a member, its destination SHALL be
+the mapped path, the record SHALL carry the resolved mapped destination,
+and the action SHALL always be `none` — the materialization ladder SHALL
+NOT run and no advisory command SHALL ever target a mapped path; an absent
+mapped destination SHALL be recorded state `absent` with a drift note
+naming the mapped path. The plan SHALL also compare the marked member-repos
+gitignore block against the manifest's member paths and record the missing
+or stale lines.
 
 #### Scenario: Absent member with a local work-tree candidate
 
@@ -450,6 +471,15 @@ manifest's member paths and record the missing or stale lines.
 - **WHEN** the plan is computed
 - **THEN** the member's action is `worktree` naming that candidate as the
   source with an advisory `git worktree add` command
+
+#### Scenario: Workspace-local source yields a candidate on its own
+
+- **GIVEN** no configuration layer declaring `clone_sources` and a map file
+  whose `clone_sources` names a directory containing a clone whose origin
+  equals the manifest `url`
+- **WHEN** the plan is computed
+- **THEN** the member's action is `worktree` naming that candidate as the
+  source
 
 #### Scenario: Absent member with no candidate falls to clone
 
@@ -501,34 +531,50 @@ id: workspace-clone-sync-flows
 The `/s:workspace` skill SHALL be the only workspace surface that runs
 networked git; the engine verbs it drives stay network-free. When invoked
 as `clone <url> [dest]`, the skill SHALL run `git clone` against the URL,
-then run the sync flow from inside the created root and report the roster;
-if a workspace root resolves from the destination's parent, then the skill
-SHALL proceed and report a note naming the enclosing workspace root,
-refusing only when the destination's immediate parent directory itself
-declares `workspace` in its own `.shipd-config.json`. Where the resolved
-configuration declares `workspaces_root` (shipd-config workspaces-root-key),
-`clone` without an explicit dest SHALL place the clone at
-`<workspaces_root>/<derived-name>` (the directory name git derives from the
-URL, under the declared root), and an explicit dest whose resolved path lies
-outside the declared root SHALL be refused before cloning with an error
-naming the dest, the declared root, and `workspaces_root`; when the key is
-undeclared, destination resolution SHALL be unchanged. When invoked as
-`sync`, the skill SHALL obtain the plan via the status CLI's `workspace-sync
---json` and execute each member record by its action — running the record's
-advisory command for `worktree`, `reference-clone`, and `clone` actions,
-and reporting `drift:` notes and `unmaterializable` reasons without
-modifying anything — asking no confirmation question. If a member's command
-fails, then the skill SHALL report the failure against that member and
-continue with the remaining members. After executing, the skill SHALL
-recompute the plan with `--write-gitignore` to reconcile the marked member
-block and confirm convergence, then report the roster via `workspace-show`.
-If no workspace is discoverable when `sync` runs, then the skill SHALL
-report the CLI's error verbatim and point at `init` or `clone`.
+then run the sync flow — its consent round included — from inside the
+created root and report the roster; if a workspace root resolves from the
+destination's parent, then the skill SHALL proceed and report a note naming
+the enclosing workspace root, refusing only when the destination's
+immediate parent directory itself declares `workspace` in its own
+`.shipd-config.json`. Where the resolved configuration declares
+`workspaces_root` (shipd-config workspaces-root-key), `clone` without an
+explicit dest SHALL place the clone at `<workspaces_root>/<derived-name>`
+(the directory name git derives from the URL, under the declared root), and
+an explicit dest whose resolved path lies outside the declared root SHALL
+be refused before cloning with an error naming the dest, the declared root,
+and `workspaces_root`; when the key is undeclared, destination resolution
+SHALL be unchanged. When invoked as `sync`, the skill SHALL obtain the plan
+via the status CLI's `workspace-sync --json`; where the plan holds at least
+one record with an executable action (`worktree`, `reference-clone`, or
+`clone`), the skill SHALL present a single batched consent round before
+executing anything, offering: reuse existing checkouts where the plan found
+a candidate and materialize the rest (the recommended default), materialize
+every absent member fresh, review member-by-member, or stop. On reuse, the
+skill SHALL drive `workspace-map set` for each member whose record names a
+`source:` candidate — executing no materialization command against those
+members — and SHALL execute the advisory commands of the remaining records;
+on materialize-fresh it SHALL execute every record's advisory command
+exactly as printed; on review it SHALL ask per member before acting, in the
+map round's shape; on stop it SHALL execute nothing. Where no clone source
+resolves from the configuration or the workspace-local `clone_sources` key
+and the plan holds an absent member without a candidate, the same round
+SHALL carry one question asking where existing checkouts live, and a given
+answer SHALL be persisted through `workspace-sources add` and the plan
+recomputed before execution. Where every record's action is `none`, no
+round SHALL open. Outside a chosen member-by-member review, once the round
+is answered the skill SHALL ask nothing further, reporting `drift:` notes
+and `unmaterializable` reasons without modifying anything. If a member's command fails, then the skill SHALL
+report the failure against that member and continue with the remaining
+members. After executing, the skill SHALL recompute the plan with
+`--write-gitignore` to reconcile the marked member block and confirm
+convergence, then report the roster via `workspace-show`. If no workspace
+is discoverable when `sync` runs, then the skill SHALL report the CLI's
+error verbatim and point at `init` or `clone`.
 
-#### Scenario: Clone bootstraps and hands into sync
+#### Scenario: Clone bootstraps and hands into the consenting sync
 - **WHEN** `clone <url>` runs
-- **THEN** the repository is cloned with real git, the sync flow runs inside
-  the created root, and the roster is reported
+- **THEN** the repository is cloned with real git, the sync flow — consent
+  round included — runs inside the created root, and the roster is reported
 
 #### Scenario: Nested clone destination proceeds with a note
 - **GIVEN** a destination whose enclosing workspace root is an ancestor but
@@ -549,10 +595,40 @@ report the CLI's error verbatim and point at `init` or `clone`.
 - **THEN** the skill refuses naming the dest, the declared root, and
   `workspaces_root`, and clones nothing
 
-#### Scenario: Sync executes the ladder actions
+#### Scenario: Consent precedes every materialization
+- **GIVEN** a plan whose records carry executable actions
+- **WHEN** `sync` runs
+- **THEN** no advisory command executes before the single batched consent
+  round is answered
+
+#### Scenario: Reuse maps found candidates instead of materializing
+- **GIVEN** a plan where one record names a `source:` candidate and another
+  carries a `clone` action with no candidate
+- **WHEN** the user chooses reuse in the consent round
+- **THEN** the candidate member is mapped via `workspace-map set` with no
+  command executed against it, and the other member's clone command runs
+
+#### Scenario: Stop executes nothing
+- **GIVEN** a plan with executable actions
+- **WHEN** the user chooses stop in the consent round
+- **THEN** no command runs and no mapping is written
+
+#### Scenario: Converged plan asks nothing
+- **GIVEN** a plan whose records all carry action `none`
+- **WHEN** `sync` runs
+- **THEN** no consent round opens and the roster is reported
+
+#### Scenario: Sourceless plan asks for checkout folders and replans
+- **GIVEN** no resolved clone source and a plan holding an absent member
+  with a `clone` action
+- **WHEN** the user names a checkout folder in the consent round
+- **THEN** the folder is persisted via `workspace-sources add` and the plan
+  is recomputed before any command executes
+
+#### Scenario: Sync executes the consented ladder actions
 - **GIVEN** a plan whose records carry `worktree` and `clone` actions with
   advisory commands
-- **WHEN** `sync` runs
+- **WHEN** `sync` runs and the user consents to materialize them
 - **THEN** each record's command is executed as printed and the members are
   git work trees on disk afterwards
 
@@ -562,13 +638,13 @@ report the CLI's error verbatim and point at `init` or `clone`.
 - **THEN** the note is reported and that member is not modified
 
 #### Scenario: A failed member does not abort the run
-- **GIVEN** a plan whose first member's advisory command fails
+- **GIVEN** a consented plan whose first member's advisory command fails
 - **WHEN** `sync` runs
 - **THEN** the failure is reported against that member and the remaining
   members are still executed
 
 #### Scenario: Sync converges and reconciles the ignore block
-- **WHEN** `sync` finishes executing a plan
+- **WHEN** `sync` finishes executing a consented plan
 - **THEN** the plan is recomputed with `--write-gitignore`, the marked
   member block matches the manifest, and the roster is reported
 
@@ -692,8 +768,9 @@ one-folder-per-job directory convention, and every interactive setup command
 SHALL invoke the `shipd` binary, never a `spec_status.py` path, except in
 `headless.md`, in the index's usage example for the headless part (whose
 contract is precisely the binary-free read), and in `member-map.md`'s
-`workspace-map` examples, whose verbs the deliberately read-only binary does
-not expose. No page SHALL carry a link or anchor that fails to resolve.
+`workspace-map` and `workspace-sources` examples, whose verbs the
+deliberately read-only binary does not expose. No page SHALL carry a link or
+anchor that fails to resolve.
 
 The getting-started page SHALL document the optional `workspaces_root` config
 key (shipd-config workspaces-root-key) as the way to mandate the directory
@@ -704,18 +781,23 @@ the root staying legal, no behavior change when undeclared — and SHALL state
 that `shipd config` reports the raw declared value with `~` unexpanded, that
 the installed sample config documents the key, and that the doctor `config`
 check fails on a malformed value and warns when the declared root directory
-is missing.
+is missing. The getting-started page SHALL also document the sync consent
+round: no member materializes without the single up-front consent question,
+which offers reusing existing checkouts where the candidate scan found them.
 
 The member-map page SHALL document the machine-local
-`.shipd-workspace.local.json` file and its two disjoint fields — the `repos`
-member map at a workspace root and the `workspace_root` pointer in a member
-checkout — the `workspace-map` list/set/remove verbs with `/s:workspace map`
-as the guided front door, the mapped member's semantics (the planner's action
-always `none`, origin drift and missing targets reported as drift notes,
-stale keys as notes, a malformed file failing the reading verb), and the
-three-rung discovery ladder — ancestor search, then the pointer, then the
-origin-URL scan — including URL normalization, the SSH-alias caveat, and the
-multi-match ambiguity warning naming the pointer as the remedy.
+`.shipd-workspace.local.json` file and its three fields — the `repos`
+member map at a workspace root, the `workspace_root` pointer in a member
+checkout, and the optional `clone_sources` directory list the candidate scan
+unions with the configuration key — the `workspace-map` list/set/remove
+verbs and the `workspace-sources` list/add/remove verbs with
+`/s:workspace map` as the guided front door, the mapped member's semantics
+(the planner's action always `none`, origin drift and missing targets
+reported as drift notes, stale keys as notes, a malformed file failing the
+reading verb), and the three-rung discovery ladder — ancestor search, then
+the pointer, then the origin-URL scan — including URL normalization, the
+SSH-alias caveat, and the multi-match ambiguity warning naming the pointer
+as the remedy.
 
 The teams page SHALL document team-shared workspace repos: any number of
 engineers cloning the same workspace repo, per-machine member materialization
@@ -756,11 +838,18 @@ or identity, and with no `~/.shipd-config.json` on the machine.
 
 #### Scenario: Member-map page carries the relocated content
 - **WHEN** `docs/workspaces/member-map.md` is inspected
-- **THEN** it documents both `.shipd-workspace.local.json` fields, the
-  `workspace-map` verbs behind the `/s:workspace map` front door, the mapped
-  member's `none`-action and drift semantics, and the three-rung discovery
-  ladder with URL normalization, the SSH-alias caveat, and the ambiguity
-  warning — and `docs/workspaces.md` no longer carries those sections
+- **THEN** it documents the three `.shipd-workspace.local.json` fields, the
+  `workspace-map` and `workspace-sources` verbs behind the `/s:workspace map`
+  front door, the mapped member's `none`-action and drift semantics, and the
+  three-rung discovery ladder with URL normalization, the SSH-alias caveat,
+  and the ambiguity warning — and `docs/workspaces.md` no longer carries
+  those sections
+
+#### Scenario: Getting-started documents the consent round
+- **WHEN** `docs/workspaces/getting-started.md` is inspected
+- **THEN** it states that sync materializes nothing without the single
+  up-front consent question and that reusing existing checkouts is offered
+  where candidates were found
 
 #### Scenario: Guide documents the workspaces_root mandate
 - **WHEN** the getting-started page is inspected
@@ -799,7 +888,7 @@ or identity, and with no `~/.shipd-config.json` on the machine.
 - **THEN** every setup and day-to-day command invokes the `shipd` binary and
   no interactive example invokes `spec_status.py` by path — save
   `headless.md`, the index's headless-part usage example, and
-  `member-map.md`'s `workspace-map` examples
+  `member-map.md`'s `workspace-map` and `workspace-sources` examples
 
 #### Scenario: No dangling links
 - **WHEN** every `](#...)` anchor and relative link in the index and part
@@ -854,15 +943,19 @@ The engine SHALL read an optional machine-local map file at
 `<workspace-root>/.shipd-workspace.local.json` whose `repos` value is a JSON
 object mapping manifest member paths to local checkout paths; a value MAY
 carry a leading `~` (expanded on read) or be relative (resolved against the
-workspace root). Member destination resolution SHALL route through a single
+workspace root). The file MAY additionally carry a `clone_sources` value: a
+JSON array of directory path strings, each expanded (`~`) on read and
+resolved against the workspace root when relative; an absent key SHALL read
+as an empty list. Member destination resolution SHALL route through a single
 seam that returns the mapped destination when the member's manifest path has
 an entry and `<workspace-root>/<path>` otherwise. If the file is absent, then
 the map SHALL be empty and behavior SHALL be unchanged. If the file is
-malformed — invalid JSON, a non-object top level or `repos` value, or a
-non-string or empty mapping value — then the engine SHALL raise a clear
-error naming the file. The workspace report SHALL annotate each mapped
-member with its resolved destination, and SHALL surface map keys matching no
-manifest member path as a note, never as an error.
+malformed — invalid JSON, a non-object top level or `repos` value, a
+non-string or empty mapping value, or a `clone_sources` value that is not an
+array of non-empty strings — then the engine SHALL raise a clear error naming
+the file. The workspace report SHALL annotate each mapped member with its
+resolved destination, and SHALL surface map keys matching no manifest member
+path as a note, never as an error.
 
 #### Scenario: Mapped member resolves to its local checkout
 
@@ -882,6 +975,13 @@ manifest member path as a note, never as an error.
 #### Scenario: Malformed map errors naming the file
 
 - **WHEN** `.shipd-workspace.local.json` holds `{"repos": []}`
+- **THEN** the consuming verb fails with an error naming
+  `.shipd-workspace.local.json`
+
+#### Scenario: Malformed clone_sources errors naming the file
+
+- **WHEN** `.shipd-workspace.local.json` holds
+  `{"repos": {}, "clone_sources": "~/projects"}`
 - **THEN** the consuming verb fails with an error naming
   `.shipd-workspace.local.json`
 
@@ -998,3 +1098,54 @@ the load's own error, never repaired.
 - **WHEN** `workspace-map remove shipd` runs
 - **THEN** only the `web` entry remains, and a second identical remove
   exits non-zero
+
+### Requirement: Workspace clone-source verbs
+id: workspace-sources-verbs
+
+The status CLI SHALL provide a `workspace-sources` verb resolving the
+workspace from the invocation directory (failing with the standard
+no-workspace error otherwise). The bare form SHALL list each stored
+`clone_sources` entry of the map file with its resolved absolute directory.
+The `add <dir>` form SHALL store the given path verbatim in the map file's
+`clone_sources` array — creating the file or the key when absent, preserving
+every other top-level key and value unchanged in content, ensuring the
+workspace root's `.gitignore` carries a `.shipd-workspace.local.json` line
+outside the marked member block — and SHALL exit zero without duplicating
+when the value is already stored. If the directory does not exist, then `add`
+SHALL warn and still write. The `remove <dir>` form SHALL delete the matching
+stored entry, erroring when no entry matches. A malformed existing map file
+SHALL fail `add` and `remove` with the load's own error, never repaired.
+
+#### Scenario: Add creates the key and preserves the member map
+
+- **GIVEN** a workspace whose map file holds a `repos` entry and no
+  `clone_sources` key
+- **WHEN** `workspace-sources add ~/projects` runs from the root
+- **THEN** the map file's `clone_sources` is `["~/projects"]`, the `repos`
+  entry survives unchanged, and the root `.gitignore` carries a
+  `.shipd-workspace.local.json` line outside the marked member block
+
+#### Scenario: Duplicate add is a zero-exit no-op
+
+- **GIVEN** a map file whose `clone_sources` already holds `~/projects`
+- **WHEN** `workspace-sources add ~/projects` runs
+- **THEN** the verb exits zero and the array still holds exactly one
+  `~/projects` entry
+
+#### Scenario: Missing directory warns but writes
+
+- **WHEN** `workspace-sources add /nowhere/real` runs
+- **THEN** the entry is written and a warning names the missing directory
+
+#### Scenario: Remove without a matching entry errors
+
+- **GIVEN** a map file with no `clone_sources` entry `/tmp/x`
+- **WHEN** `workspace-sources remove /tmp/x` runs
+- **THEN** the verb exits non-zero and the file is unchanged
+
+#### Scenario: Bare form lists entries with resolution
+
+- **GIVEN** a stored `~/projects` entry
+- **WHEN** `workspace-sources` runs
+- **THEN** the listing shows the stored value and its expanded absolute
+  directory

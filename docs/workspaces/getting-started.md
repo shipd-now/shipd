@@ -37,16 +37,13 @@ Declaring `workspaces_root` turns the one-folder-per-job convention into a rule:
   `<workspaces_root>/<name>`, and the engine creates the leaf directory.
 - The engine refuses an init target — or a `/s:workspace clone` destination —
   outside the root, naming the target, the declared root, and `workspaces_root`.
-- The root and everything beneath it counts as inside, so `--nested` job
-  workspaces ([nesting](nesting-and-stores.md#nesting-job-workspaces)) inside
-  the root stay legal.
-- Undeclared means no mandated root: every surface behaves as it does without
-  the key.
+- The root and everything under it counts as inside, so `--nested` job
+  workspaces stay legal ([nesting](nesting-and-stores.md#nesting-job-workspaces)).
+- Undeclared means no mandated root, and every surface behaves as it always has.
 - `shipd config` reports the value **as declared**, with `~` left unexpanded,
   and the installed sample config documents the key.
-- Doctor's `config` check validates it. A malformed value fails the check —
-  not a non-empty string, or not absolute once `~` expands. A declared root
-  directory that does not exist warns.
+- Doctor's `config` check validates it. A malformed value fails — not a
+  non-empty string, or not absolute once `~` expands. A missing root warns.
 
 ## Create a job workspace
 
@@ -128,9 +125,12 @@ engine's plan member by member — cheapest rung first:
 2. **`git clone --reference`** borrowing a local object store (seconds),
 3. **full clone** from the manifest `url` (only when the machine has nothing).
 
-The manifest never records how a member landed. Materialization stays a
-per-machine decision, so one workspace repo works on every machine, and in
-every teammate's clone of it.
+**Nothing materializes before you consent.** The flow opens one round over the
+whole plan. It offers reuse of the checkouts the scan found (the default,
+mapped not cloned), fresh materialization, a member-by-member review, or a stop.
+
+The manifest never records how a member landed: materialization is per-machine,
+so one workspace repo works on every machine and in every teammate's clone.
 
 ## Day to day
 

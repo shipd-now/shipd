@@ -81,6 +81,51 @@ Paths in this skill:
 Build never dead-ends on missing context, and never ceremonially re-asks what
 planning already answered. Before authoring anything, gate on context:
 
+- **Workspace materialization gate (before the workflow gate).** A workspace
+  declares member repos that may not be checked out on this machine yet, and a
+  build targeting one of those must not dead-end — nor pull it behind the
+  user's back. Resolve the workspace first:
+
+  ```
+  python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-show
+  ```
+
+  A non-zero exit means no workspace is discoverable: **skip this gate
+  silently** and go straight to the workflow gate. Otherwise match the build
+  target against the declared members it lists. A target that is not a declared
+  member, or one the roster reports **present or mapped**, likewise skips the
+  gate silently — behavior is unchanged.
+
+  Only when the target is a declared member whose checkout is neither present
+  nor mapped, read that member's record from the planner and ask:
+
+  ```
+  python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-sync --json
+  ```
+
+  Take the one `member` record whose `path` is the target's. It carries an
+  executable action (`worktree`, `reference-clone`, or `clone`) and an advisory
+  `command:`, or `unmaterializable` with a `reason:` — report that reason and
+  stop, there is nothing to materialize. Then issue **one AskUserQuestion**,
+  before any git command runs, offering:
+
+  - **Materialize it** — run the record's `command:` **exactly as printed**
+    (the planner never executes; the skill does). A failure is reported
+    verbatim and stops the build — there is no checkout to build in.
+  - **Map a checkout I already have** — take the path from the user and record
+    it through the engine's writer, never a hand edit; no materialization
+    command runs:
+    ```
+    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-map set <member-path> <local-path>
+    ```
+  - **Stop** — execute nothing, write nothing, and stop the build.
+
+  On either consented outcome, **continue the whole flow from inside the
+  resolved checkout** (the materialized destination, or the path just mapped):
+  the workflow gate below then creates the change's worktree there. Never
+  execute a materialization command without this consent, and never open a
+  second round for it.
+
 - **Workflow gate (before any artifact or code edit).** Confirm you are working
   inside the change's own worktree — `.worktrees/<change>` on branch
   `change/<change>`. If you are still in the main checkout, create it first with

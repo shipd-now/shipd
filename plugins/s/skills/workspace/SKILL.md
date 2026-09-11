@@ -21,9 +21,10 @@ guided flow so a workspace is created and inspected without hand-editing config
 files. You do **not** hand-write the workspace declaration — creation goes
 through the CLI's `workspace-init` verb, which owns the `.shipd-config.json`
 declaration and its refusal guard — and you do **not** hand-write the
-machine-local member map: mapping goes through the CLI's `workspace-map` verb,
-which owns `.shipd-workspace.local.json` and its validation. You interview only
-where a decision cannot be inferred, drive the exact commands, and stop.
+machine-local dotfile: mapping goes through the CLI's `workspace-map` verb and
+a recorded checkout folder through `workspace-sources`, the two verbs that own
+`.shipd-workspace.local.json` and its validation. You interview only where a
+decision cannot be inferred, drive the exact commands, and stop.
 
 **What a workspace is.** A workspace is the grouping root above repositories: it
 declares a `workspace` key in its `.shipd-config.json` and is discovered by
@@ -37,8 +38,10 @@ project status verbs) resolves it by that marker; without one, they dead-end —
 Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 - Status CLI: `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py`
   (all five verbs drive this — `init` runs `workspace-init`, `show` runs
-  `workspace-show`, `clone` and `sync` run `workspace-sync`, `map` runs
-  `workspace-sync --json` then `workspace-map`)
+  `workspace-show`, `clone` and `sync` run `workspace-sync` and then
+  `workspace-map set` for every checkout the user chooses to reuse, `map` runs
+  `workspace-sync --json` then `workspace-map`; both `sync` and `map` record a
+  named checkout folder through `workspace-sources add`)
 
 Run the CLIs from the workspace root (so `--root` may be omitted, defaulting to
 the cwd); `show`, `sync`, and `map` resolve the workspace from there. `init` is the
@@ -170,9 +173,11 @@ no-workspace error, report that verbatim and point the user at
 ## `clone` — bootstrap a job workspace from its repository URL
 
 Clone the workspace repository with **real git** (the skill is the only place
-networked git runs), then hand straight into the `sync` flow so the members
-materialize in one command. No confirmation round — the invocation is the
-consent.
+networked git runs), then hand into the `sync` flow so the members materialize
+in one command. The clone itself is the invocation's consent; the members are
+not — `sync`'s single consent round runs as part of the hand-off, so the user
+chooses between reusing checkouts they already have and materializing fresh
+before any member is touched.
 
 1. **Resolve the destination.** Use `[dest]` when given; otherwise the
    directory name git derives from `<url>` — the last path segment with any
@@ -230,14 +235,16 @@ consent.
    workspace is fine — just proceed.
 
 5. **Hand into `sync`.** From **inside the created root**, run the `sync`
-   section's flow end to end (the cloned repo declares its own `workspace`, so
-   it resolves as the workspace from within). Finish on `sync`'s roster report.
+   section's flow end to end — **its consent round included** (the cloned repo
+   declares its own `workspace`, so it resolves as the workspace from within).
+   Finish on `sync`'s roster report.
 
 ## `sync` — materialize the workspace's members
 
-Execute the engine's materialization plan with real git, member by member.
-**No confirmation round** — the invocation is the consent; asking would break
-unattended bootstrap. Run from the workspace root (or from inside it).
+Execute the engine's materialization plan with real git, member by member —
+but **nothing materializes before the user consents**. Sync opens exactly one
+batched consent round up front, then converges without asking again. Run from
+the workspace root (or from inside it).
 
 1. **Get the plan.** Run the planner in JSON:
 
@@ -253,8 +260,76 @@ unattended bootstrap. Run from the workspace root (or from inside it).
    `drift`/`reason` as applicable; a single trailing `gitignore` record holds
    `missing`/`stale` line lists.
 
-2. **Execute each `member` record by its `action`** — the planner never
-   executes, so the skill runs the advisory `command:` **exactly as printed**:
+2. **Decide whether the round opens.** A record's action is **executable** when
+   it is `worktree`, `reference-clone`, or `clone` — those are the records
+   carrying a `command:`. If **no** record carries an executable action (every
+   member is `none`, plus any `unmaterializable`), the plan is already
+   converged: **ask nothing**, report the `drift:` notes and
+   `unmaterializable` reasons, and skip straight to step 6.
+
+3. **Ask once — the single batched consent round.** Issue one
+   AskUserQuestion. Summarize the plan in the question text: how many members
+   would be materialized, and how many of those the candidate scan already
+   found a local checkout for (the records carrying a `source:`). Offer:
+
+   - **Reuse what I already have** *(recommended)* — map every member whose
+     record names a `source:` candidate and materialize only the rest.
+   - **Materialize everything fresh** — execute every executable record's
+     command as printed, mapping nothing.
+   - **Review member by member** — fall into a per-member round instead.
+   - **Stop** — execute nothing.
+
+   **Carry the checkout-folder question in this same round** when *no clone
+   source resolves* and at least one absent member has no `source:` candidate.
+   Read both halves of the source list first — the config key and the
+   machine-local one:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" config-show
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-sources
+   ```
+
+   No `clone_sources = ...` line in the former and `(no entries)` from the
+   latter means nothing is being scanned, so a checkout the user already has
+   can never surface as a candidate. Add a second question to the round asking
+   **where existing checkouts live** (offer skipping as the alternative — a
+   machine with no prior checkouts has nothing to name). Never open a second
+   round for it.
+
+4. **Act on the answer**, before any command runs:
+
+   - **A named checkout folder** — persist it through the engine's writer,
+     never a hand edit, then **recompute the plan** so the fresh candidates
+     demote clones to reuse under the choice already given:
+
+     ```
+     python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-sources add <dir>
+     python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-sync --json
+     ```
+
+     A stderr warning that the directory does not exist is not a failure —
+     report it and carry on with the recomputed plan.
+   - **Stop** — execute nothing, write nothing, report the plan you would have
+     run, and stop. Do not fall through to step 5.
+   - **Review member by member** — run a per-member round in the `map` verb's
+     shape: one AskUserQuestion, one question per executable record, each
+     offering its `source:` candidate as a mapping (when it found one),
+     materializing via the record's `command:`, and skipping. Then execute
+     exactly what that round accepted.
+   - **Reuse what I already have** — for every record carrying a `source:`,
+     drive the map verb and run **no** command against that member:
+
+     ```
+     python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-map set <path> <source>
+     ```
+
+     Execute the remaining executable records by step 5.
+   - **Materialize everything fresh** — execute every executable record by
+     step 5, mapping nothing.
+
+5. **Execute each consented `member` record by its `action`** — the planner
+   never executes, so the skill runs the advisory `command:` **exactly as
+   printed**:
    - **`none`** — already a git work tree; touch nothing. If the record carries
      a `drift:` note, **report it verbatim** (an origin/manifest mismatch or an
      occupied non-git path) — never repair it.
@@ -263,12 +338,12 @@ unattended bootstrap. Run from the workspace root (or from inside it).
      (networked git — the skill's prerogative).
    - **`unmaterializable`** — report the `reason:` and skip it.
 
-3. **A failed command does not abort the run.** If a member's `command:` exits
+   **A failed command does not abort the run.** If a member's `command:` exits
    non-zero (a worktree branch collision, an auth-less clone, an occupied
    path), report the failure against that member and **continue with the
    remaining members**. Partial materialization is a report, not an abort.
 
-4. **Reconcile and confirm convergence.** After executing every member,
+6. **Reconcile and confirm convergence.** After executing every member,
    recompute the plan with the gitignore reconciler:
 
    ```
@@ -287,13 +362,14 @@ unattended bootstrap. Run from the workspace root (or from inside it).
    by the write (or verify by reading the workspace root's `.gitignore` marked
    block, which now lists exactly the manifest's member paths).
 
-5. **Report the roster.** End with the workspace roster:
+7. **Report the roster.** End with the workspace roster:
 
    ```
    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-show
    ```
 
-   Summarize the members now present on disk plainly.
+   Summarize the members now present on disk plainly — the ones you mapped
+   alongside the ones you materialized.
 
 ## `map` — guided member mapping
 
@@ -332,6 +408,28 @@ through the engine's `workspace-map set` verb — **never** hand-edit
    (when the plan found one), "type a path", and "skip". Never drip a question
    per member across rounds, and never ask about an already-mapped member.
 
+   **Carry the checkout-folder question in that same round when no clone source
+   resolves.** Read both halves of the source list before composing it:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" config-show
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-sources
+   ```
+
+   No `clone_sources = ...` line in the former and `(no entries)` from the
+   latter means nothing is being scanned, so the plan can propose no candidate
+   at all. Add one question asking **where existing checkouts live** (skipping
+   as the alternative). If the user names a folder, persist it through the
+   engine's writer and **re-read the plan** before proposing candidates — the
+   rescan is what turns typed paths into offered ones:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-sources add <dir>
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-sync --json
+   ```
+
+   Never hand-edit `.shipd-workspace.local.json` to record it.
+
 4. **Drive `workspace-map set` per accepted member** — one call each, the
    value exactly as the user accepted or typed (a `~` or relative form is
    resolved at read time by the engine, so store what they gave you):
@@ -360,10 +458,34 @@ through the engine's `workspace-map set` verb — **never** hand-edit
 
 ## The question contract (AskUserQuestion)
 
-`init` and `map` are the only verbs that interview — `init` only when no
-workspace is discoverable, `map` only about members the map does not already
-carry. `clone` and `sync` **ask nothing** (the invocation is the consent; a
-question would break unattended bootstrap).
+Every interviewing verb asks in **exactly one round**, and nothing is
+materialized or written before that round is answered:
+
+- **`sync`** opens exactly one up-front consent round per invocation, and
+  **`clone` hands into that same consenting flow** — the clone is consented by
+  its invocation, the members are consented by the round. Outside a chosen
+  member-by-member review, neither asks anything further once the round is
+  answered, and neither executes a materialization command without it.
+- **`init`** asks only when no workspace is discoverable.
+- **`map`** asks only about members the map does not already carry.
+- **`show`** never asks; it reads.
+
+For `sync` (and so for `clone`):
+
+- **One call, one round.** Issue a *single* AskUserQuestion before executing
+  anything, summarizing the whole plan — how many members would be
+  materialized, how many already have a local checkout the scan found. Never
+  interrogate member by member unless the user picks the review option.
+- **Concrete options, default first.** Offer reuse-what-I-already-have
+  (recommended), materialize-everything-fresh, review-member-by-member, and
+  stop.
+- **Fold the checkout-folder question into the same round** when no clone
+  source resolves from the configuration or the workspace-local key and an
+  absent member has no candidate; persist a given answer through
+  `workspace-sources add` and recompute the plan before executing.
+- **A converged plan asks nothing.** Where every record's action is `none`,
+  no round opens at all.
+- **Stop means stop.** No command runs, no mapping is written.
 
 For `init`:
 
@@ -391,6 +513,10 @@ For `map`:
 - **Concrete options, plan-derived default.** Offer the plan's `source:`
   checkout (recommended) when it found one, plus "type a path" and "skip";
   where the plan found none, "skip" is the recommended default.
+- **Fold the checkout-folder question into the same round** when no clone
+  source resolves from the configuration or the workspace-local key; persist a
+  given answer through `workspace-sources add` and re-read the plan before
+  proposing candidates.
 - **Never re-ask a mapped member.** A member carrying `mapped:` is reported,
   not questioned — re-asking would invite an accidental remap.
 - **Ask once, then converge.** Drive `workspace-map set` per accepted member
@@ -408,16 +534,21 @@ Each verb ends the moment its work is done and self-consistent:
 - **`clone`** — the repository was cloned with real git (or refused because the
   destination's immediate parent is itself a workspace root, or because an
   explicit dest resolved outside a declared `workspaces_root`), the `sync` flow
-  ran inside the created root, and the roster was reported.
-- **`sync`** — the plan's per-member actions were executed (failures reported
-  and skipped, drift reported never repaired), the marked ignore block was
-  reconciled with `--write-gitignore`, and the roster was reported.
-- **`map`** — the single question round ran over the unmapped members,
+  — its consent round included — ran inside the created root, and the roster
+  was reported.
+- **`sync`** — the single consent round ran over the whole plan (or did not
+  open, the plan already converged), the consented actions were executed and
+  the reused checkouts mapped (failures reported and skipped, drift reported
+  never repaired), the marked ignore block was reconciled with
+  `--write-gitignore`, and the roster was reported. On **stop**, nothing was
+  executed and nothing was written.
+- **`map`** — the single question round ran over the unmapped members (carrying
+  the checkout-folder question when no clone source resolved),
   `workspace-map set` was driven once per accepted member (refusals and
   warnings reported verbatim, skipped members left unmapped, already-mapped
   members reported never re-asked), and the map listing was reported.
 
 Then **stop** — this skill does no other work. It never hand-writes the
-declaration, the gitignore block, or the member map file, never seeds the
+declaration, the gitignore block, or the machine-local dotfile, never seeds the
 registry, never nests a workspace under an existing one, and never repairs
 drift.
