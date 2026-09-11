@@ -32,7 +32,7 @@ Run the verbs from inside the clone, or point at the clone from anywhere with
 the top-level `--root`:
 
 ```sh
-git clone git@github.com:acme/ws-documents-linking.git /tmp/ws
+git clone git@github.com:acme/myapp.git /tmp/ws
 python3 <plugin>/skills/build/scripts/spec_status.py --root /tmp/ws workspace-show
 ```
 
