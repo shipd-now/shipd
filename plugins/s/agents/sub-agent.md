@@ -90,16 +90,21 @@ wrong tree.)
      from an abandoned claim.
    - **Wait in the foreground.** When you are blocked on a group or barrier,
      wait with `bash <CLAIM_SCRIPT> claim <change-name> --as <label> --wait`
-     (optionally `--timeout <secs>`, default 600). It blocks *inside that one
-     tool call* and returns the task the moment it frees up — one tool call
-     instead of dozens of polls. It returns immediately when nothing is
-     pending; on timeout it prints a note to stderr, nothing to stdout, and
-     exits 0, so you simply call it again.
+     (optionally `--timeout <secs>`, default 90 — sized to fit inside one
+     foreground tool call rather than being auto-backgrounded). It blocks
+     *inside that one tool call* and returns the task the moment it frees up
+     — one tool call instead of dozens of polls. It returns immediately when
+     nothing is pending; on timeout it prints a note to stderr, nothing to
+     stdout, and exits 0, so you simply re-issue the same call again.
    - **Never claim in the background.** Do not run `claim` or `status` in a
      backgrounded shell, a `&`-detached command, or any poll loop that outlives
      the tool call. A detached claim marks a task `[~]` after you have stopped
      watching for it, leaving work held by nobody. Every coordinator call you
      make is a synchronous, foreground call whose output you read.
+   - **Never end your turn holding a claim.** If you need to stop for any
+     reason — including waiting on a long-running verification — `complete`
+     the task first, or `release` it. A task left `[~]` by a stopped agent
+     blocks every other builder.
 3. Implement exactly that one task. Follow the spec deltas and `plan.md`'s
    `## Implementation` decisions precisely. Match the surrounding code's style.
    Do not scope-creep into other tasks.
