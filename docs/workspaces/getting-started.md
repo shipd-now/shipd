@@ -1,12 +1,13 @@
+<!-- doc-type: how-to -->
+
 # Getting started
 
 [← Workspaces](../workspaces.md)
 
-## One-time machine setup
+## Set up the machine once
 
-Tell the engine where your existing local clones live (so materialization is
-cheap), where your durable base wiki is, and — optionally — where job
-workspaces are allowed to live. In `~/.shipd-config.json`:
+Three optional keys in `~/.shipd-config.json` tune materialization, wiki
+fallback, and where job workspaces live:
 
 ```json
 {
@@ -16,34 +17,36 @@ workspaces are allowed to live. In `~/.shipd-config.json`:
 }
 ```
 
-- `clone_sources` — directories whose immediate children are probed for a
-  clone with a matching origin URL. Undeclared = no probing, everything
-  full-clones.
-- `wiki_base` — the base wiki the oracle falls back to after the workspace
-  chain, and the promote-to-base target for `/s:teach`. Optional but
-  recommended for a durable base that sits **outside** the chain — see
-  [Nesting job workspaces](nesting-and-stores.md#nesting-job-workspaces) for a
-  base reached by nesting instead.
-- `workspaces_root` — the mandated parent directory for job workspaces:
-  declaring it turns this guide's one-folder-per-job-under-`~/workspaces/`
-  convention from a habit into a rule. A bare name given to `shipd workspace
-  init` resolves to `<workspaces_root>/<name>`, with the leaf directory
-  created for you; an explicit init target — or a `/s:workspace clone`
-  destination — that lands outside the root is refused with an error naming
-  the target, the declared root, and `workspaces_root`. The root itself and
-  everything beneath it counts as inside, so `--nested` job workspaces (see
-  [Nesting job workspaces](nesting-and-stores.md#nesting-job-workspaces))
-  inside the root stay legal. Undeclared = no mandated root, and every surface
-  behaves exactly as it does without the key. `shipd config` reports the value
-  **as declared**, with `~` left unexpanded; the installed sample config
-  documents the key; and doctor's existing `config` check validates it —
-  `fail` on a malformed value (not a non-empty string, or not absolute once
-  `~` expands), `warn` when the declared root directory does not exist.
+- `clone_sources` — directories whose immediate children the engine probes for
+  a clone with a matching origin URL. Undeclared means no probing, and every
+  member full-clones.
+- `wiki_base` — the optional base wiki the oracle falls back to after the
+  workspace chain, and the promote-to-base target for `/s:teach`. It holds a
+  durable base **outside** the chain; for a base reached by nesting instead,
+  see [Nesting job workspaces](nesting-and-stores.md#nesting-job-workspaces).
+- `workspaces_root` — the mandated parent directory, covered below.
 
-These keys tune *materialization*, *wiki fallback*, and *where workspaces
-live* — none of them is needed to read a workspace, so a machine with no
-`~/.shipd-config.json` at all still resolves every read verb (see
-[Headless consumers](headless.md)).
+A workspace read needs none of them: a machine with no `~/.shipd-config.json`
+still resolves every read verb — see [Headless consumers](headless.md).
+
+### The mandated parent directory
+
+Declaring `workspaces_root` turns the one-folder-per-job convention into a rule:
+
+- A bare name given to `shipd workspace init` resolves to
+  `<workspaces_root>/<name>`, and the engine creates the leaf directory.
+- The engine refuses an init target — or a `/s:workspace clone` destination —
+  outside the root, naming the target, the declared root, and `workspaces_root`.
+- The root and everything beneath it counts as inside, so `--nested` job
+  workspaces ([nesting](nesting-and-stores.md#nesting-job-workspaces)) inside
+  the root stay legal.
+- Undeclared means no mandated root: every surface behaves as it does without
+  the key.
+- `shipd config` reports the value **as declared**, with `~` left unexpanded,
+  and the installed sample config documents the key.
+- Doctor's `config` check validates it. A malformed value fails the check —
+  not a non-empty string, or not absolute once `~` expands. A declared root
+  directory that does not exist warns.
 
 ## Create a job workspace
 
@@ -52,17 +55,11 @@ mkdir -p ~/workspaces/documents-linking
 shipd workspace init ~/workspaces/documents-linking --git
 ```
 
-`--git` makes the root a git repo and seeds the managed `.gitignore` block.
+`--git` turns the root into a git repo and seeds the managed `.gitignore`
+block. The explicit path works with or without `workspaces_root`. With the key
+declared, `shipd workspace init documents-linking --git` needs no `mkdir`.
 
-With `workspaces_root` declared
-([One-time machine setup](#one-time-machine-setup)), the bare job name
-suffices — `shipd workspace init documents-linking --git` creates
-`~/workspaces/documents-linking` and initializes it there, no `mkdir` needed.
-The explicit-path example above is the flow when the key is undeclared, and
-keeps working either way.
-
-Then declare the job in
-`~/workspaces/documents-linking/.shipd-config.json`:
+Then declare the job in `~/workspaces/documents-linking/.shipd-config.json`:
 
 ```json
 {
@@ -79,8 +76,8 @@ Then declare the job in
 
 - `focus` names the job's primary project — the oracle and `/s:teach` weight
   its surfaces first.
-- Every repo entry that should be materializable needs a `url`. A bare string
-  (`"repos": ["tools"]`) is still valid but can't be cloned elsewhere.
+- Every materializable repo entry needs a `url`. A bare string
+  (`"repos": ["tools"]`) stays valid, but the engine cannot clone it elsewhere.
 
 Finish the bootstrap from inside the workspace:
 
@@ -89,16 +86,15 @@ shipd wiki init                          # job wiki store
 shipd workspace sync --write-gitignore
 ```
 
-`shipd workspace sync` prints the materialization plan (it never touches the
-network); `--write-gitignore` fills the managed members block so the member
-dirs stay untracked. Then run `/s:workspace sync` in a Claude session to
-actually execute the plan's git commands, or run the printed `command:` lines
-yourself.
+`shipd workspace sync` prints the materialization plan and never touches the
+network; `--write-gitignore` fills the managed members block, so the member
+directories stay untracked. Then run `/s:workspace sync` in a Claude session to
+execute the plan's git commands, or run the printed `command:` lines yourself.
 
 ## Check it into git
 
-The engine already keeps member repos out of the workspace repo — you commit
-only the manifest and the knowledge:
+The engine keeps member repos out of the workspace repo, so you commit only the
+manifest and the knowledge:
 
 ```sh
 cd ~/workspaces/documents-linking
@@ -108,52 +104,47 @@ git remote add origin git@github.com:acme/ws-documents-linking.git
 git push -u origin main
 ```
 
-Notes:
-
 - **Never remove the managed `.gitignore` block** (`# >>> shipd-workspace
-  members` … `# <<< shipd-workspace members`) — it is what keeps `documents/`
-  etc. from being committed into the workspace repo (no submodules, ever).
-- Wiki writes (`/s:teach`, queued oracle questions) **auto-commit locally**
-  in the workspace repo. They do not push — end a work session with
-  `git push`, start one with `git pull`, and the wiki travels between your
-  machines — and between everyone sharing the repo — like any repo.
-- Sharing the workspace repo across **several engineers** works the same way,
-  with a few conflict surfaces to know about — see
-  [Sharing a workspace with a team](teams.md).
+  members` … `# <<< shipd-workspace members`). It keeps `documents/` and its
+  siblings out of the workspace repo — no submodules, ever.
+- Wiki writes (`/s:teach`, queued oracle questions) **auto-commit locally** and
+  never push. End a session with `git push`, and start one with `git pull`. The
+  wiki then travels between your machines, and between everyone sharing it.
+- Sharing the repo across **several engineers** works the same way, with a few
+  conflict surfaces — see [Sharing a workspace with a team](teams.md).
 
 ## Load it on another machine
 
-One command in a Claude session:
+Run one command in a Claude session:
 
 ```
 /s:workspace clone git@github.com:acme/ws-documents-linking.git ~/workspaces/documents-linking
 ```
 
-This clones the workspace repo, then runs the sync flow, which executes the
+It clones the workspace repo, then runs the sync flow, which executes the
 engine's plan member by member — cheapest rung first:
 
 1. **worktree** of an existing local clone with the same origin (near-instant),
 2. **`git clone --reference`** borrowing a local object store (seconds),
 3. **full clone** from the manifest `url` (only when the machine has nothing).
 
-The manifest never records how a member landed — materialization is always a
-per-machine decision, so the same workspace repo works on every machine, and
-in every teammate's clone of it.
+The manifest never records how a member landed. Materialization stays a
+per-machine decision, so one workspace repo works on every machine, and in
+every teammate's clone of it.
 
 ## Day to day
 
 - `shipd workspace` — roster, focus, absent members, `[url]` markers.
-- `shipd workspace sync` — re-plan any time; **drift** (an on-disk origin
-  differing from the manifest) is reported, never "repaired".
-  `--json` emits machine-readable records.
-- `/s:workspace sync` — execute the plan again after editing the manifest
-  (e.g. a new member repo was added to the job).
-- `/s:ask` — the oracle answers from the **job wiki, then any enclosing
-  workspace's wiki (nearest first), then `wiki_base`**, then the repo's spec
-  surfaces; unanswerable questions queue in the job's own wiki, for you or
-  whichever teammate gets to them first.
-- `/s:teach` — distill decisions into the job wiki; promote answers that are
-  job-independent to the base wiki so every future job inherits them.
-- Per-change work inside a member repo is unchanged: each member still uses
-  its own `.worktrees/<change>` flow. The workspace-level worktree/clone cost
-  is paid **once per job, not per task**.
+- `shipd workspace sync` — re-plan any time. It reports **drift** (an on-disk
+  origin differing from the manifest) and never repairs it; `--json` emits
+  machine-readable records.
+- `/s:workspace sync` — execute the plan again after you edit the manifest, for
+  example when the job gains a member repo.
+- `/s:ask` — the oracle answers from the **job wiki, then enclosing workspace
+  wikis (nearest first), then `wiki_base`**, then the repo's spec surfaces.
+  Unanswerable questions queue in the job's own wiki, for whoever answers first.
+- `/s:teach` — distill decisions into the job wiki, and promote job-independent
+  answers to the base wiki so every future job inherits them.
+- Per-change work inside a member repo does not change: each member keeps its
+  own `.worktrees/<change>` flow. You pay the workspace worktree or clone cost
+  **once per job, not per task**.

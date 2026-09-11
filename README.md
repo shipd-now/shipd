@@ -17,7 +17,8 @@ meant, it makes the agent converge on a specification first — a plan, testable
 requirement deltas, and a task checklist, all checked into your repository — and
 only then build the change, validate it against those requirements, and ship it
 as a pull request. For the longer version, see
-[What is shipd?](docs/what-is-shipd.md).
+[What is shipd?](docs/what-is-shipd.md), then [Workspaces](docs/workspaces.md)
+— the guide to standing one job up across several repos.
 
 ## Install
 
