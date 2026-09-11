@@ -1,21 +1,23 @@
+<!-- doc-type: how-to -->
+
 # Practical examples: multi-workspace repos
 
 [← Workspaces](../workspaces.md)
 
-One repo can carry several workspaces, so a team clones it **once** and each
-engineer syncs only the jobs they actually work on — the rest cost a few KB of
-manifest and wiki on disk and materialize nothing. Two shapes support that,
-and the choice between them is whether the jobs should share knowledge:
-sibling workspaces in a plain repo (**Shape A**) keep every job's wiki to
-itself, while a base workspace holding nested jobs (**Shape B**) gives every
+One repo can carry several workspaces. A team clones it once, and each
+engineer syncs only the jobs they work on. The rest cost a few KB of manifest
+and wiki on disk, and materialize nothing.
+
+Two shapes support that. Choose between them by whether the jobs share
+knowledge. Sibling workspaces in a plain repo (**Shape A**) keep every job's
+wiki to itself. A base workspace with nested jobs (**Shape B**) gives every
 job an inherited base wiki.
 
 ## Shape A — sibling workspaces in a plain repo
 
-The repo root declares **no** workspace: it is a plain container, and each job
-is an ordinary workspace directory beneath it, created exactly as
-[Create a job workspace](getting-started.md#create-a-job-workspace) creates a
-standalone one.
+The repo root declares no workspace. It is a plain container, and each job is
+an ordinary workspace directory beneath it, created exactly as
+[Getting started](getting-started.md) creates a standalone one.
 
 ```
 ~/workspaces/company/             ← A PLAIN GIT REPO — its root declares
@@ -34,10 +36,8 @@ standalone one.
     tasks/  incentives/           ← its own member repos                      (ignored)
 ```
 
-Discovery is nearest-ancestor, so a session working inside
-`workspace-documents/` resolves that workspace and never sees
-`ws-tasks-management/` — siblings do not interfere, and neither inherits
-anything from the other.
+Discovery is nearest-ancestor. A session inside `workspace-documents/` never
+sees `ws-tasks-management/`, so siblings neither interfere nor inherit.
 
 Create (or clone) the container repo, then initialize each workspace in it:
 
@@ -49,24 +49,21 @@ shipd workspace init ~/workspaces/company/workspace-documents
 shipd workspace init ~/workspaces/company/ws-tasks-management
 ```
 
-No `--nested` in this shape: the container root declares no workspace, so
-nothing is discoverable above either target and the bare verb is satisfied.
-Fill each manifest as
-[Create a job workspace](getting-started.md#create-a-job-workspace) shows,
-then run `shipd wiki init` and `shipd workspace sync` from inside each
-workspace.
+This shape takes no `--nested`: nothing is discoverable above either target.
+Fill each manifest as [Getting started](getting-started.md) shows, then run
+`shipd wiki init` and `shipd workspace sync` inside each workspace.
 
-`--git` is optional here and never nests a repo inside the container: the verb
-skips `git init` when the target is already inside a git work tree and only
-seeds that workspace's own members `.gitignore` block. A plain `init` gets the
-block seeded anyway on the first `shipd workspace sync --write-gitignore`, so
+`--git` is optional here, and it never nests a repo inside the container. The
+verb skips `git init` when the target already sits inside a git work tree, and
+seeds only that workspace's own members `.gitignore` block. A plain `init`
+gets the block on the first `shipd workspace sync --write-gitignore`, so
 either route ends in the same tracked state.
 
 ## Shape B — a base workspace with nested jobs
 
-Here the repo root **is** a workspace — the base of
-[Nesting job workspaces](nesting-and-stores.md#nesting-job-workspaces) — and
-each job is a `--nested` workspace filed directly beneath it.
+Here the repo root is a workspace, the base of
+[Nesting and external stores](nesting-and-stores.md). Each job is a `--nested`
+workspace filed directly beneath it.
 
 ```
 ~/workspaces/acme-base/           ← THE BASE WORKSPACE REPO — clone this
@@ -91,17 +88,15 @@ shipd workspace init ~/workspaces/acme-base/documents-linking --nested --git
 shipd workspace init ~/workspaces/acme-base/billing-rollout --nested --git
 ```
 
-`--nested` is required and deliberate: the bare verb refuses to create a
-workspace under an already-discoverable one, so a job is never nested by
-accident.
+`shipd workspace init` requires `--nested` here, and deliberately so. The
+bare verb refuses to create a workspace under an already-discoverable one, so
+no job nests by accident.
 
-Inheritance is
-[Nesting job workspaces](nesting-and-stores.md#nesting-job-workspaces)'s,
-unchanged — reads fall through the chain nearest-first, so a job sees the
+Inheritance is [Nesting and external stores](nesting-and-stores.md)'s,
+unchanged. Reads fall through the chain nearest-first, so a job sees the
 base's pages, initiatives, and project registry wherever it declares none of
-its own, while **every write lands in the nested job's own store**, never the
-base's. Teaching the base is therefore its own deliberate act, run from the
-base workspace itself.
+its own. Every write lands in the nested job's own store, never the base's.
+Teaching the base is its own deliberate act, run from the base workspace.
 
 ## What lives where
 
@@ -117,9 +112,8 @@ base workspace itself.
 ## Using either shape
 
 Clone the repo with plain `git clone`. The `/s:workspace clone` verb of
-[Load it on another machine](getting-started.md#load-it-on-another-machine)
-bootstraps *one* workspace from a repository URL, so it is the wrong front
-door for a repo holding several:
+[Getting started](getting-started.md) bootstraps one workspace from a
+repository URL, so it is the wrong front door for a repo holding several:
 
 ```sh
 git clone git@github.com:acme/company-workspaces.git ~/workspaces/company
@@ -127,32 +121,30 @@ cd ~/workspaces/company/workspace-documents
 shipd workspace sync
 ```
 
-`cd` into the workspace you care about and plan its materialization there —
+`cd` into the workspace you care about, and plan its materialization there.
 `shipd workspace sync` only prints the plan, so run `/s:workspace sync` in a
-Claude session to execute it. Sync reads only that workspace's own manifest,
-so the jobs you ignore stay unmaterialized and cost nothing but their tracked
+Claude session to execute it. Sync reads only that workspace's own manifest.
+The jobs you ignore stay unmaterialized, and cost nothing but their tracked
 manifest and wiki.
 
-Knowledge travels exactly as
-[Sharing a workspace with a team](teams.md) describes: `git pull` at the start
-of a session, `git push` at the end, with the same conflict surfaces that page
-names. Wiki auto-commits land in the enclosing work tree, which in both shapes
-is the one shared repo — so a session in any workspace commits into the same
-local history.
+Knowledge travels as [Sharing a workspace with a team](teams.md) describes:
+`git pull` at the start of a session, `git push` at the end. The conflict
+surfaces are the ones that page names. Wiki auto-commits land in the enclosing
+work tree, which in both shapes is the one shared repo. Every session
+therefore commits into the same local history.
 
 ## Pros and cons
 
 | | Shape A — siblings | Shape B — base + nested jobs |
 |---|---|---|
-| **Pros** | strict isolation between jobs; the simplest mental model — every workspace is a standalone one that happens to share a repo | a base wiki every job inherits for free; nesting is an explicit `--nested` opt-in, never accidental |
+| **Pros** | strict isolation between jobs; the simplest mental model — every workspace reads like a standalone one that happens to share a repo | a base wiki every job inherits for free; nesting is an explicit `--nested` opt-in, never accidental |
 | **Cons** | no shared knowledge — conventions common to every job are duplicated per workspace | one more level of indirection to reason about; base writes need their own discipline, since every write defaults to the job's store |
 
-Pick **Shape A** when the jobs have nothing to say to each other and you want
-each one to read exactly like a standalone workspace; pick **Shape B** when
-they share org- or team-wide conventions worth writing down once.
+Pick **Shape A** when the jobs have nothing to say to each other. Pick
+**Shape B** when they share conventions worth writing down once.
 
 Neither shape is an access-control boundary. Git has no per-directory
-permissions, so anyone who can clone the repo reads every workspace in it —
-when a job's manifest or knowledge must stay invisible to some of the people
+permissions, so anyone who can clone the repo reads every workspace in it.
+When a job's manifest or knowledge must stay invisible to some of the people
 cloning, give that job its own repo. **Separate repos, not directories, are
 the isolation boundary.**
