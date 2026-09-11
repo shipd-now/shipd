@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -23,6 +24,11 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.normpath(os.path.join(HERE, "..", "scripts", "claim_task.sh"))
+SCRIPTS_DIR = os.path.normpath(os.path.join(HERE, "..", "scripts"))
+if SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, SCRIPTS_DIR)
+import spec_lint as sl  # noqa: E402
+
 CHANGE = "demo"
 
 # The three checkbox markers, assembled by concatenation so no checkbox-shaped
@@ -886,6 +892,119 @@ class ResolutionFallbackTest(ContentDirResolutionTestBase):
     def test_claim_operates_on_dot_shipd(self):
         self.assertEqual(self.id_of(self.cmd("claim")), "1")
         self.assertEqual(self.real_boxes(), "~ ")
+
+
+class ReadinessParityTest(ClaimScriptTestBase):
+    """Differential parity between `claim_task.sh`'s `first_ready_line` awk
+    (the runtime readiness rule) and `spec_lint.ready_task_ordinals` (the
+    authoring-time mirror; shipd-spec-lint task-group-satisfiability). For
+    every configuration below, `next`'s reported task id must equal the
+    lowest ordinal the Python helper reports ready — `next` scans ordinals in
+    file order and returns the first ready one, so the two always agree on
+    the *minimum* of the ready set — and where the coordinator reports
+    nothing ready, the Python helper's ready set must be empty too.
+
+    The corpus covers every combination the rule distinguishes: barrier
+    present or absent, group numbers monotonic or not, and some tasks
+    already done — plus the cycle shape, where both must report nothing
+    ready."""
+
+    # (name, task lines) — task text is irrelevant to readiness, so lines
+    # carry only the box state and the optional `[P<n>]` tag.
+    CORPUS = [
+        ("fully_sequential_all_pending", [
+            PENDING + " 1.1 a",
+            PENDING + " 1.2 b",
+            PENDING + " 1.3 c",
+        ]),
+        ("fully_sequential_first_done", [
+            DONE + " 1.1 a",
+            PENDING + " 1.2 b",
+            PENDING + " 1.3 c",
+        ]),
+        ("grouped_monotonic_all_pending", [
+            PENDING + " 1.1 [P1] a",
+            PENDING + " 1.2 [P1] b",
+            PENDING + " 1.3 [P2] c",
+            PENDING + " 1.4 [P3] d",
+        ]),
+        ("grouped_monotonic_lowest_group_done", [
+            DONE + " 1.1 [P1] a",
+            DONE + " 1.2 [P1] b",
+            PENDING + " 1.3 [P2] c",
+            PENDING + " 1.4 [P3] d",
+        ]),
+        ("grouped_non_monotonic_no_barrier", [
+            PENDING + " 1.1 [P2] a",
+            PENDING + " 1.2 [P1] b",
+        ]),
+        ("barrier_idiom_all_pending", [
+            PENDING + " 1.1 [P1] a",
+            PENDING + " 1.2 [P1] b",
+            PENDING + " 1.3 barrier",
+            PENDING + " 1.4 [P2] c",
+            PENDING + " 1.5 [P2] d",
+        ]),
+        ("barrier_idiom_group_done_barrier_ready", [
+            DONE + " 1.1 [P1] a",
+            DONE + " 1.2 [P1] b",
+            PENDING + " 1.3 barrier",
+            PENDING + " 1.4 [P2] c",
+            PENDING + " 1.5 [P2] d",
+        ]),
+        ("barrier_idiom_barrier_done_second_group_ready", [
+            DONE + " 1.1 [P1] a",
+            DONE + " 1.2 [P1] b",
+            DONE + " 1.3 barrier",
+            PENDING + " 1.4 [P2] c",
+            PENDING + " 1.5 [P2] d",
+        ]),
+        ("in_progress_task_blocks_barrier", [
+            WIP + " 1.1 [P1] a",
+            PENDING + " 1.2 barrier",
+        ]),
+        ("cycle_shape_all_pending", [
+            PENDING + " 1.1 [P3] higher group first",
+            PENDING + " 1.2 barrier in between",
+            PENDING + " 1.3 [P2] lower group after the barrier",
+        ]),
+        ("cycle_shape_with_unrelated_task_done", [
+            DONE + " 1.1 unrelated already-done barrier",
+            PENDING + " 1.2 [P3] higher group first",
+            PENDING + " 1.3 barrier in between",
+            PENDING + " 1.4 [P2] lower group after the barrier",
+        ]),
+    ]
+
+    CORPUS_BY_NAME = dict(CORPUS)
+
+    def test_next_agrees_with_the_python_helper_over_the_corpus(self):
+        for name, lines in self.CORPUS:
+            with self.subTest(config=name):
+                text = "## 1. Work\n\n" + "\n".join(lines) + "\n"
+                self.write_tasks(text)
+                coordinator_id = self.id_of(self.cmd("next"))
+                states = sl.parse_task_states(text)
+                ready = sl.ready_task_ordinals(states)
+                if ready:
+                    self.assertEqual(
+                        coordinator_id, str(min(ready)),
+                        "config %r: coordinator reported %r, helper's "
+                        "ready set was %r" % (name, coordinator_id, ready))
+                else:
+                    self.assertIsNone(
+                        coordinator_id,
+                        "config %r: coordinator reported %r but the helper's "
+                        "ready set is empty" % (name, coordinator_id))
+
+    def test_cycle_shape_reports_nothing_ready_on_both_sides(self):
+        text = ("## 1. Work\n\n" +
+                "\n".join(self.CORPUS_BY_NAME["cycle_shape_all_pending"]) +
+                "\n")
+        self.write_tasks(text)
+        self.assertIsNone(self.id_of(self.cmd("next")))
+        self.assertEqual(
+            sl.ready_task_ordinals(sl.parse_task_states(text)), set())
 
 
 if __name__ == "__main__":

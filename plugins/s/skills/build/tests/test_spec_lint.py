@@ -737,6 +737,246 @@ class TaskTraceabilityTest(unittest.TestCase):
         self.assertTrue(has(errors, "no-such-requirement"))
 
 
+class TaskReadinessHelperTest(unittest.TestCase):
+    """The readiness mirror (shipd-spec-lint task-group-satisfiability):
+    ``ready_task_ordinals`` reproduces ``claim_task.sh``'s `first_ready_line`
+    awk rule over a tasks file's parsed checkbox states and `[P<n>]` group
+    tags — a barrier is ready only when every task before it in file order is
+    done; a grouped task only when every barrier before it is done and every
+    task in a strictly-lower-numbered group anywhere in the file is done.
+
+    These tests are written test-first and are expected to FAIL until
+    ``parse_task_states``/``ready_task_ordinals`` land in ``spec_lint.py``
+    (task 1.2)."""
+
+    def _ready(self, task_lines):
+        """Parse ``task_lines`` (a list of checkbox-line strings) and return
+        the set of 1-based ordinals `ready_task_ordinals` reports ready."""
+        text = "## 1. Work\n\n" + "\n".join(task_lines) + "\n"
+        states = sl.parse_task_states(text)
+        return sl.ready_task_ordinals(states)
+
+    def test_barrier_idiom_readies_only_the_first_group(self):
+        # [P1] [P1] barrier [P2] [P2]: only the P1 pair is ready to start;
+        # the barrier and the P2 pair are blocked behind it.
+        ready = self._ready([
+            "- [ ] 1.1 [P1] Add the exporter",
+            "- [ ] 1.2 [P1] Add the parser",
+            "- [ ] 1.3 Wire them together",
+            "- [ ] 1.4 [P2] Add the CLI flag",
+            "- [ ] 1.5 [P2] Add the docs",
+        ])
+        self.assertEqual(ready, {1, 2})
+
+    def test_barrier_becomes_ready_once_its_group_is_done(self):
+        ready = self._ready([
+            "- [x] 1.1 [P1] Add the exporter",
+            "- [x] 1.2 [P1] Add the parser",
+            "- [ ] 1.3 Wire them together",
+            "- [ ] 1.4 [P2] Add the CLI flag",
+        ])
+        self.assertEqual(ready, {3})
+
+    def test_fully_grouped_monotonic_readies_the_lowest_group(self):
+        ready = self._ready([
+            "- [ ] 1.1 [P1] a",
+            "- [ ] 1.2 [P1] b",
+            "- [ ] 1.3 [P2] c",
+            "- [ ] 1.4 [P3] d",
+        ])
+        self.assertEqual(ready, {1, 2})
+
+    def test_fully_grouped_monotonic_advances_once_lower_group_is_done(self):
+        ready = self._ready([
+            "- [x] 1.1 [P1] a",
+            "- [x] 1.2 [P1] b",
+            "- [ ] 1.3 [P2] c",
+            "- [ ] 1.4 [P3] d",
+        ])
+        self.assertEqual(ready, {3})
+
+    def test_fully_sequential_readies_only_the_first_task(self):
+        ready = self._ready([
+            "- [ ] 1.1 a",
+            "- [ ] 1.2 b",
+            "- [ ] 1.3 c",
+        ])
+        self.assertEqual(ready, {1})
+
+    def test_fully_sequential_advances_one_at_a_time(self):
+        ready = self._ready([
+            "- [x] 1.1 a",
+            "- [ ] 1.2 b",
+            "- [ ] 1.3 c",
+        ])
+        self.assertEqual(ready, {2})
+
+    def test_cycle_shape_readies_nothing(self):
+        # A [P3] task precedes an untagged barrier that itself precedes a
+        # [P2] task: the barrier waits on the [P3] task (file position), and
+        # the [P3] task waits on the [P2] task (group number) — neither can
+        # ever go first.
+        ready = self._ready([
+            "- [ ] 1.1 [P3] Do the higher-numbered thing first",
+            "- [ ] 1.2 A barrier in between",
+            "- [ ] 1.3 [P2] Do the lower-numbered thing after the barrier",
+        ])
+        self.assertEqual(ready, set())
+
+    def test_group_ready_scans_lower_groups_across_the_whole_file(self):
+        # The lower-group check is not limited to tasks before the candidate
+        # in file order — a [P1] task appearing *after* a [P2] task still
+        # blocks the [P2] task until it is done.
+        ready = self._ready([
+            "- [ ] 1.1 [P2] appears first but is not lowest-numbered",
+            "- [ ] 1.2 [P1] appears second but is lowest-numbered",
+        ])
+        self.assertEqual(ready, {2})
+
+    def test_in_progress_task_blocks_a_barrier_like_pending(self):
+        # A `[~]` (in-progress) task is not done, so it blocks a later
+        # barrier exactly as a pending task would.
+        ready = self._ready([
+            "- [~] 1.1 [P1] claimed but not finished",
+            "- [ ] 1.2 A barrier",
+        ])
+        self.assertEqual(ready, set())
+
+
+class TaskSatisfiabilityTest(unittest.TestCase):
+    """Task group satisfiability (shipd-spec-lint task-group-satisfiability):
+    the linter refuses a change whose tasks.md `[P<n>]` group configuration
+    leaves some pending task unreachable, by draining readiness to a
+    fixpoint with `ready_task_ordinals` and reporting every task still
+    pending when the drain stalls.
+
+    These tests are written test-first and are expected to FAIL until
+    ``check_task_satisfiability`` lands in ``spec_lint.py`` (task 2.2)."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _delta(self):
+        return ("## ADDED Requirements\n\n"
+                "### Requirement: Do the thing\n"
+                "id: do-the-thing\n\n"
+                "The system SHALL do the thing.\n\n"
+                "#### Scenario: s\n- **WHEN** a\n- **THEN** b\n")
+
+    def _write_change(self, change, task_lines=None, with_plan=False):
+        cdir = os.path.join(self.root, ".shipd", "planned", change)
+        os.makedirs(os.path.join(cdir, "specs", "auth"), exist_ok=True)
+        with open(os.path.join(cdir, "specs", "auth", "spec.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(self._delta())
+        if task_lines is not None:
+            with open(os.path.join(cdir, "tasks.md"), "w",
+                      encoding="utf-8") as fh:
+                fh.write("## 1. Work\n\n" + "\n".join(task_lines) + "\n")
+        if with_plan:
+            with open(os.path.join(cdir, "plan.md"), "w",
+                      encoding="utf-8") as fh:
+                fh.write("# %s\nStatus: ready\n\n## Idea\nA summary.\n\n"
+                         "### Motivation\nWhy.\n\n### Details\nThe changes.\n\n"
+                         "### Non-goals\nNot that.\n\n"
+                         "## Implementation\nHow.\n" % change)
+        return cdir
+
+    def _errors(self, task_lines):
+        change = "sat-change"
+        self._write_change(change, task_lines)
+        errors = []
+        sl.check_task_satisfiability(self.root, change, errors)
+        return [str(e) for e in errors]
+
+    def test_cycle_shape_names_every_unreachable_task(self):
+        # A [P3] task, an untagged barrier, then a [P2] task: the drain
+        # stalls immediately, so all three stay pending and are all named.
+        errors = self._errors([
+            "- [ ] 1.1 [P3] higher group first",
+            "- [ ] 1.2 a barrier in between",
+            "- [ ] 1.3 [P2] lower group after the barrier",
+        ])
+        self.assertEqual(len(errors), 3)
+        self.assertTrue(has(errors, "task 1"))
+        self.assertTrue(has(errors, "task 2"))
+        self.assertTrue(has(errors, "task 3"))
+
+    def test_barrier_idiom_produces_no_finding(self):
+        errors = self._errors([
+            "- [ ] 1.1 [P1] a",
+            "- [ ] 1.2 [P1] b",
+            "- [ ] 1.3 a barrier",
+            "- [ ] 1.4 [P2] c",
+            "- [ ] 1.5 [P2] d",
+        ])
+        self.assertEqual(errors, [])
+
+    def test_monotonic_grouping_produces_no_finding(self):
+        errors = self._errors([
+            "- [ ] 1.1 [P1] a",
+            "- [ ] 1.2 [P1] b",
+            "- [ ] 1.3 [P2] c",
+            "- [ ] 1.4 [P3] d",
+        ])
+        self.assertEqual(errors, [])
+
+    def test_fully_sequential_produces_no_finding(self):
+        errors = self._errors([
+            "- [ ] 1.1 a",
+            "- [ ] 1.2 b",
+            "- [ ] 1.3 c",
+        ])
+        self.assertEqual(errors, [])
+
+    def test_already_done_earlier_tasks_do_not_mask_a_later_cycle(self):
+        # Task 1 is unrelated and already done; tasks 2-4 reproduce the cycle
+        # shape shifted down by one ordinal. The drain still stalls on them.
+        errors = self._errors([
+            "- [x] 1.1 an unrelated, already-done barrier",
+            "- [ ] 1.2 [P3] higher group first",
+            "- [ ] 1.3 a barrier in between",
+            "- [ ] 1.4 [P2] lower group after the barrier",
+        ])
+        self.assertEqual(len(errors), 3)
+        self.assertFalse(has(errors, "task 1 "))
+        self.assertTrue(has(errors, "task 2"))
+        self.assertTrue(has(errors, "task 3"))
+        self.assertTrue(has(errors, "task 4"))
+
+    def test_no_tasks_file_is_a_noop(self):
+        change = "no-tasks-change"
+        self._write_change(change, task_lines=None)
+        errors = []
+        sl.check_task_satisfiability(self.root, change, errors)
+        self.assertEqual(errors, [])
+
+    def test_cycle_gates_lint_change_with_a_nonzero_exit(self):
+        # The whole-CLI path: a change whose only defect is the readiness
+        # cycle must lint with an error and exit non-zero, just like the
+        # traceability check does.
+        change = "gated-cycle-change"
+        self._write_change(
+            change,
+            [
+                "- [ ] 1.1 [P3] [req: do-the-thing] higher group first",
+                "- [ ] 1.2 [req: do-the-thing] a barrier in between",
+                "- [ ] 1.3 [P2] [req: do-the-thing] lower group after "
+                "the barrier",
+            ],
+            with_plan=True)
+        errors = [str(e) for e in sl.lint_change(self.root, change)]
+        self.assertTrue(errors)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = sl.main([change, "--root", self.root])
+        self.assertEqual(code, 1)
+
+
 class ArtefactReferenceLintTest(unittest.TestCase):
     """Artefact reference enforcement (shipd-spec-lint
     artefact-reference-enforcement): every file under a change's

@@ -318,5 +318,59 @@ class OrchestratorStaleClaimCheckContractTest(unittest.TestCase):
         self.assertNotRegex(self.text, r"\(default\s+600\)")
 
 
+class TaskGroupAuthoringGuidanceContractTest(unittest.TestCase):
+    """The build skill's Phase 2 task-authoring guidance
+    (build-task-coordination parallel-task-group-format): an unsatisfiable
+    `[P<n>]` configuration passes the linter's structural checks but leaves
+    the coordinator with nothing claimable, and the old advice — "when in
+    doubt, leave a task untagged (a safe barrier)" — is what steers an
+    author into it, since a barrier sitting between a higher-numbered group
+    and a lower-numbered one makes both unreachable. The guidance must name
+    the two configurations that cannot contradict themselves instead, and
+    must not call an untagged task unconditionally safe.
+
+    Written test-first; expected to FAIL until the sentence is replaced in
+    `SKILL.md` (task 3.2)."""
+
+    def setUp(self):
+        with open(BUILD_SKILL, encoding="utf-8") as fh:
+            self.text = fh.read()
+
+    def phase2_section(self):
+        """The '## Phase 2' section body: from its heading up to the next
+        top-level `## ` heading (or end of file), with internal whitespace
+        (including markdown hard-wraps) collapsed to single spaces so a
+        multi-word assertion never breaks on a line-wrap that carries no
+        semantic meaning."""
+        m = re.search(r"^## Phase 2\b.*$", self.text, re.MULTILINE)
+        self.assertIsNotNone(
+            m, "build skill is missing a '## Phase 2' section heading")
+        start = m.start()
+        nxt = re.search(r"^## ", self.text[m.end():], re.MULTILINE)
+        end = m.end() + nxt.start() if nxt else len(self.text)
+        return re.sub(r"\s+", " ", self.text[start:end])
+
+    def test_directs_to_a_fully_untagged_file(self):
+        section = self.phase2_section().lower()
+        self.assertIn("every task untagged", section)
+        self.assertIn("fully sequential", section)
+
+    def test_directs_to_non_decreasing_group_numbers(self):
+        section = self.phase2_section().lower()
+        self.assertIn("group numbers that never decrease down the file",
+                      section)
+
+    def test_explains_the_barrier_versus_group_contradiction(self):
+        section = self.phase2_section().lower()
+        self.assertIn("file position", section)
+        self.assertIn("number", section)
+        self.assertIn("unreachable", section)
+
+    def test_no_longer_calls_an_untagged_task_unconditionally_safe(self):
+        section = self.phase2_section().lower()
+        self.assertNotIn("when in doubt, leave a task untagged", section)
+        self.assertNotIn("a safe barrier).", section)
+
+
 if __name__ == "__main__":
     unittest.main()

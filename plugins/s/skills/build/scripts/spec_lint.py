@@ -107,6 +107,13 @@ CHARS_PER_TOKEN = 4
 CHECKBOX_RE = re.compile(r"^[ \t]*- \[[ ~x]\]")
 REQ_TAG_RE = re.compile(r"\[req:([^\]]*)\]")
 
+# Parallel group tags (shipd-spec-lint task-group-satisfiability;
+# build-task-coordination parallel-task-group-format): a task's text may
+# carry an optional `[P<n>]` tag, the same coordination tag `claim_task.sh`'s
+# `first_ready_line` awk matches. A task carrying no tag is a sequential
+# barrier.
+GROUP_TAG_RE = re.compile(r"\[P([0-9]+)\]")
+
 # An epic's context sections (`## Research`, `## Video`, `## References`;
 # shipd-spec-format epic-research-section, epic-video-section,
 # epic-references-section): a markdown list entry links a context file —
@@ -1445,6 +1452,62 @@ def _collect_change_req_ids(root, change):
     return ids
 
 
+def parse_task_states(text):
+    """Parse a tasks.md text into a list of ``(state, group)`` pairs, one per
+    checkbox line in file order — ordinal position ``i`` in the returned list
+    (0-based) is task id ``i + 1``, the same 1-based ordinal
+    `check_task_traceability` and the coordinator hand out. ``state`` is the
+    box character (``" "``, ``"~"``, or ``"x"``); ``group`` is the task's
+    `[P<n>]` tag as an ``int``, or ``None`` for an untagged (barrier) task.
+    Uses the same anchored checkbox grammar as the rest of this module, so a
+    marker-shaped substring on a wrapped continuation line is never counted."""
+    states = []
+    for line in text.splitlines():
+        m = CHECKBOX_RE.search(line)
+        if not m:
+            continue
+        state = m.group(0)[-2]
+        gm = GROUP_TAG_RE.search(line)
+        group = int(gm.group(1)) if gm else None
+        states.append((state, group))
+    return states
+
+
+def ready_task_ordinals(states):
+    """Given a tasks file's parsed ``(state, group)`` pairs (see
+    `parse_task_states`) in file order, return the ``set`` of 1-based
+    ordinals of tasks currently ready to claim (shipd-spec-lint
+    task-group-satisfiability). Mirrors the coordinator's ``ready()`` rule in
+    `claim_task.sh`'s `first_ready_line` awk exactly: a barrier (``group`` is
+    ``None``) is ready only once every task before it in file order is done;
+    a grouped task is ready only once every barrier before it is done and
+    every task in a strictly-lower-numbered group *anywhere in the file* —
+    not only the tasks before it — is done. Pure and side-effect free: never
+    reads or writes ``states``' caller-owned list."""
+    n = len(states)
+    ready = set()
+    for t in range(1, n + 1):
+        state, group = states[t - 1]
+        if state != " ":
+            continue
+        if group is None:
+            if all(states[j - 1][0] == "x" for j in range(1, t)):
+                ready.add(t)
+            continue
+        barriers_before_done = all(
+            states[j - 1][0] == "x"
+            for j in range(1, t) if states[j - 1][1] is None)
+        if not barriers_before_done:
+            continue
+        lower_groups_done = all(
+            states[j - 1][0] == "x"
+            for j in range(1, n + 1)
+            if states[j - 1][1] is not None and states[j - 1][1] < group)
+        if lower_groups_done:
+            ready.add(t)
+    return ready
+
+
 def check_task_traceability(root, change, errors):
     """Enforce the `[req: ...]` traceability tag on every checkbox task in a
     change's ``tasks.md`` (shipd-spec-lint ``traceability-tag-enforcement``). Each
@@ -1491,6 +1554,39 @@ def check_task_traceability(root, change, errors):
                 errors.append(LintError(
                     "tasks.md task %d references requirement id '%s', which no "
                     "delta spec in the change declares" % (ordinal, rid), path))
+
+
+def check_task_satisfiability(root, change, errors):
+    """Refuse a change whose ``tasks.md`` `[P<n>]` group configuration leaves
+    some pending task unreachable (shipd-spec-lint
+    ``task-group-satisfiability``). Drains the parsed task states by
+    repeatedly marking every ready pending task (`ready_task_ordinals`) done
+    until no further task becomes ready — the same coordinator readiness
+    rule, run to a fixpoint rather than answered once. Any task still
+    pending (``" "``) when the drain stalls can never become claimable, and
+    is reported by its checkbox ordinal, the coordinator's stable task id.
+    A change with no ``tasks.md`` has no configuration to refuse, so the
+    check is a no-op there."""
+    path = os.path.join(sc.specs_dir(root), "planned", change, "tasks.md")
+    if not os.path.isfile(path):
+        return
+    states = parse_task_states(_read(path))
+    if not states:
+        return
+    working = list(states)
+    while True:
+        ready = ready_task_ordinals(working)
+        if not ready:
+            break
+        working = [
+            ("x", group) if (ordinal in ready) else (state, group)
+            for ordinal, (state, group) in enumerate(working, start=1)
+        ]
+    for ordinal, (state, _group) in enumerate(working, start=1):
+        if state == " ":
+            errors.append(LintError(
+                "tasks.md task %d can never become ready under its "
+                "`[P<n>]` group configuration" % ordinal, path))
 
 
 # ---------------------------------------------------------------------------
@@ -1578,6 +1674,7 @@ def lint_change(root, change, warnings=None):
         check_initiative_reference(
             root, sc.parse_plan_metadata(_read(plan_path)), errors)
     check_task_traceability(root, change, errors)
+    check_task_satisfiability(root, change, errors)
     check_artefact_references(root, change, errors)
     if warnings is not None:
         check_context_economy(root, change, warnings)
