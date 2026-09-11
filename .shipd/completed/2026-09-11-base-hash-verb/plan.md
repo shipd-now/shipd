@@ -1,5 +1,5 @@
 # base-hash-verb
-Status: active
+Status: verified
 
 ## Idea
 

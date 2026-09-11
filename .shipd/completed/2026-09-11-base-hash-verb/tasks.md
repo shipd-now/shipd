@@ -13,3 +13,14 @@
 
 - [x] 3.1 [P6] [req: *] Bump the version in `plugins/s/.claude-plugin/plugin.json` from `0.6.208` to `0.6.209`.
 - [x] 3.2 [P7] [req: *] Run `python3 -m unittest discover -s plugins/s/skills/build/tests` and confirm the whole engine suite passes with the new tests included.
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 101 | 32.4k |
+| Edit | 9 | 4.3k |
+| (no tool) | 0 | 2.2k |
+| Read | 13 | 1.9k |
+| Agent | 2 | 1.5k |
+| **Total** | 125 | 42.3k |
