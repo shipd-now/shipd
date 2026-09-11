@@ -45,42 +45,47 @@ that timeline stays accurate; a raw `page.click()` is invisible to the
 timeline and to the viewer, since it leaves no cursor motion for the
 recording to show.
 
-- **`h.cursor`** — an injected cursor overlay: a synthetic pointer element
-  drawn into the page so the recording always shows where the demo is
-  acting. Created once per session; every glide method moves it.
-- **`h.glide_click(selector, label=None)`** — glides the injected cursor
-  smoothly to `selector`, then clicks it. Use this for every click the
-  viewer should be able to follow.
-- **`h.glide_type(selector, text, label=None)`** — glides the cursor to
-  `selector`, then types `text` at a natural per-keystroke pace so the
-  viewer can read it forming.
-- **`h.annotate(selector, text, seconds=3.0)`** — shows an anchored
-  annotation card near `selector` carrying `text`, visible for `seconds`.
-  The card's visible window is added to the timeline's `holds` automatically
-  — an annotation protects itself; the action module does not need to also
-  wrap it in `h.hold(...)`.
-- **`h.highlight(selector, seconds=1.5)`** — draws an outline around
-  `selector` for `seconds`. A highlight does **not** protect itself; wrap
-  it in `h.hold(...)` when the highlighted moment is itself the reveal the
+The helper also injects a **cursor overlay** — a synthetic pointer element
+drawn into the page so the recording always shows where the demo is acting.
+It is created once, when the helper is built, and every glide method below
+moves it. The overlay is internal: it is not part of the helper's API, and an
+action module never reads or positions it directly.
+
+- **`h.glide_click(selector, steps=24)`** — glides the injected cursor
+  smoothly to `selector` over `steps` intermediate moves, then clicks it. Use
+  this for every click the viewer should be able to follow.
+- **`h.glide_type(selector, text, steps=24, delay=40)`** — glides the cursor
+  to `selector` over `steps` moves, clicks it, then types `text` at `delay`
+  milliseconds per keystroke so the viewer can read it forming.
+- **`h.annotate(text, anchor_selector=None, duration=2.5)`** — shows an
+  annotation card carrying `text` for `duration` seconds — the text comes
+  first, and the card is anchored near `anchor_selector` when one is given and
+  floats unanchored otherwise. The card's visible window is added to the
+  timeline's `holds` automatically — an annotation protects itself; the
+  action module does not need to also wrap it in `h.hold(...)`.
+- **`h.highlight(selector, duration=1.5)`** — draws an outline around
+  `selector` for `duration` seconds. A highlight does **not** protect itself;
+  wrap it in `h.hold(...)` when the highlighted moment is itself the reveal the
   viewer must read (e.g. drawing attention to a value that just changed),
   not merely decorative emphasis on something already covered by a
   surrounding hold or annotation.
-- **`h.hold(seconds, label=None)`** — marks the next `seconds` as a
-  protected window: `postprocess.py` plays it at normal speed regardless of
-  how static the frame is. Use it around any reveal that is not already an
-  annotation — a modal that opened and needs to be read, a toast, a value
-  the demo is proving changed.
-- **`h.wait(seconds, label=None)`** — a recorded wait: pauses for `seconds`
-  and records the stretch as a `spans` entry, eligible for fast-forward by
+- **`h.hold(seconds)`** — marks the next `seconds` as a protected window:
+  `postprocess.py` plays it at normal speed regardless of how static the frame
+  is. Use it around any reveal that is not already an annotation — a modal
+  that opened and needs to be read, a toast, a value the demo is proving
+  changed.
+- **`h.wait(seconds)`** — a recorded wait: pauses for `seconds` and records
+  the stretch as a `spans` entry, eligible for fast-forward by
   `postprocess.py` when it turns out to be dead air (loading, a transition,
   network latency). Use this instead of a bare `page.wait_for_timeout` for
   any pause with nothing the viewer needs to read — an unrecorded pause is
   invisible to the fast-forward pass and always plays at normal speed.
-- **`h.ready()`** — marks the moment the first page has visually settled
-  (the application has finished booting). The worker records this instant
-  as the timeline's `leadingCut`, so `postprocess.py` cuts everything before
-  it. Call this once, as early as the module can, right after the first
-  navigation's content is actually on screen.
+- **`h.content_ready()`** — marks the moment the first page has visually
+  settled (the application has finished booting). The worker records the first
+  call's instant as the timeline's `leadingCut`, so `postprocess.py` cuts
+  everything before it; later calls are ignored. Call this once, as early as
+  the module can, right after the first navigation's content is actually on
+  screen.
 
 ## The reveal rule
 

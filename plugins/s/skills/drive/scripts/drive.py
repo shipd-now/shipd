@@ -484,6 +484,19 @@ def cmd_login(args, run=default_run):
         print("drive: reusing cached login for %r (%s)" % (name, cache_path))
         return 0
 
+    # A target whose auth recipe is `none` has no login to perform
+    # (drive-auth-cache): `resolve_auth` would hand back `(None, None)` and
+    # the worker would then fail demanding DRIVE_LOGIN_USERNAME and
+    # DRIVE_LOGIN_PASSWORD, so short-circuit before any credential is
+    # resolved. No cache file is written either — an empty storage state
+    # would fake a cache whose mtime drives TTL logic that means nothing for
+    # a target that never logs in.
+    auth = entry.get("auth") or {"kind": "none"}
+    if auth.get("kind", "none") == "none":
+        print("drive: target %r declares no login (auth kind 'none') — "
+              "nothing to do" % name)
+        return 0
+
     url = entry.get("url")
     if not url:
         raise DriveError("target %r declares no url" % name)
@@ -792,59 +805,58 @@ def _session_request(op, **params):
 
 
 def _print_reply(reply):
+    """Print a daemon reply verbatim and report it as an exit status
+    (drive-session): the reply itself still reaches stdout unchanged, so a
+    caller parsing the JSON sees exactly what the daemon said, while a
+    caller reading only `$?` never mistakes a falsey `ok` — a timed-out
+    `wait`, a click that found nothing — for a successful verb."""
     print(json.dumps(reply))
+    ok = reply.get("ok") if isinstance(reply, dict) else False
+    return 0 if ok else 1
 
 
 def cmd_open(args):
-    _print_reply(_session_request("open", url=args.url))
-    return 0
+    return _print_reply(_session_request("open", url=args.url))
 
 
 def cmd_snapshot(args):
-    _print_reply(_session_request("snapshot", selector=args.selector))
-    return 0
+    return _print_reply(
+        _session_request("snapshot", selector=args.selector))
 
 
 def cmd_click(args):
-    _print_reply(_session_request("click", selector=args.selector))
-    return 0
+    return _print_reply(_session_request("click", selector=args.selector))
 
 
 def cmd_type(args):
-    _print_reply(
+    return _print_reply(
         _session_request("type", selector=args.selector, text=args.text))
-    return 0
 
 
 def cmd_press(args):
-    _print_reply(_session_request("press", key=args.key))
-    return 0
+    return _print_reply(_session_request("press", key=args.key))
 
 
 def cmd_wait(args):
-    _print_reply(
+    return _print_reply(
         _session_request("wait", signal=args.signal, timeout=args.timeout))
-    return 0
 
 
 def cmd_eval(args):
-    _print_reply(_session_request("eval", expression=args.expression))
-    return 0
+    return _print_reply(
+        _session_request("eval", expression=args.expression))
 
 
 def cmd_shot(args):
-    _print_reply(_session_request("shot", out=args.out))
-    return 0
+    return _print_reply(_session_request("shot", out=args.out))
 
 
 def cmd_console(args):
-    _print_reply(_session_request("console"))
-    return 0
+    return _print_reply(_session_request("console"))
 
 
 def cmd_network(args):
-    _print_reply(_session_request("network"))
-    return 0
+    return _print_reply(_session_request("network"))
 
 
 def cmd_probe(args, run=default_run):
