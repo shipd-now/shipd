@@ -46,18 +46,16 @@ jobs:
             python3 plugins/s/skills/build/scripts/spec_lint.py "$(basename "$d")"
           done
 
-      - name: Lint marker-carrying docs
+      - name: Lint docs
         run: |
           docs=""
           for f in $(find docs -name '*.md' -not -path 'docs/retros/*'); do
-            if head -n 1 "$f" | grep -q '<!-- *doc-type:'; then
-              docs="$docs $f"
-            fi
+            docs="$docs $f"
           done
           if [ -n "$docs" ]; then
             python3 plugins/s/skills/document/scripts/docs_lint.py $docs
           else
-            echo "no marker-carrying docs; skipping"
+            echo "no docs to lint; skipping"
           fi
 
       - name: Shell syntax checks
