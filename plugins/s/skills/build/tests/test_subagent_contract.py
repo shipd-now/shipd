@@ -21,6 +21,7 @@ VALIDATOR_CONTRACT = os.path.normpath(
     os.path.join(HERE, "..", "..", "..", "agents", "validator.md"))
 ORACLE_CONTRACT = os.path.normpath(
     os.path.join(HERE, "..", "..", "..", "agents", "oracle.md"))
+BUILD_SKILL = os.path.normpath(os.path.join(HERE, "..", "SKILL.md"))
 
 
 class WorkspaceGateContractTest(unittest.TestCase):
@@ -226,6 +227,79 @@ class OracleChainRungContractTest(unittest.TestCase):
         self.assertIn("verbatim", section)
         self.assertIn("separator line", section)
         self.assertIn("(inherited <ws-root>)", section)
+
+
+class ForegroundClaimDisciplineContractTest(unittest.TestCase):
+    """The worker contract's loop section (foreground-claim-discipline,
+    claim-wait-foreground) forbids ending a turn while still holding a
+    claim: before stopping for any reason — including to await a
+    long-running verification — the worker completes the task or releases
+    it, so a held task never outlives the agent watching it."""
+
+    def setUp(self):
+        with open(CONTRACT, encoding="utf-8") as fh:
+            self.text = fh.read()
+
+    def loop_section(self):
+        """The '## Your loop' section body: from its heading up to the next
+        top-level `## ` heading (or end of file)."""
+        m = re.search(r"^## Your loop\b.*$", self.text, re.MULTILINE)
+        self.assertIsNotNone(
+            m, "contract is missing a '## Your loop' section heading")
+        start = m.start()
+        nxt = re.search(r"^## ", self.text[m.end():], re.MULTILINE)
+        end = m.end() + nxt.start() if nxt else len(self.text)
+        return self.text[start:end]
+
+    def test_forbids_ending_turn_while_holding_a_claim(self):
+        section = self.loop_section().lower()
+        self.assertIn("never end", section)
+        self.assertIn("holding a claim", section)
+        self.assertIn("complete", section)
+        self.assertIn("release", section)
+
+    def test_names_awaiting_long_running_verification_as_a_stop(self):
+        section = self.loop_section().lower()
+        self.assertIn("long-running verification", section)
+
+
+class OrchestratorStaleClaimCheckContractTest(unittest.TestCase):
+    """The build skill's fan-out phase (foreground-claim-discipline,
+    claim-wait-foreground) directs the orchestrator to check for stale
+    claims between fan-out rounds with `status <change> --stale-after
+    <mins>` and to act on any claim the check reports stale; reclamation
+    stays operator-driven via `release --stale`, never automatic in
+    `claim`."""
+
+    def setUp(self):
+        with open(BUILD_SKILL, encoding="utf-8") as fh:
+            self.text = fh.read()
+
+    def phase3_section(self):
+        """The '## Phase 3' section body: from its heading up to the next
+        top-level `## ` heading (or end of file)."""
+        m = re.search(r"^## Phase 3\b.*$", self.text, re.MULTILINE)
+        self.assertIsNotNone(
+            m, "build skill is missing a '## Phase 3' section heading")
+        start = m.start()
+        nxt = re.search(r"^## ", self.text[m.end():], re.MULTILINE)
+        end = m.end() + nxt.start() if nxt else len(self.text)
+        return self.text[start:end]
+
+    def test_directs_stale_check_between_fan_out_rounds(self):
+        section = self.phase3_section().lower()
+        self.assertIn("--stale-after", section)
+        self.assertIn("between fan-out rounds", section)
+        self.assertIn("status", section)
+
+    def test_directs_acting_on_a_reported_stale_claim(self):
+        section = self.phase3_section().lower()
+        self.assertIn("[stale]", section)
+        self.assertIn("release --stale", section)
+
+    def test_claim_never_reclaims_on_its_own(self):
+        section = self.phase3_section().lower()
+        self.assertIn("never reclaim", section)
 
 
 if __name__ == "__main__":

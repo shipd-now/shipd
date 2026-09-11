@@ -4,19 +4,12 @@
 id: atomic-task-claiming-with-stable-ids
 
 The coordinator script SHALL assign each task in a change's `tasks.md` a stable
-ordinal ID equal to its 1-based position among all checkbox lines,
-independent of blank lines, headings, or prose. A checkbox line is one whose
-content begins — after optional leading blanks — with the `- [<state>]`
-marker (state space, `~`, or `x`); a checkbox-shaped literal appearing
-mid-line inside a task's prose SHALL never be counted, and every coordinator
-verb — ordinal enumeration, readiness evaluation, in-progress resolution,
-status counts, the box rewrite, and the marker strip — SHALL apply this same
-anchored grammar. The
-`claim` command SHALL atomically transition the next **ready** pending task
-(`- [ ]`) to in-progress (`- [~]`) and print its ID and text. A pending task is
-ready when every earlier group and barrier before its group is done, per the
-parallel task group format; `claim` SHALL never hand out a task whose group is
-not yet ready. The script SHALL resolve the change's `tasks.md` under the
+ID — the task's checkbox ordinal, counting `- [ ]`, `- [~]`, and `- [x]` lines
+top-to-bottom — and SHALL hand out a ready pending task atomically under a
+lock, marking it `- [~]` and printing `ID<TAB>TEXT`. A task whose parallel
+group is not ready SHALL NOT be handed out even though pending tasks exist,
+and when nothing is claimable the script SHALL print nothing to stdout and
+exit without error. The script SHALL resolve the change's directory under the
 resolved content directory's `planned/<change>/`: it SHALL read the engine's
 `config-show` output once per invocation, taking the `store:` line's path
 when one prints (the fully resolved external per-repo content directory
@@ -32,9 +25,15 @@ itself SHALL be unchanged by the record. `claim --wait` SHALL block **inside
 the single invocation** — retrying the atomic claim every few seconds without
 holding the lock between attempts — until it wins a task, no pending task
 remains (returning immediately with the existing no-pending message), or a
-`--timeout <secs>` deadline (default 600) passes, in which case it SHALL print
+`--timeout <secs>` deadline passes, in which case it SHALL print
 a timeout message to stderr, print nothing to stdout, and exit zero — the
-established empty-stdout contract for "nothing claimed".
+established empty-stdout contract for "nothing claimed". That deadline SHALL
+default to a value that fits inside an agent harness's default foreground
+tool-call budget, so the documented waiting invocation completes in the
+foreground rather than being detached; the shipped default SHALL be 90
+seconds, and every place that states it — the script's own usage or header
+text, the execution worker contract, and the build skill's coordinator
+reference — SHALL state the same value.
 
 #### Scenario: Claiming returns a stable ID
 - **WHEN** a sub-agent runs `claim <change>` and a ready pending task exists
@@ -86,6 +85,12 @@ established empty-stdout contract for "nothing claimed".
 - **THEN** it returns at once with empty stdout and the no-pending message,
   not after the timeout
 
+#### Scenario: The wait default fits a foreground tool call
+- **WHEN** the script's `--wait` default deadline is read
+- **THEN** it is 90 seconds — inside a 120-second default foreground budget —
+  and the script text, the worker contract, and the build skill's coordinator
+  reference all state that same number
+
 #### Scenario: A store-resident change is coordinated
 - **GIVEN** a repo whose configuration declares `store_root`, with the
   change's `tasks.md` under the store's per-repo `planned/<change>/`
@@ -93,19 +98,6 @@ established empty-stdout contract for "nothing claimed".
 - **THEN** they operate on the store's tasks file — counts, claims, and the
   sidecar record all land there — instead of dying on a missing
   `.shipd/planned` path
-
-#### Scenario: A renamed content directory is coordinated
-- **GIVEN** a repo whose config declares `dir: ".agents/.shipd"` with the
-  change parked under `.agents/.shipd/planned/<change>/`
-- **WHEN** any coordinator verb runs
-- **THEN** it resolves and operates on that directory
-
-#### Scenario: Resolution failure falls back to .shipd
-- **GIVEN** a repo whose `.shipd-config.json` is malformed JSON and whose
-  change sits under `.shipd/planned/<change>/`
-- **WHEN** `status` runs
-- **THEN** it operates on `.shipd/planned/<change>/tasks.md` exactly as
-  before the resolution existed
 
 ### Requirement: Completion and release without tracking line numbers
 id: completion-and-release-without-tracking-line-numbers
@@ -307,11 +299,30 @@ forbid running claim or status poll loops as background processes — a
 detached claim outlives the agent's awareness of it — and SHALL instruct
 workers to pass a stable personal `--as` label (their spawn role, or one
 short label invented once and reused) on every claim, complete, and release.
+The contract SHALL further forbid a worker from ending its turn while it
+still holds a claim: before stopping for any reason, including to await a
+long-running verification, the worker SHALL complete the task or release it,
+so a held task never outlives the agent watching it. The orchestrator flow
+(`build/SKILL.md`) SHALL direct the orchestrator to check for stale claims
+between fan-out rounds with `status <change> --stale-after <mins>` and to act
+on any claim the check reports stale; reclamation SHALL remain operator-driven
+via `release --stale`, and `claim` SHALL never reclaim a stale task on its own.
 
 #### Scenario: The contract prescribes foreground waiting
 - **WHEN** the worker contract's loop section is read
 - **THEN** it directs barrier waits through `claim --wait`, forbids
   background claim/status loops, and requires a stable `--as` label
+
+#### Scenario: The contract forbids stopping on a held claim
+- **WHEN** the worker contract's loop section is read
+- **THEN** it requires a worker to complete or release its claimed task
+  before ending its turn, naming awaiting a long-running verification as one
+  such stop
+
+#### Scenario: The orchestrator is told to check for stale claims
+- **WHEN** the build skill's fan-out phase is read
+- **THEN** it directs the orchestrator to run `status --stale-after` between
+  rounds and to act on a reported stale claim
 
 #### Scenario: The build skill documents the verbs
 - **WHEN** the build skill's coordinator reference is read
