@@ -31,13 +31,13 @@ The sync ladder materializes members under the workspace root. A second copy
 of a checkout you already work in — say `~/projects/shipd` — silently diverges
 from the first. Map that member instead.
 
-`~/workspaces/documents-linking/.shipd-workspace.local.json`:
+`~/workspaces/myapp/.shipd-workspace.local.json`:
 
 ```json
 {
   "repos": {
     "shipd": "~/projects/shipd",
-    "documents": "../checkouts/documents"
+    "api": "../checkouts/api"
   },
   "clone_sources": ["~/projects"]
 }
@@ -179,7 +179,7 @@ machine-local file of the section above — same filename, disjoint fields.
 
 ```json
 {
-  "workspace_root": "~/workspaces/documents-linking"
+  "workspace_root": "~/workspaces/myapp"
 }
 ```
 
@@ -230,7 +230,7 @@ because a guess would write a job's knowledge into the wrong workspace:
 
 ```
 warning: this checkout's origin is declared by 2 workspaces
-(/Users/you/workspaces/documents-linking, /Users/you/workspaces/tasks-rollout);
+(/Users/you/workspaces/myapp, /Users/you/workspaces/tasks-rollout);
 declare `workspace_root` in /Users/you/projects/shipd/.shipd-workspace.local.json
 to choose one
 ```

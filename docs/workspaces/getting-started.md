@@ -48,24 +48,24 @@ Declaring `workspaces_root` turns the one-folder-per-job convention into a rule:
 ## Create a job workspace
 
 ```sh
-mkdir -p ~/workspaces/documents-linking
-shipd workspace init ~/workspaces/documents-linking --git
+mkdir -p ~/workspaces/myapp
+shipd workspace init ~/workspaces/myapp --git
 ```
 
 `--git` turns the root into a git repo and seeds the managed `.gitignore`
 block. The explicit path works with or without `workspaces_root`. With the key
-declared, `shipd workspace init documents-linking --git` needs no `mkdir`.
+declared, `shipd workspace init myapp --git` needs no `mkdir`.
 
-Then declare the job in `~/workspaces/documents-linking/.shipd-config.json`:
+Then declare the job in `~/workspaces/myapp/.shipd-config.json`:
 
 ```json
 {
   "workspace": {
-    "focus": "documents",
+    "focus": "api",
     "projects": {
-      "documents":  {"repos": [{"path": "documents",  "url": "git@github.com:acme/documents.git",  "branch": "main"}]},
-      "tasks":      {"repos": [{"path": "tasks",      "url": "git@github.com:acme/tasks.git"}]},
-      "incentives": {"repos": [{"path": "incentives", "url": "git@github.com:acme/incentives.git"}]}
+      "api":    {"repos": [{"path": "api",    "url": "git@github.com:acme/api.git",    "branch": "main"}]},
+      "web":    {"repos": [{"path": "web",    "url": "git@github.com:acme/web.git"}]},
+      "mobile": {"repos": [{"path": "mobile", "url": "git@github.com:acme/mobile.git"}]}
     }
   }
 }
@@ -94,15 +94,15 @@ The engine keeps member repos out of the workspace repo, so you commit only the
 manifest and the knowledge:
 
 ```sh
-cd ~/workspaces/documents-linking
+cd ~/workspaces/myapp
 git add .shipd-config.json .gitignore .shipd/
-git commit -m "documents-linking workspace: manifest + wiki"
-git remote add origin git@github.com:acme/ws-documents-linking.git
+git commit -m "myapp workspace: manifest + wiki"
+git remote add origin git@github.com:acme/myapp.git
 git push -u origin main
 ```
 
 - **Never remove the managed `.gitignore` block** (`# >>> shipd-workspace
-  members` … `# <<< shipd-workspace members`). It keeps `documents/` and its
+  members` … `# <<< shipd-workspace members`). It keeps `api/` and its
   siblings out of the workspace repo — no submodules, ever.
 - Wiki writes (`/s:teach`, queued oracle questions) **auto-commit locally** and
   never push. End a session with `git push`, and start one with `git pull`. The
@@ -115,7 +115,7 @@ git push -u origin main
 Run one command in a Claude session:
 
 ```
-/s:workspace clone git@github.com:acme/ws-documents-linking.git ~/workspaces/documents-linking
+/s:workspace clone git@github.com:acme/myapp.git ~/workspaces/myapp
 ```
 
 It clones the workspace repo, then runs the sync flow, which executes the

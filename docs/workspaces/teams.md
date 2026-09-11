@@ -8,7 +8,7 @@ Nothing about a workspace repo is single-user. Any number of engineers clone
 the same one, through the load flow of [getting started](getting-started.md):
 
 ```sh
-/s:workspace clone git@github.com:acme/ws-documents-linking.git ~/workspaces/documents-linking
+/s:workspace clone git@github.com:acme/myapp.git ~/workspaces/myapp
 ```
 
 **Members are machine-local, always**. Each clone runs its own sync ladder and

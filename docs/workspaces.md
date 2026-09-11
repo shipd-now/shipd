@@ -10,19 +10,19 @@ which project is the focus. The member repos themselves materialize beside
 them, and the workspace repo never tracks them.
 
 ```
-~/workspaces/documents-linking/   ← THE WORKSPACE REPO — this folder is what
+~/workspaces/myapp/               ← THE WORKSPACE REPO — this folder is what
                                     you clone, commit, and push
   .shipd-config.json              ← manifest: focus + projects + clone urls  (tracked)
   .gitignore                      ← members block, engine-managed            (tracked)
   .shipd/
     wiki/                         ← the job's knowledge store                (tracked)
     initiatives/  projects/       ← goals & per-project context              (tracked)
-  documents/  tasks/  incentives/ ← member repos, machine-local              (ignored)
+  api/  web/  mobile/             ← member repos, machine-local              (ignored)
 ```
 
 One folder per job, all of them under a `~/workspaces/` parent. The leaf
-carries the job's name (`documents-linking`), never a member repo's name. That
-keeps it distinct from the `documents/` checkout materialized inside it.
+carries the job's name (`myapp`), never a member repo's name. That
+keeps it distinct from the `api/` checkout materialized inside it.
 
 Everything marked `(tracked)` travels with `git clone`. The sync ladder
 rebuilds everything marked `(ignored)` per machine. It prefers worktrees or
@@ -35,7 +35,7 @@ a fresh machine.
 into git, loading it on another machine, and the day-to-day verbs.
 
 ```sh
-shipd workspace init documents-linking --git
+shipd workspace init myapp --git
 ```
 
 [Details →](workspaces/getting-started.md)
@@ -53,7 +53,7 @@ shipd workspace   # repo: shipd [mapped -> /Users/you/projects/shipd]
 it inherits the base's knowledge, and relocating artifacts with `store_root`.
 
 ```sh
-shipd workspace init ~/workspaces/acme-base/documents-linking --nested --git
+shipd workspace init ~/workspaces/acme-base/myapp --nested --git
 ```
 
 [Details →](workspaces/nesting-and-stores.md)
@@ -83,7 +83,7 @@ trade-offs.
 
 ```sh
 git clone git@github.com:acme/company-workspaces.git ~/workspaces/company
-cd ~/workspaces/company/workspace-documents && shipd workspace sync
+cd ~/workspaces/company/workspace-myapp && shipd workspace sync
 ```
 
 [Details →](workspaces/multi-workspace-repos.md)

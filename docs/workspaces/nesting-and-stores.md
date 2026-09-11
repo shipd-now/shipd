@@ -20,17 +20,17 @@ that [getting started](getting-started.md) creates. The nested job is a folder
 **inside** it, named for the job:
 
 ```sh
-mkdir -p ~/workspaces/acme-base/documents-linking
-shipd workspace init ~/workspaces/acme-base/documents-linking --nested --git
+mkdir -p ~/workspaces/acme-base/myapp
+shipd workspace init ~/workspaces/acme-base/myapp --nested --git
 ```
 
 ```
 ~/workspaces/acme-base/           ← the base workspace repo
   .shipd/wiki/                    ← knowledge every job beneath it inherits
-  documents-linking/              ← THE NESTED JOB'S WORKSPACE REPO
+  myapp/                          ← THE NESTED JOB'S WORKSPACE REPO
     .shipd-config.json            ← this job's own manifest
     .shipd/wiki/                  ← this job's own store — every write lands here
-    documents/  tasks/            ← this job's member repos, machine-local
+    api/  web/                    ← this job's member repos, machine-local
 ```
 
 ### `--nested`
@@ -92,14 +92,14 @@ needs a config of its own.
 ```
 
 ```
-~/workspaces/documents-linking/
+~/workspaces/myapp/
   .shipd-config.json          ← declares store_root once
   shipd-store/                ← the external store (tracked with the workspace)
-    documents/                ← one folder per member repo …
+    api/                      ← one folder per member repo …
       verified/  planned/  completed/  research/
-    tasks/
-    incentives/
-  documents/  tasks/  incentives/    ← the member repos, artifact-free
+    web/
+    mobile/
+  api/  web/  mobile/                ← the member repos, artifact-free
 ```
 
 The per-repo folder **is** the content directory: it holds `verified/`,
@@ -111,8 +111,8 @@ The per-repo folder **is** the content directory: it holds `verified/`,
 `~` expands, and an absolute value stands as-is. A relative value resolves
 against the directory of the config file that declared it — not the current
 repo. So `"store_root": "shipd-store"` in
-`~/workspaces/documents-linking/.shipd-config.json` always means
-`~/workspaces/documents-linking/shipd-store`, however deep the repo resolving
+`~/workspaces/myapp/.shipd-config.json` always means
+`~/workspaces/myapp/shipd-store`, however deep the repo resolving
 it sits. The committed workspace config therefore resolves the same on every
 machine.
 
