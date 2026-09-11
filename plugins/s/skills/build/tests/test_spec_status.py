@@ -6358,6 +6358,215 @@ class WorkspaceMapTest(SpecStatusTestBase):
             self.assertIn("no workspace", r.stderr.lower(), argv)
 
 
+class WorkspaceSourcesTest(SpecStatusTestBase):
+    """The ``workspace-sources`` verb — list/add/remove (shipd-workspace
+    workspace-sources-verbs): the engine-owned writer for the map file's
+    ``clone_sources`` directory list, so the key is never hand-authored. It
+    mirrors ``workspace-map`` and shares its file, hence the same fixtures."""
+
+    MEMBERS_BEGIN = "# >>> shipd-workspace members"
+    MEMBERS_END = "# <<< shipd-workspace members"
+    MAP_FILENAME = ".shipd-workspace.local.json"
+
+    def setUp(self):
+        super().setUp()
+        self.outside = tempfile.mkdtemp(prefix="spec-status-sources-")
+        self.addCleanup(shutil.rmtree, self.outside, True)
+        self.declare_workspace(
+            {"projects": {"alpha": {"repos": ["shipd"]}}})
+
+    def source_dir(self, name, create=True):
+        path = os.path.join(self.outside, name)
+        if create:
+            os.makedirs(path, exist_ok=True)
+        return path
+
+    def map_path(self):
+        return os.path.join(self.root, self.MAP_FILENAME)
+
+    def read_map_file(self):
+        with open(self.map_path(), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def write_raw_map(self, payload):
+        with open(self.map_path(), "w", encoding="utf-8") as fh:
+            fh.write(payload)
+
+    def gitignore(self):
+        path = os.path.join(self.root, ".gitignore")
+        if not os.path.isfile(path):
+            return None
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+
+    # -- add ---------------------------------------------------------------
+
+    def test_add_creates_the_key_and_ignores_the_map_file(self):
+        target = self.source_dir("projects")
+        r = self.cli("workspace-sources", "add", target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read_map_file()["clone_sources"], [target])
+        body = self.gitignore()
+        self.assertIsNotNone(body)
+        self.assertIn(self.MAP_FILENAME, body)
+
+    def test_add_ignore_line_lands_outside_the_marked_member_block(self):
+        gi_path = os.path.join(self.root, ".gitignore")
+        with open(gi_path, "w", encoding="utf-8") as fh:
+            fh.write("node_modules/\n\n%s\nshipd\n%s\n"
+                     % (self.MEMBERS_BEGIN, self.MEMBERS_END))
+        r = self.cli("workspace-sources", "add", self.source_dir("projects"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        body = self.gitignore()
+        block = body.split(self.MEMBERS_BEGIN)[1].split(self.MEMBERS_END)[0]
+        self.assertNotIn(self.MAP_FILENAME, block)
+        self.assertIn(self.MAP_FILENAME, body)
+
+    def test_add_stores_the_value_verbatim(self):
+        r = self.cli("workspace-sources", "add", "~/projects")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read_map_file()["clone_sources"], ["~/projects"])
+
+    def test_add_preserves_the_member_map(self):
+        self.write_raw_map(json.dumps({"repos": {"shipd": "/checkout/shipd"}}))
+        r = self.cli("workspace-sources", "add", self.source_dir("projects"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read_map_file()["repos"],
+                         {"shipd": "/checkout/shipd"})
+
+    def test_add_preserves_foreign_top_level_keys(self):
+        self.write_raw_map(json.dumps({"workspace_root": "/elsewhere/ws"}))
+        r = self.cli("workspace-sources", "add", self.source_dir("projects"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read_map_file()["workspace_root"],
+                         "/elsewhere/ws")
+
+    def test_duplicate_add_is_a_zero_exit_no_op(self):
+        target = self.source_dir("projects")
+        self.assertEqual(
+            self.cli("workspace-sources", "add", target).returncode, 0)
+        r = self.cli("workspace-sources", "add", target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read_map_file()["clone_sources"], [target])
+
+    def test_add_appends_a_second_distinct_directory(self):
+        first = self.source_dir("projects")
+        second = self.source_dir("work")
+        self.cli("workspace-sources", "add", first)
+        r = self.cli("workspace-sources", "add", second)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read_map_file()["clone_sources"],
+                         [first, second])
+
+    def test_add_of_a_missing_directory_warns_and_still_writes(self):
+        target = self.source_dir("gone", create=False)
+        r = self.cli("workspace-sources", "add", target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("warning", r.stderr.lower())
+        self.assertIn(target, r.stderr)
+        self.assertEqual(self.read_map_file()["clone_sources"], [target])
+
+    def test_add_fails_on_a_malformed_map_naming_the_file(self):
+        self.write_raw_map("{ not json")
+        r = self.cli("workspace-sources", "add", self.source_dir("projects"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn(self.MAP_FILENAME, r.stderr)
+        with open(self.map_path(), encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "{ not json")
+
+    # -- remove ------------------------------------------------------------
+
+    def test_remove_deletes_exactly_its_entry(self):
+        first = self.source_dir("projects")
+        second = self.source_dir("work")
+        self.cli("workspace-sources", "add", first)
+        self.cli("workspace-sources", "add", second)
+        r = self.cli("workspace-sources", "remove", first)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read_map_file()["clone_sources"], [second])
+
+    def test_remove_without_a_matching_entry_errors_and_writes_nothing(self):
+        target = self.source_dir("projects")
+        self.cli("workspace-sources", "add", target)
+        before = self.read_map_file()
+        r = self.cli("workspace-sources", "remove", self.source_dir("other"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self.read_map_file(), before)
+
+    def test_remove_on_an_empty_key_errors(self):
+        r = self.cli("workspace-sources", "remove", "/tmp/x")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("/tmp/x", r.stderr)
+
+    def test_remove_preserves_foreign_top_level_keys(self):
+        target = self.source_dir("projects")
+        self.cli("workspace-sources", "add", target)
+        data = self.read_map_file()
+        data["workspace_root"] = "/elsewhere/ws"
+        self.write_raw_map(json.dumps(data))
+        r = self.cli("workspace-sources", "remove", target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read_map_file()["workspace_root"],
+                         "/elsewhere/ws")
+
+    def test_remove_fails_on_a_malformed_map_naming_the_file(self):
+        self.write_raw_map(json.dumps({"clone_sources": "~/projects"}))
+        r = self.cli("workspace-sources", "remove", "~/projects")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn(self.MAP_FILENAME, r.stderr)
+
+    # -- list --------------------------------------------------------------
+
+    def test_bare_form_lists_the_stored_value_and_its_resolution(self):
+        target = self.source_dir("projects")
+        self.cli("workspace-sources", "add", target)
+        r = self.cli("workspace-sources")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(target, r.stdout)
+
+    def test_bare_form_resolves_a_tilde_value(self):
+        self.cli("workspace-sources", "add", "~/projects")
+        r = self.cli("workspace-sources")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("~/projects", r.stdout)
+        self.assertIn(os.path.join(os.environ["HOME"], "projects"), r.stdout)
+
+    def test_bare_form_resolves_a_relative_value(self):
+        self.cli("workspace-sources", "add", "../checkouts")
+        r = self.cli("workspace-sources")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("../checkouts", r.stdout)
+        self.assertIn(
+            os.path.normpath(os.path.join(self.root, "..", "checkouts")),
+            r.stdout)
+
+    def test_bare_form_on_an_empty_key_exits_zero(self):
+        r = self.cli("workspace-sources")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_bare_form_fails_on_a_malformed_map_naming_the_file(self):
+        self.write_raw_map(json.dumps({"clone_sources": "~/projects"}))
+        r = self.cli("workspace-sources")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn(self.MAP_FILENAME, r.stderr)
+
+    # -- no workspace ------------------------------------------------------
+
+    def test_every_form_requires_a_workspace(self):
+        os.remove(os.path.join(self.root, ".shipd-config.json"))
+        for argv in (["workspace-sources"],
+                     ["workspace-sources", "add", "~/projects"],
+                     ["workspace-sources", "remove", "~/projects"]):
+            r = self.cli(*argv)
+            self.assertNotEqual(r.returncode, 0, argv)
+            self.assertIn("no workspace", r.stderr.lower(), argv)
+
+    def test_a_bad_subcommand_reports_the_usage(self):
+        r = self.cli("workspace-sources", "bogus", "x")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("usage", r.stderr.lower())
+
+
 class CheckBaseTest(SpecStatusTestBase):
     """`check-base [change]` compares a planned change's delta specs against the
     current master library (spec-status check-base-verb): read-only, one

@@ -982,9 +982,10 @@ def workspace_chain(start):
 # The reverse-lookup pointer field, read from the machine-local dotfile
 # (:data:`REPO_MAP_FILENAME`) — deliberately *not* a `.shipd-config.json` key,
 # hence no ``_KEY`` name: this change declares no new config key. The dotfile's
-# two fields are disjoint by role — a workspace root declares ``repos``, a
-# member checkout declares ``workspace_root`` — so one never-committed
-# filename, and one ``.gitignore`` line, covers both.
+# fields are disjoint by role — a workspace root declares ``repos`` and the
+# optional ``clone_sources`` directory list, a member checkout declares
+# ``workspace_root`` — so one never-committed filename, and one ``.gitignore``
+# line, covers them all.
 WORKSPACE_POINTER_FIELD = "workspace_root"
 
 # The ceiling on the scan rung's single local ``git`` probe. The rungs run only
@@ -1853,6 +1854,39 @@ def repo_entry_path(entry):
 REPO_MAP_FILENAME = ".shipd-workspace.local.json"
 
 
+def _load_repo_map_file(ws_root):
+    """Load and fully validate ``<ws_root>/.shipd-workspace.local.json``,
+    returning its top-level object (``{}`` when the file is absent).
+
+    One file, one notion of malformed: every reader routes through here, so a
+    broken ``clone_sources`` value fails the member-map read too rather than
+    only the verb that happens to want the key (shipd-workspace
+    workspace-member-map)."""
+    path = os.path.join(ws_root, REPO_MAP_FILENAME)
+    if not os.path.isfile(path):
+        return {}
+    data = _load_config_file(path)
+    repos = data.get("repos")
+    if repos is not None:
+        if not isinstance(repos, dict):
+            raise ConfigError(
+                "%s `repos` must be a JSON object mapping member paths to "
+                "local checkout paths, got %r" % (path, repos))
+        for key, value in repos.items():
+            if not isinstance(value, str) or not value:
+                raise ConfigError(
+                    "%s `repos` entry '%s' must be a non-empty path string, "
+                    "got %r" % (path, key, value))
+    sources = data.get(CLONE_SOURCES_KEY)
+    if sources is not None:
+        if not isinstance(sources, list) or not all(
+                isinstance(item, str) and item for item in sources):
+            raise ConfigError(
+                "%s `%s` must be a JSON array of non-empty directory path "
+                "strings, got %r" % (path, CLONE_SOURCES_KEY, sources))
+    return data
+
+
 def load_repo_map(ws_root):
     """Load the machine-local member map from
     ``<ws_root>/.shipd-workspace.local.json`` (shipd-workspace
@@ -1863,30 +1897,61 @@ def load_repo_map(ws_root):
     read time by :func:`member_dest`). An absent file, or a file declaring no
     ``repos`` key, is the empty map, so behavior is unchanged where no map
     exists. A malformed file raises :class:`ConfigError` naming it: invalid
-    JSON, a non-object top level, a non-object ``repos`` value, or a mapping
-    value that is not a non-empty string. Keys matching no manifest member path
+    JSON, a non-object top level, a non-object ``repos`` value, a mapping
+    value that is not a non-empty string, or a ``clone_sources`` value that is
+    not an array of non-empty strings. Keys matching no manifest member path
     are preserved here and surfaced as a note by the report — never an error, so
     a stale entry cannot brick every workspace verb.
 
     Read per call (like :func:`load_workspace`), never cached — a verb's view of
     the map is always the file on disk."""
+    repos = _load_repo_map_file(ws_root).get("repos")
+    return repos if repos is not None else {}
+
+
+def load_local_clone_sources(ws_root):
+    """Load the machine-local map file's optional ``clone_sources`` array
+    (shipd-workspace workspace-member-map).
+
+    Returns the stored directory path strings verbatim — exactly as
+    :func:`load_repo_map` returns its values — with ``~`` and relative forms
+    resolved at read time by :func:`local_clone_source_dirs`. An absent file,
+    or a file declaring no ``clone_sources`` key, is the empty list, so a
+    workspace that never recorded a checkout folder behaves as before. A
+    malformed file raises the load's own :class:`ConfigError` naming it."""
+    sources = _load_repo_map_file(ws_root).get(CLONE_SOURCES_KEY)
+    return list(sources) if sources is not None else []
+
+
+def local_clone_source_dirs(ws_root):
+    """Resolve the map file's ``clone_sources`` entries into absolute
+    directories — the resolution seam beside :func:`member_dest`
+    (shipd-workspace workspace-member-map).
+
+    Each stored value is ``~``-expanded and, when relative, resolved against
+    ``ws_root``; the result is normalized so two spellings of one directory
+    compare equal downstream."""
+    return [os.path.normpath(os.path.join(ws_root, os.path.expanduser(item)))
+            for item in load_local_clone_sources(ws_root)]
+
+
+def save_local_clone_sources(ws_root, sources):
+    """Write the map file's ``clone_sources`` array — the engine-owned writer
+    beside :func:`save_repo_map` (shipd-workspace workspace-sources-verbs), so
+    the key is never hand-authored.
+
+    Replaces *only* the ``clone_sources`` key: ``repos``, the reverse-lookup
+    ``workspace_root`` pointer, and every other top-level key survive
+    unchanged, so the conventions sharing this file never clobber each other.
+    Validates the existing file through :func:`load_local_clone_sources`
+    first — a malformed file raises that load's own :class:`ConfigError` and
+    nothing is written."""
     path = os.path.join(ws_root, REPO_MAP_FILENAME)
-    if not os.path.isfile(path):
-        return {}
-    data = _load_config_file(path)
-    repos = data.get("repos")
-    if repos is None:
-        return {}
-    if not isinstance(repos, dict):
-        raise ConfigError(
-            "%s `repos` must be a JSON object mapping member paths to local "
-            "checkout paths, got %r" % (path, repos))
-    for key, value in repos.items():
-        if not isinstance(value, str) or not value:
-            raise ConfigError(
-                "%s `repos` entry '%s' must be a non-empty path string, got %r"
-                % (path, key, value))
-    return repos
+    data = _load_repo_map_file(ws_root)
+    data[CLONE_SOURCES_KEY] = list(sources)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
 
 
 def save_repo_map(ws_root, repos):
@@ -1902,12 +1967,11 @@ def save_repo_map(ws_root, repos):
     ``repos`` alone. Output is pretty-printed JSON with a trailing newline, so
     the file stays hand-readable and diffs cleanly.
 
-    Validates the existing file through :func:`load_repo_map` before writing:
-    a malformed map raises that load's own :class:`ConfigError` and nothing is
-    written — the writer never repairs a broken file."""
+    Validates the existing file through the shared map-file load before
+    writing: a malformed map raises that load's own :class:`ConfigError` and
+    nothing is written — the writer never repairs a broken file."""
     path = os.path.join(ws_root, REPO_MAP_FILENAME)
-    load_repo_map(ws_root)
-    data = _load_config_file(path) if os.path.isfile(path) else {}
+    data = _load_repo_map_file(ws_root)
     data["repos"] = dict(repos)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2)
@@ -2223,6 +2287,27 @@ def resolve_clone_sources(config):
     return [os.path.expanduser(item) for item in raw]
 
 
+def workspace_clone_source_dirs(ws_root, config):
+    """Return the directories the candidate scan probes for a workspace
+    (shipd-workspace sync-materialization-planning).
+
+    The union of the resolved configuration's ``clone_sources`` and the
+    workspace-local map file's — configuration entries first, then local
+    entries, duplicates removed after expansion so one directory named two ways
+    is scanned once and scan order stays the deterministic first-match order
+    the planner promises. Raises :class:`ConfigError` naming the offending file
+    or key when either side is malformed."""
+    dirs = []
+    seen = set()
+    for item in ([os.path.normpath(d) for d in resolve_clone_sources(config)]
+                 + local_clone_source_dirs(ws_root)):
+        if item in seen:
+            continue
+        seen.add(item)
+        dirs.append(item)
+    return dirs
+
+
 def _git_probe(target, *args, timeout=None):
     """Run ``git -C <target> <args>`` locally and return stripped stdout on a
     zero exit, else ``None``. Never the network — the caller passes only
@@ -2471,7 +2556,7 @@ def plan_workspace_sync(ws_root, config):
     lists. Raises :class:`ConfigError` naming the offending file when
     ``clone_sources`` or the member map is malformed."""
     registry = load_workspace(ws_root)
-    source_dirs = resolve_clone_sources(config)
+    source_dirs = workspace_clone_source_dirs(ws_root, config)
     records = []
     member_paths = []
     projects = registry.get("projects")

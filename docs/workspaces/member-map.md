@@ -10,18 +10,20 @@ tells a checkout outside the workspace which workspace it belongs to.
 
 ## The machine-local file
 
-The file is `.shipd-workspace.local.json` — plain JSON, no comments. It
-carries two disjoint fields, and each field belongs to a different directory:
+The file is `.shipd-workspace.local.json` — plain JSON, no comments. It carries
+three fields, two at a workspace root and one in a member checkout:
 
 | field | lives at | states |
 |---|---|---|
 | `repos` | the workspace root | where each member repo sits on this machine |
+| `clone_sources` | the workspace root | which directories the candidate scan probes |
 | `workspace_root` | a member checkout's root | which workspace the checkout belongs to |
 
 The file is machine-local and stays out of git, because it maps *this*
 machine's checkouts. It therefore sits beside the tracked
 `.shipd-config.json` manifest rather than inside it. The `workspace-map set`
-verb below adds it to the workspace root's `.gitignore` on first write.
+and `workspace-sources add` verbs below add it to the workspace root's
+`.gitignore` on first write.
 
 ## Mapping members to existing checkouts
 
@@ -36,7 +38,8 @@ from the first. Map that member instead.
   "repos": {
     "shipd": "~/projects/shipd",
     "documents": "../checkouts/documents"
-  }
+  },
+  "clone_sources": ["~/projects"]
 }
 ```
 
@@ -52,7 +55,8 @@ The guided front door is **`/s:workspace map`**. It reads the sync plan and
 proposes, for each unmapped member, the local checkout that the
 `clone_sources` scan matched. It asks in a single round, then drives one `set`
 per member you accept. It reports already-mapped members and never re-asks
-them. `sync` and `clone` stay question-free.
+them. `sync` and `clone` open one consent round of their own, which offers the
+same reuse over the whole plan.
 
 You never hand-author the file: the engine owns it. The read-only `shipd`
 binary exposes no write verb, so these three forms invoke the engine script
@@ -90,6 +94,32 @@ python3 <plugin>/skills/build/scripts/spec_status.py workspace-map remove shipd
 - **A malformed file fails both writers**, with the error the readers raise,
   naming the file. The verbs never repair a broken map.
 
+### The clone-source list
+
+The candidate scan unions two lists: the `clone_sources` key of the resolved
+configuration ([getting started](getting-started.md)) and the same key in this
+file, shown above. Configuration entries come first, and the engine drops
+duplicates after it expands them. Record a directory here when it belongs to
+this machine alone.
+
+`/s:workspace sync` and `/s:workspace map` ask where your checkouts live when
+neither list resolves, then record the answer through the engine's verbs:
+
+```sh
+# list, then start and stop probing a directory
+python3 <plugin>/skills/build/scripts/spec_status.py workspace-sources
+python3 <plugin>/skills/build/scripts/spec_status.py workspace-sources \
+    add ~/projects
+python3 <plugin>/skills/build/scripts/spec_status.py workspace-sources \
+    remove ~/projects
+```
+
+- **`add` stores the path verbatim** and ensures the ignore line `set` does. A
+  directory already stored under any spelling exits zero and writes nothing; a
+  missing one warns on stderr, and the entry still lands.
+- **`remove` deletes exactly one entry** — the stored value, or the directory
+  it resolves to — and exits non-zero when nothing matches.
+
 ### What a mapped member means
 
 A mapped member *is* that checkout for every workspace read. The report probes
@@ -115,9 +145,10 @@ The planner treats a mapped member this way:
   checkout, or remove the map entry.
 - **A stale key is a note, not an error.** The workspace report prints a
   `repos` key that matches no member path, and changes nothing.
-- **A malformed map fails the verb reading it**, naming the file. Four shapes
-  fail: invalid JSON, a non-object top level, a non-object `repos` value, and
-  a mapping value that is not a non-empty string.
+- **A malformed map fails the verb reading it**, naming the file. Five shapes
+  fail: invalid JSON, a non-object top level, and a non-object `repos` value.
+  A mapping value that is not a non-empty string fails too, as does a
+  `clone_sources` value that is not an array of non-empty strings.
 
 ## Resolving from outside the workspace
 

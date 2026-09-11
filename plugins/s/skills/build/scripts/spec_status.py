@@ -138,6 +138,19 @@ Verbs (see the spec-status + statusline capabilities for the contract):
                      the marked member block; a target that is missing or is not
                      a git work tree warns on stderr but still writes. `remove`
                      deletes the entry, erroring when none exists
+  workspace-sources [add <dir> | remove <dir>]
+                     the engine-owned writer for the same file's optional
+                     `clone_sources` directory list — the machine-local half of
+                     the candidate scan the sync planner unions with the config
+                     key. Bare, list each entry as `<value> (<resolved
+                     absolute>)`. `add` stores <dir> verbatim, exits zero
+                     without duplicating a directory already stored under any
+                     spelling, preserves every other top-level key of the map
+                     file, and ensures the workspace root's .gitignore carries
+                     the map filename outside the marked member block; a
+                     directory that does not exist warns on stderr but still
+                     writes. `remove` deletes the entry matching verbatim or by
+                     resolved directory, erroring when none matches
 
 The six read verbs — ``show``, ``status``, ``locate``, ``related``,
 ``epic-show``, and
@@ -3673,6 +3686,77 @@ def cmd_workspace_map(root, member=None, local=None, remove=False):
     return 0
 
 
+def _source_entry_line(ws_root, value):
+    """One ``workspace-sources`` listing line: the stored value verbatim plus
+    the absolute directory :func:`spec_common.local_clone_source_dirs` resolves
+    it to."""
+    resolved = os.path.normpath(
+        os.path.join(ws_root, os.path.expanduser(value)))
+    return "%s (%s)" % (value, resolved)
+
+
+def cmd_workspace_sources(root, directory=None, remove=False):
+    """List, add, or remove entries of the map file's ``clone_sources`` array
+    (shipd-workspace workspace-sources-verbs) — the engine-owned writer beside
+    ``workspace-map``, so the key is never hand-authored.
+
+    Resolves the workspace from ``root`` (the standard no-workspace error
+    otherwise) and reads/writes ``<ws_root>/.shipd-workspace.local.json``. The
+    bare form lists each entry as ``<value> (<resolved absolute>)``. ``add``
+    stores ``directory`` verbatim (``~`` and relative forms resolve at read
+    time, so what the user typed is what the file says), exits zero without
+    duplicating when the directory is already stored under any spelling, and
+    ensures the workspace root's ``.gitignore`` carries the map filename
+    outside the marked member block. A directory that does not exist is a
+    stderr warning, never a refusal: naming a checkout folder you are about to
+    populate is legitimate. ``remove`` deletes the one entry matching verbatim
+    or by resolved directory, erroring when none matches. A malformed map file
+    fails every form with the load's own error, never repaired."""
+    ws_root = _resolve_workspace(root)
+    try:
+        sources = sc.load_local_clone_sources(ws_root)
+    except sc.ConfigError as exc:
+        raise StatusError(str(exc))
+
+    if directory is None:
+        if not sources:
+            print("(no entries)")
+        for value in sources:
+            print(_source_entry_line(ws_root, value))
+        return 0
+
+    def resolve(value):
+        return os.path.normpath(
+            os.path.join(ws_root, os.path.expanduser(value)))
+
+    target = resolve(directory)
+
+    if remove:
+        matches = [i for i, value in enumerate(sources)
+                   if value == directory or resolve(value) == target]
+        if not matches:
+            held = ", ".join(sources) or "(none)"
+            raise StatusError(
+                "no clone source entry for '%s' (stored sources: %s)"
+                % (directory, held))
+        del sources[matches[0]]
+        sc.save_local_clone_sources(ws_root, sources)
+        print("removed %s" % directory)
+        return 0
+
+    if any(value == directory or resolve(value) == target
+           for value in sources):
+        print(_source_entry_line(ws_root, directory))
+        return 0
+    sources.append(directory)
+    sc.save_local_clone_sources(ws_root, sources)
+    sc.ensure_gitignore_line(ws_root, sc.REPO_MAP_FILENAME)
+    if not os.path.isdir(target):
+        sys.stderr.write("warning: directory does not exist: %s\n" % target)
+    print(_source_entry_line(ws_root, directory))
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Wiki status verbs (spec-status wiki-status-verbs)
 # ---------------------------------------------------------------------------
@@ -4483,6 +4567,15 @@ def main(argv=None):
         help="no arguments lists the map; `set <member-path> <local-path>` "
              "writes one entry; `remove <member-path>` deletes one")
 
+    p_ws_sources = sub.add_parser(
+        "workspace-sources",
+        help="list the machine-local clone-source directories, or "
+             "`add <dir>` / `remove <dir>` one")
+    p_ws_sources.add_argument(
+        "args", nargs="*",
+        help="no arguments lists the stored directories; `add <dir>` stores "
+             "one verbatim; `remove <dir>` deletes one")
+
     p_wiki_init = sub.add_parser(
         "wiki-init",
         help="scaffold the workspace wiki store layout")
@@ -4628,6 +4721,18 @@ def main(argv=None):
             raise StatusError(
                 "usage: workspace-map [set <member-path> <local-path> | "
                 "remove <member-path>]")
+        if args.verb == "workspace-sources":
+            rest = list(args.args)
+            if not rest:
+                return cmd_workspace_sources(root)
+            action, operands = rest[0], rest[1:]
+            if action == "add" and len(operands) == 1:
+                return cmd_workspace_sources(root, directory=operands[0])
+            if action == "remove" and len(operands) == 1:
+                return cmd_workspace_sources(
+                    root, directory=operands[0], remove=True)
+            raise StatusError(
+                "usage: workspace-sources [add <dir> | remove <dir>]")
         if args.verb == "wiki-init":
             return cmd_wiki_init(root, args.personal)
         if args.verb == "wiki-show":
