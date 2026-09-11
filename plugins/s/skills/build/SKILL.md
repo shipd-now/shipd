@@ -295,8 +295,15 @@ ceremony to shortcut for small tasks.
      `- [ ] 2.1 [P2] Add the CLI flag`); tasks sharing a `P` number run
      concurrently, groups run in ascending order, and any **untagged** task is a
      sequential barrier. You know the dependency structure now — encode it here
-     so fan-out in Phase 3 is deterministic. When in doubt, leave a task
-     untagged (a safe barrier).
+     so fan-out in Phase 3 is deterministic. A barrier orders by **file
+     position** while a group orders by **number**, so a barrier sitting
+     between a higher-numbered group and a lower-numbered one makes every
+     task in both unreachable — an untagged task is safe only where no
+     groups surround it, never unconditionally. Use one of the two
+     configurations that cannot contradict themselves: leave every task
+     untagged (fully sequential), or tag every task with group numbers that
+     never decrease down the file. The linter refuses anything else, naming
+     the tasks that can never become ready.
 3. Gate the contract with the linter **before any code is written** — this is
    the hard gate that replaces `openspec validate --strict`:
    ```
