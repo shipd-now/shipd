@@ -306,7 +306,9 @@ consent-gated answers recorded as advisory only on the user's express
 record-this instruction. The ladder diagram SHALL be a `mermaid` code fence —
 not ASCII box-drawing art — so the published docs site renders it natively,
 and its capture path SHALL reflect the classification rather than an
-unconditional write.
+unconditional write. The guide SHALL conform to the shipd documentation
+standard: `<!-- doc-type: reference -->` as its first line and a total line
+count within the reference cap.
 
 #### Scenario: Guide covers the loop
 - **WHEN** `docs/oracle.md` is inspected
@@ -332,6 +334,10 @@ unconditional write.
   oracle, human), the `ANSWER` and `INSUFFICIENT` verdict branches, and the
   classified capture loop back to the oracle rung, and `docs/oracle.md`
   contains no box-drawing characters
+
+#### Scenario: Guide carries its marker and fits its cap
+- **WHEN** `docs_lint.py` runs over `docs/oracle.md`
+- **THEN** it exits 0 with the file marked `reference`
 
 ### Requirement: Capture durability rubric
 id: capture-rubric

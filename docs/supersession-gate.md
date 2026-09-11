@@ -1,28 +1,33 @@
+<!-- doc-type: concept -->
+
 # The supersession gate
 
-A planned change can go stale fast: between `/s:plan` and `/s:build`,
-other PRs — especially an autopilot run — may merge work that already
-implements some or all of the plan. Building anyway would clobber newer spec
-wording and re-do shipped work. The **supersession gate** catches this
-mechanically before any execution sub-agent spawns.
+A planned change can go stale fast. Between `/s:plan` and `/s:build`, other PRs
+may merge work that already implements some or all of the plan. An autopilot
+run is the usual culprit. Building anyway would clobber newer spec wording and
+re-do shipped work. The **supersession gate** catches that mechanically, before
+any execution sub-agent spawns.
 
 ## What build does automatically
 
-When `/s:build` adopts an already-planned change, Phase 0 now:
+When `/s:build` adopts an already-planned change, Phase 0 runs three steps:
 
-1. **Syncs the branch with its base** — `git fetch origin main && git merge
-   origin/main`. The check compares against the worktree's own masters, so a
-   lagging branch must catch up first; a merge conflict here is itself
-   treated as a supersession signal and surfaced to you.
-2. **Runs the base check** — `spec_status.py check-base <change>`.
-3. **Acts on the result:**
-   - **Clean** → build proceeds; you see nothing.
-   - **Findings, classified as content drift** — the masters moved for
-     unrelated reasons, the plan's substance is still unbuilt → build
-     proceeds, reconciling the findings during plan review.
-   - **Findings, classified as superseded** — a merged PR already implemented
-     the plan's substance → build **stops** and asks you whether to abandon
-     the change or re-scope it to what remains. Nothing is executed.
+1. **Sync the branch with its base** — `git fetch origin main && git merge origin/main`.
+   The check compares against the worktree's own masters, so a lagging branch
+   catches up first. A merge conflict here is itself a supersession signal, and
+   build surfaces it to you.
+2. **Run the base check** — the status CLI's `check-base` verb.
+3. **Act on the result**, which takes one of three shapes.
+
+The three outcomes are:
+
+- **Clean** — build proceeds, and you see nothing.
+- **Findings, classified as content drift** — the masters moved for unrelated
+  reasons, and the plan's substance is still unbuilt. Build proceeds, and
+  carries the findings into plan review.
+- **Findings, classified as superseded** — a merged PR already implemented the
+  plan's substance. Build **stops** and asks you whether to abandon the change
+  or re-scope it to what remains. It executes nothing.
 
 ## Running the check yourself
 
@@ -30,8 +35,9 @@ When `/s:build` adopts an already-planned change, Phase 0 now:
 python3 plugins/s/skills/build/scripts/spec_status.py check-base [change]
 ```
 
-Compares the change's delta specs against the current master library
-(read-only; defaults to the currently selected change). One line per finding:
+The verb compares the change's delta specs against the current master library.
+It reads only, and it defaults to the currently selected change. It prints one
+line per finding:
 
 | Finding | Meaning |
 | --- | --- |
@@ -46,10 +52,10 @@ spec-status/status-cli: stale-base (expected 668ed5dbee15, actual 969a22088565)
 check-base: 2 finding(s).
 ```
 
-Exit codes: `0` clean, `4` findings (distinct from `1` general error and `3`
-guard refusal), so scripts can gate on it directly.
+Exit codes: `0` clean, `4` findings. Those stay distinct from `1` for a general
+error and `3` for a guard refusal, so scripts can gate on the verb directly.
 
-A clean check can't *prove* nothing superseded the plan (a merge may not have
-touched the same requirement ids) — build's discovery read remains the
-judgment backstop. The verb mechanizes the common case: deltas colliding with
-masters that moved.
+A clean check cannot *prove* that nothing superseded the plan. A merge may
+never have touched the same requirement ids, so build's discovery read remains
+the judgment backstop. The verb mechanizes the common case: deltas colliding
+with masters that moved.
