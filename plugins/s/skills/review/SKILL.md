@@ -81,6 +81,15 @@ references. Use `--lang` / `--path` to cut noise on common names.
   proven unaffected — say so rather than implying coverage you do not have.
 - `--lang` filters by extension and misses extensionless scripts — retry
   without it before concluding there are no references.
+- **Changed constants are contract changes.** A changed limit, bound, timeout,
+  retry count, buffer size, or threshold is not a stylistic tweak — it changes
+  what callers can rely on. Chase every consumer of the changed constant
+  through `context <symbol>` exactly as you would a changed signature.
+- **Uneven sibling sites.** When the diff touches two or more parallel
+  implementations of the same thing (sibling handlers, mirrored engines,
+  duplicated validation), compare them against each other, not only against
+  the base. Name any hardening, guard, or edge-case handling applied to one
+  and not the other.
 
 ### 4. Trace call-site values — reachability and comment accuracy
 Do not judge a new branch, guard, or helper in isolation — follow the actual
@@ -97,7 +106,26 @@ Both are usually low severity alone, but they compound. Whenever you quote a
 mechanism in the walkthrough, confirm the path that reaches it actually runs
 with the values the call sites supply.
 
-### 5. Report by cohort
+### 5. Judge new code on its own terms
+For every function, class, guard, or helper the diff introduces, judge it
+against its own stated purpose — do not wave it through because it is new
+rather than modified:
+
+- **Wrong quantity measured.** A limit, cap, or check that measures the wrong
+  thing (bytes where the guarantee is about lines, wall time where it is about
+  CPU time) looks correct and is not.
+- **Escape hatch lapsing the guarantee.** A flag, default, or fallback branch
+  that quietly steps around the very invariant the code exists to enforce.
+- **Termination on hostile input.** Does the routine terminate — and cheaply —
+  on empty, oversized, malformed, or adversarial input, not only the input the
+  happy-path test exercises?
+- **Boundary agreement.** Off-by-one and inclusive/exclusive edges: does the
+  code's actual boundary match the one its doc comment or name claims?
+- **Doc comment versus code.** Where the new code carries a doc comment or
+  docstring, confirm it describes what the code actually does, not what it was
+  meant to do.
+
+### 6. Report by cohort
 Group findings under cohort headings, most severe first. For each finding: the
 **location**, **what** is wrong, **why** it matters, a concrete **fix**, and an
 explicit **severity**.
@@ -111,6 +139,15 @@ explicit **severity**.
 
 Any high **or** medium finding blocks (Fix required); low never blocks. When
 unsure between two levels, state the doubt rather than inflating.
+
+### 7. Check test coverage per finding
+Run this check over **every** finding you write, at **every** severity —
+including low. For each one, ask: would an existing test fail if this defect
+regressed? When no test would catch it, raise the gap as its own finding in a
+`test-coverage` cohort (see the Machine output mode shape below), naming the
+defect it would guard and where the test belongs. This runs alongside, not
+instead of, the finding it covers — a real defect and its missing test are two
+findings, not one.
 
 ## Spec-aware review (when a shipd change is in scope)
 
@@ -177,7 +214,7 @@ rendering changes. Shape:
     {
       "id": "f1",
       "severity": "high" | "medium" | "low",
-      "cohort": "bug" | "contract" | "edge-case" | "untouched-caller" | "spec-coverage",
+      "cohort": "bug" | "contract" | "edge-case" | "untouched-caller" | "spec-coverage" | "test-coverage",
       "location": "path/to/file.ext:LINE",
       "what": "one-line statement of the defect",
       "why": "why it matters",
@@ -412,6 +449,15 @@ Whenever you are on the text engine (or any tool is missing), say so, and do
 **not** fall back to dumping raw files. `doctor` (without `--fix`) reports what
 is available and touches nothing. git is the one hard requirement.
 
+## Documentation standard
+
+Both the rendered report (Presentation, above) and the posted summary comment
+(`review_gate.py post`) are bound to the shipd documentation standard at
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/standard.md`. That file is
+the one canonical source of its rules — this section restates none of them;
+read it directly. Name one reported defect a **finding** throughout, in the
+report, the summary comment, and `--json` — never "issue" or "concern".
+
 ## Guardrails
 
 - **Emoji at exactly the three sanctioned sites** — the ☕ mark in the
@@ -422,8 +468,10 @@ is available and touches nothing. git is the one hard requirement.
 - **Read-only.** The review never edits the repo.
 - **shipd naming only** — no other product branding or brand marks.
 - Prefer the tool's JSON over re-deriving diffs; that keeps token cost low.
-- Whole-file added/deleted entries have `"hunks": []` and a `"lines"` count;
-  when a new file matters, read it directly to review it.
+- Whole-file added/deleted entries have `"hunks": []` and a `"lines"` count. An
+  added entry's inlined `content` is reviewed with the same rigour as a hunk —
+  never passed on its path and line count alone. When `content_truncated` is
+  `true`, read the remainder of the file directly before judging it.
 
 ## Question rejection recovery
 

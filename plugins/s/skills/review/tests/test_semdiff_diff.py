@@ -170,6 +170,113 @@ class DiffTestCase(unittest.TestCase):
         self.assertTrue(by_path["src/code.py"]["hunks"])
 
 
+class LineNumberParityTest(unittest.TestCase):
+    """Both engines must agree with `git -n` truth on the 1-based line number
+    of an edited line — the off-by-one this change corrects in the difft
+    engine (difft's own `line_number` is 0-based)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-lineno-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+        self._write("ten.py", "".join(f"line{n}\n" for n in range(1, 11)))
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+        # Edit only the tenth line.
+        self._write("ten.py",
+                    "".join(f"line{n}\n" for n in range(1, 10)) + "EDITED\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        with open(os.path.join(self.repo, rel), "w") as fh:
+            fh.write(text)
+
+    def _after_side_line(self, **kwargs):
+        rc, out, err = run_semdiff(self.repo, "diff", "HEAD", **kwargs)
+        self.assertEqual(rc, 0, err)
+        by_path = {f["path"]: f for f in out["files"]}
+        self.assertIn("ten.py", by_path)
+        after = [h for h in by_path["ten.py"]["hunks"] if h["side"] == "after"]
+        self.assertTrue(after, "no after-side hunk reported")
+        return after[0]["line"]
+
+    def test_text_engine_reports_line_10(self):
+        self.assertEqual(
+            self._after_side_line(mask_difft=True, home=self.tmp), 10)
+
+    @unittest.skipUnless(HAVE_DIFFT, "difftastic not installed")
+    def test_difft_engine_reports_line_10(self):
+        self.assertEqual(self._after_side_line(), 10)
+
+
+class AddedFileContentTest(unittest.TestCase):
+    """A newly added file with no hunks carries its numbered body inline, so
+    brand-new code doesn't ship reviewed on a path and a line count alone."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-content-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+        self._write("keep.txt", "hello\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        with open(os.path.join(self.repo, rel), "w") as fh:
+            fh.write(text)
+
+    def _entry(self, path, **kwargs):
+        rc, out, err = run_semdiff(self.repo, "diff", "HEAD", **kwargs)
+        self.assertEqual(rc, 0, err)
+        by_path = {f["path"]: f for f in out["files"]}
+        self.assertIn(path, by_path)
+        return by_path[path]
+
+    def _assert_three_line_body(self, **kwargs):
+        self._write("new.py", "one\ntwo\nthree\n")
+        entry = self._entry("new.py", **kwargs)
+        self.assertEqual(entry["kind"], "added")
+        self.assertFalse(entry["content_truncated"])
+        prefixes = [line.split(":", 1)[0] for line in entry["content"].splitlines()]
+        self.assertEqual(prefixes, ["1", "2", "3"])
+
+    def test_text_engine_three_line_body(self):
+        self._assert_three_line_body(mask_difft=True, home=self.tmp)
+
+    @unittest.skipUnless(HAVE_DIFFT, "difftastic not installed")
+    def test_difft_engine_three_line_body(self):
+        self._assert_three_line_body()
+
+    def _assert_oversized_body_truncated(self, **kwargs):
+        self._write("big.py", "".join(f"line{n}\n" for n in range(1, 701)))
+        entry = self._entry("big.py", **kwargs)
+        self.assertEqual(entry["kind"], "added")
+        self.assertTrue(entry["content_truncated"])
+        self.assertEqual(len(entry["content"].splitlines()), 600)
+
+    def test_text_engine_oversized_body_truncated(self):
+        self._assert_oversized_body_truncated(mask_difft=True, home=self.tmp)
+
+    @unittest.skipUnless(HAVE_DIFFT, "difftastic not installed")
+    def test_difft_engine_oversized_body_truncated(self):
+        self._assert_oversized_body_truncated()
+
+
 class EmptyEndpointTest(unittest.TestCase):
     """A file present at an endpoint with empty content is not a file absent
     from it. Emptying a tracked file is a modification, not a deletion, and

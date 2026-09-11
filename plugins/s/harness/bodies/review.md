@@ -26,12 +26,22 @@ edits the repository.
    Call sites the search finds but the diff does not touch are your
    highest-value findings — a contract the change moved and a consumer nobody
    updated. Treat every match as a candidate to verify, never as proof of
-   safety: grep is not a call graph, so name what you could not check.
+   safety: grep is not a call graph, so name what you could not check. A
+   changed limit, bound, timeout, retry count, buffer size, or threshold is a
+   contract change too — chase its consumers the same way.
 5. **Follow the values the call sites actually pass.** A guard the real call
    can never reach is dead code; a comment promising behaviour the code does
    not produce is wrong even though its line exists. Confirm the path that
-   reaches a mechanism really runs before you describe it as if it does.
-6. **Verify the spec when a planned change is in scope** — the user named one,
+   reaches a mechanism really runs before you describe it as if it does. When
+   the diff touches two or more parallel implementations of the same thing,
+   compare them against each other, not only against the base, and name any
+   hardening applied to one and not the other.
+6. **Judge new code on its own terms.** For every function, class, guard, or
+   helper the diff introduces: does it measure the quantity its limit
+   actually governs, does an escape hatch let its guarantee lapse, does it
+   terminate cheaply on hostile input, and do its boundaries agree with its
+   doc comment?
+7. **Verify the spec when a planned change is in scope** — the user named one,
    or exactly one change sits under `.shipd/planned/`. Read it with
    `python3 "$S/spec_status.py" cat change <change>`, then classify every
    `#### Scenario:` against the diff as **met** (citing the file and hunk),
@@ -39,7 +49,7 @@ edits the repository.
    force. Every unmet scenario is a high-severity finding. Cross-check the
    `- [x]` tasks against the diff and flag any marked done with no change
    behind it, and surface `shipd lint <change>` findings verbatim.
-7. **Report by cohort, most severe first.** Give each finding a location, what
+8. **Report by cohort, most severe first.** Give each finding a location, what
    is wrong, why it matters, a concrete fix, and an explicit severity:
    - **high** — a correctness bug, a contract break with an un-updated
      consumer, or an unmet spec scenario;
@@ -50,10 +60,13 @@ edits the repository.
    **Fix required** when any finding is high or medium, **Ship it** otherwise.
    When you are unsure between two levels, state the doubt rather than
    inflating it. Close with an explicit list of what you could not verify.
-8. **Hand off.** Fix-required findings go back through `/s:build`'s
-   implementation loop while the branch is still open, or — once it has
-   merged — become a new change through `/s:plan`. Never open a second pull
-   request on an already-merged branch.
+9. **Check test coverage per finding.** For every finding you write, at every
+   severity, ask whether an existing test would fail if that defect
+   regressed; when none would, raise the gap as its own finding.
+10. **Hand off.** Fix-required findings go back through `/s:build`'s
+    implementation loop while the branch is still open, or — once it has
+    merged — become a new change through `/s:plan`. Never open a second pull
+    request on an already-merged branch.
 <!-- if:file-references -->
    Posting the verdict onto a pull request as its merge gate is a separate
    flow with its own payload and posting verbs: read {refs}/review.md before
