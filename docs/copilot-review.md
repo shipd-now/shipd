@@ -22,7 +22,7 @@ Copilot code review** and classifying whatever that wrote. See
   July 29, 2026.
 - The repository is **hosted on GitHub**, and you can push a branch and open a
   pull request against it.
-- `shipd` on your PATH (see the [quickstart](quickstart.md#1-install)).
+- `shipd` on your PATH (see [getting started](getting-started.md#1-install)).
 
 Nothing else. The review runs on GitHub Actions runners, which already provide
 `git` and Python 3 — all the engine needs.

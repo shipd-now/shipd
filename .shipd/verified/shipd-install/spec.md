@@ -99,8 +99,8 @@ install mode — the advertised one-liner
 commands and the raw GitHub `install.sh` URL documented as equivalents, and
 the launcher's PATH location — and
 SHALL retain the existing clone-and-symlink instructions as an explicitly
-labeled dev mode. The install-mode documentation, and the quickstart's
-install step, SHALL document enabling Claude Code's marketplace
+labeled dev mode. The install-mode documentation, and the install step of
+`docs/getting-started.md`, SHALL document enabling Claude Code's marketplace
 auto-update for `shipd` (the `/plugin` toggle and the `"autoUpdate": true`
 settings entry), the apply semantics (next session start, or
 `/reload-plugins`), and both `shipd update` — the one-command manual upgrade,
@@ -129,8 +129,8 @@ re-running `shipd vendor add` after a plugin update, and removal via
   cache path) is still present
 
 #### Scenario: Auto-update is documented
-- **WHEN** a reader finishes the install-mode section or the quickstart's
-  install step
+- **WHEN** a reader finishes the install-mode section or the install step
+  of `docs/getting-started.md`
 - **THEN** the auto-update enable step, its apply semantics, and the
   manual `claude plugin update s@shipd` fallback are documented
 

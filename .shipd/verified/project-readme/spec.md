@@ -50,7 +50,8 @@ id: readme-retains-onboarding-content
 The `README.md` SHALL preserve the existing practical guidance: what the
 project is, how to install it as a marketplace/plugin, the directory
 structure, and how to add new commands and skills, ordered newcomer-first —
-installation and the quickstart link before the engine internals.
+installation and the `docs/getting-started.md` link before the engine
+internals.
 
 #### Scenario: Install instructions survive the rewrite
 - **WHEN** a reader wants to try the plugin
@@ -59,8 +60,8 @@ installation and the quickstart link before the engine internals.
 
 #### Scenario: Newcomer content precedes internals
 - **WHEN** a reader scans the README top to bottom
-- **THEN** installation and the quickstart link appear before the
-  spec-engine and statusline internals
+- **THEN** installation and the `docs/getting-started.md` link appear
+  before the spec-engine and statusline internals
 
 ### Requirement: README documents the spec engine and status pipeline
 id: readme-documents-spec-engine
@@ -89,35 +90,15 @@ the grammar authority rather than restating the requirement/delta grammar.
 - **THEN** the `.shipd/` default, the `.shipd-config.json` layering, and the
   `dir` key are described
 
-### Requirement: Quickstart document
-id: quickstart-doc
-
-A `docs/quickstart.md` SHALL walk a newcomer from install to a first
-shipped change with the exact command at each step: the one-command
-install, the `shipd doctor` preflight, the `/s:onboard` guided tour, a
-first `/s:plan` and `/s:build` in the reader's own repository, and
-watching the result with `shipd board` and `shipd status`. The README SHALL
-link the quickstart from its newcomer-facing top section.
-
-#### Scenario: Quickstart covers install to first change
-- **WHEN** a reader follows `docs/quickstart.md` top to bottom
-- **THEN** each step names its exact command, in order: install, doctor,
-  onboard, plan, build, board/status
-
-#### Scenario: README links the quickstart
-- **WHEN** a reader finishes the README's install section
-- **THEN** a link to `docs/quickstart.md` is present before the engine
-  internals
-
 ### Requirement: Pipeline follower surfaces stay current
 id: pipeline-follower-docs
 
 The root `README.md`'s autonomous-pipeline overview SHALL mention that
 entries may carry typed per-stage options validated strictly (unknown keys
 and wrong types rejected) by the engine's stdlib-only schema module,
-requiring no third-party package, linking the format authority for the full grammar. `docs/quickstart.md`
-SHALL list the `shipd doctor` checks as shipped and SHALL carry a
-one-line mention that
+requiring no third-party package, linking the format authority for the full
+grammar. `docs/getting-started.md`'s doctor step SHALL list the checks the
+`shipd doctor` verb reports and SHALL carry a one-line mention that
 `{"autonomous-pipeline": "eco"}` in `.shipd-config.json` opts a delivery
 into the cheap preset.
 
@@ -126,14 +107,14 @@ into the cheap preset.
 - **THEN** it names typed per-stage options and strict validation and
   points at the format authority for the grammar
 
-#### Scenario: Quickstart doctor list matches the shipped checks
-- **WHEN** a reader compares quickstart's doctor check list against a
-  `shipd doctor` run
-- **THEN** every check the verb reports — `python`, `git`, `config`, `gh`,
-  `textual`, `snapshot` — appears in the list
+#### Scenario: Doctor list matches the shipped checks
+- **WHEN** a reader compares the doctor step's check list in
+  `docs/getting-started.md` against a `shipd doctor` run
+- **THEN** every check the verb reports appears in the list
 
-#### Scenario: Quickstart mentions the eco opt-in
-- **WHEN** a reader searches quickstart for the cheap-delivery opt-in
+#### Scenario: Guide mentions the eco opt-in
+- **WHEN** a reader searches `docs/getting-started.md` for the
+  cheap-delivery opt-in
 - **THEN** one line shows `{"autonomous-pipeline": "eco"}` as the way to
   opt in
 
@@ -296,10 +277,10 @@ generated file never mentions a feature its harness did not declare; the
 as the inspection verbs. The README's CLI verb list SHALL include the
 `harness` verb. The harness documentation SHALL carry the brand note: the
 animated wordmark is confined to the install surface and ☕ remains the
-brand mark. `docs/quickstart.md`'s install step SHALL mention the harness
-selection step and its headless degradation, and the quickstart SHALL name
-`shipd harness add` as the way to install the generated commands into a
-repository.
+brand mark. `docs/getting-started.md`'s install step SHALL mention the
+harness selection step and its headless degradation, and the guide SHALL
+name `shipd harness add` as the way to install the generated commands into
+a repository.
 
 #### Scenario: Install finish is documented
 - **WHEN** a reader finishes the README's install-mode documentation
@@ -334,46 +315,57 @@ repository.
 - **THEN** it states the animated wordmark appears only on the install
   surface and that ☕ remains the brand mark
 
-#### Scenario: Quickstart carries the mode
-- **WHEN** a reader follows `docs/quickstart.md`'s install step
+#### Scenario: Getting started carries the mode
+- **WHEN** a reader follows `docs/getting-started.md`'s install step
 - **THEN** the harness selection step and its headless degradation are
   mentioned, and `shipd harness add` is named for repo-level installs
 
 ### Requirement: Getting-started guide
 id: getting-started-doc
 
-A `docs/getting-started.md` SHALL walk a newcomer through their first working
-session in this order: registering the ☕ statusline, then taking one change
-through `/s:plan` and `/s:build`. The guide SHALL explain each planning
-artifact — `plan.md`, the per-capability delta `spec.md`, and `tasks.md` —
-with its purpose, and SHALL name the three durable outcomes of a build: the
-`change/<name>` branch, the merge into `verified/`, and the archive under
-`completed/`. Where it documents statusline registration for an installed
-plugin, the guide SHALL give a command that resolves the newest cached
-snapshot rather than a version-pinned path. The guide SHALL link
-`docs/cheatsheet.md` from its closing where-to-go-next section.
+`docs/getting-started.md` SHALL be the single entry how-to: it SHALL open
+with a `<!-- doc-type: how-to -->` comment on its first line, total 150
+lines or fewer, pass `docs_lint.py`, and walk a newcomer in this order:
+install (the one-command installer), the `shipd doctor` preflight, the
+`/s:onboard` tour, a first `/s:plan` and `/s:build`, then watching the
+result with `shipd board`, `shipd status`, and the statusline. The plan step
+SHALL name each planning artifact — `plan.md`, the per-capability delta
+`spec.md`, and `tasks.md` — with its purpose and SHALL link the content
+directory's `README.md` as the grammar authority. The build step SHALL name
+the three durable outcomes: the `change/<name>` branch, the merge into
+`verified/`, and the archive under `completed/`. The watch step SHALL give
+`shipd statusline install` as the registration command and state that the
+written entry resolves the newest cached snapshot rather than a
+version-pinned path. The guide SHALL link `docs/cheatsheet.md` from its
+closing where-to-go-next section.
 
-#### Scenario: Statusline precedes the walkthrough
+#### Scenario: Guide passes the lint within its cap
+- **WHEN** `python3 plugins/s/skills/document/scripts/docs_lint.py
+  docs/getting-started.md` runs
+- **THEN** it exits 0, the first line is the how-to marker, and the file is
+  at most 150 lines
+
+#### Scenario: The walk is ordered install-first
 - **WHEN** a reader follows `docs/getting-started.md` top to bottom
-- **THEN** the statusline registration and its rendered segments are explained
-  before the `/s:plan` walkthrough begins
+- **THEN** install, doctor, onboard, plan, build, and watch appear as steps
+  in that order, each naming its exact command
 
 #### Scenario: Artifacts are each explained
-- **WHEN** the reader reaches the planning walkthrough
+- **WHEN** the reader reaches the plan step
 - **THEN** `plan.md`, the delta `specs/<capability>/spec.md`, and `tasks.md`
-  are each explained with their purpose, and the delta's WHEN/THEN scenario
-  grammar is shown in an excerpt
+  are each named with their purpose, and the content directory's `README.md`
+  is linked as the grammar authority
 
 #### Scenario: Build outcomes are named
-- **WHEN** the reader reaches the build walkthrough
-- **THEN** the change branch, the `verified/` master-library merge, and the
-  `completed/` archive are all named as the build's durable outcomes
+- **WHEN** the reader reaches the build step
+- **THEN** the change branch, the `verified/` merge, and the `completed/`
+  archive are all named as the build's durable outcomes
 
-#### Scenario: Install-mode registration survives updates
-- **WHEN** the documented install-mode statusline command is executed with
-  more than one snapshot in the plugin cache
-- **THEN** it runs the newest snapshot's `integrations/statusline.sh` under
-  dotted-version ordering, not a version-pinned path
+#### Scenario: Statusline registration survives updates
+- **WHEN** the reader reaches the watch step
+- **THEN** `shipd statusline install` is the given command, and the text
+  states the registered entry resolves the newest cached snapshot rather
+  than a version-pinned path
 
 #### Scenario: Guide points at the cheatsheet
 - **WHEN** a reader reaches the guide's closing where-to-go-next section
@@ -382,34 +374,43 @@ snapshot rather than a version-pinned path. The guide SHALL link
 ### Requirement: Command cheatsheet
 id: cheatsheet-doc
 
-A `docs/cheatsheet.md` SHALL be a lookup reference listing every user-facing
-command in two tables — one for the `/s:` commands, one for the `shipd`
-CLI verbs. Each row SHALL carry the invocation including its argument and
-option forms, a one-line description of what the command does, and exactly one
-short example invocation. The `/s:` table SHALL carry one row for every
-directory under `plugins/s/skills/`, and the `shipd` table SHALL carry one row
-for every verb listed in the `shipd --help` banner. Where an option is
-accepted by several verbs, the cheatsheet SHALL state it once in a conventions
+`docs/cheatsheet.md` SHALL be a lookup reference opening with a
+`<!-- doc-type: reference -->` comment on its first line, totalling 250
+lines or fewer and passing `docs_lint.py`, listing every user-facing command
+in two tables — one for the `/s:` commands, one for the `shipd` CLI verbs.
+Each row SHALL carry the invocation including its argument and option forms,
+a one-line description of what the command does, and exactly one short
+example invocation. The `/s:` table SHALL carry one row for every directory
+under `plugins/s/skills/`, and the `shipd` table SHALL carry one row for
+every verb listed in the `shipd --help` banner. Where an option is accepted
+by several verbs, the cheatsheet SHALL state it once in a conventions
 preamble rather than repeating it on every row. Where a verb requires a
 precondition this repository does not meet, its row SHALL name that
-precondition rather than omit the verb or invent an invocation that avoids it.
+precondition rather than omit the verb or invent an invocation that avoids
+it.
+
+#### Scenario: Cheatsheet passes the lint within its cap
+- **WHEN** `python3 plugins/s/skills/document/scripts/docs_lint.py
+  docs/cheatsheet.md` runs
+- **THEN** it exits 0, the first line is the reference marker, and the file
+  is at most 250 lines
 
 #### Scenario: Every skill has a row
 - **WHEN** the `/s:` table's rows are compared against the directory names
   under `plugins/s/skills/`
-- **THEN** every directory has exactly one row and no row names a command that
-  has no directory
+- **THEN** every directory has exactly one row and no row names a command
+  that has no directory
 
 #### Scenario: Every shipd verb has a row
-- **WHEN** the `shipd` table's rows are compared against the verb list printed
-  by `shipd --help`
+- **WHEN** the `shipd` table's rows are compared against the verb list
+  printed by `shipd --help`
 - **THEN** every listed verb has exactly one row and no row names a verb the
   banner does not list
 
 #### Scenario: Each row carries one example
 - **WHEN** a reader scans any row of either table
-- **THEN** that row shows the invocation with its argument and option forms, a
-  one-line description, and exactly one example invocation
+- **THEN** that row shows the invocation with its argument and option forms,
+  a one-line description, and exactly one example invocation
 
 #### Scenario: Read-only examples run as written
 - **WHEN** the read-only examples in the `shipd` table whose rows name no
@@ -417,8 +418,8 @@ precondition rather than omit the verb or invent an invocation that avoids it.
 - **THEN** each one runs and exits zero
 
 #### Scenario: A precondition-gated row names its precondition
-- **WHEN** a reader scans the row for a verb that cannot succeed here without
-  setup — `workspace`, which resolves through the nearest ancestor
+- **WHEN** a reader scans the row for a verb that cannot succeed here
+  without setup — `workspace`, which resolves through the nearest ancestor
   `.shipd-config.json` declaring a `workspace` key
 - **THEN** the row names that precondition, and its example is still the
   ordinary invocation rather than one contrived to exit zero
@@ -458,3 +459,31 @@ SHALL come first or immediately after the `docs/what-is-shipd.md` entry link.
 - **WHEN** the README's links into `docs/` are enumerated top to bottom
 - **THEN** `docs/workspaces.md` is linked, preceded by no `docs/` link other
   than `docs/what-is-shipd.md`
+
+### Requirement: Entry docs conform to the standard
+id: entry-docs-standard
+
+The entry path SHALL read `docs/what-is-shipd.md` (concept) →
+`docs/getting-started.md` (how-to) → `docs/cheatsheet.md` (reference).
+`docs/what-is-shipd.md` SHALL open with a `<!-- doc-type: concept -->`
+comment on its first line, SHALL total 100 lines or fewer, SHALL pass
+`docs_lint.py`, and SHALL link `getting-started.md` from its prose before
+the overview diagram. `docs/quickstart.md` SHALL NOT exist, and no file
+under `docs/` outside `docs/retros/`, and no line of `README.md`, SHALL
+reference `quickstart.md`.
+
+#### Scenario: What-is doc passes the lint
+- **WHEN** `python3 plugins/s/skills/document/scripts/docs_lint.py
+  docs/what-is-shipd.md` runs
+- **THEN** it exits 0, the first line is the concept marker, and the file is
+  at most 100 lines
+
+#### Scenario: What-is doc links the entry how-to
+- **WHEN** `docs/what-is-shipd.md` is read top to bottom
+- **THEN** a relative link to `getting-started.md` appears before the
+  mermaid fence
+
+#### Scenario: Quickstart is gone and unreferenced
+- **WHEN** the tree is searched for `quickstart`
+- **THEN** `docs/quickstart.md` does not exist, and no match remains under
+  `docs/` (outside `docs/retros/`) or in `README.md`
