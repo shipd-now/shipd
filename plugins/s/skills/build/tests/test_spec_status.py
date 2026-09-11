@@ -6726,6 +6726,99 @@ class CheckBaseTest(SpecStatusTestBase):
         self.assertEqual(before, after)
 
 
+class BaseHashTest(SpecStatusTestBase):
+    """`base-hash <capability> <requirement-id>` prints a master requirement's
+    content hash (spec-status base-hash-verb): read-only, resolving the master
+    through `spec_merge.master_path` and hashing through
+    `spec_common.content_hash` — the same two primitives `check-base` uses."""
+
+    def make_master(self, capability, body):
+        """Write a master spec ``.shipd/verified/<capability>/spec.md`` from a raw
+        body (the requirement blocks after the ``# <capability>`` title)."""
+        vdir = os.path.join(self.root, ".shipd", "verified", capability)
+        os.makedirs(vdir, exist_ok=True)
+        with open(os.path.join(vdir, "spec.md"), "w", encoding="utf-8") as fh:
+            fh.write("# %s\n\n%s" % (capability, body))
+
+    def master_hash(self, capability, req_id):
+        """Return the current content hash of ``req_id`` in the master spec —
+        the value the verb is expected to print."""
+        path = os.path.join(
+            self.root, ".shipd", "verified", capability, "spec.md")
+        with open(path, encoding="utf-8") as fh:
+            spec = sc.parse_spec(fh.read())
+        for req in spec.requirements:
+            if req.id == req_id:
+                return sc.content_hash(req)
+        raise AssertionError("no requirement %r in master %r" % (req_id, capability))
+
+    def snapshot_content(self):
+        """Return a {path: bytes} snapshot of every file under the content
+        directory so a test can assert the verb wrote nothing."""
+        snap = {}
+        content = os.path.join(self.root, ".shipd")
+        for dirpath, _dirs, files in os.walk(content):
+            for name in files:
+                p = os.path.join(dirpath, name)
+                with open(p, "rb") as fh:
+                    snap[p] = fh.read()
+        return snap
+
+    def test_known_requirement_prints_its_hash(self):
+        self.make_master(
+            "auth",
+            "### Requirement: Login\nid: login\n\nThe system SHALL log in.\n")
+        expected = self.master_hash("auth", "login")
+        r = self.cli("base-hash", "auth", "login")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), expected)
+
+    def test_hash_matches_content_hash_directly(self):
+        self.make_master(
+            "auth",
+            "### Requirement: Login\nid: login\n\nThe system SHALL log in.\n")
+        r = self.cli("base-hash", "auth", "login")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        path = os.path.join(self.root, ".shipd", "verified", "auth", "spec.md")
+        with open(path, encoding="utf-8") as fh:
+            spec = sc.parse_spec(fh.read())
+        req = next(r2 for r2 in spec.requirements if r2.id == "login")
+        self.assertEqual(r.stdout.strip(), sc.content_hash(req))
+
+    def test_unknown_capability_fails_loudly(self):
+        r = self.cli("base-hash", "no-such-capability", "some-id")
+        self.assertNotEqual(r.returncode, 0)
+        lines = r.stderr.strip("\n").splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("Error: "), lines[0])
+
+    def test_unknown_requirement_id_fails_loudly(self):
+        self.make_master(
+            "auth",
+            "### Requirement: Login\nid: login\n\nThe system SHALL log in.\n")
+        r = self.cli("base-hash", "auth", "no-such-id")
+        self.assertNotEqual(r.returncode, 0)
+        lines = r.stderr.strip("\n").splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("Error: "), lines[0])
+        self.assertIn("no-such-id", lines[0])
+
+    def test_missing_requirement_id_is_a_usage_error(self):
+        r = self.cli("base-hash", "auth")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("usage", r.stderr.lower())
+
+    def test_verb_never_writes(self):
+        self.make_master(
+            "auth",
+            "### Requirement: Login\nid: login\n\nThe system SHALL log in.\n")
+        before = self.snapshot_content()
+        r = self.cli("base-hash", "auth", "login")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        after = self.snapshot_content()
+        self.assertEqual(before, after)
+
+
 class EpicAmendCheckTest(SpecStatusTestBase):
     """`epic-amend-check <slug> [--base <ref>]` compares the working tree's
     epic against its content at the merge-base of ``HEAD`` and the base ref

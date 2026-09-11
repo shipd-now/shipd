@@ -17,11 +17,24 @@ with the default layout, so its literals are intentionally exact.
 """
 
 import os
+import re
+import subprocess
+import sys
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILLS_DIR = os.path.normpath(os.path.join(HERE, "..", ".."))
 REPO_ROOT = os.path.normpath(os.path.join(SKILLS_DIR, "..", "..", ".."))
+
+# The emission reference's `base:` hash recipe (shipd-plan
+# base-hash-through-the-engine) and the scripts dir its documented command
+# calls into.
+EMISSION_MD = os.path.join(SKILLS_DIR, "plan", "references", "emission.md")
+BUILD_SCRIPTS_DIR = os.path.join(SKILLS_DIR, "build", "scripts")
+BASE_HASH_HEADING = "### `base:` hashes for MODIFIED / REMOVED"
+
+sys.path.insert(0, BUILD_SCRIPTS_DIR)
+import spec_common as sc  # noqa: E402
 
 # A file carrying this substring declares the notation rule for all its lines.
 # Matched against the file's whitespace-collapsed text, so the sentence may wrap
@@ -77,6 +90,51 @@ class PromptPathNotationTest(unittest.TestCase):
             [], offenders,
             "skill prompt lines hardcode `.shipd/` without the notation rule "
             "or a self-annotation:\n  " + "\n  ".join(offenders))
+
+
+def _base_hash_command():
+    """Extract the fenced ```bash command from the emission reference's
+    `base:` hash section (the text between its heading and the next
+    heading)."""
+    with open(EMISSION_MD, encoding="utf-8") as fh:
+        text = fh.read()
+    start = text.index(BASE_HASH_HEADING)
+    rest = text[start + len(BASE_HASH_HEADING):]
+    next_heading = re.search(r"^#{2,3} ", rest, re.MULTILINE)
+    section = rest[:next_heading.start()] if next_heading else rest
+    fence = re.search(r"```bash\n(.*?)```", section, re.DOTALL)
+    if fence is None:
+        raise AssertionError(
+            "no ```bash fenced command found under %r in %s"
+            % (BASE_HASH_HEADING, EMISSION_MD))
+    return fence.group(1)
+
+
+class BaseHashReferenceTest(unittest.TestCase):
+    """Guards the emission reference's `base:` hash recipe (shipd-plan
+    base-hash-through-the-engine) by **executing** the command it documents,
+    not by pattern-matching its text — a textual match would pass on a
+    command that still cannot run, which is the defect this guards against."""
+
+    def test_documented_command_runs_and_prints_the_content_hash(self):
+        capability, requirement_id = "spec-status", "status-cli"
+        master_path = os.path.join(
+            REPO_ROOT, ".shipd", "verified", capability, "spec.md")
+        with open(master_path, encoding="utf-8") as fh:
+            master = sc.parse_spec(fh.read())
+        req = next(r for r in master.requirements if r.id == requirement_id)
+        expected = sc.content_hash(req)
+
+        command = _base_hash_command()
+        env = dict(os.environ)
+        env["CLAUDE_PLUGIN_ROOT"] = os.path.join(REPO_ROOT, "plugins", "s")
+        env["CAP"] = capability
+        env["ID"] = requirement_id
+        result = subprocess.run(
+            ["bash", "-c", command], cwd=REPO_ROOT, env=env,
+            capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), expected)
 
 
 if __name__ == "__main__":
