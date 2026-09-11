@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the marker-gated docs lint step in ``.github/workflows/ci.yml``.
+"""Tests for the full-scope docs lint step in ``.github/workflows/ci.yml``.
 
 The workflow is read as text and its named step's ``run:`` body extracted by a
 tiny indentation-based reader (:func:`extract_run`): the engine is stdlib-only,
@@ -30,7 +30,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.normpath(os.path.join(HERE, "..", "..", "..", "..", ".."))
 CI_YML = os.path.join(REPO_ROOT, ".github", "workflows", "ci.yml")
 
-STEP_NAME = "Lint marker-carrying docs"
+STEP_NAME = "Lint docs"
 PRIOR_STEP_NAME = "Lint in-flight changes"
 
 # Where the fixture tree keeps its copy of the linter, so the step's encoded
@@ -38,7 +38,7 @@ PRIOR_STEP_NAME = "Lint in-flight changes"
 LINT_REL = os.path.join(
     "plugins", "s", "skills", "document", "scripts", "docs_lint.py")
 
-SKIP_NOTICE = "no marker-carrying docs; skipping"
+SKIP_NOTICE = "no docs to lint; skipping"
 
 # ---------------------------------------------------------------------------
 # Fixture documents
@@ -51,8 +51,8 @@ CLEAN_DOC = """<!-- doc-type: concept -->
 A widget holds one job. The engine reads it once. Nothing else touches it.
 """
 
-# A marker the filter must select even though its type is unknown, so the lint
-# reports it instead of the filter hiding it.
+# A well-formed marker naming a type the standard does not define, which the
+# lint reports.
 UNKNOWN_TYPE_DOC = """<!-- doc-type: bogus -->
 
 # Widget
@@ -217,8 +217,9 @@ class EncodedCommandTest(unittest.TestCase):
         self.assertIn("cap", out)
 
     def test_indented_marker_is_still_selected(self):
-        """The filter is lenient where the linter is, so a marker behind
-        leading whitespace is checked rather than skipped."""
+        """Selection no longer reads the marker at all, so a marker behind
+        leading whitespace reaches the linter, which accepts its placement and
+        reports the type instead."""
         root = self.make_tree(
             "indented",
             {os.path.join("docs", "widget.md"): INDENTED_MARKER_DOC})
@@ -239,17 +240,25 @@ class EncodedCommandTest(unittest.TestCase):
         code, out = self.run_step(root)
         self.assertNotEqual(code, 0, out)
 
-    def test_no_marker_docs_skips_and_passes(self):
+    def test_unmarked_doc_fails(self):
+        """Full scope carries the marker rule: an unmarked doc is selected and
+        fails through the linter's own missing-marker error."""
         root = self.make_tree(
             "unmarked", {os.path.join("docs", "widget.md"): NO_MARKER_DOC})
         code, out = self.run_step(root)
-        self.assertEqual(code, 0, out)
-        self.assertIn(SKIP_NOTICE, out)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("missing first-line doc-type marker", out)
 
     def test_retros_are_exempt(self):
         root = self.make_tree(
             "retros",
             {os.path.join("docs", "retros", "bad.md"): UNKNOWN_TYPE_DOC})
+        code, out = self.run_step(root)
+        self.assertEqual(code, 0, out)
+        self.assertIn(SKIP_NOTICE, out)
+
+    def test_empty_docs_tree_skips_and_passes(self):
+        root = self.make_tree("empty", {})
         code, out = self.run_step(root)
         self.assertEqual(code, 0, out)
         self.assertIn(SKIP_NOTICE, out)
