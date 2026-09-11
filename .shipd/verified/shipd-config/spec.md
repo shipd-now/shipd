@@ -597,7 +597,10 @@ same-named override of a built-in), the config kill-switches and the
 environment bypass, remind cooldown behavior, and the token-cost properties —
 that rules consume no model context until one fires, that a firing deny costs
 the retried edit while a firing remind costs one injected reminder, and the
-deny-for-certain / remind-for-fuzzy authoring guidance.
+deny-for-certain / remind-for-fuzzy authoring guidance. The standalone guide
+SHALL conform to the shipd documentation standard:
+`<!-- doc-type: reference -->` as its first line and a total line count
+within the reference cap.
 
 #### Scenario: The format authority answers the rulebook's usage
 - **WHEN** a reader consults the content directory's `README.md` on
@@ -616,6 +619,10 @@ deny-for-certain / remind-for-fuzzy authoring guidance.
 - **THEN** it explains both hook events over added lines, the rule format
   with a worked example, the sources and their precedence, and states that
   rules consume no model context until one fires
+
+#### Scenario: The standalone guide carries its marker and fits its cap
+- **WHEN** `docs_lint.py` runs over `docs/guardrails.md`
+- **THEN** it exits 0 with the file marked `reference`
 
 ### Requirement: External store root
 id: store-root-key

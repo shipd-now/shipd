@@ -1,23 +1,24 @@
+<!-- doc-type: reference -->
+
 # The oracle
 
-Some decisions can't be read out of the codebase. Which retention window? Which
-naming convention? Which of two equally defensible layouts does this team
-actually use? Historically the only way to settle one was to interrupt a human.
+Some decisions do not live in the codebase. Which retention window? Which
+naming convention? Which of two defensible layouts does this team use?
+Settling one used to mean interrupting a human.
 
-The **oracle** is the rung in between. It is a non-interactive
-sub-agent (`s:oracle`) that takes **one compact decision** — the decision, its
-options, and your recommended default — searches the durable knowledge the
-workspace already holds, and returns one of exactly two verdicts: a **cited
-recommendation**, or an **admission that nobody has decided this yet**, filed
-as a question for a person.
+The **oracle** is the rung in between. It is a non-interactive sub-agent
+(`s:oracle`). It takes one compact decision — the decision, its options, and
+your recommended default. It searches the durable knowledge the workspace
+already holds. It returns one of exactly two verdicts: a cited recommendation,
+or an admission that nobody has decided this yet.
 
-It never asks you anything and never blocks its caller. Every spawn ends in a
-verdict.
+The oracle never asks you anything and never blocks its caller. Every spawn
+ends in a verdict.
 
 ## The ladder
 
-The oracle sits in the middle of a three-rung ladder: **read → oracle →
-human**. Each rung is cheaper than the one above it, so you only climb when the
+The oracle sits in the middle of a three-rung ladder: read, then oracle, then
+human. Each rung costs less than the one above it. You climb only when the
 rung below comes up empty.
 
 ```mermaid
@@ -42,18 +43,17 @@ flowchart TD
     gated -. "only on your express yes, as advisory<br/>anything else discards the block" .-> oracle
 ```
 
-Those dotted arrows back to rung 2 are the point: **an answer you give once can
-be captured**, so the same question never reaches you twice. Not every answer
-earns that, though — your reply is classified before anything is written, and
-only the durable kind becomes standing knowledge (see
+The dotted arrows back to rung 2 carry the point. An answer you give once can
+become standing knowledge, so the same question never reaches you twice. Not
+every answer earns that. The capture path classifies your reply before it
+writes anything, and only the durable kind settles into the store (see
 [What gets captured](#what-gets-captured)). `/s:teach` later distills the
-captured queue entries into proper wiki pages, which is where the knowledge
-finally settles.
+captured queue entries into proper wiki pages.
 
 ## The two verdicts
 
-The oracle's reply always begins with a first line of exactly `ANSWER` or
-`INSUFFICIENT`, so callers branch on it mechanically.
+The oracle's reply always opens with a first line of exactly `ANSWER` or
+`INSUFFICIENT`. Callers branch on that line mechanically.
 
 ### `ANSWER` — somebody already decided this
 
@@ -69,23 +69,23 @@ to log.md; entries are never rewritten in place."
 
 Every `ANSWER` carries:
 
-- **one position**, not a menu of alternatives — you asked for an opinion;
-- **`Cited:` line(s)** naming what backs it — a wiki page as `[[slug]]`, an
-  answered queue entry as `queue q-<slug>`, or a repo artifact
-  (`verified/<capability>`, `epic/<slug>`, `research/<slug>`). A page from the
-  personal memory store is marked `(personal)`, one from an enclosing
-  workspace's inherited store `(inherited <ws-root>)`, and one from a base
-  store `(base)`, so you can see which store answered;
-- **at least one `Evidence:` line** quoting a cited source **verbatim**.
+- **one position**, not a menu of alternatives. You asked for an opinion.
+- **`Cited:` lines** naming what backs the position: a wiki page as
+  `[[slug]]`, an answered queue entry as `queue q-<slug>`, or a repo artifact.
+- **at least one `Evidence:` line** quoting a cited source verbatim.
+
+A repo artifact cites as `verified/<capability>`, `epic/<slug>`, or
+`research/<slug>`. Each `Cited:` line also names its store. The oracle marks a
+personal memory page `(personal)`, a page from an enclosing workspace
+`(inherited <ws-root>)`, and one from a base store `(base)`.
 
 #### The advisory variant
 
-Not everything the oracle knows is a rule. Workflow shortcuts, process habits
-and personal preferences are only ever recorded on your express instruction,
-and they are stored as **advisory** knowledge (see
-[What gets captured](#what-gets-captured)).
-When an answer rests on such a source, the `ANSWER` carries an
-`Authority: advisory` line right after its position:
+Not everything the oracle knows is a rule. Workflow shortcuts, process habits,
+and personal preferences reach the store only on your express instruction, as
+**advisory** knowledge (see [What gets captured](#what-gets-captured)). When an
+answer rests on such a source, the `ANSWER` carries an `Authority: advisory`
+line right after its position:
 
 ```
 ANSWER
@@ -96,18 +96,17 @@ Evidence: queue q-merge-style — "advisory: always squash-merge with imperative
 one-line subjects"
 ```
 
-Advisory is not a third verdict — the first line is still `ANSWER`, so callers
-branch on it exactly as before and then check for the authority line.
+Advisory is not a third verdict. The first line stays `ANSWER`, so callers
+branch exactly as before and then check for the authority line.
 
-What the line changes is what the caller does with the answer. An advisory
-`ANSWER` is a **recommended, citable default, not a settlement**: `/s:ask`
-still puts the decision to you, with the oracle's position as the
-recommended-first option and its citation named, so you can accept it in one
-keystroke or override it. Nothing is settled behind your back on a preference
-you once expressed.
+The line changes what the caller does with the answer. An advisory `ANSWER`
+acts as a **recommended, citable default, not a settlement**. `/s:ask` puts the
+decision to you. It lists the oracle's position as the recommended-first
+option, names its citation, and lets you accept or override it in one
+keystroke. Nothing settles behind your back on a preference you once expressed.
 
-An `ANSWER` with **no** `Authority:` line is binding, as before: the decision
-was made, the citation says where, and you are not asked again.
+An `ANSWER` with **no** `Authority:` line is binding, as before. Somebody made
+the decision, the citation says where, and the oracle never asks you again.
 
 ### `INSUFFICIENT` — nobody has decided this yet
 
@@ -119,31 +118,33 @@ Recommendation: prune after one release
 Queued: q-answered-queue-retention
 ```
 
-The compact question is filed in the workspace wiki's queue as
-`q-answered-queue-retention` with `Answer: pending`, and the caller takes it
-from there — `/s:ask` puts it to you in a dialog, `/s:plan` folds it into its
-question round, and an unattended autopilot run parks on the recommendation
-rather than blocking. When the repo has no discoverable workspace the line
-reads `Queued: none`: there is no store to file it in, so an answer you give
-is used for that session only and nothing durable is written.
+The oracle files the compact question in the workspace wiki's queue as
+`q-answered-queue-retention`, carrying `Answer: pending`. The caller takes it
+from there. `/s:ask` puts it to you in a dialog. `/s:plan` folds it into its
+question round. An unattended autopilot run parks on the recommendation rather
+than blocking.
+
+When the repo has no discoverable workspace, the line reads `Queued: none`. No
+store exists to file the question in, so an answer you give holds for that
+session only, and nothing durable lands.
 
 ## The bar: definitive evidence, or nothing
 
-**`INSUFFICIENT` is the oracle's default verdict.** It is a retrieval rung, not
-a consultant, and it speaks only for what the sources actually say:
+**`INSUFFICIENT` is the oracle's default verdict.** The oracle is a retrieval
+rung, not a consultant, and it speaks only for what its sources actually say:
 
 - **It never answers from model knowledge.** Its own view of your decision,
   however sensible, is not evidence.
 - **Topical relevance is not enough.** A page about caching does not answer
-  "which TTL". `ANSWER` requires a source that states a position on the
-  *specific* decision asked — which is what the verbatim `Evidence:` quote lets
-  you check at a glance.
-- **Callers enforce it too.** `/s:ask` and `/s:plan` demote an `ANSWER` that
-  arrives without a `Cited:` or an `Evidence:` line back to `INSUFFICIENT` and
-  ask you instead. A demotion costs one question; a confident guess costs a
-  wrong decision.
+  "which TTL". `ANSWER` needs a source that states a position on the *specific*
+  decision asked.
+- **Callers enforce the bar too.** `/s:ask` and `/s:plan` demote an `ANSWER`
+  that arrives without a `Cited:` or an `Evidence:` line, and ask you instead.
 
-So a thin wiki produces a lot of `INSUFFICIENT` — by design. Each one you
+The verbatim `Evidence:` quote is what lets you check that bar at a glance. A
+demotion costs one question. A confident guess costs a wrong decision.
+
+So a thin wiki produces many `INSUFFICIENT` verdicts, by design. Each one you
 answer with a durable position thickens the store.
 
 ## Using it directly
@@ -152,71 +153,74 @@ answer with a durable position thickens the store.
 /s:ask should the queue prune answered entries, and after how long?
 ```
 
-The skill shapes your request into a compact question (no interview round),
-spawns the oracle, and relays the verdict. On an advisory `ANSWER` it puts the
-decision to you with the oracle's position recommended first, cited, rather
-than treating it as settled. On `INSUFFICIENT` it asks you the question in a
-single dialog with the oracle's recommendation listed first, distills your
-reply, classifies it, and — when the answer is one worth keeping — writes it
-back to the queued entry, so the next caller to hit that decision gets an
-`ANSWER`.
+The skill shapes your request into a compact question, spawns the oracle, and
+relays the verdict. It opens no interview round.
+
+On an advisory `ANSWER` it puts the decision to you, with the oracle's position
+recommended first and cited, rather than treating it as settled. On
+`INSUFFICIENT` it asks you the question in a single dialog, listing the
+oracle's recommendation first. It then distills your reply, classifies it, and
+writes a keepable answer back to the queued entry. The next caller to hit that
+decision gets an `ANSWER`.
 
 `/s:plan` consults the same rung automatically before any question round it
-would otherwise open, and puts your typed answers through the same
-classification. You do not invoke the oracle there; you just get asked less.
+would otherwise open. It puts your typed answers through the same
+classification. You never invoke the oracle there; you simply get asked less.
 
 ## What gets captured
 
-Your typed answer is **classified before any queue write**. The queue is a
-pending-only worklist and the wiki is standing knowledge, so a one-off
-decision or a passing preference must not silently become either. The capture
-path sorts every distilled reply into exactly one of three tiers — the
-shipped rubric is `plugins/s/skills/ask/references/capture-rubric.md`:
+The capture path classifies your typed answer **before any queue write**. The
+queue is a pending-only worklist, and the wiki is standing knowledge. A one-off
+decision or a passing preference must not silently become either. Every
+distilled reply lands in exactly one of three tiers. The shipped rubric is
+`plugins/s/skills/ask/references/capture-rubric.md`.
 
-**Include — captured as binding.** Durable engineering positions that shape
-future work and that no single repo artifact already evidences: "never
+**Include — captured as binding.** Durable engineering positions shape future
+work, and no single repo artifact already evidences them. Examples: "never
 hard-delete; soft-delete flags plus an audit log", "async accessors are
-`fetch*`, never `get*`". These are written to the queued entry with
-`wiki-queue-answer`, and the oracle later relays them as binding `ANSWER`
-verdicts that settle the decision without asking you again.
+`fetch*`, never `get*`". `wiki-queue-answer` writes them to the queued entry.
+The oracle later relays them as binding `ANSWER` verdicts that settle the
+decision without asking you again.
 
-**Exclude — discarded, nothing stored.** Answers whose durable record already
-lives somewhere better, or that are explicitly scoped to one change: "pin
-Node 22 in `.nvmrc`" (the file is its own record), "ship this migration
-without a rollback, just this once". The pending block is removed with
-`wiki-queue-discard` and a one-line reason, and nothing is written to the
-wiki; the change's own plan ledger still records how the decision went. A
-stale copy of a self-evidencing fact is worse than no copy.
+**Exclude — discarded, nothing stored.** Some answers already have a better
+durable record, or scope explicitly to one change. Examples: "pin Node 22 in
+`.nvmrc`" (the file is its own record), "ship this migration without a
+rollback, just this once". `wiki-queue-discard` removes the pending block
+with a one-line reason and writes nothing to the wiki. The change's own plan
+ledger still records how the decision went. A stale copy of a self-evidencing
+fact is worse than no copy.
 
-**Consent-gated — advisory, and only if you say so.** Workflow shortcuts,
-process habits, and personal preferences: "always squash-merge", "stop asking
-and just run the unlock instead". These are **never captured by inference** —
-a vented annoyance is not a standing instruction. You get one explicit
-record-this question, and only your express affirmative captures, always via
-`wiki-queue-answer --advisory`. Declined, deferred, or left unaddressed, the
-block is discarded like an excluded one. What is recorded this way is exactly
-what comes back later carrying `Authority: advisory`: recommended, never
-forced. For a preference about you rather than about the workspace,
-`/s:remember` and the personal memory store are usually the better home.
+**Consent-gated — advisory, and only if you say so.** These are workflow
+shortcuts, process habits, and personal preferences. Examples: "always
+squash-merge", "stop asking and just run the unlock instead". The capture path
+**never infers them** — a vented annoyance is not a standing instruction. You
+get one explicit record-this question, and only your express affirmative
+captures, always via `wiki-queue-answer --advisory`. Declined, deferred, or
+left unaddressed, the block goes the way of an excluded one. What lands this
+way is exactly what comes back later carrying `Authority: advisory`:
+recommended, never forced.
 
-A borderline answer leans toward the *less*-capturing tier — an answer left
-uncaptured costs one future question, while one captured wrongly silently
-steers work. And where the verdict reported `Queued: none`, there is no store
-to write to at all: your answer holds for that session and nothing durable is
-captured.
+For a preference about you rather than about the workspace, `/s:remember` and
+the personal memory store are usually the better home.
+
+A borderline answer leans toward the *less*-capturing tier. An answer left
+uncaptured costs one future question; one captured wrongly silently steers
+work. Where the verdict reported `Queued: none`, no store exists to write to at
+all: your answer holds for that session, and nothing durable lands.
 
 ## Correcting an answer
 
-The capture path writes an answer **once**: `wiki-queue-answer` refuses a block
-that is already answered, so nothing silently overwrites what a human said.
+The capture path writes an answer **once**. `wiki-queue-answer` refuses a block
+that already carries an answer, so nothing silently overwrites what a human
+said.
 
-Corrections go through **`/s:teach`**, which is the sole distiller of queue
-entries into wiki pages. Run it to drain answered entries into pages, and edit
-the decision there — a page outranks a raw queue entry on the oracle's ladder,
-so the corrected page is what future spawns cite. During planning, the same
-path is named per consultation as `/s:teach <change> Q<n>`.
+Corrections go through **`/s:teach`**, the sole distiller of queue entries into
+wiki pages. Run it to drain answered entries into pages, then edit the decision
+on the page. A page outranks a raw queue entry on the oracle's ladder, so
+future spawns cite the corrected page. During planning, the same path appears
+per consultation as `/s:teach <change> Q<n>`.
 
-And a typed answer always supersedes the oracle: you are the final authority,
+A typed answer always supersedes the oracle. You are the final authority, and
 the wiki merely caches your standing answer.
 
 ## See also
