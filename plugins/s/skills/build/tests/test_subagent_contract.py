@@ -262,6 +262,14 @@ class ForegroundClaimDisciplineContractTest(unittest.TestCase):
         section = self.loop_section().lower()
         self.assertIn("long-running verification", section)
 
+    def test_wait_timeout_default_matches_script(self):
+        """The `--wait` default this contract quotes to the worker must
+        match claim_task.sh's own TIMEOUT= (pinned by
+        test_claim_task.py::test_wait_default_is_90_seconds), so the two
+        can't silently drift apart."""
+        self.assertIn("default 90", self.text)
+        self.assertNotIn("default 600", self.text)
+
 
 class OrchestratorStaleClaimCheckContractTest(unittest.TestCase):
     """The build skill's fan-out phase (foreground-claim-discipline,
@@ -300,6 +308,14 @@ class OrchestratorStaleClaimCheckContractTest(unittest.TestCase):
     def test_claim_never_reclaims_on_its_own(self):
         section = self.phase3_section().lower()
         self.assertIn("never reclaim", section)
+
+    def test_wait_timeout_default_matches_script(self):
+        """The coordinator script reference's own `--timeout <secs>`
+        default must match claim_task.sh's TIMEOUT= (pinned by
+        test_claim_task.py::test_wait_default_is_90_seconds), so the two
+        can't silently drift apart."""
+        self.assertRegex(self.text, r"--timeout <secs>`\s*\(default\s+90\)")
+        self.assertNotRegex(self.text, r"\(default\s+600\)")
 
 
 if __name__ == "__main__":
