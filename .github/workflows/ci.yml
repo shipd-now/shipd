@@ -33,6 +33,9 @@ jobs:
       - name: Run video-ingest test suite
         run: python3 -m unittest discover -s plugins/s/skills/video-ingest/tests -v
 
+      - name: Run drive test suite
+        run: python3 -m unittest discover -s plugins/s/skills/drive/tests -v
+
       - name: Run document test suite
         run: python3 -m unittest discover -s plugins/s/skills/document/tests -v
 

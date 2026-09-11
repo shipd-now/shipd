@@ -25,6 +25,7 @@ below:
 | `/s:build [change]` | Plan, delegate to execution sub-agents, verify, and ship a change end to end. | `/s:build export-json-flag` |
 | `/s:doctor` | Diagnose a shipd environment and run only the remedies you consent to. | `/s:doctor` |
 | `/s:document` | Author or revise a doc against the shipd documentation standard, then lint it clean. | `/s:document Rewrite docs/api-keys.md as a reference` |
+| `/s:drive` | Drive a real browser to operate an app, verify a change, and optionally record a branded demo. | `/s:drive Verify the checkout flow still works` |
 | `/s:duck` | Talk an idea through with an adversarial, read-only rubber-duck critic before planning it. | `/s:duck Should the queue be per-tenant?` |
 | `/s:epic` | Decompose a feature into an epic of member changes with shared decisions. | `/s:epic Add multi-tenant billing` |
 | `/s:explain <epic>` | Read a shipd epic through the engine and explain what it is for and where it stands. | `/s:explain autonomous-delivery` |

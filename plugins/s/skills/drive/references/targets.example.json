@@ -1,0 +1,35 @@
+{
+  "//": "Reference ~/.shipd/drive/targets.json for /s:drive (shipd-drive, drive-targets-config). A repository may override entries by name in <content-dir>/drive/targets.json — only the named targets differ; entries this file declares and the repo file does not are inherited unchanged. Copy this file's shape to ~/.shipd/drive/targets.json and edit; the `//`-prefixed keys below are inert documentation, safe to keep or delete.",
+  "authCacheTtlHours": 8,
+  "// authCacheTtlHours": "Hours a cached login (~/.shipd/drive/auth/<target>.json) is reused before logging in again (drive-auth-cache). Default 8.",
+  "default": "staging",
+  "// default": "The target name /s:drive assumes when the request names none and more than one target is configured; otherwise the skill lists targets as plain text and asks (drive-skill-flow).",
+  "targets": {
+    "// targets": "Each entry declares a url and an auth recipe of kind none, env, or command.",
+    "staging": {
+      "url": "https://staging.example.com",
+      "auth": {
+        "kind": "env",
+        "// kind=env": "Reads two environment variables already set in the caller's shell. The CLI never writes them to disk or to a worker's argv — only to the worker's environment.",
+        "usernameEnv": "DRIVE_STAGING_USERNAME",
+        "passwordEnv": "DRIVE_STAGING_PASSWORD"
+      }
+    },
+    "prod-readonly": {
+      "url": "https://app.example.com",
+      "auth": {
+        "kind": "command",
+        "// kind=command": "Runs two argv arrays and takes each secret from that command's stdout, trailing newline stripped. The `op item get` example below is one documented recipe built on the 1Password CLI — never a requirement; any command that prints a secret to stdout works.",
+        "usernameCmd": ["op", "item", "get", "shipd-drive-prod-readonly", "--fields", "label=username", "--reveal"],
+        "passwordCmd": ["op", "item", "get", "shipd-drive-prod-readonly", "--fields", "label=password", "--reveal"]
+      }
+    },
+    "public-demo": {
+      "url": "https://demo.example.com",
+      "auth": {
+        "kind": "none",
+        "// kind=none": "No login step — the session starts with no storage state."
+      }
+    }
+  }
+}
