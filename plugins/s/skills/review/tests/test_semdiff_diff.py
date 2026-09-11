@@ -15,7 +15,12 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPT = os.path.normpath(os.path.join(HERE, "..", "scripts", "semdiff.py"))
+SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
+SCRIPT = os.path.join(SCRIPTS, "semdiff.py")
+if SCRIPTS not in sys.path:
+    sys.path.insert(0, SCRIPTS)
+
+import semdiff  # noqa: E402
 
 HAVE_DIFFT = shutil.which("difft") is not None
 
@@ -275,6 +280,37 @@ class AddedFileContentTest(unittest.TestCase):
     @unittest.skipUnless(HAVE_DIFFT, "difftastic not installed")
     def test_difft_engine_oversized_body_truncated(self):
         self._assert_oversized_body_truncated()
+
+
+class SummarizeChunksLineNumberTest(unittest.TestCase):
+    """CI-visible guard for the 0-based-to-1-based line number normalization
+    in `summarize_chunks`. The difft-engine tests above are gated behind
+    `@unittest.skipUnless(HAVE_DIFFT, ...)` and CI never installs difftastic,
+    so without this test the normalization has no regression guard in the
+    gating pipeline. This test calls `summarize_chunks` directly on a
+    synthetic difft-shaped `chunks` argument — no difft binary required — so
+    it always runs, including in CI."""
+
+    def test_line_number_normalized_to_one_based(self):
+        # Shaped like real difft JSON: a list of chunks, each a list of line
+        # dicts with "lhs"/"rhs" keys carrying a 0-based "line_number" and a
+        # "changes" list of {"content": ...} tokens.
+        chunks = [
+            [
+                {
+                    "lhs": None,
+                    "rhs": {
+                        "line_number": 9,
+                        "changes": [{"content": "new text"}],
+                    },
+                },
+            ],
+        ]
+        hunks = semdiff.summarize_chunks(chunks)
+        self.assertEqual(len(hunks), 1)
+        self.assertEqual(hunks[0]["side"], "after")
+        self.assertEqual(hunks[0]["line"], 10)
+        self.assertEqual(hunks[0]["snippet"], "new text")
 
 
 class EmptyEndpointTest(unittest.TestCase):

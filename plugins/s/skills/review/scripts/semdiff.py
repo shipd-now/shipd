@@ -292,14 +292,18 @@ def _inline_content(text):
     truncated = len(lines) > ADDED_CONTENT_MAX_LINES
     if truncated:
         lines = lines[:ADDED_CONTENT_MAX_LINES]
-    numbered = [f"{i}: {line}" for i, line in enumerate(lines, start=1)]
+    numbered = []
+    total_bytes = 0
+    for i, line in enumerate(lines, start=1):
+        entry = f"{i}: {line}"
+        entry_bytes = len(entry.encode("utf-8"))
+        added_bytes = entry_bytes + (1 if numbered else 0)  # "\n" join separator
+        if total_bytes + added_bytes > ADDED_CONTENT_MAX_BYTES:
+            truncated = True
+            break
+        numbered.append(entry)
+        total_bytes += added_bytes
     content = "\n".join(numbered)
-    if len(content.encode("utf-8")) > ADDED_CONTENT_MAX_BYTES:
-        truncated = True
-        while numbered and (
-                len("\n".join(numbered).encode("utf-8")) > ADDED_CONTENT_MAX_BYTES):
-            numbered.pop()
-        content = "\n".join(numbered)
     return content, truncated
 
 
@@ -334,7 +338,7 @@ def summarize_chunks(chunks):
                 hunks.append({
                     "side": "before" if side == "lhs" else "after",
                     # difftastic reports a 0-based line_number; normalize to
-                    # 1-based so both engines agree with `git -n` truth.
+                    # 1-based so both engines agree with `grep -n` truth.
                     "line": line_number + 1 if line_number is not None else None,
                     "snippet": snippet,
                 })
