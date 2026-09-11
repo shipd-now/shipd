@@ -139,7 +139,9 @@ the adversarial rubber-duck critic before planning it, `/s:prd` to interview
 for and install a workspace PRD — the discover phase, `/s:plan` to
 spec work, `/s:build` to execute it, `/s:fix` to debug a reported problem
 against the spec library and fix it, `/s:review` for a semantic review of
-local changes before pushing, `/s:gate` to set up that review as a
+local changes before pushing, `/s:drive` to drive a real browser against a
+running app and verify a change with a `PASS`/`FAIL` verdict (optionally
+recording a branded demo video), `/s:gate` to set up that review as a
 repository's merge gate (and `/s:gate update` to refresh an already-gated
 repository's managed files to the running plugin version),
 `/s:status` for lifecycle status,
