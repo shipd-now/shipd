@@ -73,9 +73,11 @@ class _FakeSessionServer:
     with, standing in for events the real daemon would have buffered
     before this test's driving verb ever ran."""
 
-    def __init__(self, socket_path, console_events=None):
+    def __init__(self, socket_path, console_events=None,
+                 reply_overrides=None):
         self.socket_path = socket_path
         self.console_events = console_events or []
+        self.reply_overrides = reply_overrides or {}
         self.received = []
         self._srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         if os.path.exists(socket_path):
@@ -98,7 +100,10 @@ class _FakeSessionServer:
             with conn:
                 request = _read_request(conn)
                 self.received.append(request)
-                if request.get("op") == "console":
+                op = request.get("op")
+                if op in self.reply_overrides:
+                    _write_reply(conn, self.reply_overrides[op])
+                elif op == "console":
                     _write_reply(conn, {"ok": True,
                                         "events": self.console_events})
                 else:
@@ -207,9 +212,10 @@ class DriveSessionTestBase(unittest.TestCase):
             json.dump({"target": target, "pid": pid,
                       "socket": sock_path or self.socket_path()}, fh)
 
-    def start_fake_server(self, console_events=None):
+    def start_fake_server(self, console_events=None, reply_overrides=None):
         server = _FakeSessionServer(self.socket_path(),
-                                    console_events=console_events)
+                                    console_events=console_events,
+                                    reply_overrides=reply_overrides)
         self._servers.append(server)
         return server
 
@@ -298,6 +304,47 @@ class SessionStartReplacesDifferentTargetTest(DriveSessionTestBase):
         with open(self.state_path(), encoding="utf-8") as fh:
             state = json.load(fh)
         self.assertEqual(state.get("target"), "new-target")
+
+
+class FailedVerbExitsNonZeroTest(DriveSessionTestBase):
+    """drive-session: "If a reply carries a falsey `ok` field, then the
+    verb SHALL still print that reply to stdout unchanged and SHALL exit
+    non-zero" — covering the `wait` timeout scenario the requirement names
+    explicitly, plus one other driving verb so the fix is known to be the
+    shared `_print_reply` return value, not a `wait`-only special case."""
+
+    def test_wait_timeout_reply_is_printed_and_exits_non_zero(self):
+        timeout_reply = {
+            "ok": False,
+            "error": "Locator.wait_for: Timeout 20000ms exceeded.",
+        }
+        self.start_fake_server(reply_overrides={"wait": timeout_reply})
+        self.write_state("app", os.getpid())
+
+        r = self.run_cli("wait", "#search", "--timeout", "20")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Timeout 20000ms exceeded", r.stdout)
+        printed = json.loads(r.stdout)
+        self.assertEqual(printed, timeout_reply)
+
+    def test_a_failed_click_reply_is_printed_and_exits_non_zero(self):
+        failed_reply = {"ok": False, "error": "no such element: #missing"}
+        self.start_fake_server(reply_overrides={"click": failed_reply})
+        self.write_state("app", os.getpid())
+
+        r = self.run_cli("click", "#missing")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no such element: #missing", r.stdout)
+        printed = json.loads(r.stdout)
+        self.assertEqual(printed, failed_reply)
+
+    def test_a_successful_reply_still_exits_zero(self):
+        # Guards against an overcorrection that fails every reply outright.
+        self.start_fake_server()
+        self.write_state("app", os.getpid())
+
+        r = self.run_cli("open", "https://app.example/dashboard")
+        self.assertEqual(r.returncode, 0, r.stderr)
 
 
 class SessionStatusReportsStaleSocketTest(DriveSessionTestBase):

@@ -69,6 +69,21 @@ print(json.dumps({{"ok": True, "storageState": out_path}}))
 """
 
 
+# A target whose auth recipe is `none` has no login to perform at all
+# (drive-auth-cache): `login` short-circuits on that kind before any worker
+# runs, at any cache age. So the TTL-expiry and failed-login paths below
+# can only be exercised through a target that really does log in, and those
+# two tests ask `write_target_config` for this `env` recipe instead of the
+# `none` one it defaults to. The secrets the recipe names reach the CLI
+# through `run_cli`'s `extra_env` and never through a file, mirroring how a
+# real `env` recipe is fed.
+ENV_AUTH = {"kind": "env",
+            "username": "DRIVE_LOGIN_USERNAME",
+            "password": "DRIVE_LOGIN_PASSWORD"}
+LOGIN_ENV = {"DRIVE_LOGIN_USERNAME": "driver@example",
+             "DRIVE_LOGIN_PASSWORD": "s3cret"}
+
+
 class DriveAuthCacheTestBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="drive-auth-cache-")
@@ -92,11 +107,11 @@ class DriveAuthCacheTestBase(unittest.TestCase):
         return os.path.join(
             self.home, ".shipd", "drive", "auth", "%s.json" % target)
 
-    def write_target_config(self, ttl_hours=None):
+    def write_target_config(self, ttl_hours=None, auth=None):
         data = {
             "targets": {
                 "app": {"url": "https://app.example",
-                        "auth": {"kind": "none"}},
+                        "auth": {"kind": "none"} if auth is None else auth},
             },
         }
         if ttl_hours is not None:
@@ -143,7 +158,7 @@ class FreshCacheSkipsLoginTest(DriveAuthCacheTestBase):
 
 class ExpiredCacheReLoginsTest(DriveAuthCacheTestBase):
     def test_expired_auth_file_runs_the_login_worker_and_overwrites_it(self):
-        self.write_target_config(ttl_hours=1)
+        self.write_target_config(ttl_hours=1, auth=ENV_AUTH)
         auth_path = self.auth_path()
         self.write_json(auth_path, {"cookies": ["stale"]})
         old = time.time() - 2 * 3600  # 2h old, past the 1h TTL
@@ -151,7 +166,8 @@ class ExpiredCacheReLoginsTest(DriveAuthCacheTestBase):
 
         spy_log = os.path.join(self.tmp, "spy.json")
         r = self.run_cli(
-            "login", "app", extra_env={"DRIVE_TEST_SPY_LOG": spy_log})
+            "login", "app",
+            extra_env={"DRIVE_TEST_SPY_LOG": spy_log, **LOGIN_ENV})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(
             os.path.isfile(spy_log),
@@ -160,16 +176,40 @@ class ExpiredCacheReLoginsTest(DriveAuthCacheTestBase):
             self.assertEqual(json.load(fh), {"cookies": ["fresh"]})
 
 
+class NoAuthTargetSkipsLoginTest(DriveAuthCacheTestBase):
+    def test_none_auth_target_performs_no_login(self):
+        # No cache file, and no credentials in the environment (`run_cli`
+        # builds its subprocess env from scratch, so DRIVE_LOGIN_USERNAME
+        # and DRIVE_LOGIN_PASSWORD are never set here): a `kind: "none"`
+        # target must skip the login worker entirely rather than invoke it
+        # and let it fail demanding those two variables (drive-auth-cache).
+        self.write_target_config()
+        auth_path = self.auth_path()
+        self.assertFalse(os.path.isfile(auth_path))
+
+        spy_log = os.path.join(self.tmp, "spy.json")
+        r = self.run_cli(
+            "login", "app", extra_env={"DRIVE_TEST_SPY_LOG": spy_log})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(
+            os.path.isfile(spy_log),
+            "the login worker ran for a kind: \"none\" target")
+        self.assertFalse(
+            os.path.isfile(auth_path),
+            "a cache file was written for a kind: \"none\" target")
+
+
 class FailedLoginLeavesCacheUntouchedTest(DriveAuthCacheTestBase):
     def test_failed_login_leaves_the_previous_auth_file_untouched(self):
-        self.write_target_config(ttl_hours=1)
+        self.write_target_config(ttl_hours=1, auth=ENV_AUTH)
         auth_path = self.auth_path()
         self.write_json(auth_path, {"cookies": ["previous"]})
         old = time.time() - 2 * 3600  # past the 1h TTL, so login is tried
         os.utime(auth_path, (old, old))
 
         r = self.run_cli(
-            "login", "app", extra_env={"DRIVE_TEST_SPY_FAIL": "1"})
+            "login", "app",
+            extra_env={"DRIVE_TEST_SPY_FAIL": "1", **LOGIN_ENV})
         self.assertNotEqual(r.returncode, 0)
         # The previous cache is exactly as it was — never partially
         # overwritten, never deleted.

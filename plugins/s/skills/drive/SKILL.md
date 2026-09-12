@@ -66,11 +66,14 @@ supplies evidence or state the next stage depends on.
    request needs `record` or `post`. **If a required tool is missing, report
    it and stop** — offer `drive.py doctor --fix` as the next step rather than
    attempting the pipeline against a toolchain `doctor` has already flagged.
-3. **Login.** Run `drive.py login <target>`. A cached storage-state file
-   inside its TTL is reused with no network login; an expired or missing one
-   triggers a fresh login through the browser worker. A failed login reports
-   its debug screenshot path — read it before retrying, never guess at what
-   went wrong.
+3. **Login.** Run `drive.py login <target>`. A target whose `auth` recipe is
+   kind `none` performs no login at all: the verb reports that there is
+   nothing to do, writes no cache file, and exits zero — it is a no-op, never
+   a failure. Otherwise a cached storage-state file inside its TTL is reused
+   with no network login, and an expired or missing one triggers a fresh
+   login through the browser worker. A failed login reports its debug
+   screenshot path — read it before retrying, never guess at what went
+   wrong.
 4. **Session.** Run `drive.py session start <target>`. This spawns the
    one-browser session daemon that the rest of the run drives — every
    navigation, click, and read happens against this single browser and page,

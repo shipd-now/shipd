@@ -68,6 +68,18 @@ def _mode(path):
 # --- Finding 1: the auth cache directory and file -------------------------
 
 
+# The login tests below declare an `env` auth recipe rather than a `none`
+# one: `login` short-circuits on `kind: "none"` before `_ensure_private_dir`
+# runs (drive-auth-cache), and a target that never writes a cache file has
+# no auth directory to make private. The mode contract these tests pin is
+# about a login that really does write storage state, so they drive one.
+ENV_AUTH = {"kind": "env",
+            "username": "DRIVE_LOGIN_USERNAME",
+            "password": "DRIVE_LOGIN_PASSWORD"}
+LOGIN_ENV = {"DRIVE_LOGIN_USERNAME": "driver@example",
+             "DRIVE_LOGIN_PASSWORD": "s3cret"}
+
+
 class AuthCacheDirIsPrivateTest(unittest.TestCase):
     """`drive.py login` (drive-auth-cache) must leave
     `~/.shipd/drive/auth/` at mode `0700`, whether it creates that
@@ -97,8 +109,10 @@ class AuthCacheDirIsPrivateTest(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
 
-    def run_cli(self, *args, path_dir):
+    def run_cli(self, *args, path_dir, extra_env=None):
         env = {"PATH": path_dir, "HOME": self.home}
+        if extra_env:
+            env.update(extra_env)
         return subprocess.run(
             [sys.executable, SCRIPT, *args],
             capture_output=True, text=True, env=env)
@@ -107,12 +121,13 @@ class AuthCacheDirIsPrivateTest(unittest.TestCase):
         self.write_json(self.user_targets_path(), {
             "targets": {
                 "app": {"url": "https://app.example",
-                        "auth": {"kind": "none"}},
+                        "auth": ENV_AUTH},
             },
         })
         bindir = stub_bindir(self.tmp, "bin", ["uv"])
 
-        r = self.run_cli("login", "app", path_dir=bindir)
+        r = self.run_cli("login", "app", path_dir=bindir,
+                         extra_env=LOGIN_ENV)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(os.path.isdir(self.auth_dir()))
         self.assertEqual(_mode(self.auth_dir()), 0o700)
@@ -124,7 +139,7 @@ class AuthCacheDirIsPrivateTest(unittest.TestCase):
         self.write_json(self.user_targets_path(), {
             "targets": {
                 "app": {"url": "https://app.example",
-                        "auth": {"kind": "none"}},
+                        "auth": ENV_AUTH},
             },
         })
         os.makedirs(self.auth_dir(), exist_ok=True)
@@ -132,7 +147,8 @@ class AuthCacheDirIsPrivateTest(unittest.TestCase):
         self.assertEqual(_mode(self.auth_dir()), 0o755)
         bindir = stub_bindir(self.tmp, "bin", ["uv"])
 
-        r = self.run_cli("login", "app", path_dir=bindir)
+        r = self.run_cli("login", "app", path_dir=bindir,
+                         extra_env=LOGIN_ENV)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(_mode(self.auth_dir()), 0o700)
 
