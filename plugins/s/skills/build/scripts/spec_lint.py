@@ -1558,22 +1558,25 @@ def check_task_traceability(root, change, errors):
 
 def check_task_satisfiability(root, change, errors):
     """Refuse a change whose ``tasks.md`` `[P<n>]` group configuration leaves
-    some pending task unreachable (shipd-spec-lint
-    ``task-group-satisfiability``). Drains the parsed task states by
-    repeatedly marking every ready pending task (`ready_task_ordinals`) done
-    until no further task becomes ready — the same coordinator readiness
-    rule, run to a fixpoint rather than answered once. Any task still
-    pending (``" "``) when the drain stalls can never become claimable, and
-    is reported by its checkbox ordinal, the coordinator's stable task id.
-    A change with no ``tasks.md`` has no configuration to refuse, so the
-    check is a no-op there."""
+    some task unreachable (shipd-spec-lint ``task-group-satisfiability``).
+    Reads the group configuration *alone*, independently of the tasks'
+    current checkbox states: every task is normalized to pending before the
+    drain, so a task claimed (``"~"``) or completed (``"x"``) by a build in
+    progress can neither manufacture a finding nor mask one. Drains that
+    all-pending list by repeatedly marking every ready task
+    (`ready_task_ordinals`) done until no further task becomes ready — the
+    same coordinator readiness rule, run to a fixpoint rather than answered
+    once. Any task still pending when the drain stalls can never become
+    claimable, and is reported by its checkbox ordinal, the coordinator's
+    stable task id. A change with no ``tasks.md`` has no configuration to
+    refuse, so the check is a no-op there."""
     path = os.path.join(sc.specs_dir(root), "planned", change, "tasks.md")
     if not os.path.isfile(path):
         return
     states = parse_task_states(_read(path))
     if not states:
         return
-    working = list(states)
+    working = [(" ", group) for _state, group in states]
     while True:
         ready = ready_task_ordinals(working)
         if not ready:
