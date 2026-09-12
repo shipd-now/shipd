@@ -16,6 +16,26 @@ below:
 - `--root DIR` — run against a repository root other than the current
   directory.
 
+## How the skills overlap
+
+```mermaid
+venn-beta
+  set loop["The core loop"]
+    text "s:onboard  s:doctor  s:duck  s:plan  s:fix  s:review  s:drive  s:gate  s:status  s:document  s:worktree-hooks"
+  set scale["Bigger than one change"]
+    text "s:epic  s:prd  s:initiative  s:workspace  s:explain"
+  set know["Knowledge"]
+    text "s:remember  s:memory  s:forget"
+  union loop,scale
+    text "s:build  s:autopilot"
+  union loop,know
+    text "s:ask"
+  union scale,know
+    text "s:research  s:video-ingest"
+  union loop,scale,know
+    text "s:teach"
+```
+
 ## /s: commands
 
 | Command | What it does | Example |
@@ -64,7 +84,7 @@ below:
 | `board [text] [--epic EPIC] [--interval N]` | The delivery board (default: full-screen). | `shipd board text` |
 | `render [output] [file] [--plain\|--ascii]` | Markdown with its mermaid diagrams drawn as text (default: full-screen); `--plain` unstyled, `--ascii` ASCII-only lines. | `shipd render output docs/what-is-shipd.md --plain` |
 | `metrics [summary\|record-flow\|forecast\|rollup]` | Delivery metrics (default: summary). | `shipd metrics` |
-| `lint [change] [--epic EPIC] [--initiative INITIATIVE] [--workspace] [--wiki]` | Structurally validate specs and change deltas. | `shipd lint docs-entry-merge` |
+| `lint [change] [--epic EPIC] [--initiative INITIATIVE] [--workspace] [--wiki]` | Structurally validate specs and change deltas. | `shipd lint` |
 | `worktree <change> [--fresh]` | Create the change's worktree, then run the configured post-worktree-scripts. | `shipd worktree add-login-flow` |
 | `doctor` | Preflight this environment for shipd. | `shipd doctor` |
 | `statusline [install] [--settings FILE] [--force]` | Report or register the shipd statusline. | `shipd statusline` |
