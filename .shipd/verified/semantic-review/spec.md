@@ -302,6 +302,48 @@ free of emoji and prose.
 - **THEN** its body still opens with the shared severity marker that
   `parse_severity` reads
 
+#### Scenario: Pass verdict posts green
+- **WHEN** `post` publishes a `pass` verdict to a pull request that carries no
+  marker comment yet
+- **THEN** a summary comment carrying the marker is created and the head SHA's
+  `semantic-review` status state is `success`
+
+#### Scenario: Red verdict anchors findings inline
+- **GIVEN** a `changes-requested` verdict carrying one finding that anchors to
+  the diff and one that does not
+- **WHEN** `post` publishes it
+- **THEN** the anchoring finding becomes an inline comment, the other is folded
+  into the summary, and the status state is `failure`
+
+#### Scenario: Re-post updates instead of stacking
+- **WHEN** `post` runs twice against the same pull request
+- **THEN** exactly one marker comment remains, the second run having edited the
+  first rather than adding another
+
+#### Scenario: Legacy-marker summary is updated, not duplicated
+- **GIVEN** a pull request whose summary comment carries the legacy marker
+  `<!-- am-semantic-review -->`
+- **WHEN** `post` runs against it
+- **THEN** that comment is edited in place, its new body carries the current
+  marker, and exactly one summary remains
+
+#### Scenario: High-only greens over mediums
+- **WHEN** `post --disposition high-only` publishes a verdict whose findings
+  are medium and low only
+- **THEN** the status state is `success`, its description names the acting
+  scope, and the summary carries both findings and a `Disposition:` line
+
+#### Scenario: High-only stays red on a high
+- **WHEN** `post --disposition high-only` publishes a verdict carrying a
+  high-severity finding
+- **THEN** the status state is `failure`
+
+#### Scenario: None is always green and stays honest
+- **WHEN** `post --disposition none --model <tier>` publishes a verdict
+  carrying a high-severity finding
+- **THEN** the status state is `success` and the summary still carries that
+  finding, a `Disposition:` line, and a `Model:` line naming the tier verbatim
+
 ### Requirement: Required-check protection verb
 id: required-check-protect
 
@@ -395,6 +437,25 @@ completed disposition.
   suggestion
 - **THEN** the flow replies on its thread with the concrete reason before
   resolving
+
+#### Scenario: Sensible suggestion is implemented before merge
+- **WHEN** a posted finding's fix is correct and the disposition loop runs
+  under scope `all`
+- **THEN** the fix is edited, committed and pushed, and the review is re-run
+  and re-posted against the new head
+
+#### Scenario: High-only spends judgment only on highs
+- **GIVEN** a posted review carrying one high finding and two medium findings
+- **WHEN** the disposition loop runs under scope `high-only`
+- **THEN** the high finding is implemented or answered individually, the
+  autoreply verb covers the medium threads, and the resolve verb reports an
+  unresolved count of zero
+
+#### Scenario: None costs no disposition judgment
+- **WHEN** the disposition loop runs under scope `none`
+- **THEN** no finding receives an individually authored disposition, the
+  autoreply verb covers every gate thread, and the resolve verb reports an
+  unresolved count of zero
 
 ### Requirement: Poster test coverage in ci
 id: gate-test-coverage
