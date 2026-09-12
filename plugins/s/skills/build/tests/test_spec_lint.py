@@ -947,6 +947,31 @@ class TaskSatisfiabilityTest(unittest.TestCase):
         self.assertTrue(has(errors, "task 3"))
         self.assertTrue(has(errors, "task 4"))
 
+    def test_in_progress_claim_produces_no_finding(self):
+        # A build in progress: the [P1] task is done and the [P2] task is
+        # claimed, with a barrier behind them. The claim is not done, so a
+        # state-dependent drain would stall on the barrier; reading the
+        # group configuration alone, the file is sound and reports nothing.
+        errors = self._errors([
+            "- [x] 1.1 [P1] a",
+            "- [~] 1.2 [P2] b",
+            "- [ ] 1.3 a barrier",
+        ])
+        self.assertEqual(errors, [])
+
+    def test_broken_configuration_is_reported_even_when_all_done(self):
+        # The cycle shape with every task already marked done: the finding
+        # is a property of the configuration, not of how far the build got.
+        errors = self._errors([
+            "- [x] 1.1 [P3] higher group first",
+            "- [x] 1.2 a barrier in between",
+            "- [x] 1.3 [P2] lower group after the barrier",
+        ])
+        self.assertEqual(len(errors), 3)
+        self.assertTrue(has(errors, "task 1"))
+        self.assertTrue(has(errors, "task 2"))
+        self.assertTrue(has(errors, "task 3"))
+
     def test_no_tasks_file_is_a_noop(self):
         change = "no-tasks-change"
         self._write_change(change, task_lines=None)
