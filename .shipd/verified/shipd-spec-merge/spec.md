@@ -2,6 +2,7 @@
 
 ### Requirement: Deterministic keyed merge
 id: deterministic-keyed-merge
+
 The merge engine SHALL apply a change's delta specs into the master library by
 matching each delta requirement to a master requirement using exact `id` slug
 equality only. It SHALL NOT use similarity, fuzzy matching, or any language model
@@ -17,6 +18,7 @@ same result.
 
 ### Requirement: ADDED operation
 id: added-operation
+
 For each entry under `## ADDED Requirements`, the engine SHALL insert the
 requirement into the target capability. If a requirement with that `id` already
 exists in the master, the engine SHALL overwrite it with the incoming content and
@@ -33,10 +35,13 @@ emit a warning naming the `id` (take-newer semantics; never a hard failure).
 
 ### Requirement: MODIFIED operation
 id: modified-operation
+
 For each entry under `## MODIFIED Requirements`, the engine SHALL replace the
 matching master requirement's content with the incoming content. If no
 requirement with that `id` exists in the master, the engine SHALL insert the
-incoming content and emit a warning (take-newer semantics).
+incoming content and emit a warning (take-newer semantics). The engine SHALL
+withhold the entry's `Dropped:` metadata from the master it writes, so a
+merged master carries only its title, `id:` and content.
 
 #### Scenario: Existing requirement is replaced
 - **WHEN** a MODIFIED entry's `id` exists in the master
@@ -48,8 +53,13 @@ incoming content and emit a warning (take-newer semantics).
 - **THEN** the engine inserts the incoming requirement and emits a warning that
   the modified target was not found
 
+#### Scenario: Dropped metadata never reaches the master
+- **WHEN** a MODIFIED entry carrying a `Dropped:` line is merged
+- **THEN** the rewritten master requirement contains no `Dropped:` line
+
 ### Requirement: REMOVED operation
 id: removed-operation
+
 For each entry under `## REMOVED Requirements`, the engine SHALL delete the
 matching master requirement. Each REMOVED entry SHALL include a `Reason` and a
 `Migration` note. If no requirement with that `id` exists, the engine SHALL treat
@@ -66,6 +76,7 @@ the removal as a no-op and emit a warning.
 
 ### Requirement: RENAMED operation
 id: renamed-operation
+
 For each entry under `## RENAMED Requirements` (FROM/TO id pair), the engine SHALL
 re-key the master requirement from the old `id` to the new `id`. If the old `id`
 is absent or the new `id` already exists, the engine SHALL apply the rename
@@ -78,6 +89,7 @@ best-effort under take-newer semantics and emit a warning.
 
 ### Requirement: Base-hash concurrency check
 id: base-hash-concurrency-check
+
 For each MODIFIED or REMOVED entry, the engine SHALL compare the entry's `base:`
 hash to the current content hash of the matching master requirement. On a
 mismatch the engine SHALL still apply the incoming operation (take-newer) and
@@ -97,6 +109,7 @@ a stale-base overwrite is always reported rather than silent.
 
 ### Requirement: Content hash definition
 id: content-hash-definition
+
 The engine SHALL compute a requirement's content hash deterministically over its
 normalized normative body and scenarios, excluding the `id:` and `base:`
 metadata lines and insignificant whitespace, so that identical behavior yields an
@@ -110,6 +123,7 @@ change the hash.
 
 ### Requirement: Deterministic output and warning summary
 id: deterministic-output-and-warning-summary
+
 After applying all operations, the engine SHALL rewrite each affected master file
 with a stable, reproducible ordering of requirements, and SHALL emit all warnings
 as a machine-readable summary (in addition to human-readable output) so a caller

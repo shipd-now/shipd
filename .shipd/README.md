@@ -1006,6 +1006,16 @@ Under each header, requirement blocks use the same `### Requirement:` +
 - **`Reason` and `Migration`** — every `## REMOVED Requirements` entry SHALL
   carry both a `Reason:` note (why it is going away) and a `Migration:` note (how
   existing behavior is handled).
+- **`Dropped:` line** — a `## MODIFIED Requirements` entry MAY carry one or more
+  `Dropped:` lines, each naming the exact title of one `#### Scenario:` it
+  deliberately removes from the master requirement it edits. Because MODIFIED
+  replaces the requirement's content wholesale, any base scenario the entry does
+  not restate is deleted on merge, so the linter refuses an omission no
+  `Dropped:` line names — and refuses a `Dropped:` line naming a title the base
+  does not carry. Scenarios are matched by exact title, so rewording a
+  scenario's body in place is never a drop. `Dropped:` is delta-only metadata:
+  the merge engine never writes it into the master library, exactly as it
+  withholds `base:`, `Reason:` and `Migration:`.
 - **`FROM:` / `TO:`** — every `## RENAMED Requirements` entry SHALL carry a
   `FROM:` id and a `TO:` id, where `TO:` is a valid kebab-case slug. The engine
   re-keys the master requirement from the old id to the new id.
@@ -1030,6 +1040,7 @@ a rolling 60-second window.
 ### Requirement: Enforce SSO session timeout
 id: enforce-sso-timeout
 base: a3f9c1
+Dropped: Session survives a browser restart
 
 The system SHALL end an SSO session after 15 minutes of inactivity and MUST
 require re-authentication before granting further access.

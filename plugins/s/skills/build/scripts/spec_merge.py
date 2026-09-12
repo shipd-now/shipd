@@ -88,8 +88,9 @@ _WARNING_MESSAGES = {
 
 def _clean(entry):
     """Return a master-clean copy of a delta requirement: same title, id, and
-    content, but without the delta-only ``base``/``Reason``/``Migration``
-    metadata that never belongs in the master library."""
+    content, but without the delta-only
+    ``base``/``Reason``/``Migration``/``Dropped`` metadata that never belongs
+    in the master library."""
     return sc.Requirement(
         title=entry.title, id=entry.id, body=entry.body,
         scenarios=list(entry.scenarios), content=entry.content)

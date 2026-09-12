@@ -1633,6 +1633,62 @@ def check_artefact_references(root, change, errors):
 
 
 # ---------------------------------------------------------------------------
+# MODIFIED scenario retention
+# ---------------------------------------------------------------------------
+
+
+def check_modified_scenario_retention(root, change, errors):
+    """Refuse a ``## MODIFIED Requirements`` entry that silently drops a
+    scenario its base master requirement carries (shipd-spec-lint
+    ``modified-scenario-retention``). A MODIFIED entry replaces the master
+    requirement's content wholesale, so an omitted ``#### Scenario:`` title
+    deletes that scenario on merge: the entry must either restate the title or
+    name it in a ``Dropped:`` line, and every unnamed omission is its own
+    error naming the requirement id and the title. Scenarios are matched by
+    exact title, so rewording a scenario's body in place is never reported. A
+    ``Dropped:`` title the base requirement does not carry is itself an error,
+    since a stale or misspelled line otherwise appears to license an omission
+    it does not. An entry whose ``id`` has no master requirement is skipped —
+    merge inserts it with a warning, so there are no base scenarios to
+    retain."""
+    deltas_dir = os.path.join(sc.specs_dir(root), "planned", change, "specs")
+    if not os.path.isdir(deltas_dir):
+        return
+    for capability in sorted(os.listdir(deltas_dir)):
+        path = os.path.join(deltas_dir, capability, "spec.md")
+        master_path = os.path.join(sc.specs_dir(root), "verified", capability,
+                                   "spec.md")
+        if not os.path.isfile(path) or not os.path.isfile(master_path):
+            continue
+        masters = {r.id: r
+                   for r in sc.parse_spec(_read(master_path)).requirements
+                   if r.id}
+        for req in sc.parse_delta(_read(path)).modified:
+            base = masters.get(req.id)
+            if base is None:
+                continue
+            base_titles = []
+            for scenario in base.scenarios:
+                if scenario.title not in base_titles:
+                    base_titles.append(scenario.title)
+            restated = set(s.title for s in req.scenarios)
+            named = set(req.dropped)
+            for title in base_titles:
+                if title in restated or title in named:
+                    continue
+                errors.append(LintError(
+                    "MODIFIED requirement '%s' omits the scenario '%s' its "
+                    "base carries; restate it or name it in a `Dropped:` line"
+                    % (req.id, title), path))
+            for title in req.dropped:
+                if title not in base_titles:
+                    errors.append(LintError(
+                        "MODIFIED requirement '%s' carries a `Dropped:` line "
+                        "naming the scenario '%s', which its base does not "
+                        "carry" % (req.id, title), path))
+
+
+# ---------------------------------------------------------------------------
 # Target discovery and gating
 # ---------------------------------------------------------------------------
 
@@ -1679,6 +1735,7 @@ def lint_change(root, change, warnings=None):
     check_task_traceability(root, change, errors)
     check_task_satisfiability(root, change, errors)
     check_artefact_references(root, change, errors)
+    check_modified_scenario_retention(root, change, errors)
     if warnings is not None:
         check_context_economy(root, change, warnings)
     deltas_dir = os.path.join(sc.specs_dir(root), "planned", change, "specs")

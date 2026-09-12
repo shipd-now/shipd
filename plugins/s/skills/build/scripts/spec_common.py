@@ -51,7 +51,7 @@ REQUIREMENT_HEADER_RE = re.compile(r"^###\s+Requirement:\s*(.*?)\s*$")
 # Any level of "Scenario:" header, so the linter can flag mis-leveled ones.
 SCENARIO_HEADER_RE = re.compile(r"^(#{1,6})\s+Scenario:\s*(.*?)\s*$")
 # Metadata lines that may appear immediately under a requirement header.
-METADATA_RE = re.compile(r"^(id|base|Reason|Migration):\s*(.*?)\s*$")
+METADATA_RE = re.compile(r"^(id|base|Reason|Migration|Dropped):\s*(.*?)\s*$")
 OP_HEADER_RE = re.compile(r"^##\s+([A-Za-z]+)\s+Requirements\s*$")
 
 KNOWN_OPS = ("ADDED", "MODIFIED", "REMOVED", "RENAMED")
@@ -136,6 +136,9 @@ class Requirement:
     base : str | None      the `base:` content hash on delta edits, or None
     reason : str | None    the `Reason:` note on REMOVED entries, or None
     migration : str | None the `Migration:` note on REMOVED entries, or None
+    dropped : list[str]    the scenario titles named by `Dropped:` lines on
+                           MODIFIED entries (one title per line, repeatable);
+                           empty when the entry names none
     body : str             normative text between metadata and first scenario
     scenarios : list[Scenario]
     content : str          body + scenarios (everything after the metadata
@@ -144,12 +147,14 @@ class Requirement:
     """
 
     def __init__(self, title="", id=None, base=None, reason=None,
-                 migration=None, body="", scenarios=None, content="", raw=""):
+                 migration=None, dropped=None, body="", scenarios=None,
+                 content="", raw=""):
         self.title = title
         self.id = id
         self.base = base
         self.reason = reason
         self.migration = migration
+        self.dropped = list(dropped) if dropped is not None else []
         self.body = body
         self.scenarios = scenarios if scenarios is not None else []
         self.content = content
@@ -221,9 +226,11 @@ def parse_requirement_block(text):
     """Parse the text of a single requirement block into a Requirement.
 
     The block must start with a ``### Requirement:`` header. Metadata lines
-    (``id:``, ``base:``, ``Reason:``, ``Migration:``) are read from the
-    contiguous run starting at the first non-blank line under the header; the
-    remainder is the content (body + scenarios)."""
+    (``id:``, ``base:``, ``Reason:``, ``Migration:``, ``Dropped:``) are read
+    from the contiguous run starting at the first non-blank line under the
+    header; a repeated ``Dropped:`` line appends, so an entry dropping several
+    scenarios names them one per line. The remainder is the content
+    (body + scenarios)."""
     raw = text
     lines = text.splitlines()
     title = ""
@@ -252,6 +259,9 @@ def parse_requirement_block(text):
             req.reason = val or None
         elif key == "migration":
             req.migration = val or None
+        elif key == "dropped":
+            if val:
+                req.dropped.append(val)
         i += 1
 
     content_lines = lines[i:]
@@ -2732,8 +2742,8 @@ def render_requirement(req):
 
         <content>
 
-    Delta-only metadata (``base:``, ``Reason:``, ``Migration:``) is dropped,
-    because the master library never carries it. ``content`` (body + scenarios)
+    Delta-only metadata (``base:``, ``Reason:``, ``Migration:``,
+    ``Dropped:``) is dropped, because the master library never carries it. ``content`` (body + scenarios)
     is emitted verbatim as parsed."""
     lines = ["### Requirement: %s" % req.title]
     if req.id is not None:
