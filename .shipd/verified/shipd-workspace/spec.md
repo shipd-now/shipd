@@ -323,6 +323,12 @@ SHALL behave exactly as it does without the key.
   directory relative to the working directory
 - **THEN** the workspace is created at that relative target exactly as before
 
+#### Scenario: Git option inside an existing work tree does not re-init
+- **GIVEN** a target already inside a git work tree whose ignore file already
+  carries the marked member-repos block
+- **WHEN** initialization runs with the git option
+- **THEN** no new repository is created and the marked block is not duplicated
+
 ### Requirement: Workspace setup skill
 id: workspace-setup-skill
 
@@ -902,6 +908,12 @@ or identity, and with no `~/.shipd-config.json` on the machine.
 - **THEN** every standalone workspace example lives under `~/workspaces/`,
   the index's layout diagram labels the workspace repo, and no example uses
   the retired `~/jobs/` convention or the term "portable workspace"
+
+#### Scenario: The nesting and stores part carries its content
+- **WHEN** the nesting-and-stores guide page is inspected
+- **THEN** it documents nested job workspaces including what inherits across
+  the chain, and external artifact stores including where the store lands and
+  how its writes are committed
 
 ### Requirement: Workspaces guide practical examples
 id: workspaces-doc-examples

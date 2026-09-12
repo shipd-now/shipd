@@ -178,6 +178,17 @@ the epic markdown from the epic's hosting root.
 - **WHEN** the board is built from the workspace root
 - **THEN** both epics are aggregated, distinguished by their `project`
 
+#### Scenario: A worktree-hosted epic is marked on the text board
+- **WHEN** an epic's location is a worktree root beneath its universe rather
+  than the universe root itself
+- **THEN** its header line on the human-readable board carries a `[worktree]`
+  marker
+
+#### Scenario: An unreadable worktree config does not break discovery
+- **WHEN** one worktree's content-directory configuration cannot be read
+- **THEN** that worktree is skipped and board aggregation completes for every
+  other candidate rather than failing
+
 ### Requirement: Board TUI
 id: board-tui
 

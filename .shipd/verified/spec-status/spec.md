@@ -1263,6 +1263,11 @@ skipped, never raised.
 - **THEN** both epics count and their rows are distinguished by their
   project markers
 
+#### Scenario: A selection still wins
+- **GIVEN** a repository with a change currently selected
+- **WHEN** the bare show verb runs with no change named
+- **THEN** it reports that change rather than the workspace board
+
 ### Requirement: JSON output mode
 id: json-output
 

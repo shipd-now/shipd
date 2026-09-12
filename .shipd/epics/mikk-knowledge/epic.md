@@ -1,7 +1,6 @@
 # mikk-knowledge
 Status: complete
 Theme: developer-experience
-Initiative: context-enhancements
 
 ## Introduction
 

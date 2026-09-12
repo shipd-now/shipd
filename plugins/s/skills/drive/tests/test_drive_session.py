@@ -34,6 +34,7 @@ at a time, never one per target.
 import json
 import os
 import shutil
+import signal
 import socket
 import stat
 import subprocess
@@ -255,6 +256,42 @@ class ConsoleReturnsPriorEventsTest(DriveSessionTestBase):
 
 
 class SessionStartReplacesDifferentTargetTest(DriveSessionTestBase):
+    def tearDown(self):
+        """Stop whatever daemon this test left running, before the base
+        class removes the tree that daemon lives under. The replacement
+        started last is never itself replaced, so no production path ever
+        stops it: without this, every full-suite run left one spy worker
+        alive, looping on an `accept()` whose socket had been deleted out
+        from under it. `session stop` is the same stop path the
+        replacement itself used; the marker sweep after it catches a
+        daemon the session state does not name — the first one, say, if
+        the replace path ever regressed and left it running."""
+        try:
+            self.run_cli("session", "stop")
+            self.terminate_leftover_daemons()
+        finally:
+            super().tearDown()
+
+    def terminate_leftover_daemons(self):
+        """`SIGTERM` every spy daemon whose marker is still present after
+        the stop above — a daemon that closed gracefully removed its own
+        marker, so whatever is left here is a leak."""
+        try:
+            names = os.listdir(self.tmp)
+        except OSError:
+            return
+        for name in names:
+            if not (name.startswith("running-")
+                    and name.endswith(".pid")):
+                continue
+            try:
+                with open(os.path.join(self.tmp, name),
+                          encoding="utf-8") as fh:
+                    pid = int(fh.read().strip())
+                os.kill(pid, signal.SIGTERM)
+            except (OSError, ValueError):
+                pass
+
     def spy_bindir(self):
         d = os.path.join(self.tmp, "bin")
         os.makedirs(d, exist_ok=True)

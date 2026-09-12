@@ -442,6 +442,12 @@ declared `autonomous-pipeline`. The verb SHALL mutate nothing.
 - **THEN** the `pipeline` line is `ok` in both runs and the exit code is
   `0`
 
+#### Scenario: Checkout run reports dev mode
+- **WHEN** `doctor` runs from a repository checkout rather than a cache
+  snapshot
+- **THEN** the snapshot check reports `ok` and its detail names dev mode rather
+  than comparing versions
+
 ### Requirement: List JSON output
 id: list-json
 
