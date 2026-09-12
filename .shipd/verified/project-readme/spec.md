@@ -32,7 +32,10 @@ the `s` plugin. Each skill entry SHALL state its invocation name
 (`/s:<name>`) and a one-to-two sentence description consistent with that
 skill's own `description` frontmatter. The section SHALL reflect the current
 skill set exactly — no missing skills, no skills that do not exist, and no
-references to retired systems.
+references to retired systems. Every skill SHALL appear under exactly one of
+the section's three group headings — the core loop, bigger than one change,
+and knowledge — so the section partitions the skill set rather than sampling
+it.
 
 #### Scenario: All current skills are documented
 - **WHEN** the Skills section is compared against the plugin's skill
@@ -43,6 +46,11 @@ references to retired systems.
 #### Scenario: No stale entries
 - **WHEN** the Skills section is read
 - **THEN** it names no skill that does not exist and no retired system
+
+#### Scenario: The three groups partition the skill set
+- **WHEN** the rows of the section's three group tables are collected
+- **THEN** each directory under `plugins/s/skills/` appears in exactly one
+  of them, and no skill appears in two
 
 ### Requirement: README retains onboarding content
 id: readme-retains-onboarding-content
@@ -390,6 +398,15 @@ precondition this repository does not meet, its row SHALL name that
 precondition rather than omit the verb or invent an invocation that avoids
 it.
 
+The file SHALL additionally carry exactly one mermaid diagram: a `venn-beta`
+fence, above the `/s:` table and under its own level-2 heading, whose three
+sets are the `README.md` **Skills** groups — the core loop, bigger than one
+change, and knowledge. Every directory under `plugins/s/skills/` SHALL appear
+in that diagram exactly once as `s:<name>`, in the region for the group or
+groups it spans, and each region SHALL hold exactly one `text` node listing
+its names. The fence SHALL carry no `title` line and no `style` line, so the
+corpus states content and the rendering surface states presentation.
+
 #### Scenario: Cheatsheet passes the lint within its cap
 - **WHEN** `python3 plugins/s/skills/document/scripts/docs_lint.py
   docs/cheatsheet.md` runs
@@ -429,6 +446,22 @@ it.
 - **WHEN** a reader looks for what `--json` or `--root` mean
 - **THEN** they are explained in the conventions preamble, and the per-verb
   rows do not repeat that explanation
+
+#### Scenario: Every skill appears in the diagram exactly once
+- **WHEN** the `s:<name>` tokens inside the `venn-beta` fence are collected
+  and compared against the directory names under `plugins/s/skills/`
+- **THEN** every directory appears exactly once and no token names a skill
+  that has no directory
+
+#### Scenario: The fence is content-only and singular
+- **WHEN** `docs/cheatsheet.md` is read
+- **THEN** it holds exactly one ```mermaid fence, that fence's first body
+  line is `venn-beta`, and the fence carries no `title` line and no `style`
+  line
+
+#### Scenario: Each region carries one text node
+- **WHEN** the fence's `set` and `union` declarations are read
+- **THEN** each one is followed by exactly one indented `text` line
 
 ### Requirement: What-is overview layout
 id: what-is-overview-layout
