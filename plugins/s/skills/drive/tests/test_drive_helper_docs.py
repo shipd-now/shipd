@@ -62,8 +62,12 @@ _ENTRY_RE = re.compile(
 
 # `self.<name> = ...` assignments inside `Helper`, so a documented plain
 # member set up in `__init__` counts as defined even though it never lands
-# on the class object itself.
-_SELF_ASSIGN_RE = re.compile(r"^\s*self\.(\w+)\s*(?::[^=]+)?=", re.MULTILINE)
+# on the class object itself. The `(?!=)` lookahead keeps a comparison
+# (`self.foo == bar`) from reading as a definition, which would let a
+# documented-but-nonexistent member resolve — the very drift this file
+# exists to catch.
+_SELF_ASSIGN_RE = re.compile(
+    r"^\s*self\.(\w+)\s*(?::[^=]+)?=(?!=)", re.MULTILINE)
 
 
 def _stub_playwright():
