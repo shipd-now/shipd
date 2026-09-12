@@ -1106,6 +1106,153 @@ class ArtefactReferenceLintTest(unittest.TestCase):
         self.assertTrue(has(errors, "artefacts/policy.md"))
 
 
+class ModifiedScenarioRetentionTest(unittest.TestCase):
+    """MODIFIED scenario retention (shipd-spec-lint
+    modified-scenario-retention): a MODIFIED entry that omits a scenario title
+    its base master requirement carries is an error unless a ``Dropped:`` line
+    names that title, scenarios are matched by exact title so rewording a body
+    is silent, a ``Dropped:`` title absent from the base is itself an error,
+    and an entry whose id has no master requirement is skipped.
+
+    These tests are written test-first and are expected to FAIL until the
+    ``Dropped:`` grammar lands in ``spec_common.py`` (task 2.1) and
+    ``check_modified_scenario_retention`` lands in ``spec_lint.py``
+    (task 2.2)."""
+
+    REQ_ID = "session-timeout"
+    TITLES = ("Alpha", "Beta", "Gamma", "Delta")
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _scenario(self, title, body="- **WHEN** a\n- **THEN** b\n"):
+        return "#### Scenario: %s\n%s" % (title, body)
+
+    def _master(self, req_id=REQ_ID, titles=TITLES):
+        return ("# auth\n\n"
+                "### Requirement: Session timeout\n"
+                "id: %s\n\n"
+                "The system SHALL expire idle sessions.\n\n"
+                "%s" % (req_id,
+                        "\n".join(self._scenario(t) for t in titles)))
+
+    def _delta(self, titles, dropped=(), bodies=None):
+        """A one-entry MODIFIED delta restating ``titles``, optionally with a
+        ``Dropped:`` line per entry in ``dropped`` and per-title body
+        overrides from the ``bodies`` mapping."""
+        bodies = bodies or {}
+        meta = "".join("Dropped: %s\n" % t for t in dropped)
+        blocks = [self._scenario(t, bodies[t]) if t in bodies
+                  else self._scenario(t) for t in titles]
+        return ("## MODIFIED Requirements\n\n"
+                "### Requirement: Session timeout\n"
+                "id: %s\n"
+                "base: 0123456789ab\n"
+                "%s\n"
+                "The system SHALL expire idle sessions.\n\n"
+                "%s" % (self.REQ_ID, meta, "\n".join(blocks)))
+
+    def _write(self, change, delta_text, master_text=None, plan_text=None,
+               capability="auth"):
+        verified = os.path.join(self.root, ".shipd", "verified", capability)
+        os.makedirs(verified, exist_ok=True)
+        with open(os.path.join(verified, "spec.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(self._master() if master_text is None else master_text)
+        cdir = os.path.join(self.root, ".shipd", "planned", change)
+        os.makedirs(os.path.join(cdir, "specs", capability), exist_ok=True)
+        with open(os.path.join(cdir, "specs", capability, "spec.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(delta_text)
+        with open(os.path.join(cdir, "plan.md"), "w", encoding="utf-8") as fh:
+            fh.write(plan_text if plan_text is not None
+                     else "A plan.\n")
+        with open(os.path.join(cdir, "tasks.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("## 1. Work\n\n- [ ] 1.1 [req: %s] Do it\n" % self.REQ_ID)
+        return cdir
+
+    def _errors(self, change, delta_text, **kwargs):
+        self._write(change, delta_text, **kwargs)
+        errors = []
+        sl.check_modified_scenario_retention(self.root, change, errors)
+        return [str(e) for e in errors]
+
+    def test_silently_dropped_scenarios_are_refused(self):
+        # (a) the master carries four scenarios; the entry restates two and
+        # names no `Dropped:` line, so merging it would delete Gamma and
+        # Delta. One error per omitted title, each naming the requirement id.
+        errors = self._errors("ret-silent",
+                              self._delta(["Alpha", "Beta"]))
+        self.assertEqual(len(errors), 2, errors)
+        for title in ("Gamma", "Delta"):
+            self.assertTrue(
+                any(self.REQ_ID in e and title in e for e in errors),
+                "no error names %r and %r: %r" % (self.REQ_ID, title, errors))
+
+    def test_named_drop_is_allowed(self):
+        # (b) the entry restates three scenarios and names the fourth in a
+        # `Dropped:` line: the removal is deliberate, so no finding.
+        errors = self._errors(
+            "ret-named",
+            self._delta(["Alpha", "Beta", "Gamma"], dropped=["Delta"]))
+        self.assertEqual(errors, [])
+
+    def test_several_named_drops_are_allowed(self):
+        # (b) `Dropped:` repeats, one title per line, so an entry dropping
+        # two scenarios names them both.
+        errors = self._errors(
+            "ret-named-two",
+            self._delta(["Alpha", "Beta"], dropped=["Gamma", "Delta"]))
+        self.assertEqual(errors, [])
+
+    def test_rewording_a_scenario_body_is_not_a_drop(self):
+        # (c) every base title is restated but one scenario's WHEN/THEN text
+        # is rewritten: matching is by exact title, so this is silent.
+        errors = self._errors(
+            "ret-reworded",
+            self._delta(list(self.TITLES),
+                        bodies={"Beta": "- **WHEN** the session idles\n"
+                                        "- **THEN** it expires\n"}))
+        self.assertEqual(errors, [])
+
+    def test_stale_dropped_line_is_refused(self):
+        # (d) `Dropped:` names a title the base requirement does not carry, so
+        # it licenses nothing while looking like it does.
+        errors = self._errors(
+            "ret-stale",
+            self._delta(list(self.TITLES), dropped=["Epsilon"]))
+        self.assertEqual(len(errors), 1, errors)
+        self.assertTrue(has(errors, "Epsilon"))
+
+    def test_modified_entry_with_no_master_is_skipped(self):
+        # (e) the entry's id matches no master requirement, so there are no
+        # base scenarios to retain and the check contributes nothing.
+        errors = self._errors(
+            "ret-no-master",
+            self._delta(["Alpha"]),
+            master_text=self._master(req_id="something-else"))
+        self.assertEqual(errors, [])
+
+    def test_silent_drop_gates_lint_change(self):
+        # The check must be wired into lint_change so an otherwise-valid
+        # change that silently drops a scenario fails to lint — and so the
+        # CLI exits non-zero on it.
+        change = "ret-gated"
+        self._write(
+            change, self._delta(["Alpha", "Beta"]),
+            plan_text=("# %s\nStatus: ready\n\n## Idea\nA summary.\n\n"
+                       "### Motivation\nWhy.\n\n### Details\nThe changes.\n\n"
+                       "### Non-goals\nNot that.\n\n"
+                       "## Implementation\nHow.\n" % change))
+        errors = [str(e) for e in sl.lint_change(self.root, change)]
+        self.assertTrue(any(self.REQ_ID in e and "Gamma" in e
+                            for e in errors), errors)
+
+
 class EpicLintTest(unittest.TestCase):
     """Epic structural validation (shipd-spec-lint epic-structural-validation,
     shipd-spec-format epic-artifact-layout / epic-header-metadata): an epic under

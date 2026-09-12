@@ -258,6 +258,32 @@ class MergeAndArchiveTest(unittest.TestCase):
             ["enforce-sso-timeout", "password-strength", "rate-limit-login"])
         self.assertEqual([w for w in warnings if w.kind == "stale-base"], [])
 
+    def test_dropped_metadata_never_reaches_the_master(self):
+        base = sc.content_hash(
+            {r.id: r for r in master_spec().requirements}
+            ["enforce-sso-timeout"])
+        delta = os.path.join(self.tmp, ".shipd", "planned", "sample-change",
+                             "specs", "auth", "spec.md")
+        with open(delta, "w", encoding="utf-8") as fh:
+            fh.write(
+                "## MODIFIED Requirements\n\n"
+                "### Requirement: Enforce SSO session timeout\n"
+                "id: enforce-sso-timeout\n"
+                "base: %s\n"
+                "Dropped: Idle session is ended\n\n"
+                "The system SHALL end an SSO session after 5 minutes of\n"
+                "inactivity.\n\n"
+                "#### Scenario: Short idle session is ended\n"
+                "- **WHEN** an SSO session has seen no activity for 5 minutes\n"
+                "- **THEN** the session is invalidated\n" % base)
+        warnings = []
+        sm.merge_change(self.tmp, "sample-change", warnings)
+        text = read(sm.master_path(self.tmp, "auth"))
+        self.assertNotIn("Dropped:", text)
+        self.assertNotIn("Idle session is ended", text)
+        self.assertIn("Short idle session is ended", text)
+        self.assertEqual([w for w in warnings if w.kind == "stale-base"], [])
+
     def test_archive_moves_change_directory(self):
         warnings = []
         sm.merge_change(self.tmp, "sample-change", warnings)

@@ -142,6 +142,32 @@ class ParserTest(unittest.TestCase):
         self.assertIsNotNone(rem.reason)
         self.assertIsNotNone(rem.migration)
 
+    def test_dropped_metadata_parses_as_a_list(self):
+        req = sc.parse_requirement_block(
+            "### Requirement: X\nid: x\nbase: deadbeef01\n"
+            "Dropped: First gone\nDropped: Second gone\n\n"
+            "The system SHALL do it.\n\n"
+            "#### Scenario: kept\n- **WHEN** a\n- **THEN** b")
+        self.assertEqual(req.dropped, ["First gone", "Second gone"])
+        # ``Dropped:`` is metadata, so it never leaks into the hashed content.
+        self.assertNotIn("Dropped:", req.content)
+        self.assertEqual([s.title for s in req.scenarios], ["kept"])
+
+    def test_dropped_defaults_to_empty_list(self):
+        req = sc.parse_requirement_block(
+            "### Requirement: X\nid: x\n\nThe system SHALL do it.")
+        self.assertEqual(req.dropped, [])
+
+    def test_dropped_is_excluded_from_the_content_hash(self):
+        a = sc.parse_requirement_block(
+            "### Requirement: X\nid: x\n\nThe system SHALL do it.\n\n"
+            "#### Scenario: s\n- **WHEN** a\n- **THEN** b")
+        b = sc.parse_requirement_block(
+            "### Requirement: X\nid: x\nDropped: Gone\n\n"
+            "The system SHALL do it.\n\n"
+            "#### Scenario: s\n- **WHEN** a\n- **THEN** b")
+        self.assertEqual(sc.content_hash(a), sc.content_hash(b))
+
     def test_unknown_operation_header_is_captured(self):
         delta = sc.parse_delta(read(os.path.join(
             FIXTURES, "bad", ".shipd", "planned", "unknown-op",
@@ -231,6 +257,18 @@ class SerializationTest(unittest.TestCase):
         rendered = sc.render_requirement(delta.modified[0])
         self.assertNotIn("base:", rendered)
         self.assertIn("id: enforce-sso-timeout", rendered)
+
+    def test_render_drops_dropped_metadata(self):
+        req = sc.parse_requirement_block(
+            "### Requirement: X\nid: x\nbase: deadbeef01\n"
+            "Dropped: First gone\nDropped: Second gone\n\n"
+            "The system SHALL do it.\n\n"
+            "#### Scenario: kept\n- **WHEN** a\n- **THEN** b")
+        rendered = sc.render_requirement(req)
+        self.assertNotIn("Dropped:", rendered)
+        self.assertNotIn("First gone", rendered)
+        self.assertIn("id: x", rendered)
+        self.assertIn("#### Scenario: kept", rendered)
 
 
 class PlanMetadataParserTest(unittest.TestCase):
