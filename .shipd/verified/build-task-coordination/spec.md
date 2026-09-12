@@ -99,6 +99,18 @@ reference — SHALL state the same value.
   sidecar record all land there — instead of dying on a missing
   `.shipd/planned` path
 
+#### Scenario: A renamed content directory is coordinated
+- **GIVEN** a repository configuring a content directory other than the default
+  and a change parked under that directory
+- **WHEN** any coordinator verb runs
+- **THEN** it resolves and operates on the configured directory rather than the
+  default one
+
+#### Scenario: Resolution failure falls back to .shipd
+- **GIVEN** a repository whose configuration cannot be resolved
+- **WHEN** a coordinator verb runs against a change under the default directory
+- **THEN** it operates on that default directory rather than failing
+
 ### Requirement: Completion and release without tracking line numbers
 id: completion-and-release-without-tracking-line-numbers
 

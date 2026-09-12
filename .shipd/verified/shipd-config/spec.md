@@ -822,6 +822,12 @@ differs from the engine's built-in defaults.
   configuration is resolved
 - **THEN** every resolved value equals the engine's built-in default
 
+#### Scenario: Key constants stay in the registry
+- **WHEN** every module-level configuration-key constant the engine declares is
+  inspected
+- **THEN** each one's value is a member of the recognized-keys registry, and at
+  least one such constant is found
+
 ### Requirement: Skill prompt path notation
 id: skill-prompt-path-notation
 
