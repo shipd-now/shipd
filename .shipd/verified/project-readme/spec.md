@@ -401,11 +401,14 @@ it.
 The file SHALL additionally carry exactly one mermaid diagram: a `venn-beta`
 fence, above the `/s:` table and under its own level-2 heading, whose three
 sets are the `README.md` **Skills** groups — the core loop, bigger than one
-change, and knowledge. Every directory under `plugins/s/skills/` SHALL appear
-in that diagram exactly once as `s:<name>`, in the region for the group or
-groups it spans, and each region SHALL hold exactly one `text` node listing
-its names. The fence SHALL carry no `title` line and no `style` line, so the
-corpus states content and the rendering surface states presentation.
+change, and knowledge. Each of the fence's seven regions SHALL hold exactly
+one `text` node naming what that region holds, in at most three words, and
+SHALL name no skill. The fence SHALL carry no `title` line and no `style`
+line, so the corpus states content and the rendering surface states
+presentation. Beneath the fence the file SHALL carry a list naming every
+directory under `plugins/s/skills/` exactly once as `s:<name>`, grouped under
+the region names the fence uses, so every skill the diagram places is legible
+without reading the diagram.
 
 #### Scenario: Cheatsheet passes the lint within its cap
 - **WHEN** `python3 plugins/s/skills/document/scripts/docs_lint.py
@@ -447,11 +450,17 @@ corpus states content and the rendering surface states presentation.
 - **THEN** they are explained in the conventions preamble, and the per-verb
   rows do not repeat that explanation
 
-#### Scenario: Every skill appears in the diagram exactly once
-- **WHEN** the `s:<name>` tokens inside the `venn-beta` fence are collected
+#### Scenario: Every skill appears in the list exactly once
+- **WHEN** the `s:<name>` tokens in the list beneath the fence are collected
   and compared against the directory names under `plugins/s/skills/`
 - **THEN** every directory appears exactly once and no token names a skill
   that has no directory
+
+#### Scenario: The fence names regions, not skills
+- **WHEN** the `venn-beta` fence is read
+- **THEN** each of its seven `set` and `union` declarations is followed by
+  exactly one indented `text` line of at most three words, and no `text` line
+  contains the string `s:`
 
 #### Scenario: The fence is content-only and singular
 - **WHEN** `docs/cheatsheet.md` is read
@@ -459,9 +468,11 @@ corpus states content and the rendering surface states presentation.
   line is `venn-beta`, and the fence carries no `title` line and no `style`
   line
 
-#### Scenario: Each region carries one text node
-- **WHEN** the fence's `set` and `union` declarations are read
-- **THEN** each one is followed by exactly one indented `text` line
+#### Scenario: Every region name reappears in the list
+- **WHEN** the region names in the fence's `text` lines are compared against
+  the bolded group names in the list beneath it
+- **THEN** each of the seven region names appears in the list, so a reader
+  moving from a circle to the list finds the same word
 
 ### Requirement: What-is overview layout
 id: what-is-overview-layout
