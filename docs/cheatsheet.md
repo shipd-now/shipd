@@ -21,20 +21,32 @@ below:
 ```mermaid
 venn-beta
   set loop["The core loop"]
-    text "s:onboard  s:doctor  s:duck  s:plan  s:fix  s:review  s:drive  s:gate  s:status  s:document  s:worktree-hooks"
+    text "One change"
   set scale["Bigger than one change"]
-    text "s:epic  s:prd  s:initiative  s:workspace  s:explain"
+    text "Many changes"
   set know["Knowledge"]
-    text "s:remember  s:memory  s:forget"
+    text "Durable decisions"
   union loop,scale
-    text "s:build  s:autopilot"
+    text "At scale"
   union loop,know
-    text "s:ask"
+    text "Asks"
   union scale,know
-    text "s:research  s:video-ingest"
+    text "Evidence"
   union loop,scale,know
-    text "s:teach"
+    text "Both"
 ```
+
+- **One change** — the core loop, one change from idea to merged:
+  s:onboard, s:doctor, s:duck, s:plan, s:fix, s:review, s:drive,
+  s:gate, s:status, s:document, s:worktree-hooks
+- **Many changes** — bigger than one change, tracked together: s:epic,
+  s:prd, s:initiative, s:workspace, s:explain
+- **Durable decisions** — knowledge that outlives a change: s:remember,
+  s:memory, s:forget
+- **At scale** — s:build, s:autopilot
+- **Asks** — s:ask
+- **Evidence** — s:research, s:video-ingest
+- **Both** — s:teach
 
 ## /s: commands
 
