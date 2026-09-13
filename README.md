@@ -257,7 +257,7 @@ the delivery board.
 
 Everything the plugin ships is invoked as `/s:<name>`.
 
-**The core loop** — take one change from idea to merged.
+**Pipeline** — spec, build and ship one change, end to end.
 
 | Invocation | What it does |
 | --- | --- |
@@ -274,7 +274,7 @@ Everything the plugin ships is invoked as `/s:<name>`.
 | `/s:document` | Author and revise documentation against the shipd documentation standard: classify each doc as concept, how-to, or reference, write or rewrite it to the standard's rules — active voice, sentence and paragraph caps, one meaning per glossary term, and a diagram only where it carries structure prose cannot — then run the stdlib-only `docs_lint.py` and fix findings until it exits clean. The skill edits documentation only; it never commits, pushes, or opens a PR. |
 | `/s:worktree-hooks` | Author and register the setup scripts a new worktree runs: turn a described setup need into an executable script under `<content-dir>/hooks/`, register its repo-relative path through the binary's `worktree hooks add` verb, and verify the registration by reading `worktree hooks list` back. Also browses the registered hooks and removes one on confirmation. |
 
-**Bigger than one change** — decompose, deliver, and track work at scale.
+**Orchestration** — decompose a feature and drive its changes at scale.
 
 | Invocation | What it does |
 | --- | --- |
@@ -287,7 +287,7 @@ Everything the plugin ships is invoked as `/s:<name>`.
 | `/s:explain` | Read a shipd epic through the engine and explain it: run the mediated `cat epic` and `epic-show` verbs, then print a short explanation covering what the epic is for, the decisions holding it up, how its member changes compose, and where delivery stands — with a diagram only where one carries structure prose cannot. Strictly read-only. |
 | `/s:workspace` | Set up and inspect the shipd workspace: create the workspace marker with a guided target-root choice, report the roster of projects and initiatives, bootstrap a job workspace from its repository URL, or materialize its members with real git. |
 
-**Knowledge** — so a decision made once is never asked twice.
+**Memory** — so a decision made once is never asked twice.
 
 | Invocation | What it does |
 | --- | --- |

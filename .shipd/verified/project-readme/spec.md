@@ -32,10 +32,10 @@ the `s` plugin. Each skill entry SHALL state its invocation name
 (`/s:<name>`) and a one-to-two sentence description consistent with that
 skill's own `description` frontmatter. The section SHALL reflect the current
 skill set exactly — no missing skills, no skills that do not exist, and no
-references to retired systems. Every skill SHALL appear under exactly one of
-the section's three group headings — the core loop, bigger than one change,
-and knowledge — so the section partitions the skill set rather than sampling
-it.
+references to retired systems. The section SHALL carry exactly three group
+headings — **Pipeline**, **Orchestration** and **Memory** — and every skill
+SHALL appear under exactly one of them, so the section partitions the skill
+set rather than sampling it.
 
 #### Scenario: All current skills are documented
 - **WHEN** the Skills section is compared against the plugin's skill
@@ -51,6 +51,11 @@ it.
 - **WHEN** the rows of the section's three group tables are collected
 - **THEN** each directory under `plugins/s/skills/` appears in exactly one
   of them, and no skill appears in two
+
+#### Scenario: The section's three headings are Pipeline, Orchestration and Memory
+- **WHEN** the Skills section's group headings are read
+- **THEN** they are exactly `**Pipeline**`, `**Orchestration**` and
+  `**Memory**`, in that order
 
 ### Requirement: README retains onboarding content
 id: readme-retains-onboarding-content
@@ -402,8 +407,9 @@ The file SHALL additionally carry exactly one mermaid diagram: a `venn-beta`
 fence, above the `/s:` table and under its own level-2 heading, whose three
 sets are the `README.md` **Skills** groups — the core loop, bigger than one
 change, and knowledge. Each of the fence's seven regions SHALL hold exactly
-one `text` node naming what that region holds, in at most three words, and
-SHALL name no skill. The fence SHALL carry no `title` line and no `style`
+one `text` node naming what that region holds, in at most three words — and
+in at most two for the three pairwise regions and the centre, whose area does
+not carry more — and SHALL name no skill. The fence SHALL carry no `title` line and no `style`
 line, so the corpus states content and the rendering surface states
 presentation. Beneath the fence the file SHALL carry a list naming every
 directory under `plugins/s/skills/` exactly once as `s:<name>`, grouped under
