@@ -20,33 +20,33 @@ below:
 
 ```mermaid
 venn-beta
-  set loop["The core loop"]
-    text "One change"
-  set scale["Bigger than one change"]
-    text "Many changes"
-  set know["Knowledge"]
-    text "Durable decisions"
+  set loop["Pipeline"]
+    text "Spec, build, ship"
+  set scale["Orchestration"]
+    text "Epics, driven"
+  set know["Memory"]
+    text "Decisions that stick"
   union loop,scale
-    text "At scale"
+    text "Unattended"
   union loop,know
-    text "Asks"
+    text "Asks first"
   union scale,know
     text "Evidence"
   union loop,scale,know
-    text "Both"
+    text "Compounds"
 ```
 
-- **One change** — the core loop, one change from idea to merged:
-  s:onboard, s:doctor, s:duck, s:plan, s:fix, s:review, s:drive,
-  s:gate, s:status, s:document, s:worktree-hooks
-- **Many changes** — bigger than one change, tracked together: s:epic,
-  s:prd, s:initiative, s:workspace, s:explain
-- **Durable decisions** — knowledge that outlives a change: s:remember,
+- **Spec, build, ship** — the pipeline, one change end to end: s:onboard,
+  s:doctor, s:duck, s:plan, s:fix, s:review, s:drive, s:gate, s:status,
+  s:document, s:worktree-hooks
+- **Epics, driven** — orchestration across many changes: s:epic, s:prd,
+  s:initiative, s:workspace, s:explain
+- **Decisions that stick** — memory that outlives a change: s:remember,
   s:memory, s:forget
-- **At scale** — s:build, s:autopilot
-- **Asks** — s:ask
+- **Unattended** — s:build, s:autopilot
+- **Asks first** — s:ask
 - **Evidence** — s:research, s:video-ingest
-- **Both** — s:teach
+- **Compounds** — s:teach
 
 ## /s: commands
 
