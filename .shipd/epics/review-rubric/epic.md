@@ -65,6 +65,31 @@ below 300 lines with no rubric substance lost.
   field at all.
   *(amended 2026-09-14: corrected the surface count from two to three, after the
   harness body surfaced while building `review-skill-references`.)*
+
+  Four surfaces, and the `--json` payload lives on two of them. The fourth is
+  `plugins/s/harness/references/review.md`, the command body's file-reference,
+  which carries the machine payload in full and ships to every harness
+  declaring the `file-references` feature — thirteen of them. So the rule that
+  a `--json` shape change "updates the plugin alone" is wrong: it updates the
+  plugin's `references/json-output.md` **and** the harness reference. The
+  harness *body* and the copilot template still carry no payload shape, which
+  is what the superseded sentence was reaching for. The parity requirement
+  `review-taxonomy-parity` in `.shipd/verified/semantic-review/spec.md` now
+  pins the two payload surfaces against each other, so this is enforced rather
+  than remembered.
+  *(amended 2026-09-14: corrected again — four surfaces, two of them carrying
+  the payload. Found while building `review-finding-category`, which discovered
+  the harness reference five taxonomy values behind since its creation commit.)*
+- **The 300-line ceiling holds; space is bought with a reference.**
+  `plugins/s/skills/review/SKILL.md` is capped under 300 lines by the
+  `review-skill-references` requirement and pinned by `test_under_line_ceiling`.
+  It stands at 291. A member needing room moves guidance into a reference file
+  rather than raising the number — the cap exists to force progressive
+  disclosure, and a cap that rises whenever it binds is not a cap. Raising it is
+  possible but never incidental: it takes its own amendment stating why the
+  larger body is the right shape.
+  *(amended 2026-09-14: added after `review-risk-lenses` consumed the headroom,
+  leaving nine lines for the two remaining members.)*
 - **A reference states its whole trigger.** A member that moves guidance behind a
   load condition writes that condition in full at the pointer, never only inside
   the file the condition gates. A pointer that under-states its trigger makes the
