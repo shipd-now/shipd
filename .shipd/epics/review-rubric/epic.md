@@ -52,6 +52,29 @@ below 300 lines with no rubric substance lost.
   executes it. That runner has no `${CLAUDE_PLUGIN_ROOT}` and no reference
   files. Every member that changes rubric substance updates both surfaces, and
   the template keeps its substance inline.
+
+  Three surfaces, not two. `plugins/s/harness/bodies/review.md` is the third — a
+  distilled command body that the `review-skill` requirement in
+  `.shipd/verified/semantic-review/spec.md` binds to the same judgement passes
+  as the skill, so the two cannot drift. Which surfaces a member touches now
+  follows from what it changes: a member that changes a judgement pass updates
+  all three, and a member that changes only the `--json` finding shape updates
+  the plugin alone, because neither the harness body nor the copilot template
+  carries that shape. The copilot template's JSON array holds `severity`,
+  `path`, `start_line`, `end_line`, `detail` and `replacement`, and no taxonomy
+  field at all.
+  *(amended 2026-09-14: corrected the surface count from two to three, after the
+  harness body surfaced while building `review-skill-references`.)*
+- **A reference states its whole trigger.** A member that moves guidance behind a
+  load condition writes that condition in full at the pointer, never only inside
+  the file the condition gates. A pointer that under-states its trigger makes the
+  guidance unreachable, because the reader who needs it never learns it applies.
+  The agreement test at
+  `plugins/s/skills/review/tests/test_skill_references.py` pins every pointer
+  against its reference's own condition sentence; a member that adds a reference
+  extends that test rather than working around it.
+  *(amended 2026-09-14: added after the spec-aware pointer shipped half its
+  trigger in `review-skill-references` and the review gate caught it.)*
 - **Progressive disclosure binds the plugin skill only.** Follow the existing
   `plugins/s/skills/plan/references/` idiom. `SKILL.md` names each reference by
   its `${CLAUDE_PLUGIN_ROOT}` path and states the condition that loads it. The
