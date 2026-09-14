@@ -142,15 +142,15 @@ gate members are independent of the text members and of each other.
 
 | Tool | Calls | Output tokens |
 | --- | --- | --- |
-| Bash | 336 | 115.6k |
-| Edit | 22 | 20.3k |
-| (no tool) | 0 | 18.0k |
+| Bash | 442 | 137.7k |
+| Edit | 29 | 30.1k |
+| (no tool) | 0 | 23.3k |
 | Write | 8 | 14.8k |
-| Read | 38 | 8.7k |
-| Agent | 8 | 4.4k |
+| Read | 51 | 10.4k |
+| Agent | 12 | 6.3k |
+| ToolSearch | 9 | 2.6k |
 | AskUserQuestion | 2 | 2.4k |
-| ToolSearch | 7 | 2.4k |
-| SendMessage | 1 | 707 |
-| Monitor | 1 | 272 |
+| SendMessage | 2 | 1.3k |
+| Monitor | 4 | 1.1k |
 | WebFetch | 1 | 142 |
-| **Total** | 424 | 187.7k |
+| **Total** | 560 | 230.2k |
