@@ -1,5 +1,5 @@
 # review-rubric
-Status: ready
+Status: active
 Theme: developer-experience
 
 ## Introduction
@@ -114,3 +114,18 @@ gate members are independent of the text members and of each other.
 | review-risk-lenses | Add security, performance, stability, and data-integrity lenses as a loaded reference, inline in the vendored template | low | medium | medium | medium |
 | review-static-analysis | Add the `semdiff lint` subcommand with linter auto-detection and config override | high | medium | medium | medium |
 | review-incremental | Suppress gate findings already posted and dismissed, read back from the PR's threads | medium | high | high | high |
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 144 | 50.5k |
+| Write | 7 | 13.4k |
+| Edit | 8 | 8.7k |
+| (no tool) | 0 | 6.9k |
+| Read | 26 | 3.7k |
+| Agent | 4 | 2.5k |
+| AskUserQuestion | 2 | 2.4k |
+| ToolSearch | 3 | 2.1k |
+| WebFetch | 1 | 142 |
+| **Total** | 195 | 90.3k |
