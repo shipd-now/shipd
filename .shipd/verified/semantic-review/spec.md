@@ -184,8 +184,14 @@ whether an escape hatch lapses its guarantee, whether it terminates cheaply
 on hostile input, and whether its boundaries and its doc comment agree. It
 SHALL run a test-coverage check over each finding it writes, at every
 severity, asking whether an existing test would fail if that defect
-regressed, and SHALL raise any gap as its own finding in a `test-coverage`
-cohort, which the `--json` finding shape SHALL accept.
+regressed, and SHALL raise any gap as its own finding in the `test-coverage`
+category, which the `--json` finding shape SHALL accept.
+
+The `--json` finding shape's taxonomy field SHALL be named `category`. The
+name `cohort` SHALL denote only the architectural grouping `semdiff files`
+emits, and the name `kind` SHALL denote only a file's added, deleted or
+modified state in `semdiff diff`; no surface SHALL use either word for the
+finding taxonomy.
 
 The skill SHALL review an added file's inlined `content` with the rigour it
 applies to a hunk, and SHALL NOT pass such a file on its path and line count
@@ -207,6 +213,17 @@ judgement passes as the skill, so the two surfaces do not drift.
 - **THEN** it emits only a JSON object — verdict `changes-requested` iff
   any finding is high or medium, else `pass`, with findings, optional
   spec_coverage, and could_not_verify arrays — and no emoji or prose
+
+#### Scenario: The taxonomy field is named category
+- **WHEN** a `--json` review emits a finding
+- **THEN** the finding's taxonomy is carried on a `category` key, and no
+  finding carries a `cohort` or `kind` key
+
+#### Scenario: The architectural cohort keeps its name
+- **WHEN** `semdiff files` output and the skill's reporting instructions are
+  inspected
+- **THEN** both still name the architectural grouping `cohort`, unchanged by
+  the finding-taxonomy rename
 
 #### Scenario: The skill binds the standard by reference
 - **WHEN** `plugins/s/skills/review/SKILL.md` is inspected
@@ -726,3 +743,30 @@ the exposure severity floor inline. `SKILL.md` SHALL stay under 300 lines.
 #### Scenario: The skill body still fits the ceiling
 - **WHEN** `plugins/s/skills/review/SKILL.md` is measured
 - **THEN** it is under 300 lines
+
+### Requirement: Taxonomy parity across payload surfaces
+id: review-taxonomy-parity
+
+The `--json` finding payload is documented on two surfaces: the plugin skill's
+reference at `plugins/s/skills/review/references/json-output.md`, and the
+harness command reference at `plugins/s/harness/references/review.md`, which
+ships to every harness declaring the `file-references` feature. Both SHALL
+state the same taxonomy field name and the same set of accepted values, and a
+test SHALL assert that equality so a value added to one cannot silently skip
+the other.
+
+#### Scenario: Both payload surfaces accept the same values
+- **WHEN** the taxonomy enums of the plugin reference and the harness
+  reference are compared
+- **THEN** the two value sets are equal, and both name the field `category`
+
+#### Scenario: A value added to one surface alone fails the pin
+- **WHEN** a taxonomy value is added to the plugin reference and not to the
+  harness reference
+- **THEN** the parity test fails, naming the values present on one surface and
+  absent from the other
+
+#### Scenario: The harness reference carries the values it had drifted behind
+- **WHEN** `plugins/s/harness/references/review.md` is inspected
+- **THEN** its taxonomy accepts `test-coverage`, `security`, `performance`,
+  `stability` and `data-integrity` alongside the values it already carried

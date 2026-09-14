@@ -32,6 +32,28 @@ COPILOT_SKILL_MD = os.path.join(
 HARNESS_REVIEW_BODY = os.path.join(
     PLUGIN_S_ROOT, "harness", "bodies", "review.md")
 
+# The finding taxonomy's two payload surfaces (review-taxonomy-parity). The
+# harness reference ships to every harness declaring `file-references`, so it
+# is reached from this tests directory via the plugin root, not the skill's
+# own references/ directory.
+HARNESS_REVIEW_MD = os.path.join(
+    PLUGIN_S_ROOT, "harness", "references", "review.md")
+
+# The full finding taxonomy both payload surfaces must accept.
+ALL_TAXONOMY_VALUES = frozenset((
+    "bug", "contract", "edge-case", "untouched-caller", "spec-coverage",
+    "test-coverage", "security", "performance", "stability",
+    "data-integrity",
+))
+
+# Matches the one line in a taxonomy site naming the finding field as
+# `cohort`, `category`, or `kind` — whichever the file currently uses —
+# followed by its `|`-separated list of quoted string values, e.g.
+# `"cohort": "bug" | "contract" | ...,`. Scoped to these three candidate
+# names so it never mismatches the neighbouring `"severity"` enum line.
+TAXONOMY_FIELD_RE = re.compile(
+    r'^\s*"(cohort|category|kind)":\s*(".*"),?\s*$')
+
 # The five risk-lens triggers, named exactly as plan.md's Implementation
 # section orders them. Every surface that carries the lenses inline must
 # name each of these verbatim (case-insensitively) — this is deliberately a
@@ -163,6 +185,24 @@ def _exposure_floor_stated(text):
         any(p.search(text) for p in _EXPOSURE_FLOOR_PATTERNS)
         and any(p.search(text) for p in _AUTHZ_FLOOR_PATTERNS)
     )
+
+
+def _taxonomy_field_and_values(path):
+    """The `--json` taxonomy line's field name and its quoted enum values.
+
+    Returns `(field_name, frozenset_of_values)` for the one line in `path`
+    matching `TAXONOMY_FIELD_RE` — the line naming the finding taxonomy as
+    `cohort`, `category`, or `kind`, whichever the file currently uses.
+    """
+    text = _read(path)
+    for line in text.splitlines():
+        match = TAXONOMY_FIELD_RE.match(line)
+        if match:
+            field = match.group(1)
+            values = frozenset(re.findall(r'"([\w-]+)"', match.group(2)))
+            return field, values
+    raise AssertionError(
+        f"no cohort/category/kind taxonomy line found in {path}")
 
 
 class SkillMdStructureTest(unittest.TestCase):
@@ -316,17 +356,74 @@ class ReferenceFreeSurfacesCarryRiskLensesTest(unittest.TestCase):
 class JsonOutputTaxonomyTest(unittest.TestCase):
     """The `--json` finding taxonomy grows the four risk-lens values."""
 
-    def test_cohort_enum_accepts_lens_values(self):
+    def test_category_enum_accepts_lens_values(self):
         text = _read(JSON_OUTPUT_MD)
         line = next(
-            (ln for ln in text.splitlines() if '"cohort":' in ln), None)
+            (ln for ln in text.splitlines() if '"category":' in ln), None)
         self.assertIsNotNone(
-            line, "expected a `\"cohort\":` line in json-output.md")
+            line, "expected a `\"category\":` line in json-output.md")
         for value in ("security", "performance", "stability",
                       "data-integrity"):
             self.assertIn(
                 f'"{value}"', line,
-                f"cohort enum is missing {value!r}: {line!r}")
+                f"category enum is missing {value!r}: {line!r}")
+
+
+class TaxonomyFieldParityTest(unittest.TestCase):
+    """Both `--json` taxonomy surfaces name the field `category` and agree.
+
+    `cohort` names only the architectural grouping `semdiff files` emits and
+    `kind` names only a file's added/deleted/modified state in `semdiff
+    diff` — neither may double as the finding taxonomy's field name. The two
+    taxonomy sites (the plugin skill reference and the harness reference
+    that ships to every harness declaring `file-references`) must also agree
+    on the exact set of accepted values, since a value added to one alone
+    would silently skip the other.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.json_field, cls.json_values = _taxonomy_field_and_values(
+            JSON_OUTPUT_MD)
+        cls.harness_field, cls.harness_values = _taxonomy_field_and_values(
+            HARNESS_REVIEW_MD)
+
+    def test_json_output_names_the_field_category(self):
+        self.assertEqual(
+            self.json_field, "category",
+            f"{JSON_OUTPUT_MD} names the taxonomy field "
+            f"{self.json_field!r}, expected 'category'")
+
+    def test_harness_reference_names_the_field_category(self):
+        self.assertEqual(
+            self.harness_field, "category",
+            f"{HARNESS_REVIEW_MD} names the taxonomy field "
+            f"{self.harness_field!r}, expected 'category'")
+
+    def test_neither_site_names_the_field_cohort_or_kind(self):
+        for path, field in (
+            (JSON_OUTPUT_MD, self.json_field),
+            (HARNESS_REVIEW_MD, self.harness_field),
+        ):
+            with self.subTest(path=path):
+                self.assertNotIn(
+                    field, ("cohort", "kind"),
+                    f"{path} still names the finding taxonomy {field!r}")
+
+    def test_value_sets_are_exactly_equal(self):
+        symmetric_diff = self.json_values ^ self.harness_values
+        self.assertFalse(
+            symmetric_diff,
+            "taxonomy value sets disagree between "
+            f"{JSON_OUTPUT_MD} and {HARNESS_REVIEW_MD}: "
+            f"symmetric difference {sorted(symmetric_diff)}")
+
+    def test_value_set_contains_all_ten_values(self):
+        missing = ALL_TAXONOMY_VALUES - self.json_values
+        self.assertFalse(
+            missing,
+            f"{JSON_OUTPUT_MD} taxonomy is missing values: "
+            f"{sorted(missing)}")
 
 
 class TableConditionAgreementTest(unittest.TestCase):
