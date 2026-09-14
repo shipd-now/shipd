@@ -95,3 +95,5 @@ reports as failed, and the review still completes.
   every pull request
 - [Copilot review reference](copilot-review-reference.md) — the managed files
   and the contract for the check
+- [Semantic review reference](semantic-review-reference.md) — the `--json`
+  fields, the `lint` key, and `prior`'s output
