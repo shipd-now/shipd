@@ -135,6 +135,7 @@ class FakeGh:
             nodes.append({
                 "id": t["id"],
                 "isResolved": t["isResolved"],
+                "path": t.get("path", ""),
                 "comments": {"nodes": [
                     {"databaseId": c["databaseId"],
                      "author": {"login": c["author"]},
@@ -883,17 +884,26 @@ class ProtectUnprotectedBranchTest(unittest.TestCase):
 
 
 def _thread(tid, *, resolved=False, author="gate-bot", created="2024-01-01T00:00:00Z",
-            replies=0, root_id=None, body=""):
+            replies=0, reply_bodies=None, root_id=None, body="", path="a.py"):
     """Build a FakeGh review-thread dict: a root comment authored by ``author``
-    at ``created`` carrying ``body``, plus ``replies`` follow-up comments."""
+    at ``created`` carrying ``body``, plus follow-up comments — either
+    ``replies`` generic ones, or the exact ``reply_bodies`` list when given (so
+    a test can pin a reasoned reply vs. a canonical autoreply body). ``path``
+    travels alongside for ``prior`` to report."""
     root = {"databaseId": root_id if root_id is not None else 10000 + tid_num(tid),
             "author": author, "createdAt": created, "body": body}
     comments = [root]
-    for i in range(replies):
-        comments.append({"databaseId": root["databaseId"] + 1 + i,
-                         "author": author, "createdAt": created,
-                         "body": "a reply"})
-    return {"id": "T%s" % tid, "isResolved": resolved, "comments": comments}
+    if reply_bodies is not None:
+        for i, rb in enumerate(reply_bodies):
+            comments.append({"databaseId": root["databaseId"] + 1 + i,
+                             "author": author, "createdAt": created, "body": rb})
+    else:
+        for i in range(replies):
+            comments.append({"databaseId": root["databaseId"] + 1 + i,
+                             "author": author, "createdAt": created,
+                             "body": "a reply"})
+    return {"id": "T%s" % tid, "isResolved": resolved, "comments": comments,
+            "path": path}
 
 
 def tid_num(tid):
@@ -1022,13 +1032,15 @@ class ResolveTest(unittest.TestCase):
         self.assertEqual(code, 0)
 
 
-def _gate_thread(tid, severity, *, what="boom", **kw):
+def _gate_thread(tid, severity, *, what="boom", path="a.py", **kw):
     """A gate-authored thread whose root body is what the poster would render
-    for a finding of ``severity`` — so the parser is exercised against the real
-    renderer, never a hand-written imitation."""
+    for a finding of ``severity`` at ``path`` — so the parser (and the identity
+    marker it carries) are exercised against the real renderer, never a
+    hand-written imitation."""
     body = review_gate._inline_body(
-        {"severity": severity, "what": what, "why": "w", "fix": "x"})
-    return _thread(tid, body=body, **kw)
+        {"location": "%s:1" % path, "severity": severity, "what": what,
+         "why": "w", "fix": "x"})
+    return _thread(tid, body=body, path=path, **kw)
 
 
 class SeverityParseTest(unittest.TestCase):
@@ -1175,6 +1187,141 @@ class MarkerMigrationTest(unittest.TestCase):
         result = review_gate.autoreply("7", gh, "none")
         self.assertEqual(result["replied"], 1)
         self.assertEqual(len(threads_from(gh, "T1")["comments"]), 2)
+
+
+class FindingHashTest(unittest.TestCase):
+    """`_finding_hash` is the identity primitive `prior`'s matching rests on: a
+    stable digest of a finding's path and normalized `what`, deliberately blind
+    to the line number a diff can move."""
+
+    def test_hash_is_twelve_lowercase_hex_chars(self):
+        h = review_gate._finding_hash("a.py", "boom")
+        self.assertEqual(len(h), 12)
+        int(h, 16)  # raises if not valid hex
+        self.assertEqual(h, h.lower())
+
+    def test_case_and_whitespace_runs_are_normalized(self):
+        h1 = review_gate._finding_hash("a.py", "Boom   Now")
+        h2 = review_gate._finding_hash("a.py", "boom now")
+        self.assertEqual(h1, h2)
+
+    def test_different_path_hashes_differently(self):
+        h1 = review_gate._finding_hash("a.py", "boom")
+        h2 = review_gate._finding_hash("b.py", "boom")
+        self.assertNotEqual(h1, h2)
+
+    def test_different_what_hashes_differently(self):
+        h1 = review_gate._finding_hash("a.py", "boom one")
+        h2 = review_gate._finding_hash("a.py", "boom two")
+        self.assertNotEqual(h1, h2)
+
+    def test_extract_returns_none_without_a_marker(self):
+        self.assertIsNone(review_gate._extract_finding_hash("just some prose"))
+        self.assertIsNone(review_gate._extract_finding_hash(""))
+        self.assertIsNone(review_gate._extract_finding_hash(None))
+
+    def test_extract_round_trips_a_rendered_marker(self):
+        h = review_gate._finding_hash("a.py", "boom")
+        body = "some prose\n\n<!-- shipd-finding %s -->" % h
+        self.assertEqual(review_gate._extract_finding_hash(body), h)
+
+
+class IdentityMarkerTest(unittest.TestCase):
+    """The hidden `<!-- shipd-finding <hash> -->` marker `_inline_body` appends
+    is the last element of the body, after any suggestion fence, so the
+    leading severity marker `parse_severity` reads is never disturbed."""
+
+    def test_rendered_body_ends_with_the_marker_and_severity_still_parses(self):
+        for sev in ("high", "medium", "low"):
+            f = {"location": "a.py:5", "severity": sev, "what": "boom",
+                 "why": "w", "fix": "x"}
+            body = review_gate._inline_body(f)
+            lines = body.split("\n")
+            self.assertRegex(lines[-1], r"^<!-- shipd-finding [0-9a-f]{12} -->$")
+            self.assertEqual(lines[-2], "")  # blank line separates it from prose
+            self.assertEqual(review_gate.parse_severity(body), sev)
+
+    def test_marker_comes_after_a_suggestion_fence(self):
+        f = {"location": "a.py:5", "severity": "high", "what": "boom",
+             "why": "w", "fix": "x"}
+        suggestion = (5, 5, ["    return None"])
+        body = review_gate._inline_body(f, suggestion)
+        self.assertLess(body.index("```suggestion"),
+                        body.index("<!-- shipd-finding "))
+        self.assertTrue(body.rstrip().endswith("-->"))
+        self.assertEqual(review_gate.parse_severity(body), "high")
+
+    def test_a_moved_line_number_hashes_identically(self):
+        f1 = {"location": "a.py:5", "severity": "high", "what": "boom"}
+        f2 = {"location": "a.py:99", "severity": "high", "what": "boom"}
+        h1 = review_gate._extract_finding_hash(review_gate._inline_body(f1))
+        h2 = review_gate._extract_finding_hash(review_gate._inline_body(f2))
+        self.assertIsNotNone(h1)
+        self.assertEqual(h1, h2)
+
+    def test_a_reworded_what_hashes_differently(self):
+        f1 = {"location": "a.py:5", "severity": "high", "what": "boom one"}
+        f2 = {"location": "a.py:5", "severity": "high", "what": "boom two"}
+        h1 = review_gate._extract_finding_hash(review_gate._inline_body(f1))
+        h2 = review_gate._extract_finding_hash(review_gate._inline_body(f2))
+        self.assertNotEqual(h1, h2)
+
+
+class PriorTest(unittest.TestCase):
+    """`review_gate.py prior <pr>` reports each gate thread's identity,
+    severity, `what`, and disposition class — deciding nothing about
+    suppression and mutating nothing."""
+
+    CANONICAL_NONE = review_gate._AUTOREPLY_BODY["none"]
+    CANONICAL_HIGH_ONLY = review_gate._AUTOREPLY_BODY["high-only"]
+
+    def test_a_reasoned_reply_classifies_replied(self):
+        threads = [_gate_thread(1, "high", what="reasoned finding",
+                                reply_bodies=["Deferred: not applicable here"])]
+        gh = FakeGh(review_threads=threads)
+        entries = review_gate.prior("7", gh)
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry["disposition"], "replied")
+        self.assertEqual(entry["severity"], "high")
+        self.assertEqual(entry["what"], "reasoned finding")
+        self.assertEqual(entry["path"], "a.py")
+        self.assertEqual(entry["thread_id"], "T1")
+        self.assertFalse(entry["resolved"])
+        self.assertIsNotNone(entry["hash"])
+
+    def test_a_canonical_autoreply_classifies_autoreplied(self):
+        for body in (self.CANONICAL_NONE, self.CANONICAL_HIGH_ONLY):
+            threads = [_gate_thread(2, "medium", reply_bodies=[body])]
+            gh = FakeGh(review_threads=threads)
+            entries = review_gate.prior("7", gh)
+            self.assertEqual(entries[0]["disposition"], "autoreplied")
+
+    def test_a_later_commit_with_no_reply_classifies_commit_only(self):
+        threads = [_gate_thread(3, "low", created="2024-01-01T00:00:00Z")]
+        gh = FakeGh(review_threads=threads, commits=["2024-02-01T00:00:00Z"])
+        entries = review_gate.prior("7", gh)
+        self.assertEqual(entries[0]["disposition"], "commit-only")
+
+    def test_neither_reply_nor_later_commit_classifies_none(self):
+        threads = [_gate_thread(4, "low", created="2024-03-01T00:00:00Z")]
+        gh = FakeGh(review_threads=threads, commits=["2024-01-01T00:00:00Z"])
+        entries = review_gate.prior("7", gh)
+        self.assertEqual(entries[0]["disposition"], "none")
+
+    def test_hash_is_none_when_the_body_carries_no_marker(self):
+        threads = [_thread(5, author="gate-bot", body="free-form prose")]
+        gh = FakeGh(review_threads=threads)
+        entries = review_gate.prior("7", gh)
+        self.assertIsNone(entries[0]["hash"])
+
+    def test_mutates_nothing(self):
+        threads = [_gate_thread(6, "high", reply_bodies=["a reasoned reply"])]
+        gh = FakeGh(review_threads=threads)
+        review_gate.prior("7", gh)
+        self.assertEqual(gh.resolved_thread_ids, [])
+        self.assertEqual(gh.reply_posts, [])
+        self.assertFalse(threads_from(gh, "T6")["isResolved"])
 
 
 if __name__ == "__main__":

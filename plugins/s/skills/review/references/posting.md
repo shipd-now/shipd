@@ -22,7 +22,7 @@ posting request. Both default to today's behaviour, so a plain "post the
 review" changes nothing:
 
 - `disposition=<all|high-only|none>` (default `all`) — how much per-finding
-  judgement this review is worth. It selects the posting flow's step 5 (see
+  judgement this review is worth. It selects the posting flow's step 6 (see
   below) and passes straight through to the poster as `--disposition`, which
   maps the `semantic-review` commit status by scope: `all` → `success` iff the
   verdict is `pass`; `high-only` → `success` iff no finding is high; `none` →
@@ -52,16 +52,35 @@ When posting is requested:
    `diff <base> <head>` (default base `main`) so the "after" side is the PR's
    head exactly as GitHub shows it — the same three-dot semantics described
    under "Determine what to review". Do the full analysis; do not shortcut it.
-3. **Emit the machine JSON to a temp file.** Produce the `--json` object (same
-   shape and rules as Machine output mode) and write it to a temp path, e.g.
-   `"$TMPDIR/review.json"`.
-4. **Run the poster.** `review_gate.py post <pr> --from "$TMPDIR/review.json"`,
+3. **Read prior dispositions and drop what was already answered.** Run
+   `review_gate.py prior <pr>` and, for every finding this review is about to
+   post, compare its `hash` — the same identity `_finding_hash(<path>,
+   <normalized what>)` computes and `_inline_body` embeds as the trailing
+   `<!-- shipd-finding <hash> -->` marker — against `prior`'s entries. Omit a
+   finding whose hash matches an entry classified `replied`: a human already
+   gave it a reasoned answer, and reposting it unchanged only repeats the
+   finding back at them. Leave every other finding in place — none of the
+   other three classes is evidence a human dismissed it:
+   - **`commit-only`** — only a commit landed after the thread, which is
+     purely time-based and proves nothing about implementation; a recurrence
+     after it is a regression, the most valuable finding the gate can produce.
+   - **`autoreplied`** — one of the two canonical `autoreply` bodies fired
+     mechanically; nobody actually assessed the finding.
+   - **`none`** — nobody has dispositioned it at all.
+
+   This step runs only when posting; a review that is not posting makes no
+   `prior` call and omits nothing. Carry the omitted count and this PR forward
+   to the final report (step 8).
+4. **Emit the machine JSON to a temp file.** Produce the `--json` object (same
+   shape and rules as Machine output mode) from the findings that survived
+   step 3, and write it to a temp path, e.g. `"$TMPDIR/review.json"`.
+5. **Run the poster.** `review_gate.py post <pr> --from "$TMPDIR/review.json"`,
    adding `--disposition <scope>` and `--model <tier>` when the invoker passed
    them. It upserts the marker summary comment, posts anchored inline comments
    for in-diff findings (folding the rest into the summary), and sets the
    `semantic-review` commit status on the head SHA by scope — under the default
    `all`, `success` iff the verdict is `pass`, else `failure`.
-5. **Disposition the findings — by scope.** A posted finding is advice nobody
+6. **Disposition the findings — by scope.** A posted finding is advice nobody
    is required to read until it is dispositioned, and every gate thread must
    end up carrying disposition evidence. How much judgement you spend depends
    on the acting scope:
@@ -115,7 +134,7 @@ When posting is requested:
 
    `autoreply` skips threads that already carry a reply, so re-running it after
    a push is safe.
-6. **Resolve the threads.** Once every finding is implemented, answered, or
+7. **Resolve the threads.** Once every finding is implemented, answered, or
    auto-replied, run
 
    ```
@@ -127,11 +146,12 @@ When posting is requested:
    carry neither (listing them as undispositioned and exiting non-zero), and
    never touches human-authored threads — humans resolve their own. Use
    `resolve <pr> --check` to read the unresolved count without mutating.
-7. **Report back** the posted status state (`success`/`failure`), the summary
-   comment URL, the acting disposition scope when it is not `all`, and the
+8. **Report back** the posted status state (`success`/`failure`), the summary
+   comment URL, the acting disposition scope when it is not `all`, the
    `unresolved=` count from `resolve` — which is **zero** on a completed
-   disposition. Any non-zero count means a finding still has no disposition; go
-   back to step 5.
+   disposition — and, when step 3 omitted any finding, how many and the pull
+   request whose threads answered them. Any non-zero `unresolved=` count means
+   a finding still has no disposition; go back to step 6.
 
 The poster is idempotent: re-running after a new push edits the same summary
 comment in place and re-stamps the status on the new head SHA. It performs no
