@@ -52,7 +52,7 @@ Source: `plugins/s/skills/review/references/json-output.md`.
 
 ## The `lint` configuration key
 
-`lint` is an optional top-level key in `shipd.config.json`. It configures the
+`lint` is an optional top-level key in `.shipd-config.json`. It configures the
 `semdiff lint` subcommand.
 
 | member | type | default | meaning |
