@@ -70,7 +70,19 @@ argument each call site passes in. A defensive branch the real call can never
 hit is dead code; a comment promising behaviour the code does not produce given
 how it is called is wrong even though its line exists.
 
-### 5. Report
+### 5. Apply the risk lenses
+
+Whatever the cohort, watch for five triggers: secret or credential exposure (a
+new key, token, password, connection string, or personal data landing in a
+literal, log line, error message, or fixture); an authorization boundary — a
+new route, handler, job, or query — reached without checking the caller's
+scope, role, or ownership; unbounded work whose iteration count or size is
+driven by user input with no cap; resource release — a file handle, socket,
+lock, connection, or transaction not released on every exit path, including
+the error path; and migration reversibility — a schema migration or
+destructive data operation with no down-path, backfill, or backup.
+
+### 6. Report
 
 Write a report that is **scanned**, not read start to finish: the verdict
 first, then a table that rates every finding, then the detail. A reader who
@@ -173,6 +185,9 @@ body remains the review, and the verdict marker below is what gates the merge.
 - **medium** — an unhandled edge case, an untouched caller at genuine risk, or
   a likely-wrong behaviour you cannot fully confirm.
 - **low** — style, naming, minor redundancy, defensive nits.
+
+A secret/credential exposure finding, or an authorization boundary reached
+without a scope check, is always **high** regardless of your confidence.
 
 **Verdict rule.** Any high **or** medium finding blocks: the verdict is
 **Fix required**. With no high and no medium finding, it is **Ship it**.

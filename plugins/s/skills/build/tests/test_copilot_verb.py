@@ -426,7 +426,7 @@ class SkillTemplateTest(unittest.TestCase):
         self.assertIn("advisory", lowered)
 
     def test_report_instructions_mandate_the_verdict_marker(self):
-        report = markdown_section(self.text, "### 5. Report")
+        report = markdown_section(self.text, "### 6. Report")
         self.assertTrue(report.strip(), "no report section in the template")
         self.assertIn(SHIP_MARKER, report)
         self.assertIn(FIX_MARKER, report)
@@ -440,7 +440,7 @@ class SkillTemplateTest(unittest.TestCase):
         # substring match" describes a matcher that does not exist and that
         # the gate deliberately does not use — a marker quoted mid-text is
         # prose, and matching it anywhere would fail a passing pull request.
-        report = markdown_section(self.text, "### 5. Report")
+        report = markdown_section(self.text, "### 6. Report")
         self.assertTrue(report.strip(), "no report section in the template")
         lowered = report.lower()
         self.assertIn("last non-empty line", lowered)
@@ -454,7 +454,7 @@ class SkillTemplateTest(unittest.TestCase):
         # A reader who stops after the first screen must already have the
         # verdict and every finding's rating — the shape `/s:review` renders
         # and the gate has never matched.
-        report = markdown_section(self.text, "### 5. Report")
+        report = markdown_section(self.text, "### 6. Report")
         self.assertTrue(report.strip(), "no report section in the template")
         for header in VERDICT_HEADERS:
             self.assertIn(header, report,
@@ -475,7 +475,7 @@ class SkillTemplateTest(unittest.TestCase):
                       "the template does not ask for brief findings")
 
     def test_the_findings_file_is_specified_with_its_replacement_rule(self):
-        report = markdown_section(self.text, "### 5. Report")
+        report = markdown_section(self.text, "### 6. Report")
         self.assertTrue(report.strip(), "no report section in the template")
         self.assertIn(FINDINGS_FILE, report,
                       "the template names no machine-readable findings file")

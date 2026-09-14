@@ -44,6 +44,7 @@ Each file below is read only when its condition fires — not by default.
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/spec-aware.md` | the user named a planned change, or exactly one change exists under `planned/` |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` | the user passed `--json`, or the poster's JSON is being produced |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/posting.md` | posting to a PR was explicitly requested |
+| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/risk-lenses.md` | a risk lens trigger fires during review of the diff |
 
 ## Determine what to review
 
@@ -135,6 +136,25 @@ rather than modified:
   docstring, confirm it describes what the code actually does, not what it was
   meant to do.
 
+### 5b. Risk lenses
+Check every diff, in every cohort, against five fixed triggers, always — never
+gated on cohort or file type. Read
+`${CLAUDE_PLUGIN_ROOT}/skills/review/references/risk-lenses.md` for the full
+guidance and worked examples once one fires:
+
+- **Secret or credential exposure** — a new literal, log line, or error
+  message carrying a key, token, password, or personal data. Always rated
+  `high`, whatever the reviewer's confidence.
+- **Authorization boundary** — a new route, handler, or query reaching data
+  without checking the caller's scope, role, or ownership. Always rated
+  `high`.
+- **Unbounded work** — a loop, recursion, batch, or fan-out whose size is
+  driven by user input or external data with no cap.
+- **Resource release** — a file handle, socket, lock, connection, or
+  transaction not released on every exit path, including the error path.
+- **Migration reversibility** — a schema migration or destructive data
+  operation with no down-migration, backup, or recovery path.
+
 ### 6. Report by cohort
 Group findings under cohort headings, most severe first. For each finding: the
 **location**, **what** is wrong, **why** it matters, a concrete **fix**, and an
@@ -146,6 +166,9 @@ explicit **severity**.
 - **medium** — an unhandled edge case, an untouched caller at genuine risk, or
   a likely-wrong behaviour you cannot fully confirm.
 - **low** — style, naming, minor redundancy, defensive nits.
+- **Exposure floor.** A secret or credential exposure finding, or an
+  authorization boundary reached without the caller's scope check, is always
+  `high`, whatever the reviewer's confidence.
 
 Any high **or** medium finding blocks (Fix required); low never blocks. When
 unsure between two levels, state the doubt rather than inflating.

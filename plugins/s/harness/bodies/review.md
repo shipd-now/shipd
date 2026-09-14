@@ -41,7 +41,17 @@ edits the repository.
    actually governs, does an escape hatch let its guarantee lapse, does it
    terminate cheaply on hostile input, and do its boundaries agree with its
    doc comment?
-7. **Verify the spec when a planned change is in scope** — the user named one,
+7. **Apply the risk lenses.** Whatever the cohort, watch for five triggers.
+   Secret or credential exposure: a new key, token, password, connection
+   string, or personal data landing in a literal, log line, error message, or
+   fixture. Authorization boundary: a new route, handler, job, or query
+   reached without checking the caller's scope, role, or ownership.
+   Unbounded work: iteration count or size driven by user input with no cap.
+   Resource release: a file handle, socket, lock, connection, or transaction
+   not released on every exit path, including the error path. Migration reversibility:
+   a schema migration or destructive data operation with no down-path,
+   backfill, or backup.
+8. **Verify the spec when a planned change is in scope** — the user named one,
    or exactly one change sits under `.shipd/planned/`. Read it with
    `python3 "$S/spec_status.py" cat change <change>`, then classify every
    `#### Scenario:` against the diff as **met** (citing the file and hunk),
@@ -49,21 +59,23 @@ edits the repository.
    force. Every unmet scenario is a high-severity finding. Cross-check the
    `- [x]` tasks against the diff and flag any marked done with no change
    behind it, and surface `shipd lint <change>` findings verbatim.
-8. **Report by cohort, most severe first.** Give each finding a location, what
+9. **Report by cohort, most severe first.** Give each finding a location, what
    is wrong, why it matters, a concrete fix, and an explicit severity:
    - **high** — a correctness bug, a contract break with an un-updated
      consumer, or an unmet spec scenario;
    - **medium** — an unhandled edge case, a caller at genuine risk, or a
      likely-wrong behaviour you cannot fully confirm;
    - **low** — style, naming, minor redundancy, defensive nits.
+   A secret/credential exposure finding, or an authorization boundary reached
+   without a scope check, is always **high** regardless of your confidence.
    Open with an effort score of 1–5 justified by the counts, then the verdict:
    **Fix required** when any finding is high or medium, **Ship it** otherwise.
    When you are unsure between two levels, state the doubt rather than
    inflating it. Close with an explicit list of what you could not verify.
-9. **Check test coverage per finding.** For every finding you write, at every
-   severity, ask whether an existing test would fail if that defect
-   regressed; when none would, raise the gap as its own finding.
-10. **Hand off.** Fix-required findings go back through `/s:build`'s
+10. **Check test coverage per finding.** For every finding you write, at every
+    severity, ask whether an existing test would fail if that defect
+    regressed; when none would, raise the gap as its own finding.
+11. **Hand off.** Fix-required findings go back through `/s:build`'s
     implementation loop while the branch is still open, or — once it has
     merged — become a new change through `/s:plan`. Never open a second pull
     request on an already-merged branch.
