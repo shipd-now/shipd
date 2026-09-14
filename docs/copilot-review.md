@@ -142,7 +142,7 @@ the four states it reports.
 
 ## See also
 
-- [`/s:review`](../README.md#skills) — the same review, run locally against a
-  base ref before you push.
+- [The semantic review](semantic-review.md) — what this review reads, and how
+  it rates what it finds.
 - [`.shipd/research/copilot-code-review/report.md`](../.shipd/research/copilot-code-review/report.md)
   — the cited research behind this integration.
