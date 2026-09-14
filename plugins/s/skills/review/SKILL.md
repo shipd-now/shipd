@@ -35,6 +35,16 @@ subcommands are read-only and never touch the network; only `doctor --fix`
 installs software or reaches the network, and the single place this skill runs
 it is the review-start difftastic repair (see Degradation).
 
+## References
+
+Each file below is read only when its condition fires — not by default.
+
+| Reference | Load when |
+| --- | --- |
+| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/spec-aware.md` | the user named a planned change, or exactly one change exists under `planned/` |
+| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` | the user passed `--json`, or the poster's JSON is being produced |
+| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/posting.md` | posting to a PR was explicitly requested |
+
 ## Determine what to review
 
 - **Local changes before pushing** (the default): `diff <base>` compares
@@ -144,31 +154,11 @@ unsure between two levels, state the doubt rather than inflating.
 Run this check over **every** finding you write, at **every** severity —
 including low. For each one, ask: would an existing test fail if this defect
 regressed? When no test would catch it, raise the gap as its own finding in a
-`test-coverage` cohort (see the Machine output mode shape below), naming the
-defect it would guard and where the test belongs. This runs alongside, not
-instead of, the finding it covers — a real defect and its missing test are two
-findings, not one.
-
-## Spec-aware review (when a shipd change is in scope)
-
-Trigger when the user names a change **or** exactly one change exists under
-`planned/`. Run `change <name>` — it returns the change's status, deltas
-(requirements + WHEN/THEN scenario texts), tasks (checkbox states + progress),
-lint findings, and best-effort impact files. Then, against the structural diff:
-
-- **Verify each scenario.** Classify each **Met** (cite the satisfying
-  file/hunk), **Unmet** (behaviour absent), or **Can't-tell** (a first-class
-  outcome — do not force it). Report every **Unmet** scenario as a
-  **high-severity** spec-coverage finding; unmet requirements are the top
-  finding and force a Fix-required verdict.
-- **Task honesty.** Cross-check `- [x]` tasks against the diff; flag any marked
-  done with no supporting change in the diff.
-- **Uncovered code.** Behavioural changes no requirement or task describes are
-  **observations**, not blockers.
-- **Lint findings.** Surface the change's lint findings verbatim.
-
-Report under a **Spec coverage** heading: a Met/Unmet/Can't-tell scenario
-table, then the task-honesty and uncovered-code items.
+`test-coverage` cohort (see
+`${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` for the shape),
+naming the defect it would guard and where the test belongs. This runs
+alongside, not instead of, the finding it covers — a real defect and its
+missing test are two findings, not one.
 
 ## Presentation (human mode — the default)
 
@@ -180,7 +170,9 @@ table, then the task-honesty and uncovered-code items.
 2. **Findings header — directly below the effort score.** A line
    `## Findings: <marker> <VERDICT>` — `✅ Ship it` when no finding is high or
    medium; `❌ Fix required` otherwise. This is the **same** decision as the
-   `--json` verdict — never let the two diverge. In the summary comment
+   verdict in
+   `${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` — never let
+   the two diverge. In the summary comment
    `review_gate.py post` upserts, the brand line `**☕ shipd** semantic review`
    precedes this header — it is the first visible line of the comment body,
    directly after the hidden `<!-- shipd-semantic-review -->` marker, which
@@ -199,215 +191,6 @@ table, then the task-honesty and uncovered-code items.
    never rely on colour alone — label bands as text.
 6. **Findings by cohort** — reuse the summary table's numbers — then the
    **verdict** and an explicit list of **what you could not verify**.
-
-## Machine output mode (`--json`)
-
-When the user passes `--json`, emit a single JSON object to stdout and nothing
-else — no preamble, no walkthrough, no diagrams. All analysis still runs; only
-rendering changes. Shape:
-
-```json
-{
-  "verdict": "pass" | "changes-requested",
-  "effort": 3,
-  "findings": [
-    {
-      "id": "f1",
-      "severity": "high" | "medium" | "low",
-      "cohort": "bug" | "contract" | "edge-case" | "untouched-caller" | "spec-coverage" | "test-coverage",
-      "location": "path/to/file.ext:LINE",
-      "what": "one-line statement of the defect",
-      "why": "why it matters",
-      "fix": "concrete fix",
-      "status": "open",
-      "note": "",
-      "suggestion": {
-        "confident": true,
-        "start_line": 42,
-        "end_line": 44,
-        "lines": ["the whole replacement line", "and the next one"]
-      }
-    }
-  ],
-  "spec_coverage": [ { "scenario": "WHEN … THEN …", "state": "met" | "unmet" | "cant-tell" } ],
-  "could_not_verify": [ "…" ]
-}
-```
-
-Rules: `verdict` is `changes-requested` iff any finding is high or medium, else
-`pass`. An unmet acceptance criterion MUST also appear as a `spec-coverage`
-finding with severity `high`. `spec_coverage` is present only when a change is
-in scope. Valid JSON only — no fences, no commentary, **no emoji**. If the
-analysis cannot run, still emit a well-formed object with `could_not_verify`
-explaining why.
-
-### The optional `suggestion` object
-
-`suggestion` is **optional** and belongs on a finding only when you would stake
-the fix on being applied unread: clicking Apply on a GitHub suggestion commits
-your lines verbatim, so the correctness judgement moves to whoever clicks.
-Omit it and the finding renders as prose, which is the right answer whenever
-you are less than sure.
-
-The poster commits it as a `suggestion` block only when **all** of these hold —
-anything else quietly degrades to prose, never an error, so a shape you got
-wrong costs a suggestion and not the review:
-
-- `confident` is exactly `true`;
-- `start_line` and `end_line` are integers with `start_line <= end_line` — one
-  contiguous range, the only shape GitHub can commit;
-- `lines` is a non-empty list of the **whole** replacement lines. Its length
-  need not match the range: a fix may add or remove lines. Never express an
-  edit inside a line — no `start_column`/`end_column`, whose mere presence
-  declares a partial-line edit and degrades the finding;
-- the finding's `location` anchors to a RIGHT-side line of the PR diff (the
-  same rule that decides inline-vs-summary for every finding), and every line
-  in `start_line..end_line` is in that diff too — a comment spanning a line the
-  diff does not carry is rejected outright.
-
-The range is what the suggestion replaces, and it need not be the `location`
-line; the comment anchors on the range. The block changes nothing else about
-the finding — same severity marker, same what/why/fix prose — and `--json`
-stays emoji- and prose-free.
-
-## Posting to a PR (the gate)
-
-The review verdict gates a PR only once it reaches GitHub. Posting is a
-**mechanical** step handled by a companion script — you supply the judgement
-(the `--json` object), it shapes the GitHub payloads:
-
-```
-python3 "$CLAUDE_PLUGIN_ROOT/skills/review/scripts/review_gate.py" post <pr> --from <json|->
-```
-
-**Post only on an explicit request** — the user asking to "post the review to
-the PR", or a driving session (the autopilot's `review` stage) instructing you
-to. Never post as a side effect of a plain review; a review with no posting
-request stays local and touches no `gh` write.
-
-### Review stage options
-
-The invoker — a driving session or the user — may pass two options with the
-posting request. Both default to today's behaviour, so a plain "post the
-review" changes nothing:
-
-- `disposition=<all|high-only|none>` (default `all`) — how much per-finding
-  judgement this review is worth. It selects the posting flow's step 5 (see
-  below) and passes straight through to the poster as `--disposition`, which
-  maps the `semantic-review` commit status by scope: `all` → `success` iff the
-  verdict is `pass`; `high-only` → `success` iff no finding is high; `none` →
-  always `success`. The findings and the rendered verdict stay
-  severity-honest in every scope — only the merge-gating status is
-  policy-aware, and a non-`all` scope is stamped on the summary comment and in
-  the status description so a green status over visible findings is explained
-  on the PR.
-- `model=<tier>` — the model tier this review was meant to run on, symbolic
-  (`session`, `tier-below`, `tier-two-below`) or a concrete id. Pass it
-  through to the poster as `--model`; it is recorded verbatim as a `Model:`
-  line in the summary. **Applying** the tier is the concern of the driver that
-  spawns the reviewing session (the autopilot's `review` stage); this skill
-  never spawns itself on another model, and interactively the tier is
-  informational provenance only.
-
-Never resolve the pipeline configuration yourself — this skill reads no
-`autonomous-pipeline` key and infers no options. Whatever the invoker did not
-pass, take as the default.
-
-When posting is requested:
-
-1. **Resolve the PR.** `gh pr view <branch> --json number,headRefOid,url` (or
-   pass the PR number/URL directly). The branch is usually the current
-   `change/<name>`.
-2. **Review head vs base with merge-base semantics.** Run the review as
-   `diff <base> <head>` (default base `main`) so the "after" side is the PR's
-   head exactly as GitHub shows it — the same three-dot semantics described
-   under "Determine what to review". Do the full analysis; do not shortcut it.
-3. **Emit the machine JSON to a temp file.** Produce the `--json` object (same
-   shape and rules as Machine output mode) and write it to a temp path, e.g.
-   `"$TMPDIR/review.json"`.
-4. **Run the poster.** `review_gate.py post <pr> --from "$TMPDIR/review.json"`,
-   adding `--disposition <scope>` and `--model <tier>` when the invoker passed
-   them. It upserts the marker summary comment, posts anchored inline comments
-   for in-diff findings (folding the rest into the summary), and sets the
-   `semantic-review` commit status on the head SHA by scope — under the default
-   `all`, `success` iff the verdict is `pass`, else `failure`.
-5. **Disposition the findings — by scope.** A posted finding is advice nobody
-   is required to read until it is dispositioned, and every gate thread must
-   end up carrying disposition evidence. How much judgement you spend depends
-   on the acting scope:
-   - **`all` (the default) — every finding, low included.** Walk the findings
-     (newest post first) and give each exactly one of two dispositions — never
-     leave a finding with neither. A finding that is neither implemented (by
-     your edit or by its suggestion having been applied) nor replied to is
-     undispositioned, and `resolve` will refuse it:
-     - **Implement** it when the suggestion is correct: make the edit, commit,
-       and push. The push re-triggers the gate, so re-run the review + poster
-       afterwards so the summary and status track the new head SHA.
-
-       A finding whose committable `suggestion` block has already been
-       **applied** on the pull request is implemented by that very act — the
-       commit GitHub made is the evidence — so it needs no edit and **no
-       separate reply**. Do not reply "applied" onto such a thread; `resolve`
-       reads the later commit as the disposition, exactly as it does for a fix
-       you pushed yourself.
-     - **Push back** when you judge it not worth implementing: post a concrete,
-       reasoned reply onto the finding's thread with
-
-       ```
-       review_gate.py reply <pr> <comment-id> --body "<the reason>"
-       ```
-
-       where `<comment-id>` is the inline review comment rooting that finding's
-       thread. A bare "won't fix" is not a disposition — name the reason.
-   - **`high-only` — judgement on the highs only.** Implement each **high**
-     finding (or push back on it with a reasoned `reply`, exactly as under
-     `all`), re-reviewing and re-posting after any push. Then cover the rest
-     mechanically:
-
-     ```
-     review_gate.py autoreply <pr> --disposition high-only
-     ```
-
-     It posts the canonical policy reply onto every unreplied gate thread
-     rooted at a medium or low finding, prints `replied=<n>`, and leaves the
-     highs — and any thread whose severity it cannot parse — untouched, so a
-     reported unparsed thread still needs your disposition.
-   - **`none` — no per-finding judgement at all.** Do not implement and do not
-     author individual replies; run
-
-     ```
-     review_gate.py autoreply <pr> --disposition none
-     ```
-
-     which replies to every unreplied gate thread regardless of severity. The
-     findings stay posted and honest; they are simply recorded rather than
-     acted on.
-
-   `autoreply` skips threads that already carry a reply, so re-running it after
-   a push is safe.
-6. **Resolve the threads.** Once every finding is implemented, answered, or
-   auto-replied, run
-
-   ```
-   review_gate.py resolve <pr>
-   ```
-
-   It resolves only the gate-authored threads that carry disposition evidence
-   (a reply, or a commit landed after the thread was created), refuses any that
-   carry neither (listing them as undispositioned and exiting non-zero), and
-   never touches human-authored threads — humans resolve their own. Use
-   `resolve <pr> --check` to read the unresolved count without mutating.
-7. **Report back** the posted status state (`success`/`failure`), the summary
-   comment URL, the acting disposition scope when it is not `all`, and the
-   `unresolved=` count from `resolve` — which is **zero** on a completed
-   disposition. Any non-zero count means a finding still has no disposition; go
-   back to step 5.
-
-The poster is idempotent: re-running after a new push edits the same summary
-comment in place and re-stamps the status on the new head SHA. It performs no
-analysis of its own — all judgement stays in this skill; the engine only
-enforces that each finding was implemented or answered before its thread
-resolves.
 
 ## Degradation
 
@@ -464,7 +247,8 @@ report, the summary comment, and `--json` — never "issue" or "concern".
   `**☕ shipd** semantic review` brand line opening the posted summary
   comment's visible body, the ✅/❌ verdict marker in the findings header, and
   the 🔴/🟠/🟡 severity dots in the summary table. Nowhere else: not in prose,
-  findings, other tables, or mermaid labels. `--json` output carries none.
+  findings, other tables, or mermaid labels. The `--json` output described in
+  `${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` carries none.
 - **Read-only.** The review never edits the repo.
 - **shipd naming only** — no other product branding or brand marks.
 - Prefer the tool's JSON over re-deriving diffs; that keeps token cost low.
