@@ -120,6 +120,20 @@ below 300 lines with no rubric substance lost.
   infers linters from repo files. `.shipd-config.json` overrides the detection
   or disables a linter. A repo that configures nothing still gets a working
   check.
+
+  Configuration may also **enable** one thing detection never turns on by
+  itself: executing a repository-defined lint script. `semdiff lint` runs only
+  an argv the engine constructs for a known linter binary, because `semdiff.py`
+  is vendored byte-identical into user repositories and runs inside their
+  GitHub Actions — a wider trust posture than its existing fixed-argv calls to
+  `git`, `difft` and `rg`. A script-based linter is therefore reported as
+  detected but not run, and a repository opts into running it through the
+  configuration's `lint` key. Detection still never reaches a linter the engine
+  does not know; configuration overrides, disables, or permits execution, and
+  never teaches a new linter.
+  *(amended 2026-09-14: extended so configuration may permit script execution,
+  after planning `review-static-analysis` found the original wording granted
+  config only override and disable.)*
 - **Incremental review applies to gate mode only.** Prior findings are read
   back from the PR's posted threads, which `review_gate.py` already parses over
   GraphQL. No member adds a local cache. A pre-push `/s:review` stays stateless.
