@@ -181,15 +181,16 @@ gate members are independent of the text members and of each other.
 
 | Tool | Calls | Output tokens |
 | --- | --- | --- |
-| Bash | 442 | 137.7k |
-| Edit | 29 | 30.1k |
-| (no tool) | 0 | 23.3k |
-| Write | 8 | 14.8k |
-| Read | 51 | 10.4k |
-| Agent | 12 | 6.3k |
-| ToolSearch | 9 | 2.6k |
+| Bash | 631 | 192.7k |
+| Edit | 41 | 57.5k |
+| Write | 10 | 54.4k |
+| (no tool) | 0 | 32.1k |
+| Read | 88 | 20.1k |
+| Agent | 16 | 8.6k |
+| ToolSearch | 13 | 3.3k |
 | AskUserQuestion | 2 | 2.4k |
+| Monitor | 5 | 1.6k |
 | SendMessage | 2 | 1.3k |
-| Monitor | 4 | 1.1k |
 | WebFetch | 1 | 142 |
-| **Total** | 560 | 230.2k |
+| TaskStop | 1 | 59 |
+| **Total** | 810 | 374.3k |
