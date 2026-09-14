@@ -148,7 +148,13 @@ def _text_excluding_references_section(text):
 
 
 def _missing_triggers(text):
-    lowered = text.lower()
+    # Collapse all whitespace runs (including newlines) to a single space
+    # before matching. Markdown reflows prose at ~80 columns, so a multi-word
+    # trigger phrase can legitimately wrap across a line break even though
+    # the prose states it perfectly well; without this normalization, a
+    # cosmetic wrap reads as a missing trigger. Do not simplify this back to
+    # a plain substring check on `text.lower()`.
+    lowered = re.sub(r"\s+", " ", text.lower())
     return [phrase for phrase in TRIGGER_PHRASES if phrase not in lowered]
 
 
