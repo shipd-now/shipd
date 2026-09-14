@@ -10,6 +10,8 @@ Subcommands:
   diff <base> [<head>]     structural diff (syntax-aware via difft, text
                            fallback when difft is missing)
   files <base> [<head>]    changed paths grouped into architectural cohorts
+  lint <base> [<head>]     run detected linters (ruff, flake8, pylint,
+                           eslint) over changed paths only
   context <symbol>         best-effort reference lookup (rg, else git grep)
   change <name>            aggregate a planned shipd change's review context
   doctor [--fix]           dependency check with a tiered difft installer
@@ -22,6 +24,7 @@ its hard difft requirement and replaces its OpenSpec bridge with a shipd one.
 """
 
 import argparse
+import glob
 import json
 import os
 import platform
@@ -649,6 +652,326 @@ def cmd_files(args):
     return 0
 
 
+# --- lint (static analysis subcommand) --------------------------------------
+
+# Findings a linter run may report, in the shape every subcommand emits
+# (review-lint-subcommand): {"path", "line", "rule", "message", "severity"}.
+
+DEFAULT_LINT_TIMEOUT = 30.0
+
+# JavaScript/TypeScript extensions eslint owns.
+JS_TS_EXTENSIONS = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts",
+                    ".cts")
+
+_INI_SECTION_RE_CACHE = {}
+
+
+def _read_text(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _has_marker_file(root, *names):
+    return any(os.path.isfile(os.path.join(root, n)) for n in names)
+
+
+def _has_glob_marker(root, *patterns):
+    return any(glob.glob(os.path.join(root, pat)) for pat in patterns)
+
+
+def _has_ini_section(root, filename, section):
+    """True if `filename` (INI or TOML — both use `[section]` headers)
+    carries a `[section]` header on its own line."""
+    text = _read_text(os.path.join(root, filename))
+    if text is None:
+        return False
+    pattern = _INI_SECTION_RE_CACHE.get(section)
+    if pattern is None:
+        pattern = re.compile(r"(?m)^\s*\[" + re.escape(section) + r"\]\s*$")
+        _INI_SECTION_RE_CACHE[section] = pattern
+    return bool(pattern.search(text))
+
+
+def _detect_ruff(root):
+    return (_has_marker_file(root, "ruff.toml", ".ruff.toml")
+            or _has_ini_section(root, "pyproject.toml", "tool.ruff"))
+
+
+def _detect_flake8(root):
+    return (_has_marker_file(root, ".flake8")
+            or _has_ini_section(root, "setup.cfg", "flake8")
+            or _has_ini_section(root, "tox.ini", "flake8"))
+
+
+def _detect_pylint(root):
+    return (_has_marker_file(root, ".pylintrc")
+            or _has_ini_section(root, "pyproject.toml", "tool.pylint"))
+
+
+def _detect_eslint(root):
+    return _has_glob_marker(root, "eslint.config.*", ".eslintrc*")
+
+
+def _finding(path, line, rule, message, severity):
+    return {"path": path, "line": line, "rule": rule, "message": message,
+            "severity": severity}
+
+
+def _parse_ruff_output(text):
+    data = json.loads(text or "[]")
+    findings = []
+    for item in data:
+        loc = item.get("location") or {}
+        findings.append(_finding(
+            item.get("filename", ""), loc.get("row"), item.get("code") or "",
+            item.get("message", ""), "warning"))
+    return findings
+
+
+def _parse_flake8_output(text):
+    data = json.loads(text or "{}")
+    findings = []
+    for path, violations in data.items():
+        for v in violations:
+            findings.append(_finding(
+                path, v.get("line_number"), v.get("code", ""),
+                v.get("text", ""), "warning"))
+    return findings
+
+
+def _parse_pylint_output(text):
+    data = json.loads(text or "[]")
+    findings = []
+    for item in data:
+        findings.append(_finding(
+            item.get("path", ""), item.get("line"),
+            item.get("symbol") or item.get("message-id") or "",
+            item.get("message", ""), item.get("type") or "warning"))
+    return findings
+
+
+def _parse_eslint_output(text):
+    data = json.loads(text or "[]")
+    findings = []
+    for file_result in data:
+        path = file_result.get("filePath", "")
+        for msg in file_result.get("messages", []):
+            severity = "error" if msg.get("severity") == 2 else "warning"
+            findings.append(_finding(
+                path, msg.get("line"), msg.get("ruleId") or "",
+                msg.get("message", ""), severity))
+    return findings
+
+
+# The detection table (review-lint-subcommand): each of the four linters maps
+# to its detector, its resolvable binary name, the file extensions it owns in
+# a diff, the argv fragment requesting its machine-readable format, and its
+# output parser. Order matches plan.md's table (ruff, flake8, pylint, eslint).
+LINTERS = {
+    "ruff": {
+        "detect": _detect_ruff,
+        "binary": "ruff",
+        "extensions": (".py",),
+        "format_argv": ["--output-format", "json"],
+        "parse": _parse_ruff_output,
+    },
+    "flake8": {
+        "detect": _detect_flake8,
+        "binary": "flake8",
+        "extensions": (".py",),
+        "format_argv": ["--format=json"],
+        "parse": _parse_flake8_output,
+    },
+    "pylint": {
+        "detect": _detect_pylint,
+        "binary": "pylint",
+        "extensions": (".py",),
+        "format_argv": ["--output-format=json"],
+        "parse": _parse_pylint_output,
+    },
+    "eslint": {
+        "detect": _detect_eslint,
+        "binary": "eslint",
+        "extensions": JS_TS_EXTENSIONS,
+        "format_argv": ["--format", "json"],
+        "parse": _parse_eslint_output,
+    },
+}
+
+STDERR_EXCERPT_MAX = 4000
+
+
+def _truncate(text):
+    text = text or ""
+    if len(text) > STDERR_EXCERPT_MAX:
+        return text[:STDERR_EXCERPT_MAX] + "…"
+    return text
+
+
+def _resolve_binary(root, name):
+    """Resolve `name`'s executable, preferring the repository's own
+    `node_modules/.bin` over `PATH` (review-lint-subcommand: "the project's
+    own install wins")."""
+    local = os.path.join(root, "node_modules", ".bin", name)
+    if os.path.isfile(local) and os.access(local, os.X_OK):
+        return local
+    return shutil.which(name)
+
+
+def _lint_config(root):
+    """The resolved `lint` configuration (shipd-config `lint` key), read
+    through the same `spec_common.resolve_config` path `_content_dir` uses.
+    Falls back to the defaults — no scripts run, nothing disabled — when the
+    engine cannot be imported or the layer is malformed."""
+    lint_cfg = {}
+    try:
+        build = _build_scripts_dir()
+        if build not in sys.path:
+            sys.path.insert(0, build)
+        import spec_common as sc  # noqa: WPS433 (local import by design)
+        config, _prov = sc.resolve_config(root)
+        raw = config.get("lint")
+        if isinstance(raw, dict):
+            lint_cfg = raw
+    except Exception:  # noqa: BLE001 - lint config resolution degrades safely
+        lint_cfg = {}
+    run_scripts = bool(lint_cfg.get("run_scripts", False))
+    raw_disable = lint_cfg.get("disable")
+    disable = set(raw_disable) if isinstance(raw_disable, list) else set()
+    return {"run_scripts": run_scripts, "disable": disable}
+
+
+def _partition_paths(paths, extensions):
+    return [p for p in paths if os.path.splitext(p)[1].lower() in extensions]
+
+
+def _npm_lint_script_declared(root):
+    data_text = _read_text(os.path.join(root, "package.json"))
+    if data_text is None:
+        return False
+    try:
+        data = json.loads(data_text)
+    except ValueError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    scripts = data.get("scripts")
+    return isinstance(scripts, dict) and isinstance(scripts.get("lint"), str)
+
+
+def _execute_linter(argv, timeout, parse):
+    """Run one linter's `argv` under `timeout` and parse its stdout.
+
+    Returns (state, findings, stderr_excerpt_or_None). A non-zero exit is
+    normal (findings exist); only a timeout, an execution failure, or output
+    that does not parse sets `failed` (review-lint-subcommand)."""
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True,
+                           timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "failed", [], _truncate(
+            f"linter exceeded its {timeout}s timeout")
+    except OSError as e:
+        return "failed", [], _truncate(f"failed to execute linter: {e}")
+    try:
+        findings = parse(r.stdout)
+    except Exception as e:  # noqa: BLE001 - any parse failure degrades safely
+        excerpt = (r.stderr or "").strip() or f"could not parse output: {e}"
+        return "failed", [], _truncate(excerpt)
+    return "ran", findings, None
+
+
+def _execute_script(argv, timeout):
+    """Run a repository-defined script under `timeout`. No structured
+    findings are parsed from arbitrary script output — only its execution
+    outcome is reported."""
+    try:
+        subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "failed", _truncate(f"script exceeded its {timeout}s timeout")
+    except OSError as e:
+        return "failed", _truncate(f"failed to execute script: {e}")
+    return "ran", None
+
+
+def cmd_lint(args):
+    if not have("git"):
+        die("required tool 'git' not found on PATH. install git.", code=127)
+    if not in_git_repo():
+        die("not inside a git repository.")
+
+    _, new_ref, diff_spec, meta = resolve_endpoints(
+        args.base, args.head, args.linear)
+    root = repo_root()
+    paths = changed_paths(new_ref, diff_spec)
+    lint_cfg = _lint_config(root)
+    disabled = lint_cfg["disable"]
+    timeout = args.timeout
+
+    entries = []
+    counts = {"ran": 0, "unavailable": 0, "skipped": 0, "not-run": 0,
+              "failed": 0}
+    total_findings = 0
+
+    for name, spec in LINTERS.items():
+        if name in disabled:
+            if not spec["detect"](root):
+                continue
+            entry = {"name": name, "state": "skipped", "argv": [],
+                     "findings": []}
+        elif not spec["detect"](root):
+            continue
+        else:
+            binary = _resolve_binary(root, spec["binary"])
+            if binary is None:
+                entry = {"name": name, "state": "unavailable", "argv": [],
+                         "findings": []}
+            else:
+                owned = _partition_paths(paths, spec["extensions"])
+                if not owned:
+                    entry = {"name": name, "state": "skipped", "argv": [],
+                             "findings": []}
+                else:
+                    argv = [binary] + spec["format_argv"] + owned
+                    state, findings, stderr = _execute_linter(
+                        argv, timeout, spec["parse"])
+                    entry = {"name": name, "state": state, "argv": argv,
+                             "findings": findings}
+                    if stderr is not None:
+                        entry["stderr"] = stderr
+        entries.append(entry)
+        counts[entry["state"]] += 1
+        total_findings += len(entry["findings"])
+
+    if _npm_lint_script_declared(root) and "npm-lint-script" not in disabled:
+        if not lint_cfg["run_scripts"]:
+            entry = {"name": "npm-lint-script", "state": "not-run",
+                     "argv": [], "findings": []}
+        else:
+            npm_bin = _resolve_binary(root, "npm")
+            if npm_bin is None:
+                entry = {"name": "npm-lint-script", "state": "unavailable",
+                         "argv": [], "findings": []}
+            else:
+                argv = [npm_bin, "run", "lint"]
+                state, stderr = _execute_script(argv, timeout)
+                entry = {"name": "npm-lint-script", "state": state,
+                         "argv": argv, "findings": []}
+                if stderr is not None:
+                    entry["stderr"] = stderr
+        entries.append(entry)
+        counts[entry["state"]] += 1
+
+    summary = {"findings": total_findings, **counts}
+    json.dump({**meta, "linters": entries, "summary": summary},
+              sys.stdout, indent=2)
+    print()
+    return 0
+
+
 # --- context (on-demand reference lookup) -----------------------------------
 
 # Best-effort mapping of a --lang value to a ripgrep glob.
@@ -853,6 +1176,16 @@ def main():
     f = sub.add_parser("files", help="changed files grouped by cohort")
     _add_endpoint_args(f)
     f.set_defaults(func=cmd_files)
+
+    lt = sub.add_parser(
+        "lint", help="run detected static-analysis linters over changed "
+                     "paths only")
+    _add_endpoint_args(lt)
+    lt.add_argument(
+        "--timeout", type=float, default=DEFAULT_LINT_TIMEOUT,
+        help="per-linter timeout in seconds (default: "
+             f"{DEFAULT_LINT_TIMEOUT})")
+    lt.set_defaults(func=cmd_lint)
 
     c = sub.add_parser("context", help="on-demand reference lookup")
     c.add_argument("symbol", help="symbol to find references for")

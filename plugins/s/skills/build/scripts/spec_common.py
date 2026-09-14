@@ -392,6 +392,7 @@ RECOGNIZED_CONFIG_KEYS = (
     "completed_retention_days",
     "dir",
     "guardrails",
+    "lint",
     "memory_dir",
     "post-worktree-scripts",
     "pr-mode",

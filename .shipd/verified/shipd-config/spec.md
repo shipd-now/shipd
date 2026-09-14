@@ -798,7 +798,7 @@ id: config-sample-coverage
 The engine SHALL define the recognized top-level configuration keys in a
 single registry constant in `spec_common.py`
 (`autonomous-pipeline`, `build`, `clone_sources`, `completed_retention_days`,
-`dir`, `guardrails`, `memory_dir`, `post-worktree-scripts`, `pr-mode`,
+`dir`, `guardrails`, `lint`, `memory_dir`, `post-worktree-scripts`, `pr-mode`,
 `store_root`, `valid_themes`, `voice`, `wiki_base`, `workspace`,
 `workspaces_root`).
 The copyable config
@@ -810,12 +810,27 @@ key outside the registry (the bare `//` header entry excepted). Copying the
 file verbatim as `.shipd-config.json` SHALL declare no effective value that
 differs from the engine's built-in defaults.
 
+The `lint` key SHALL configure `semdiff lint`. Its recognized members are
+`run_scripts` (boolean, default false — permitting the subcommand to execute a
+repository-defined lint script) and `disable` (a list of linter names the
+subcommand SHALL NOT run even where detected). Where no layer declares `lint`,
+the subcommand SHALL behave as though both defaults applied.
+
 #### Scenario: Every recognized key is documented
 - **WHEN** the test suite compares the registry constant against the keys the
   example documents (declared keys plus the names parsed from `// <key>`
   comment entries)
-- **THEN** the two sets are equal, and `voice` is among them with a comment
-  stating it gates the session-start voice digest and defaults to true
+- **THEN** the two agree in both directions, with `lint` present in each
+
+#### Scenario: An absent lint key takes the defaults
+- **WHEN** no configuration layer declares `lint`
+- **THEN** `semdiff lint` runs no repository-defined script and disables no
+  detected linter
+
+#### Scenario: A disabled linter does not run
+- **WHEN** the resolved configuration declares `lint.disable` naming a linter
+  whose marker and binary are both present
+- **THEN** that linter is not executed
 
 #### Scenario: Verbatim copy changes nothing
 - **WHEN** the example file is copied as `.shipd-config.json` and the
