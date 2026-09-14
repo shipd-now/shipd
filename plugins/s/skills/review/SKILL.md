@@ -30,7 +30,7 @@ Invoke the engine as (it is a plugin script, not a PATH binary):
 python3 "$CLAUDE_PLUGIN_ROOT/skills/review/scripts/semdiff.py" <subcommand> ...
 ```
 
-Subcommands: `diff`, `files`, `context`, `change`, `doctor`. All review
+Subcommands: `diff`, `files`, `lint`, `context`, `change`, `doctor`. All review
 subcommands are read-only and never touch the network; only `doctor --fix`
 installs software or reaches the network, and the single place this skill runs
 it is the review-start difftastic repair (see Degradation).
@@ -45,6 +45,7 @@ Each file below is read only when its condition fires — not by default.
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` | the user passed `--json`, or the poster's JSON is being produced |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/posting.md` | posting to a PR was explicitly requested |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/risk-lenses.md` | a risk lens trigger fires during review of the diff |
+| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/linters.md` | `semdiff lint` has run, to interpret each linter's state, weigh its findings, or read the `lint` configuration key |
 
 ## Determine what to review
 
@@ -101,6 +102,13 @@ references. Use `--lang` / `--path` to cut noise on common names.
   duplicated validation), compare them against each other, not only against
   the base. Name any hardening, guard, or edge-case handling applied to one
   and not the other.
+
+### 3b. Read the linter output
+Run `lint <base> [<head>]` over the same endpoints as the diff. Read
+`${CLAUDE_PLUGIN_ROOT}/skills/review/references/linters.md` to interpret each
+linter's state and findings. A linter finding is corroboration you weigh,
+reported only where it bears on the change — never promoted to a review
+finding automatically.
 
 ### 4. Trace call-site values — reachability and comment accuracy
 Do not judge a new branch, guard, or helper in isolation — follow the actual
