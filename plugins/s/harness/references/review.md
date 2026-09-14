@@ -21,7 +21,7 @@ preamble, no fences, no commentary, and no emoji:
     {
       "id": "f1",
       "severity": "high" | "medium" | "low",
-      "cohort": "bug" | "contract" | "edge-case" | "untouched-caller" | "spec-coverage",
+      "category": "bug" | "contract" | "edge-case" | "untouched-caller" | "spec-coverage" | "test-coverage" | "security" | "performance" | "stability" | "data-integrity",
       "location": "path/to/file.ext:LINE",
       "what": "one-line statement of the defect",
       "why": "why it matters",

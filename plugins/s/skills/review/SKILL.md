@@ -177,7 +177,7 @@ unsure between two levels, state the doubt rather than inflating.
 Run this check over **every** finding you write, at **every** severity —
 including low. For each one, ask: would an existing test fail if this defect
 regressed? When no test would catch it, raise the gap as its own finding in a
-`test-coverage` cohort (see
+`test-coverage` category (see
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` for the shape),
 naming the defect it would guard and where the test belongs. This runs
 alongside, not instead of, the finding it covers — a real defect and its
