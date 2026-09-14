@@ -26,6 +26,12 @@ Subcommands:
                               branch's required status check contexts and the
                               conversation-resolution requirement, creating the
                               protection when the branch has none
+  prior <pr>                  report each gate-authored thread's identity
+                              (hash), path, severity, what, and disposition
+                              class (JSON) — the read-back `/s:review` consumes
+                              before posting to suppress a previously-answered
+                              finding; decides no suppression itself and
+                              mutates nothing
 
 The `gh` runner has signature ``gh(args, input=None) -> (rc, stdout, stderr)``
 where ``args`` is everything after the ``gh`` executable.
@@ -35,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import re
 import subprocess
@@ -81,9 +88,10 @@ _AUTOREPLY_BODY = {
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 # GraphQL: list a PR's review threads (root-comment author, comment count,
-# creation time, and body) plus the PR's commit dates and the authenticated
-# viewer login, so `resolve` can pick gate-authored threads and judge
-# disposition evidence, and `autoreply` can read each root's severity.
+# creation time, and body) plus each thread's path, the PR's commit dates, and
+# the authenticated viewer login, so `resolve` can pick gate-authored threads
+# and judge disposition evidence, `autoreply` can read each root's severity,
+# and `prior` can report where a finding lives.
 # Pagination beyond 100 threads/comments is out of scope (the same known cap as
 # the poster's comment listing).
 _THREADS_QUERY = """
@@ -96,6 +104,7 @@ query($owner:String!, $name:String!, $number:Int!) {
         nodes {
           id
           isResolved
+          path
           comments(first:100) {
             nodes { databaseId author { login } createdAt body }
           }
@@ -301,6 +310,44 @@ def parse_severity(body):
     return match.group(1) if match else None
 
 
+def _parse_what(body):
+    """The `what` text of a gate-authored inline finding comment, read back
+    from its opening line — the same one `parse_severity` matches — or
+    ``None`` when the body does not open with the severity marker."""
+    first_line = (body or "").lstrip().split("\n", 1)[0]
+    match = _SEV_MARKER_RE.match(first_line)
+    if not match:
+        return None
+    rest = first_line[match.end():]
+    if rest.endswith("**"):
+        rest = rest[:-2]
+    return rest
+
+
+def _finding_hash(path, what):
+    """The finding identity `_inline_body` embeds and `prior` matches against:
+    the first twelve hex characters of the SHA-256 of ``path``, a newline, and
+    ``what`` lowercased with whitespace runs collapsed to a single space.
+
+    A line number is deliberately excluded — a finding's line moves as the
+    diff around it changes, so an anchor-based identity would miss the
+    recurrence it exists to catch."""
+    normalized = " ".join((what or "").lower().split())
+    digest = hashlib.sha256(("%s\n%s" % (path or "", normalized)).encode("utf-8"))
+    return digest.hexdigest()[:12]
+
+
+_FINDING_MARKER_RE = re.compile(r"<!-- shipd-finding ([0-9a-f]{12}) -->")
+
+
+def _extract_finding_hash(body):
+    """The hash carried by a rendered inline body's hidden identity marker, or
+    ``None`` when ``body`` carries none (a human's comment, or a body this
+    gate did not write)."""
+    match = _FINDING_MARKER_RE.search(body or "")
+    return match.group(1) if match else None
+
+
 def _line_number(value):
     """True when ``value`` is a usable line number — an int, and not the bool
     that ``isinstance(True, int)`` would otherwise let through."""
@@ -358,6 +405,12 @@ def _inline_body(f, suggestion=None):
     the same either way, so ``parse_severity`` reads a suggestion-carrying body
     exactly as it reads any other.
 
+    The hidden ``<!-- shipd-finding <hash> -->`` identity marker closes the
+    body — after any suggestion fence, never before the leading severity
+    marker, so `parse_severity`'s lstripped-start match stays untouched. The
+    hash comes from `_finding_hash` against the finding's location path (the
+    line dropped, so a moved line still matches) and its `what` text.
+
     No emoji."""
     sev = f.get("severity", "low")
     parts = [_sev_marker(sev) + "%s**" % (f.get("what") or "")]
@@ -369,6 +422,8 @@ def _inline_body(f, suggestion=None):
         parts.append("Fix: %s" % f["fix"])
     if suggestion:
         parts += ["", "```suggestion"] + list(suggestion[2]) + ["```"]
+    path, _line = _parse_location(f.get("location") or "")
+    parts += ["", "<!-- shipd-finding %s -->" % _finding_hash(path, f.get("what"))]
     return "\n".join(parts)
 
 
@@ -751,8 +806,8 @@ def _graphql(gh, query, **variables):
 
 def _list_review_threads(gh, repo, number):
     """Return ``(viewer_login, commit_dates, threads)`` for pull request
-    ``number``. Each thread is ``{"id", "isResolved", "comments"}`` where
-    ``comments`` is the ordered list of
+    ``number``. Each thread is ``{"id", "isResolved", "path", "comments"}``
+    where ``comments`` is the ordered list of
     ``{"databaseId", "author", "createdAt", "body"}`` (author being the
     login)."""
     owner, _, name = repo.partition("/")
@@ -773,6 +828,7 @@ def _list_review_threads(gh, repo, number):
             for c in ((node.get("comments") or {}).get("nodes") or [])]
         threads.append({"id": node.get("id"),
                         "isResolved": bool(node.get("isResolved")),
+                        "path": node.get("path"),
                         "comments": comments})
     return viewer, commit_dates, threads
 
@@ -871,6 +927,62 @@ def autoreply(pr, gh, disposition, body=None, out=_noop):
     return {"replied": len(replied), "threads": replied, "unparsed": unparsed}
 
 
+def _canonical_autoreply_bodies():
+    """The set of exact reply bodies `autoreply` posts — matched verbatim by
+    `prior` to tell a mechanical disposition from a reasoned one."""
+    return set(_AUTOREPLY_BODY.values())
+
+
+def prior(pr, gh):
+    """Report each gate-authored review thread on ``pr``: its identity hash,
+    path, severity, `what`, resolution state, and disposition class. This is
+    the evidence class only — it decides nothing about suppression (that
+    judgement stays the `/s:review` skill's) and mutates nothing.
+
+    Gate-authored means the root comment's author is the authenticated viewer
+    (the account the gate posts as), exactly as `resolve` and `autoreply`
+    already define it. A thread's non-root comments that are *all* exactly one
+    of the canonical `autoreply` bodies classify `autoreplied`; any other
+    reply classifies `replied`; no reply but a commit landed after the
+    thread's creation classifies `commit-only`; neither classifies `none`.
+
+    Returns a list of ``{"hash", "path", "severity", "what", "thread_id",
+    "resolved", "disposition"}`` dicts, one per gate-authored thread."""
+    number, _sha, _url = _resolve_pr(gh, pr)
+    repo = _resolve_repo(gh)
+    viewer, commit_dates, threads = _list_review_threads(gh, repo, number)
+    commit_stamps = [c for c in map(_as_utc, commit_dates) if c is not None]
+    canonical = _canonical_autoreply_bodies()
+
+    entries = []
+    for t in threads:
+        comments = t["comments"]
+        if not comments or comments[0]["author"] != viewer:
+            continue                      # human-authored: never reported
+        root = comments[0]
+        replies = comments[1:]
+        if replies:
+            disposition = ("autoreplied"
+                           if all(r.get("body") in canonical for r in replies)
+                           else "replied")
+        else:
+            created = _as_utc(root.get("createdAt"))
+            later_commit = created is not None and any(
+                c > created for c in commit_stamps)
+            disposition = "commit-only" if later_commit else "none"
+        body = root.get("body") or ""
+        entries.append({
+            "hash": _extract_finding_hash(body),
+            "path": t.get("path"),
+            "severity": parse_severity(body),
+            "what": _parse_what(body),
+            "thread_id": t["id"],
+            "resolved": bool(t.get("isResolved")),
+            "disposition": disposition,
+        })
+    return entries
+
+
 # --- CLI --------------------------------------------------------------------
 
 def _load_review(src):
@@ -912,6 +1024,12 @@ def _cmd_protect(args, gh):
     result = protect(gh, remove=args.remove,
                      out=lambda m: print(m, file=sys.stderr))
     print(json.dumps(result))
+    return 0
+
+
+def _cmd_prior(args, gh):
+    entries = prior(args.pr, gh)
+    print(json.dumps(entries))
     return 0
 
 
@@ -964,6 +1082,12 @@ def main(argv=None, gh=None):
     pr.add_argument("--remove", action="store_true",
                     help="remove the context instead of adding it")
     pr.set_defaults(func=_cmd_protect)
+
+    pv = sub.add_parser(
+        "prior", help="report each gate thread's identity and disposition "
+                      "class (JSON); decides no suppression, mutates nothing")
+    pv.add_argument("pr", help="PR number, URL, or branch")
+    pv.set_defaults(func=_cmd_prior)
 
     args = parser.parse_args(argv)
     try:

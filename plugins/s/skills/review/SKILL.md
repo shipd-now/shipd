@@ -43,7 +43,7 @@ Each file below is read only when its condition fires — not by default.
 | --- | --- |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/spec-aware.md` | the user named a planned change, or exactly one change exists under `planned/` |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` | the user passed `--json`, or the poster's JSON is being produced |
-| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/posting.md` | posting to a PR was explicitly requested |
+| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/posting.md` | posting to a PR was explicitly requested — it also reads prior findings back before reporting |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/risk-lenses.md` | a risk lens trigger fires during review of the diff |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/linters.md` | `semdiff lint` has run, to interpret each linter's state, weigh its findings, or read the `lint` configuration key |
 
