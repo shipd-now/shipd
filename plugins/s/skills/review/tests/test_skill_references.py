@@ -44,10 +44,58 @@ REFERENCE_PATH_RE = re.compile(
 
 REFERENCES_UNDER_SKILL_RE = re.compile(r"skills/review/references/")
 
+# Matches one `## References` table row naming a reference file, capturing
+# its filename and the "Load when" cell text, e.g.
+# "| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/spec-aware.md` | ... |".
+TABLE_ROW_RE = re.compile(
+    r"^\|\s*`?\$\{CLAUDE_PLUGIN_ROOT\}/skills/review/references/"
+    r"([\w-]+\.md)`?\s*\|\s*(.+?)\s*\|\s*$",
+    re.MULTILINE)
+
+# Lowercased tokens too generic to count as evidence two sentences agree.
+STOPWORDS = frozenset((
+    "this", "that", "when", "only", "file", "reads", "skill", "which",
+    "with", "been", "they", "from", "into",
+))
+
+MIN_SHARED_CONTENT_WORDS = 3
+
 
 def _read(path):
     with open(path, "r", encoding="utf-8") as fh:
         return fh.read()
+
+
+def _content_words(text):
+    """Lowercased alphabetic tokens of length >= 4, minus STOPWORDS.
+
+    Backticks and other punctuation fall out for free: only letter runs are
+    matched, so "`--json`" yields "json" and "poster's" yields "poster".
+    """
+    return {
+        word.lower()
+        for word in re.findall(r"[A-Za-z]+", text)
+        if len(word) >= 4 and word.lower() not in STOPWORDS
+    }
+
+
+def _reference_condition_sentence(path):
+    """The paragraph directly under the level-1 title in a reference file.
+
+    Same region `test_each_reference_opens_with_title_and_condition` already
+    inspects: the non-blank lines after the title, up to the next blank
+    line, joined into one string.
+    """
+    lines = _read(path).splitlines()
+    title_idx = next(i for i, ln in enumerate(lines) if ln.strip())
+    condition_lines = []
+    for ln in lines[title_idx + 1:]:
+        if not ln.strip():
+            if condition_lines:
+                break
+            continue
+        condition_lines.append(ln)
+    return " ".join(condition_lines)
 
 
 class SkillMdStructureTest(unittest.TestCase):
@@ -139,6 +187,38 @@ class OtherRubricSurfacesUntouchedTest(unittest.TestCase):
     def test_harness_review_body_names_no_reference_path(self):
         text = _read(HARNESS_REVIEW_BODY)
         self.assertNotRegex(text, REFERENCES_UNDER_SKILL_RE)
+
+
+class TableConditionAgreementTest(unittest.TestCase):
+    """Pins agreement between a `## References` table cell and its file.
+
+    The table's "Load when" cell is a summary a reviewer reads without
+    opening the reference; the reference file states the same condition in
+    full. If the cell drifts from the file (as it once did for
+    spec-aware.md, dropping the auto-trigger half of the rule), a reader who
+    trusts only the table misses the real trigger. This does not require the
+    two texts match exactly — only that they share enough substantive
+    vocabulary to be recognizably the same condition.
+    """
+
+    def test_table_cell_agrees_with_reference_condition(self):
+        table_rows = TABLE_ROW_RE.findall(_read(SKILL_MD))
+        self.assertTrue(
+            table_rows, "expected at least one reference row in the "
+            "SKILL.md References table")
+        for name, cell in table_rows:
+            with self.subTest(reference=name):
+                path = os.path.join(REFERENCES_DIR, name)
+                sentence = _reference_condition_sentence(path)
+                cell_words = _content_words(cell)
+                sentence_words = _content_words(sentence)
+                shared = cell_words & sentence_words
+                self.assertGreaterEqual(
+                    len(shared), MIN_SHARED_CONTENT_WORDS,
+                    f"{name}: table cell {cell!r} shares only "
+                    f"{sorted(shared)} with its file's condition sentence "
+                    f"{sentence!r} — need at least "
+                    f"{MIN_SHARED_CONTENT_WORDS} shared content words")
 
 
 if __name__ == "__main__":

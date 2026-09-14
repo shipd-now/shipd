@@ -41,7 +41,7 @@ Each file below is read only when its condition fires — not by default.
 
 | Reference | Load when |
 | --- | --- |
-| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/spec-aware.md` | a planned shipd change is in scope |
+| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/spec-aware.md` | the user named a planned change, or exactly one change exists under `planned/` |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` | the user passed `--json`, or the poster's JSON is being produced |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/posting.md` | posting to a PR was explicitly requested |
 
