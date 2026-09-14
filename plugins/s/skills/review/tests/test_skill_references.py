@@ -26,10 +26,37 @@ PLUGIN_S_ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
 
 SKILL_MD = os.path.join(REVIEW_SKILL_DIR, "SKILL.md")
 REFERENCES_DIR = os.path.join(REVIEW_SKILL_DIR, "references")
+JSON_OUTPUT_MD = os.path.join(REFERENCES_DIR, "json-output.md")
 COPILOT_SKILL_MD = os.path.join(
     PLUGIN_S_ROOT, "integrations", "copilot", "SKILL.md")
 HARNESS_REVIEW_BODY = os.path.join(
     PLUGIN_S_ROOT, "harness", "bodies", "review.md")
+
+# The five risk-lens triggers, named exactly as plan.md's Implementation
+# section orders them. Every surface that carries the lenses inline must
+# name each of these verbatim (case-insensitively) — this is deliberately a
+# literal match, not a loose keyword search, because the plan fixes this
+# exact naming as the shared vocabulary across all three surfaces.
+TRIGGER_PHRASES = (
+    "secret or credential exposure",
+    "authorization boundary",
+    "unbounded work",
+    "resource release",
+    "migration reversibility",
+)
+
+# Proxies for "the exposure severity floor is stated": a floor sentence puts
+# the word `high` in the same neighbourhood as the trigger it floors. `re`'s
+# DOTALL lets the window span a wrapped line; the window is generous (160
+# chars) because the floor is a full clause, not an adjacent word.
+_EXPOSURE_FLOOR_PATTERNS = (
+    re.compile(r"(?is)(?:secret|credential).{0,160}\bhigh\b"),
+    re.compile(r"(?is)\bhigh\b.{0,160}(?:secret|credential)"),
+)
+_AUTHZ_FLOOR_PATTERNS = (
+    re.compile(r"(?is)authorization boundary.{0,160}\bhigh\b"),
+    re.compile(r"(?is)\bhigh\b.{0,160}authorization boundary"),
+)
 
 MOVED_HEADINGS = (
     "## Machine output mode",
@@ -98,6 +125,40 @@ def _reference_condition_sentence(path):
     return " ".join(condition_lines)
 
 
+def _text_excluding_references_section(text):
+    """`text` with its `## References` section removed.
+
+    Used to confirm a trigger phrase is stated in the workflow itself, not
+    only in the References table's summary row for `risk-lenses.md`.
+    """
+    lines = text.splitlines()
+    result = []
+    in_references = False
+    for ln in lines:
+        if ln.startswith("## References"):
+            in_references = True
+            continue
+        if in_references:
+            if ln.startswith("## "):
+                in_references = False
+            else:
+                continue
+        result.append(ln)
+    return "\n".join(result)
+
+
+def _missing_triggers(text):
+    lowered = text.lower()
+    return [phrase for phrase in TRIGGER_PHRASES if phrase not in lowered]
+
+
+def _exposure_floor_stated(text):
+    return (
+        any(p.search(text) for p in _EXPOSURE_FLOOR_PATTERNS)
+        and any(p.search(text) for p in _AUTHZ_FLOOR_PATTERNS)
+    )
+
+
 class SkillMdStructureTest(unittest.TestCase):
     """Assertions about `SKILL.md` itself."""
 
@@ -131,6 +192,28 @@ class SkillMdStructureTest(unittest.TestCase):
 
     def test_difft_probe_stayed_inline(self):
         self.assertIn("command -v difft", self.text)
+
+    def test_risk_lens_triggers_stated_inline(self):
+        """All five triggers appear in the workflow, not only the table.
+
+        `SKILL.md` can read a reference file, so a trigger named only in the
+        `## References` table (and left implicit in the workflow) would let
+        a reviewer who never opens `risk-lenses.md` miss it entirely — the
+        opposite of the "always visible" design this change requires.
+        """
+        inline_text = _text_excluding_references_section(self.text)
+        missing = _missing_triggers(inline_text)
+        self.assertFalse(
+            missing,
+            f"trigger(s) not named inline in SKILL.md (outside the "
+            f"References table): {missing}")
+
+    def test_risk_lens_exposure_floor_stated(self):
+        self.assertTrue(
+            _exposure_floor_stated(self.text),
+            "SKILL.md must state that a secret/credential exposure finding "
+            "and an authorization-boundary finding both carry severity "
+            "`high`")
 
     def test_every_reference_file_is_named(self):
         named = set(REFERENCE_PATH_RE.findall(self.text))
@@ -187,6 +270,57 @@ class OtherRubricSurfacesUntouchedTest(unittest.TestCase):
     def test_harness_review_body_names_no_reference_path(self):
         text = _read(HARNESS_REVIEW_BODY)
         self.assertNotRegex(text, REFERENCES_UNDER_SKILL_RE)
+
+
+class ReferenceFreeSurfacesCarryRiskLensesTest(unittest.TestCase):
+    """The harness body and the copilot template carry the lenses inline.
+
+    Neither surface can read `references/risk-lenses.md` — the harness body
+    ships into other repositories with no `${CLAUDE_PLUGIN_ROOT}`, and the
+    copilot template is vendored byte-for-byte into a GitHub Actions runner —
+    so both must name all five triggers and the exposure floor in their own
+    body text.
+    """
+
+    def test_harness_review_body_names_all_triggers_and_floor(self):
+        text = _read(HARNESS_REVIEW_BODY)
+        missing = _missing_triggers(text)
+        self.assertFalse(
+            missing,
+            f"trigger(s) not named in the harness review body: {missing}")
+        self.assertTrue(
+            _exposure_floor_stated(text),
+            "the harness review body must state the exposure severity "
+            "floor for secret/credential and authorization-boundary "
+            "findings")
+
+    def test_copilot_skill_names_all_triggers_and_floor(self):
+        text = _read(COPILOT_SKILL_MD)
+        missing = _missing_triggers(text)
+        self.assertFalse(
+            missing,
+            f"trigger(s) not named in the copilot skill template: {missing}")
+        self.assertTrue(
+            _exposure_floor_stated(text),
+            "the copilot skill template must state the exposure severity "
+            "floor for secret/credential and authorization-boundary "
+            "findings")
+
+
+class JsonOutputTaxonomyTest(unittest.TestCase):
+    """The `--json` finding taxonomy grows the four risk-lens values."""
+
+    def test_cohort_enum_accepts_lens_values(self):
+        text = _read(JSON_OUTPUT_MD)
+        line = next(
+            (ln for ln in text.splitlines() if '"cohort":' in ln), None)
+        self.assertIsNotNone(
+            line, "expected a `\"cohort\":` line in json-output.md")
+        for value in ("security", "performance", "stability",
+                      "data-integrity"):
+            self.assertIn(
+                f'"{value}"', line,
+                f"cohort enum is missing {value!r}: {line!r}")
 
 
 class TableConditionAgreementTest(unittest.TestCase):
