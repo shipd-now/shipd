@@ -1050,9 +1050,44 @@ class SeverityParseTest(unittest.TestCase):
                 {"severity": sev, "what": "something", "why": "w", "fix": "x"})
             self.assertEqual(review_gate.parse_severity(body), sev)
 
+    def test_rendered_marker_carries_the_matching_dot(self):
+        """Each rendered marker's dot is the `_SEV_DOT` entry for that
+        severity, sitting directly before the severity word — the
+        round-trip above only checks that parsing recovers the severity,
+        not that the dot rendered is the right one."""
+        for sev in ("high", "medium", "low"):
+            body = review_gate._inline_body(
+                {"severity": sev, "what": "something", "why": "w", "fix": "x"})
+            dot = review_gate._SEV_DOT[sev]
+            self.assertIn(
+                "%s %s" % (dot, sev), body,
+                "expected %r directly before %r in %r" % (dot, sev, body))
+
+    def test_dotless_marker_still_parses(self):
+        """A finding comment posted before the dot existed carries no dot in
+        its marker. `parse_severity` must still classify it rather than
+        report it as unparseable."""
+        self.assertEqual(
+            review_gate.parse_severity("**high — something**"), "high")
+
     def test_unparseable_body_yields_none(self):
         self.assertIsNone(review_gate.parse_severity("just some prose"))
         self.assertIsNone(review_gate.parse_severity(""))
+
+
+class FoldedFindingSeverityDotTest(unittest.TestCase):
+    """The summary comment's folded-findings bullets carry the same dot an
+    anchored inline comment does, so a finding reads the same wherever it
+    lands on the PR."""
+
+    def test_folded_medium_finding_carries_its_dot(self):
+        finding = {"id": "f1", "severity": "medium", "location": "z.py:1",
+                   "what": "boom", "why": "w", "fix": "x"}
+        body = review_gate.render_summary(
+            _review(verdict="changes-requested", findings=[finding]),
+            [finding])
+        dot = review_gate._SEV_DOT["medium"]
+        self.assertIn("%s medium" % dot, body)
 
 
 class AutoreplyTest(unittest.TestCase):

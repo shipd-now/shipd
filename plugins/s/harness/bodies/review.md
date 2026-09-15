@@ -82,11 +82,16 @@ edits the repository.
 <!-- if:file-references -->
    Posting the verdict onto a pull request as its merge gate is a separate
    flow with its own payload and posting verbs: read {refs}/review.md before
-   posting anything, and post only when the user explicitly asks.
+   posting anything. A review naming a pull request posts to it by default —
+   no ask required. Dispositioning the findings — implementing or resolving
+   them — happens only when asked.
 <!-- else -->
    Posting the verdict onto a pull request as its merge gate is a separate
-   flow whose detail is not available as a file here. Say so when the user
-   asks for it, state that you would have read the review reference for the
-   gate's payload shape and its posting verbs, and either finish the review
-   locally or hand the posting step to a harness that carries that reference.
+   flow whose detail is not available as a file here. A review naming a pull
+   request still posts to it by default — no ask required — and
+   dispositioning the findings happens only when asked; say so when the user
+   asks for the flow's detail, state that you would have read the review
+   reference for the gate's payload shape and its posting verbs, and either
+   finish the review locally or hand the posting step to a harness that
+   carries that reference.
 <!-- end -->

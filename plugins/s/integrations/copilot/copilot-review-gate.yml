@@ -660,6 +660,11 @@ jobs:
 
           HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
           SEVERITIES = ("high", "medium", "low")
+          # The severity dot each posted finding's severity carries, matching
+          # `review_gate.py`'s `_SEV_DOT` exactly, so a finding reads the same
+          # whichever surface posted it.
+          SEV_DOT = {"high": "\U0001F534", "medium": "\U0001F7E0",
+                     "low": "\U0001F7E1"}
           MARKERS = ("<!-- shipd-verdict: ship-it -->",
                      "<!-- shipd-verdict: fix-required -->")
 
@@ -738,7 +743,9 @@ jobs:
           def inline_body(finding):
               """One anchored comment's body: the severity marker and the detail, plus
               the committable suggestion where the finding carries one."""
-              parts = ["**%s — %s**" % (severity(finding), detail(finding))]
+              sev = severity(finding)
+              parts = ["**%s %s — %s**"
+                       % (SEV_DOT[sev], sev, detail(finding))]
               lines = replacement(finding)
               if lines:
                   parts += ["", "```suggestion"] + lines + ["```"]
@@ -757,8 +764,9 @@ jobs:
                       where = "(no location)"
                   elif is_line(finding.get("start_line")):
                       where = "%s:%s" % (where, finding["start_line"])
-                  block.append("- **%s** [%s] — %s"
-                               % (where, severity(finding), detail(finding)))
+                  sev = severity(finding)
+                  block.append("- **%s** [%s %s] — %s"
+                               % (where, SEV_DOT[sev], sev, detail(finding)))
               return block
 
 

@@ -458,5 +458,76 @@ class TableConditionAgreementTest(unittest.TestCase):
                     f"{MIN_SHARED_CONTENT_WORDS} shared content words")
 
 
+class PostingDefaultInvertedTest(unittest.TestCase):
+    """Posting fires by default once a pull request is in scope, not only on
+    an explicit request. Pinned against both the `SKILL.md` References table
+    row for `posting.md` and that file's own condition sentence, so neither
+    surface can drift back to gating on an explicit ask.
+    """
+
+    def test_table_row_and_condition_state_pull_request_default(self):
+        table_rows = TABLE_ROW_RE.findall(_read(SKILL_MD))
+        row = next(
+            (cell for name, cell in table_rows if name == "posting.md"),
+            None)
+        self.assertIsNotNone(
+            row, "expected a References table row for posting.md")
+        posting_path = os.path.join(REFERENCES_DIR, "posting.md")
+        condition = _reference_condition_sentence(posting_path)
+        for text, label in (
+            (row, "SKILL.md References table row for posting.md"),
+            (condition, "posting.md condition sentence"),
+        ):
+            lowered = text.lower()
+            self.assertIn(
+                "pull request", lowered,
+                f"{label} must state the file is read when a pull request "
+                f"is in scope: {text!r}")
+            self.assertNotIn(
+                "explicitly requested", lowered,
+                f"{label} must not gate on posting being explicitly "
+                f"requested: {text!r}")
+
+
+class ReferenceFreeSurfacesPostingDefaultTest(unittest.TestCase):
+    """The two surfaces that cannot read `posting.md` — the harness review
+    body and the harness review reference — carry the posting-default
+    inversion in their own prose: a named pull request is posted to by
+    default, and dispositioning the findings is asked for rather than
+    automatic. Neither may still gate posting on an explicit request.
+    """
+
+    _NEGATIVE_PHRASES = (
+        "post only when the user explicitly asks",
+        "Post only on an explicit request",
+    )
+
+    def test_neither_surface_gates_posting_on_an_explicit_request(self):
+        for path in (HARNESS_REVIEW_BODY, HARNESS_REVIEW_MD):
+            with self.subTest(path=path):
+                text = _read(path)
+                for phrase in self._NEGATIVE_PHRASES:
+                    self.assertNotIn(
+                        phrase, text,
+                        f"{path} must not gate posting on an explicit "
+                        f"request: found {phrase!r}")
+
+    def test_both_state_the_default_and_the_opt_in_disposition(self):
+        for path in (HARNESS_REVIEW_BODY, HARNESS_REVIEW_MD):
+            with self.subTest(path=path):
+                lowered = re.sub(r"\s+", " ", _read(path).lower())
+                self.assertIn(
+                    "pull request", lowered,
+                    f"{path} must name the pull request it posts to")
+                self.assertIn(
+                    "by default", lowered,
+                    f"{path} must state that posting to a named pull "
+                    f"request happens by default")
+                self.assertIn(
+                    "disposition", lowered,
+                    f"{path} must state that dispositioning the findings "
+                    f"is opt-in, asked for rather than automatic")
+
+
 if __name__ == "__main__":
     unittest.main()

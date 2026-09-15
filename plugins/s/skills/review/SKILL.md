@@ -43,22 +43,22 @@ Each file below is read only when its condition fires — not by default.
 | --- | --- |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/spec-aware.md` | the user named a planned change, or exactly one change exists under `planned/` |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` | the user passed `--json`, or the poster's JSON is being produced |
-| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/posting.md` | posting to a PR was explicitly requested — it also reads prior findings back before reporting |
+| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/posting.md` | a pull request is in scope for the review — it also reads prior findings back before reporting |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/risk-lenses.md` | a risk lens trigger fires during review of the diff |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/linters.md` | `semdiff lint` has run, to interpret each linter's state, weigh its findings, or read the `lint` configuration key |
 
 ## Determine what to review
 
 - **Local changes before pushing** (the default): `diff <base>` compares
-  `<base>` against the working tree. If the user did not name a base, default
-  to `main` (fall back to `master`).
-- **An already-pushed branch or PR**: when the user names two refs, pass a
-  head — `diff <base> <head>`. This reviews what `<head>` added since it
-  diverged from `<base>` using PR-style merge-base (three-dot) semantics,
-  matching what GitHub shows — the "after" content comes from `<head>`, not
-  your checkout. Add `--linear` for a plain two-dot comparison. Refs must
-  exist locally (fetch first). The output echoes the resolved
-  `base`/`head`/`mode` so you can state precisely what was compared.
+  `<base>` against the working tree, defaulting to `main` (or `master`).
+- **An already-pushed branch or PR, given as two refs**: `diff <base> <head>`
+  reviews what `<head>` added since diverging from `<base>`, PR-style
+  (three-dot) — the "after" content is `<head>`, not your checkout. Add
+  `--linear` for two-dot; refs must exist locally (fetch first). Output
+  echoes the resolved `base`/`head`/`mode`.
+- **A named pull request** — a URL, `#<number>`, a bare number, or a branch
+  pointed at one: posts its verdict by default, no ask required. See
+  `${CLAUDE_PLUGIN_ROOT}/skills/review/references/posting.md` for the flow.
 
 ## Workflow
 
@@ -274,12 +274,12 @@ report, the summary comment, and `--json` — never "issue" or "concern".
 
 ## Guardrails
 
-- **Emoji at exactly the three sanctioned sites** — the ☕ mark in the
-  `**☕ shipd** semantic review` brand line opening the posted summary
-  comment's visible body, the ✅/❌ verdict marker in the findings header, and
-  the 🔴/🟠/🟡 severity dots in the summary table. Nowhere else: not in prose,
-  findings, other tables, or mermaid labels. The `--json` output described in
-  `${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` carries none.
+- **Emoji at exactly the four sanctioned sites** — the ☕ brand-line mark, the
+  ✅/❌ verdict marker, the 🔴/🟠/🟡 severity dots in the summary table, and
+  that same dot prefixing a severity wherever a posted finding names it: an
+  anchored inline comment's leading marker, and each folded-findings bullet.
+  Nowhere else: not in prose, findings, other tables, or mermaid labels. The
+  `--json` output (json-output.md) carries none.
 - **Read-only.** The review never edits the repo.
 - **shipd naming only** — no other product branding or brand marks.
 - Prefer the tool's JSON over re-deriving diffs; that keeps token cost low.

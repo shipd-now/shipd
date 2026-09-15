@@ -168,10 +168,20 @@ report SHALL carry an effort score (1–5), a findings header reading
 `## Findings: ✅ Ship it` when no finding is high or medium and
 `## Findings: ❌ Fix required` otherwise, a summary table rating findings
 with 🔴/🟠/🟡 severity dots, a collapsible walkthrough, and an explicit
-list of what could not be verified. Emoji SHALL appear only at those two
-sites and, in the posted summary comment, the ☕ of the
-`**☕ shipd** semantic review` brand line — the three sanctioned sites;
-branding is shipd-only, and the skill SHALL NOT modify the repo.
+list of what could not be verified.
+
+Emoji SHALL appear at four sanctioned sites and nowhere else: the ✅/❌ verdict
+marker, the 🔴/🟠/🟡 severity dots of the summary table, the ☕ of the posted
+summary comment's `**☕ shipd** semantic review` brand line, and the 🔴/🟠/🟡
+dot that prefixes a severity wherever a posted finding names its own severity —
+the leading marker of an anchored inline comment, and each bullet of the summary
+comment's folded-findings section. Both posting surfaces — `review_gate.py` and
+the vendored review-gate workflow at
+`plugins/s/integrations/copilot/copilot-review-gate.yml` — SHALL render that
+dot, so one finding reads the same whichever surface posted it. The `--json`
+payload SHALL stay free of emoji: the dot is added when a finding is rendered,
+never carried in the machine object. Branding is shipd-only, and the skill SHALL
+NOT modify the repo.
 
 The skill SHALL additionally carry three judgement passes. It SHALL treat a
 changed limit, bound, timeout, retry count, buffer size or threshold as a
@@ -207,6 +217,23 @@ judgement passes as the skill, so the two surfaces do not drift.
 - **WHEN** a review yields one medium and one low finding
 - **THEN** the header reads `## Findings: ❌ Fix required` and the summary
   table rates them 🟠 and 🟡
+
+#### Scenario: A posted finding names its severity with its dot
+- **WHEN** `review_gate.py post` renders an anchored inline comment for a high
+  finding
+- **THEN** the comment's leading severity marker carries 🔴 directly before the
+  word `high`
+
+#### Scenario: A folded finding carries the dot too
+- **WHEN** the summary comment's folded-findings section renders a medium
+  finding
+- **THEN** that bullet's severity is prefixed with 🟠
+
+#### Scenario: Both posting surfaces render the dot
+- **WHEN** `plugins/s/skills/review/scripts/review_gate.py` and
+  `plugins/s/integrations/copilot/copilot-review-gate.yml` are inspected
+- **THEN** each renders an inline finding comment whose severity carries the
+  matching 🔴/🟠/🟡 dot
 
 #### Scenario: Machine mode for the gate
 - **WHEN** the skill is invoked with `--json`
@@ -280,6 +307,15 @@ findings into the summary, retrying once with no inline comments if the review
 POST is rejected, submitting that review with the event `COMMENT`, and setting
 a commit status with context `semantic-review` on the pull request's head SHA.
 
+An anchored inline comment's leading severity marker SHALL carry the severity's
+🔴/🟠/🟡 dot directly before the severity word, and each bullet of the summary
+comment's folded-findings section SHALL carry that same dot before its severity.
+The marker's literal format SHALL live in exactly one place, shared by the body
+renderer and by `parse_severity`, so the pair cannot drift. `parse_severity`
+SHALL read a severity whether or not the marker carries the dot, so a finding
+comment posted before this change is still classified rather than reported as
+unparseable.
+
 Where a finding declares its fix confident and supplies a replacement covering
 one or more contiguous whole lines that anchor to a RIGHT-side commentable
 line, its inline comment SHALL carry that replacement as a committable
@@ -288,6 +324,17 @@ replacement is absent, covers part of a line, spans a discontiguous range, or
 does not anchor SHALL render as prose instead. Emitting a suggestion SHALL NOT
 change the comment's leading severity marker, and the `--json` mode SHALL stay
 free of emoji and prose.
+
+#### Scenario: The marker round-trips with its dot
+- **WHEN** an inline body is rendered for each of `high`, `medium` and `low` and
+  read back with `parse_severity`
+- **THEN** each body's marker carries the matching dot and each parse returns
+  the severity it was rendered from
+
+#### Scenario: A dotless marker still parses
+- **WHEN** `parse_severity` reads an inline comment body whose marker carries no
+  dot, as posted before this change
+- **THEN** it returns that body's severity rather than nothing
 
 #### Scenario: A confident whole-line fix becomes committable
 - **WHEN** a finding declares its fix confident with a replacement covering
@@ -422,57 +469,105 @@ resulting contexts and conversation-resolution state.
 ### Requirement: Skill post-to-PR flow
 id: skill-post-flow
 
-Where the user explicitly asks for a review to be posted, the `/s:review`
-skill SHALL run the review, emit the machine verdict, and publish it via the
-poster, passing through the disposition scope and model tier when the invoker
-supplied them (defaults: scope `all`, no tier). The skill SHALL then
-disposition findings by scope. Under `all`, the flow SHALL run the full loop
-over every posted finding regardless of severity: implement the suggestion
-when it is correct — by editing, committing and pushing, or by the finding's
-committable suggestion having been applied on the pull request, which counts
-as the same implement branch and needs no separate reply — otherwise reply on
-the finding's thread with the concrete reason via the gate's reply verb, never
-leaving a finding with neither. Under `high-only`, the flow SHALL implement (or
-push back with a reasoned reply) only the high-severity findings, re-reviewing
-and re-posting after any push, and SHALL then run the gate's autoreply verb so
-the remaining threads carry disposition evidence. Under `none`, the flow SHALL
-perform no per-finding judgment and SHALL run the autoreply verb over every
-gate thread. Every scope SHALL finish by running the gate's resolve verb and
-reporting the posted status state, the summary comment URL, the acting scope
-when it is not `all`, and the unresolved count, which SHALL be zero on a
-completed disposition.
+Where the review's target is a named pull request — a pull request URL, a
+`#<number>` or a bare number, or a branch the invoker points at a pull request —
+the `/s:review` skill SHALL review that pull request's head against its base
+with merge-base semantics, emit the machine verdict, and publish it via the
+poster without being asked to. Where the invocation names no pull request, the
+skill SHALL review locally and SHALL post nothing.
 
-#### Scenario: An applied suggestion needs no reply
-- **WHEN** a posted finding's committable suggestion has been applied on the
-  pull request and the disposition loop runs under scope `all`
-- **THEN** that finding is treated as implemented, no reply is required on its
-  thread, and the completed disposition still reports an unresolved count of
-  zero
+The skill SHALL pass the disposition scope and the model tier through to the
+poster only where the invoker supplied them. A default posted review therefore
+carries no `--disposition` flag, so the poster's own default scope `all` maps the
+`semantic-review` commit status severity-honestly.
+
+Where the invoker asks for the posted findings to be dispositioned — a driving
+session declaring a disposition scope, or the user asking for the findings to be
+implemented or answered — the skill SHALL run the disposition loop by scope and
+SHALL finish by running the gate's resolve verb. Under `all`, the loop SHALL
+cover every posted finding regardless of severity: implement the suggestion when
+it is correct, by editing, committing and pushing, or by the finding's
+committable suggestion having been applied on the pull request, which counts as
+the same implement branch and needs no separate reply; otherwise reply on the
+finding's thread with the concrete reason via the gate's reply verb, never
+leaving a finding with neither. Under `high-only`, the loop SHALL implement or
+answer only the high-severity findings, re-reviewing and re-posting after any
+push, and SHALL then run the gate's autoreply verb over the remaining threads.
+Under `none`, the loop SHALL perform no per-finding judgment and SHALL run the
+autoreply verb over every gate thread.
+
+Where no such ask was made, the skill SHALL implement no finding, author no
+reply, run neither the autoreply verb nor the resolve verb, and SHALL leave every
+posted thread open for the pull request's owner to action and resolve.
+
+Every posted review SHALL report the posted status state, the summary comment
+URL, and the acting disposition scope when it is not `all`; where the
+disposition loop ran, it SHALL additionally report the unresolved count, which
+SHALL be zero on a completed disposition.
+
+The two surfaces that cannot read a file under `skills/review/references/` —
+`plugins/s/harness/bodies/review.md` and `plugins/s/harness/references/review.md`
+— SHALL state the same posting default and the same opt-in disposition rule in
+their own bodies.
+
+#### Scenario: A named pull request is posted to without being asked
+- **WHEN** the skill is invoked naming a pull request by URL and the user asks
+  for nothing beyond the review
+- **THEN** the verdict is published to that pull request through the poster, with
+  no `--disposition` flag, and the `semantic-review` status is `success` iff the
+  verdict is `pass`
+
+#### Scenario: A local review still posts nothing
+- **WHEN** the skill is invoked naming no pull request
+- **THEN** the review ends at the rendered report, and no `gh` write is performed
+
+#### Scenario: A default posted review leaves the threads open
+- **WHEN** a posted review runs with no disposition asked for
+- **THEN** no finding is implemented, no reply is authored, neither the autoreply
+  verb nor the resolve verb runs, and every posted thread is left unresolved
 
 #### Scenario: An unimplemented finding still needs a reason
+- **GIVEN** the invoker asked for the findings to be dispositioned under scope
+  `all`
 - **WHEN** a posted finding is neither implemented nor carries an applied
   suggestion
 - **THEN** the flow replies on its thread with the concrete reason before
   resolving
 
 #### Scenario: Sensible suggestion is implemented before merge
-- **WHEN** a posted finding's fix is correct and the disposition loop runs
-  under scope `all`
-- **THEN** the fix is edited, committed and pushed, and the review is re-run
-  and re-posted against the new head
+- **GIVEN** the invoker asked for the findings to be dispositioned under scope
+  `all`
+- **WHEN** a posted finding's fix is correct
+- **THEN** the fix is edited, committed and pushed, and the review is re-run and
+  re-posted against the new head
+
+#### Scenario: An applied suggestion needs no reply
+- **WHEN** a posted finding's committable suggestion has been applied on the pull
+  request and the disposition loop runs under scope `all`
+- **THEN** that finding is treated as implemented, no reply is required on its
+  thread, and the completed disposition still reports an unresolved count of zero
 
 #### Scenario: High-only spends judgment only on highs
-- **GIVEN** a posted review carrying one high finding and two medium findings
-- **WHEN** the disposition loop runs under scope `high-only`
-- **THEN** the high finding is implemented or answered individually, the
-  autoreply verb covers the medium threads, and the resolve verb reports an
-  unresolved count of zero
+- **GIVEN** a posted review carrying one high finding and two medium findings,
+  and a driving session declaring scope `high-only`
+- **WHEN** the disposition loop runs
+- **THEN** the high finding is implemented or answered individually, the autoreply
+  verb covers the medium threads, and the resolve verb reports an unresolved
+  count of zero
 
 #### Scenario: None costs no disposition judgment
-- **WHEN** the disposition loop runs under scope `none`
-- **THEN** no finding receives an individually authored disposition, the
-  autoreply verb covers every gate thread, and the resolve verb reports an
-  unresolved count of zero
+- **GIVEN** a driving session declaring scope `none`
+- **WHEN** the disposition loop runs
+- **THEN** no finding receives an individually authored disposition, the autoreply
+  verb covers every gate thread, and the resolve verb reports an unresolved count
+  of zero
+
+#### Scenario: The reference-free surfaces carry the default
+- **WHEN** `plugins/s/harness/bodies/review.md` and
+  `plugins/s/harness/references/review.md` are inspected
+- **THEN** neither instructs the reviewer to post only on an explicit request,
+  and each states that a named pull request is posted to by default while
+  dispositioning and resolving are opt-in
 
 ### Requirement: Poster test coverage in ci
 id: gate-test-coverage
@@ -634,8 +729,10 @@ files under `plugins/s/skills/review/references/` rather than inline in its
 `${CLAUDE_PLUGIN_ROOT}` path beside the condition under which the skill reads
 it. The spec-aware verification guidance, the `--json` machine output guidance,
 and the PR posting guidance SHALL each occupy one such file, read only when a
-planned change is in scope, when `--json` is requested, and when posting is
-explicitly requested, respectively.
+planned change is in scope, when `--json` is requested, and when a pull request
+is in scope for the review, respectively. The posting reference SHALL carry the
+resolution of a named pull request into a base and a head, so `SKILL.md` names
+that flow rather than restating it.
 
 Guidance that runs on every review SHALL stay inline in `SKILL.md`: the
 workflow steps, the severity rubric, the presentation shape, the review-start
@@ -650,6 +747,12 @@ into a reference SHALL NOT change that guidance's substance.
 - **WHEN** `plugins/s/skills/review/SKILL.md` is inspected
 - **THEN** it names every file under `plugins/s/skills/review/references/` by
   path, and every reference path it names resolves to an existing file
+
+#### Scenario: The posting reference is loaded on a pull request
+- **WHEN** the References table row for `posting.md` is compared with that
+  file's own condition sentence
+- **THEN** both state that the file is read when a pull request is in scope for
+  the review, rather than when posting was explicitly requested
 
 #### Scenario: Conditional guidance left the skill body
 - **WHEN** `plugins/s/skills/review/SKILL.md` is inspected

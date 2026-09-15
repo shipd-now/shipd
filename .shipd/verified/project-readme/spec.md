@@ -564,13 +564,18 @@ never does. It SHALL state the exposure floor — an exposed secret, and an
 authorization boundary reached without a scope check, always rate `high`.
 
 The guide SHALL describe both paths a review takes: a local run that ends at
-the report, and a posting run that reads prior dispositions back before
-reporting. It SHALL state that the review omits a finding answered with a
-reasoned reply, that it keeps a finding only a commit cleared, and that a
+the report, and a run against a named pull request that reads prior
+dispositions back before posting. It SHALL state that a named pull request is
+posted to by default, that the posted findings are left open for that pull
+request's owner, and that implementing and resolving them is an opt-in the
+invoker asks for. It SHALL state that the review omits a finding answered with
+a reasoned reply, that it keeps a finding only a commit cleared, and that a
 finding's identity excludes its line number.
 
-The guide SHALL carry exactly one mermaid diagram, of those two paths, and
-SHALL state that the review degrades rather than stops when a tool is missing.
+The guide SHALL carry exactly one mermaid diagram, of those two paths, showing
+the local path ending at the report, the posting path, and the opted-in
+disposition path looping back on a later push. It SHALL state that the review
+degrades rather than stops when a tool is missing.
 
 `docs/copilot-review.md` SHALL link `/s:review` to this guide rather than to a
 README anchor.
@@ -597,6 +602,12 @@ README anchor.
 - **THEN** it names secret or credential exposure, authorization boundary,
   unbounded work, resource release, and migration reversibility
 
+#### Scenario: The posting default is stated
+- **WHEN** the guide is inspected
+- **THEN** it states that a named pull request is posted to by default, that the
+  findings stay open for that pull request's owner, and that dispositioning them
+  is an opt-in
+
 #### Scenario: The suppression rule is stated honestly
 - **WHEN** the guide is inspected
 - **THEN** it states that a reasoned reply suppresses a recurrence, that a
@@ -606,7 +617,7 @@ README anchor.
 #### Scenario: The guide carries one diagram
 - **WHEN** the guide's mermaid fences are counted
 - **THEN** exactly one is present, and it shows the local path ending at the
-  report and the posting path looping back
+  report and the opted-in disposition path looping back
 
 #### Scenario: The how-to points at the guide
 - **WHEN** `docs/copilot-review.md` is inspected
