@@ -329,6 +329,32 @@ class ConfigFilenameTests(LintTestCase):
         self.assertEqual(len(errs), 1, out)
         self.assertIn(".shipd-config.json", errs[0])
 
+    def test_matches_the_engines_constant(self):
+        """docs_lint's CONFIG_FILENAME must track spec_common's real one.
+
+        Nothing at import time ties the lint's copy of the filename to the
+        engine's — docs_lint stays stdlib-only and never imports the engine
+        at runtime. Without this test, a rename of spec_common.CONFIG_FILENAME
+        would silently desync the lint: it would keep accepting the old name
+        and start flagging the new, correct one. This test crosses the
+        boundary the lint itself must not cross, so that rename fails the
+        suite instead of drifting unnoticed.
+        """
+        build_scripts = os.path.normpath(os.path.join(
+            HERE, "..", "..", "build", "scripts"))
+        if build_scripts not in sys.path:
+            sys.path.insert(0, build_scripts)
+        try:
+            import spec_common  # noqa: WPS433 (local import by design)
+        except ImportError as exc:
+            self.skipTest(
+                "spec_common not importable from the build skill's "
+                "scripts/ (%s); cannot verify docs_lint.CONFIG_FILENAME "
+                "against the engine's real constant: %s"
+                % (build_scripts, exc))
+        self.assertEqual(
+            docs_lint.CONFIG_FILENAME, spec_common.CONFIG_FILENAME)
+
 
 class CodeFenceTests(LintTestCase):
     """Prose analysis stops at a fence; code is never measured."""
