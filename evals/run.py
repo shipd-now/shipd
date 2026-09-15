@@ -63,6 +63,9 @@ class Case:
     prompt_path: str
     fixture_path: str
     grader: str = "structural"
+    # The requirement id a "handoff" grader requires to appear in the
+    # session's final text. None for every other grader.
+    handoff_requirement: str | None = None
 
 
 @dataclasses.dataclass
@@ -82,23 +85,28 @@ class RunResult:
 # Case discovery
 # ---------------------------------------------------------------------------
 
-RECOGNIZED_GRADERS = ("structural", "behavior")
+RECOGNIZED_GRADERS = ("structural", "behavior", "handoff")
 
 
 def read_expect(case_dir):
-    """Return the grader name a case's ``expect.json`` selects.
+    """Return the ``(grader, handoff_requirement)`` pair a case's
+    ``expect.json`` selects.
 
     An absent ``expect.json``, or one present without a ``grader`` key,
     selects ``"structural"``. A file declaring ``{"grader": "behavior"}``
-    selects ``"behavior"``. Raises :class:`ValueError`, naming the case
+    selects ``"behavior"``. A file declaring ``{"grader": "handoff",
+    "handoff_requirement": "some-id"}`` selects ``"handoff"`` and that
+    requirement id. ``handoff_requirement`` is ``None`` for every grader but
+    ``handoff``. Raises :class:`ValueError`, naming the case
     (``os.path.basename(case_dir)``) and the offending value, when the file
-    is unreadable (missing/invalid JSON) or declares a grader outside
-    :data:`RECOGNIZED_GRADERS`.
+    is unreadable (missing/invalid JSON), declares a grader outside
+    :data:`RECOGNIZED_GRADERS`, or declares ``"handoff"`` without a
+    ``handoff_requirement`` key.
     """
     name = os.path.basename(case_dir.rstrip(os.sep))
     expect_path = os.path.join(case_dir, "expect.json")
     if not os.path.isfile(expect_path):
-        return "structural"
+        return "structural", None
     try:
         with open(expect_path, encoding="utf-8") as fh:
             data = json.load(fh)
@@ -113,7 +121,14 @@ def read_expect(case_dir):
         raise ValueError(
             "case '%s': unrecognized grader %r in expect.json"
             % (name, grader))
-    return grader
+    if grader != "handoff":
+        return grader, None
+    handoff_requirement = data.get("handoff_requirement")
+    if not handoff_requirement:
+        raise ValueError(
+            "case '%s': grader 'handoff' requires a 'handoff_requirement' "
+            "key naming the requirement id in expect.json" % name)
+    return grader, handoff_requirement
 
 
 def discover_cases(cases_dir, case_filter=None):
@@ -148,11 +163,13 @@ def discover_cases(cases_dir, case_filter=None):
         if not os.path.isdir(fixture_path):
             continue
         try:
-            grader = read_expect(case_dir)
+            grader, handoff_requirement = read_expect(case_dir)
         except ValueError as exc:
             grader = str(exc)
+            handoff_requirement = None
         cases.append(Case(name=name, prompt_path=prompt_path,
-                          fixture_path=fixture_path, grader=grader))
+                          fixture_path=fixture_path, grader=grader,
+                          handoff_requirement=handoff_requirement))
     return cases
 
 
@@ -201,6 +218,13 @@ def assemble_scratch(case, host_repo=HOST_REPO):
     grammar authority must not drift inside a fixture), and the scratch dir is
     turned into a git repo with a single baseline commit so the session sees a
     clean working tree.
+
+    For a handoff-graded case, the ``src/`` tree and content directory are
+    then snapshotted (:func:`_snapshot_handoff_state`) in exactly the state
+    assembly leaves them — including any file assembly itself injected, such
+    as the host repo's ``.shipd/README.md`` — so :func:`grade_handoff` can
+    later compare the post-session tree against what assembly actually
+    produced rather than against the case's ``fixture/``.
     """
     scratch = tempfile.mkdtemp(prefix="s-eval-%s-" % case.name)
     # Copy the fixture contents into the (already-created) scratch root.
@@ -226,6 +250,10 @@ def assemble_scratch(case, host_repo=HOST_REPO):
          "-c", "user.email=eval@shipd.local",
          "-c", "user.name=s eval",
          "commit", "-q", "-m", "fixture baseline")
+
+    if case.grader == "handoff":
+        _snapshot_handoff_state(scratch)
+
     return scratch
 
 
@@ -531,6 +559,33 @@ def _tree_files(root):
     return found
 
 
+def _tree_differs(a, b):
+    """Return the first relative path whose content differs between
+    directories ``a`` and ``b``, sorted for a stable, deterministic result,
+    or ``None`` when every file matches.
+
+    A path present under one directory but not the other counts as
+    differing. Never descends into a ``__pycache__`` directory (via
+    :func:`_tree_files`), so compiled bytecode is never treated as a
+    mismatch. A missing directory is treated as holding no files.
+    """
+    a_files = _tree_files(a) if os.path.isdir(a) else set()
+    b_files = _tree_files(b) if os.path.isdir(b) else set()
+    for rel in sorted(a_files | b_files):
+        if rel not in a_files or rel not in b_files:
+            return rel
+        try:
+            with open(os.path.join(a, rel), "rb") as fh:
+                content_a = fh.read()
+            with open(os.path.join(b, rel), "rb") as fh:
+                content_b = fh.read()
+        except OSError:
+            return rel
+        if content_a != content_b:
+            return rel
+    return None
+
+
 def _prune_to_known(root, known_relpaths):
     """Remove every file under ``root`` whose path relative to ``root`` is
     not in ``known_relpaths``, then remove any directory left empty as a
@@ -588,6 +643,193 @@ def grade_behavior(case, scratch_dir):
     if proc.returncode != 0:
         return RunResult(False, proc.stdout)
     return RunResult(True, None)
+
+
+
+# ---------------------------------------------------------------------------
+# Handoff grading
+# ---------------------------------------------------------------------------
+
+# Registry mapping a scratch dir's canonical path to the directory holding
+# its pre-session snapshot of src/ and the content directory — the state
+# assemble_scratch leaves right after assembly, before any session runs.
+# assemble_scratch populates this (via _snapshot_handoff_state) as its last
+# step for a handoff-graded case; grade_handoff reads it back so the grader
+# compares the post-session tree against what assembly actually produced,
+# never against case.fixture_path — assembly legitimately injects files
+# (e.g. the host repo's .shipd/README.md) the fixture does not ship, and the
+# grader asks what the session changed, not how the scratch differs from the
+# fixture.
+_HANDOFF_SNAPSHOTS = {}
+
+
+def _snapshot_key(scratch_dir):
+    return os.path.realpath(scratch_dir)
+
+
+def _snapshot_handoff_state(scratch_dir):
+    """Copy ``<scratch_dir>/src`` and ``<scratch_dir>/.shipd`` into a fresh
+    temp directory and register it against ``scratch_dir`` for
+    :func:`grade_handoff` to compare the post-session tree against. Called
+    once, from :func:`assemble_scratch`, immediately after assembly and
+    before any session runs.
+    """
+    snapshot = tempfile.mkdtemp(prefix="s-eval-handoff-snapshot-")
+    for name in ("src", ".shipd"):
+        source = os.path.join(scratch_dir, name)
+        if os.path.isdir(source):
+            shutil.copytree(source, os.path.join(snapshot, name))
+    _HANDOFF_SNAPSHOTS[_snapshot_key(scratch_dir)] = snapshot
+    return snapshot
+
+
+def discard_handoff_snapshot(scratch_dir):
+    """Remove and forget the pre-session snapshot :func:`_snapshot_handoff_state`
+    registered for ``scratch_dir``, if any. Safe to call for a scratch dir
+    that never registered one (e.g. a non-handoff case).
+    """
+    snapshot = _HANDOFF_SNAPSHOTS.pop(_snapshot_key(scratch_dir), None)
+    if snapshot is not None:
+        shutil.rmtree(snapshot, ignore_errors=True)
+
+
+_TURN_TRANSCRIPT_RE = re.compile(r"^eval-transcript-turn(\d+)\.json$")
+
+
+def _latest_transcript_path(scratch_dir):
+    """Return the path to the transcript carrying the session's final turn:
+    the highest-numbered ``eval-transcript-turn<N>.json`` in ``scratch_dir``
+    when any resumed turn ran, else the turn-1 ``eval-transcript.json``.
+    ``None`` when neither is present.
+    """
+    best_n = None
+    best_path = None
+    try:
+        entries = os.listdir(scratch_dir)
+    except OSError:
+        entries = []
+    for name in entries:
+        m = _TURN_TRANSCRIPT_RE.match(name)
+        if m:
+            n = int(m.group(1))
+            if best_n is None or n > best_n:
+                best_n = n
+                best_path = os.path.join(scratch_dir, name)
+    if best_path is not None:
+        return best_path
+    base = os.path.join(scratch_dir, TRANSCRIPT_NAME)
+    return base if os.path.isfile(base) else None
+
+
+def _transcript_result_text(scratch_dir):
+    """Return the session's final ``result`` text from
+    :func:`_latest_transcript_path`'s transcript, or ``""`` when no
+    transcript is present, it is unreadable/invalid JSON, or carries no
+    string ``result`` field.
+    """
+    path = _latest_transcript_path(scratch_dir)
+    if path is None:
+        return ""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return ""
+    if isinstance(data, dict):
+        result = data.get("result")
+        if isinstance(result, str):
+            return result
+    return ""
+
+
+def grade_handoff(case, scratch_dir):
+    """Grade a completed handoff-graded session's scratch repo and return a
+    :class:`RunResult`.
+
+    Asserts, in order: every file under ``<scratch_dir>/src`` matches the
+    pre-session snapshot :func:`_snapshot_handoff_state` took right after
+    ``assemble_scratch`` assembled ``scratch_dir``; every file under
+    ``<scratch_dir>/.shipd`` matches that same snapshot; ``python3 -m
+    unittest discover -s tests`` exits 0 in ``scratch_dir`` (the shipped
+    suite, expected to stay green since the correct outcome touches no
+    code); and the session's final ``result`` text
+    (:func:`_transcript_result_text`) contains ``case.handoff_requirement``.
+    The first failing assertion is named in ``RunResult.failure``.
+
+    Comparing against the pre-session snapshot rather than
+    ``case.fixture_path`` matters because assembly legitimately injects
+    files the fixture does not ship (e.g. the host repo's
+    ``.shipd/README.md``) — the grader asks what the session changed, never
+    how the scratch differs from the fixture.
+    """
+    snapshot = _HANDOFF_SNAPSHOTS.get(_snapshot_key(scratch_dir))
+    if snapshot is None:
+        raise RuntimeError(
+            "grade_handoff called for scratch dir %r with no pre-session "
+            "snapshot registered — assemble_scratch must assemble a "
+            "handoff-graded case before grade_handoff can run" % scratch_dir)
+
+    scratch_src = os.path.join(scratch_dir, "src")
+    snapshot_src = os.path.join(snapshot, "src")
+    diff = _tree_differs(snapshot_src, scratch_src)
+    if diff is not None:
+        return RunResult(
+            False, "src/ changed since assembly: %s"
+                   % os.path.join("src", diff))
+
+    scratch_content = os.path.join(scratch_dir, ".shipd")
+    snapshot_content = os.path.join(snapshot, ".shipd")
+    diff = _tree_differs(snapshot_content, scratch_content)
+    if diff is not None:
+        return RunResult(
+            False, "content directory changed since assembly: %s"
+                   % os.path.join(".shipd", diff))
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
+        cwd=scratch_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True)
+    if proc.returncode != 0:
+        return RunResult(
+            False, "shipped suite no longer exits 0:\n%s" % proc.stdout)
+
+    result_text = _transcript_result_text(scratch_dir)
+    if case.handoff_requirement not in result_text:
+        return RunResult(
+            False,
+            "session's final text does not name the declared requirement "
+            "id %r" % case.handoff_requirement)
+
+    return RunResult(True, None)
+
+
+def check_handoff_fixture(case, scratch_dir):
+    """Sanity-check a handoff case's fixture before a session runs.
+
+    Probes a throwaway copy of ``scratch_dir`` (so probing never disturbs
+    the real scratch tree the session is about to work in) with the shipped
+    suite alone, which must exit 0 — the code is expected to implement its
+    documented contract faithfully, so a handoff fixture whose own tests
+    don't pass against its original code is mis-seeded.
+
+    Returns ``None`` when the probe holds, else a message naming the case
+    and the check, and the captured output.
+    """
+    throwaway = tempfile.mkdtemp(prefix="s-eval-handoff-sanity-%s-" % case.name)
+    try:
+        shutil.copytree(scratch_dir, throwaway, dirs_exist_ok=True)
+        proc = subprocess.run(
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
+            cwd=throwaway, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True)
+        if proc.returncode != 0:
+            return (
+                "handoff fixture sanity check failed for case '%s': the "
+                "shipped suite did not exit 0 before the session:\n%s"
+                % (case.name, proc.stdout))
+        return None
+    finally:
+        shutil.rmtree(throwaway, ignore_errors=True)
 
 
 def check_behavior_fixture(case, scratch_dir):
@@ -735,14 +977,17 @@ def execute_case(case, runs, claude_bin, keep_scratch,
     removed afterward unless ``keep_scratch``.
 
     Grading dispatches on ``case.grader``: ``"structural"`` calls :func:`grade`,
-    ``"behavior"`` calls :func:`grade_behavior`. A ``case.grader`` outside
-    those two values — set by :func:`discover_cases` to the offending
-    ``expect.json``'s error message when it is unreadable or names an
-    unrecognized grader — fails every run immediately with that message,
-    spawning no session. A behavior case is additionally sanity-checked with
-    :func:`check_behavior_fixture` immediately after ``assemble_scratch``; a
-    reported failure fails the run before ``run_conversation`` is invoked, so
-    a mis-seeded fixture never spawns a session.
+    ``"behavior"`` calls :func:`grade_behavior`, ``"handoff"`` calls
+    :func:`grade_handoff`. A ``case.grader`` outside those three values —
+    set by :func:`discover_cases` to the offending ``expect.json``'s error
+    message when it is unreadable, names an unrecognized grader, or omits a
+    ``handoff`` case's required ``handoff_requirement`` — fails every run
+    immediately with that message, spawning no session. A behavior case is
+    additionally sanity-checked with :func:`check_behavior_fixture`, and a
+    handoff case with :func:`check_handoff_fixture`, immediately after
+    ``assemble_scratch``; a reported failure fails the run before
+    ``run_conversation`` is invoked, so a mis-seeded fixture never spawns a
+    session.
 
     Before any of that, :func:`_arm_refusal` is consulted: a baseline-bearing
     ``arm`` (``"baseline"`` or ``"both"``) against a structural case, or a
@@ -756,7 +1001,7 @@ def execute_case(case, runs, claude_bin, keep_scratch,
     if refusal is not None:
         return _refused_results(case, runs, refusal)
 
-    if case.grader not in ("structural", "behavior"):
+    if case.grader not in ("structural", "behavior", "handoff"):
         results = []
         for i in range(1, runs + 1):
             result = RunResult(False, case.grader)
@@ -771,9 +1016,12 @@ def execute_case(case, runs, claude_bin, keep_scratch,
         scratch = assemble_scratch(case)
         try:
             try:
-                sanity_failure = (
-                    check_behavior_fixture(case, scratch)
-                    if case.grader == "behavior" else None)
+                if case.grader == "behavior":
+                    sanity_failure = check_behavior_fixture(case, scratch)
+                elif case.grader == "handoff":
+                    sanity_failure = check_handoff_fixture(case, scratch)
+                else:
+                    sanity_failure = None
                 if sanity_failure is not None:
                     result = RunResult(False, sanity_failure)
                 else:
@@ -784,6 +1032,8 @@ def execute_case(case, runs, claude_bin, keep_scratch,
                         result = RunResult(False, failure)
                     elif case.grader == "behavior":
                         result = grade_behavior(case, scratch)
+                    elif case.grader == "handoff":
+                        result = grade_handoff(case, scratch)
                     else:
                         result = grade(scratch)
             except Exception as exc:  # noqa: BLE001 — one bad run must not
@@ -797,6 +1047,7 @@ def execute_case(case, runs, claude_bin, keep_scratch,
                 print("  [%s %d/%d] FAIL — %s"
                       % (case.name, i, runs, first[0] if first else ""))
         finally:
+            discard_handoff_snapshot(scratch)
             if keep_scratch:
                 print("    scratch kept: %s" % scratch)
             else:
