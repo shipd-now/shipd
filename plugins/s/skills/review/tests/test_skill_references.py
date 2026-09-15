@@ -11,13 +11,17 @@ and neither of the other two rubric surfaces (the copilot skill body and the
 harness command body) points at a reference path that only resolves relative
 to `${CLAUDE_PLUGIN_ROOT}`.
 
-Pure text-structure assertions — no production module is imported, since the
-thing under test is prose shape, not code.
+Mostly pure text-structure assertions — no production module is imported for
+them, since the thing under test is prose shape, not code. The one exception
+is `SeverityDotParityTest`, which imports `review_gate` to pin the vendored
+copilot workflow's severity-dot rendering against the real module rather than
+a second hard-coded restatement of it.
 """
 
 import glob
 import os
 import re
+import sys
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -38,6 +42,19 @@ HARNESS_REVIEW_BODY = os.path.join(
 # own references/ directory.
 HARNESS_REVIEW_MD = os.path.join(
     PLUGIN_S_ROOT, "harness", "references", "review.md")
+
+# The vendored posting workflow (review-skill): its inline Python carries
+# its own copy of the severity-dot map and marker format, independent of
+# `review_gate.py`. `SeverityDotParityTest` pins the two together.
+COPILOT_GATE_YML = os.path.join(
+    PLUGIN_S_ROOT, "integrations", "copilot", "copilot-review-gate.yml")
+
+# `review_gate.py` itself, imported the way test_review_gate.py does, so
+# `SeverityDotParityTest` reads its real `_SEV_DOT`/`_sev_marker` rather
+# than a value copied here that could drift from either side unnoticed.
+SCRIPTS = os.path.join(REVIEW_SKILL_DIR, "scripts")
+sys.path.insert(0, SCRIPTS)
+import review_gate  # noqa: E402
 
 # The full finding taxonomy both payload surfaces must accept.
 ALL_TAXONOMY_VALUES = frozenset((
@@ -527,6 +544,101 @@ class ReferenceFreeSurfacesPostingDefaultTest(unittest.TestCase):
                     "disposition", lowered,
                     f"{path} must state that dispositioning the findings "
                     f"is opt-in, asked for rather than automatic")
+
+
+HEREDOC_PY_RE = re.compile(r"<<'PY'\n(.*?)\n( *)PY\n", re.DOTALL)
+
+
+def _extract_heredoc_python(yml_text):
+    """The posting step's inline Python: the body of the one `<<'PY' ... PY`
+    heredoc in `copilot-review-gate.yml`, dedented to real module-level
+    Python source."""
+    match = HEREDOC_PY_RE.search(yml_text)
+    if not match:
+        raise AssertionError(
+            "expected a <<'PY' ... PY heredoc in copilot-review-gate.yml")
+    body, indent = match.group(1), match.group(2)
+    lines = []
+    for line in body.split("\n"):
+        if line.startswith(indent):
+            lines.append(line[len(indent):])
+        elif not line.strip():
+            lines.append("")
+        else:
+            raise AssertionError(
+                "heredoc line under-indented relative to its PY "
+                "terminator: %r" % line)
+    return "\n".join(lines)
+
+
+def _workflow_namespace():
+    """Executes the posting step's constants and function definitions in an
+    isolated namespace, so a test reads `SEV_DOT`, `inline_body`, and
+    `prose` from the real workflow source rather than a value hard-coded
+    here that could silently drift from it.
+
+    The source unpacks `sys.argv` at module scope before any function is
+    defined, so `sys.argv` is stubbed for the exec; the module's tail (past
+    the constants and function definitions) reads and writes real files
+    named from those argv entries, which this test has no business
+    touching, so the source is cut before that point.
+    """
+    source = _extract_heredoc_python(_read(COPILOT_GATE_YML))
+    cutoff = source.index("with open(body_path")
+    source = source[:cutoff]
+    namespace = {}
+    old_argv = sys.argv
+    try:
+        sys.argv = ["prog", "body", "findings", "files", "payload",
+                    "fallback"]
+        exec(compile(source, COPILOT_GATE_YML, "exec"), namespace)
+    finally:
+        sys.argv = old_argv
+    return namespace
+
+
+class SeverityDotParityTest(unittest.TestCase):
+    """The `review-skill` requirement binds both posting surfaces —
+    `review_gate.py` and the vendored `copilot-review-gate.yml` workflow —
+    to render the identical severity dot, but each carries its own copy of
+    the dot map and the marker format. Nothing failed if the workflow's copy
+    drifted from `review_gate.py`'s until this test: it pins the workflow's
+    rendering against the real `review_gate` module, not a second
+    hard-coded restatement of it.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = _workflow_namespace()
+
+    def test_sev_dot_maps_are_identical(self):
+        self.assertEqual(self.workflow["SEV_DOT"], review_gate._SEV_DOT)
+
+    def test_inline_body_opens_with_review_gates_marker(self):
+        inline_body = self.workflow["inline_body"]
+        for sev in ("high", "medium", "low"):
+            with self.subTest(severity=sev):
+                body = inline_body({"severity": sev, "detail": "something"})
+                expected_prefix = review_gate._sev_marker(sev)
+                self.assertTrue(
+                    body.startswith(expected_prefix),
+                    "workflow inline_body for %r opens with %r, expected "
+                    "the review_gate marker %r"
+                    % (sev, body, expected_prefix))
+
+    def test_folded_finding_bracket_matches_render_summary(self):
+        prose = self.workflow["prose"]
+        for sev in ("high", "medium", "low"):
+            with self.subTest(severity=sev):
+                block = prose([{"severity": sev, "detail": "something",
+                                 "path": "z.py", "start_line": 1}])
+                dot = review_gate._SEV_DOT[sev]
+                expected_bracket = "[%s %s]" % (dot, sev)
+                joined = "\n".join(block)
+                self.assertIn(
+                    expected_bracket, joined,
+                    "workflow folded finding is missing %r: %r"
+                    % (expected_bracket, joined))
 
 
 if __name__ == "__main__":
