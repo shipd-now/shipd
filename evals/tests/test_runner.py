@@ -617,17 +617,121 @@ class HandoffGradingTests(TmpPathTestCase):
         self.assertIn(
             os.path.join("tests", "test_shipped.py"), result.failure)
 
-    def test_stray_root_file_fails_naming_its_path(self):
-        """A file a session drops anywhere in the scratch tree — not only
-        under ``src/`` or the content directory — must fail the run, naming
-        that path."""
+    def test_stray_root_file_is_tolerated(self):
+        """A new file a session drops at the scratch root — outside
+        ``src/`` and outside any ``.shipd/verified/`` or ``.shipd/planned/``
+        directory — is tolerated, since the authored-content comparison
+        only flags a new file under one of those three locations."""
         case = self._make_case("case-g")
         scratch = _untouched_handoff_scratch(self, case)
         _write(os.path.join(scratch, "NOTES.md"), "stray notes\n")
         _write_handoff_transcript(scratch, "req-id")
         result = run.grade_handoff(case, scratch)
+        self.assertTrue(result.passed, result.failure)
+
+
+# ---------------------------------------------------------------------------
+# Handoff grading — authored-content comparison
+# ---------------------------------------------------------------------------
+
+class HandoffAuthoredContentGradingTests(TmpPathTestCase):
+    """Exercises ``grade_handoff``'s target authored-content comparison:
+    engine scaffolding created outside the authored locations is tolerated;
+    a new file under ``src/`` or under any ``.shipd/verified/`` or
+    ``.shipd/planned/`` directory anywhere in the scratch (including inside
+    a worktree) fails, naming it; a rewritten shipped test still fails
+    because it was present in the pre-session snapshot. Every scratch here
+    is built through the real :func:`run.assemble_scratch`, mirroring what a
+    live handoff run actually leaves post-assembly — never a bare fixture
+    copy. Written against ``grade_handoff`` before its repair (this is task
+    1.1; task 1.2 repairs it), so the scaffolding case is expected to fail
+    here — the current whole-tree comparison flags any new file, tooling-
+    created or not — while the worktree case already fails today too, since
+    any new file anywhere currently fails regardless of location."""
+
+    def _make_case(self, name, handoff_requirement="req-id"):
+        cases_dir = os.path.join(self.tmp_path, "cases")
+        return _write_handoff_case(cases_dir, name, handoff_requirement)
+
+    def test_engine_scaffolding_outside_authored_locations_passes(self):
+        case = self._make_case("case-scaffold")
+        scratch = _untouched_handoff_scratch(self, case)
+        # Tooling-created scaffolding, none of it under src/ or a
+        # .shipd/verified/ or .shipd/planned/ directory.
+        _write(os.path.join(scratch, ".shipd", "schema", "case.json"),
+              "{}\n")
+        _write(os.path.join(scratch, "completed", "2026-01-01-x", "plan.md"),
+              "done\n")
+        _write(os.path.join(scratch, "research", "r1", "report.md"), "r\n")
+        _write(os.path.join(scratch, "shipd.config.example.json"), "{}\n")
+        _write_handoff_transcript(scratch, "req-id")
+        result = run.grade_handoff(case, scratch)
+        self.assertTrue(result.passed, result.failure)
+
+    def test_new_file_under_src_fails_naming_it(self):
+        case = self._make_case("case-src")
+        scratch = _untouched_handoff_scratch(self, case)
+        _write(os.path.join(scratch, "src", "helper.py"), "X = 1\n")
+        _write_handoff_transcript(scratch, "req-id")
+        result = run.grade_handoff(case, scratch)
         self.assertFalse(result.passed)
-        self.assertIn("NOTES.md", result.failure)
+        self.assertIn(os.path.join("src", "helper.py"), result.failure)
+
+    def test_new_file_under_src_inside_worktree_fails_naming_it(self):
+        """The ``src/`` rule is depth-independent exactly like the
+        ``.shipd/planned/`` rule below: a new file under a worktree's own
+        ``src/`` (e.g. ``.worktrees/<name>/src/...``) must fail the run too,
+        not just one at the scratch root."""
+        case = self._make_case("case-src-wt")
+        scratch = _untouched_handoff_scratch(self, case)
+        _write(os.path.join(
+            scratch, ".worktrees", "x", "src", "helper.py"), "X = 1\n")
+        _write_handoff_transcript(scratch, "req-id")
+        result = run.grade_handoff(case, scratch)
+        self.assertFalse(result.passed)
+        self.assertIn(
+            os.path.join(".worktrees", "x", "src", "helper.py"),
+            result.failure)
+
+    def test_new_file_under_planned_at_scratch_root_fails_naming_it(self):
+        case = self._make_case("case-planned-root")
+        scratch = _untouched_handoff_scratch(self, case)
+        _write(os.path.join(scratch, ".shipd", "planned", "x", "plan.md"),
+              "Status: draft\n")
+        _write_handoff_transcript(scratch, "req-id")
+        result = run.grade_handoff(case, scratch)
+        self.assertFalse(result.passed)
+        self.assertIn(
+            os.path.join(".shipd", "planned", "x", "plan.md"),
+            result.failure)
+
+    def test_new_file_under_planned_inside_worktree_fails_naming_it(self):
+        case = self._make_case("case-planned-wt")
+        scratch = _untouched_handoff_scratch(self, case)
+        _write(os.path.join(
+            scratch, ".worktrees", "x", ".shipd", "planned", "x",
+            "plan.md"), "Status: draft\n")
+        _write_handoff_transcript(scratch, "req-id")
+        result = run.grade_handoff(case, scratch)
+        self.assertFalse(result.passed)
+        self.assertIn(
+            os.path.join(".worktrees", "x", ".shipd", "planned", "x",
+                        "plan.md"),
+            result.failure)
+
+    def test_rewritten_shipped_test_still_fails(self):
+        case = self._make_case("case-rewrite")
+        scratch = _untouched_handoff_scratch(self, case)
+        _write(os.path.join(scratch, "tests", "test_shipped.py"),
+              "import unittest\n\n\n"
+              "class T(unittest.TestCase):\n"
+              "    def test_nop(self):\n"
+              "        pass\n")
+        _write_handoff_transcript(scratch, "req-id")
+        result = run.grade_handoff(case, scratch)
+        self.assertFalse(result.passed)
+        self.assertIn(
+            os.path.join("tests", "test_shipped.py"), result.failure)
 
 
 # ---------------------------------------------------------------------------
@@ -721,40 +825,11 @@ class HandoffFixtureSanityDispatchTests(TmpPathTestCase):
             cases_dir, "seeded-red", shipped_test=_FAILING_TEST)
         with mock.patch.object(run, "run_conversation") as spy:
             results = run.execute_case(
-                case, runs=1, claude_bin="claude", keep_scratch=False,
-                arm="treatment")
+                case, runs=1, claude_bin="claude", keep_scratch=False)
         spy.assert_not_called()
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0].passed)
         self.assertIn("sanity", results[0].failure.lower())
-
-
-# ---------------------------------------------------------------------------
-# Derived baseline prompt
-# ---------------------------------------------------------------------------
-
-class BaselinePromptTests(unittest.TestCase):
-
-    def test_strips_leading_skill_token(self):
-        text = ("/s:fix The report CLI prints its rows in the wrong "
-                "order.\nSecond line stays.\n")
-        result = run.baseline_prompt(text)
-        self.assertEqual(
-            result,
-            "The report CLI prints its rows in the wrong order.\n"
-            "Second line stays.\n")
-
-    def test_strips_a_different_skill_token(self):
-        text = "/s:plan Add a CSV export button.\nMore detail here.\n"
-        result = run.baseline_prompt(text)
-        self.assertEqual(
-            result, "Add a CSV export button.\nMore detail here.\n")
-
-    def test_no_skill_token_raises(self):
-        text = "Just a plain request with no skill token.\n"
-        with self.assertRaises(ValueError) as ctx:
-            run.baseline_prompt(text)
-        self.assertIn("/s:", str(ctx.exception))
 
 
 # ---------------------------------------------------------------------------
@@ -782,337 +857,6 @@ class SummarizeTests(unittest.TestCase):
         }
         _lines, code = run.summarize(results)
         self.assertNotEqual(code, 0)
-
-
-class SummarizeArmTests(unittest.TestCase):
-    """Exercises ``summarize`` against the ``(case, arm)``-keyed results shape
-    a multi-arm run produces, alongside the legacy plain-case-name shape
-    :class:`SummarizeTests` covers above."""
-
-    def test_single_arm_mapping_renders_like_today(self):
-        """A results mapping carrying only one arm — even when keyed by the
-        new ``(case, arm)`` tuple shape — renders byte-identically to the
-        legacy plain-case-name shape: the default single-arm invocation is
-        unchanged."""
-        legacy_lines, legacy_code = run.summarize(
-            {"a": [_res(True), _res(True), _res(False)]})
-        tupled_lines, tupled_code = run.summarize(
-            {("a", "treatment"): [_res(True), _res(True), _res(False)]})
-        self.assertEqual(tupled_lines, legacy_lines)
-        self.assertEqual(tupled_code, legacy_code)
-
-    def test_two_arm_mapping_renders_one_labelled_row_per_arm(self):
-        results = {
-            ("a", "treatment"): [_res(True), _res(True)],
-            ("a", "baseline"): [_res(False), _res(False)],
-        }
-        lines, _code = run.summarize(results)
-        treatment_rows = [ln for ln in lines
-                          if "a" in ln and "treatment" in ln]
-        baseline_rows = [ln for ln in lines
-                         if "a" in ln and "baseline" in ln]
-        self.assertEqual(len(treatment_rows), 1)
-        self.assertEqual(len(baseline_rows), 1)
-        self.assertIn("2/2", treatment_rows[0])
-        self.assertIn("0/2", baseline_rows[0])
-
-    def test_all_pass_treatment_all_fail_baseline_exits_zero(self):
-        results = {
-            ("fix-report-drift", "treatment"): [_res(True), _res(True)],
-            ("fix-report-drift", "baseline"): [_res(False), _res(False)],
-        }
-        _lines, code = run.summarize(results)
-        self.assertEqual(code, 0)
-
-    def test_failing_treatment_exits_nonzero_whatever_baseline_did(self):
-        for baseline_runs in ([_res(True), _res(True)],
-                              [_res(False), _res(False)]):
-            with self.subTest(baseline_runs=baseline_runs):
-                results = {
-                    ("fix-report-drift", "treatment"):
-                        [_res(True), _res(False)],
-                    ("fix-report-drift", "baseline"): baseline_runs,
-                }
-                _lines, code = run.summarize(results)
-                self.assertNotEqual(code, 0)
-
-
-class SummarizeRefusalTests(unittest.TestCase):
-    """Exercises ``summarize``'s distinction between a refused run — a
-    baseline-bearing arm turned away before any session spawned, because
-    nothing was measured — and a baseline arm that actually ran and failed,
-    which is the expected, informative outcome of a working comparison."""
-
-    def test_refused_baseline_only_rows_exit_nonzero(self):
-        refused = run.RunResult(
-            False,
-            "case 'plan-csv-export': baseline arm refused — grader is "
-            "'structural', which only a plugin session can produce; the "
-            "comparison would carry no information",
-            refused=True)
-        results = {("plan-csv-export", "baseline"): [refused, refused]}
-        _lines, code = run.summarize(results)
-        self.assertNotEqual(code, 0)
-
-    def test_all_pass_treatment_all_fail_baseline_that_ran_exits_zero(self):
-        """A baseline arm that genuinely ran (``refused`` False, the
-        default) and failed every run must still exit 0 alongside an
-        all-pass treatment — this is the case the fix must not regress."""
-        results = {
-            ("fix-report-drift", "treatment"): [_res(True), _res(True)],
-            ("fix-report-drift", "baseline"): [_res(False), _res(False)],
-        }
-        _lines, code = run.summarize(results)
-        self.assertEqual(code, 0)
-
-
-# ---------------------------------------------------------------------------
-# Session turn command construction (arm selection)
-# ---------------------------------------------------------------------------
-
-def _stub_completed_process(stdout='{"type": "result", "session_id": "s1"}'):
-    return subprocess.CompletedProcess(
-        args=[], returncode=0, stdout=stdout, stderr="")
-
-
-class RunTurnCommandTests(TmpPathTestCase):
-    """Exercises the command ``_run_turn`` builds for each arm, with
-    ``subprocess.run`` monkeypatched so no real ``claude`` process is
-    spawned."""
-
-    def _capture_cmd(self, **run_turn_kwargs):
-        captured = {}
-
-        def fake_run(cmd, **kwargs):
-            captured["cmd"] = cmd
-            captured["kwargs"] = kwargs
-            return _stub_completed_process()
-
-        with mock.patch.object(run.subprocess, "run", fake_run):
-            run._run_turn(
-                "hello", self.tmp_path, host_repo=REPO_ROOT,
-                **run_turn_kwargs)
-        return captured
-
-    def test_treatment_arm_includes_plugin_dir(self):
-        captured = self._capture_cmd()
-        self.assertIn("--plugin-dir", captured["cmd"])
-
-    def test_baseline_arm_omits_plugin_dir(self):
-        captured = self._capture_cmd(arm="baseline")
-        self.assertNotIn("--plugin-dir", captured["cmd"])
-
-    def test_cwd_permission_mode_and_output_format_identical_across_arms(self):
-        treatment = self._capture_cmd()
-        baseline = self._capture_cmd(arm="baseline")
-        self.assertEqual(
-            treatment["kwargs"]["cwd"], baseline["kwargs"]["cwd"])
-        self.assertEqual(treatment["kwargs"]["cwd"], self.tmp_path)
-
-        def _drop_plugin_dir(cmd):
-            if "--plugin-dir" not in cmd:
-                return list(cmd)
-            i = cmd.index("--plugin-dir")
-            return cmd[:i] + cmd[i + 2:]
-
-        self.assertEqual(
-            _drop_plugin_dir(treatment["cmd"]), baseline["cmd"])
-        for flag in ("--permission-mode", "--output-format"):
-            self.assertIn(flag, treatment["cmd"])
-            self.assertIn(flag, baseline["cmd"])
-            t_i = treatment["cmd"].index(flag)
-            b_i = baseline["cmd"].index(flag)
-            self.assertEqual(
-                treatment["cmd"][t_i + 1], baseline["cmd"][b_i + 1])
-
-
-# ---------------------------------------------------------------------------
-# Arm refusal — baseline arm requires a behavior-graded case
-# ---------------------------------------------------------------------------
-
-class ArmRefusalTests(TmpPathTestCase):
-    """Exercises ``execute_case``'s refusal of a baseline-bearing arm for a
-    structural case, and confirms a behavior case proceeds under the same
-    arms — with ``run_conversation`` mocked so no real session is spawned."""
-
-    def _structural_case(self):
-        cases = os.path.join(self.tmp_path, "cases")
-        _make_case(cases, "struct-case")
-        found = run.discover_cases(cases, case_filter="struct-case")
-        return found[0]
-
-    def _behavior_case(self):
-        # A correctly-seeded fixture: the shipped suite passes on its own,
-        # and the held-out test fails against the fixture's original code —
-        # the shape :func:`check_behavior_fixture`'s sanity check requires,
-        # so the mocked ``run_conversation`` is actually reached.
-        cases_dir = os.path.join(self.tmp_path, "cases")
-        return _write_behavior_case(
-            cases_dir, "behave-case",
-            fixture_tests={"test_shipped.py": _PASSING_TEST},
-            verify_tests={"test_held_out.py": _FAILING_TEST})
-
-    def _handoff_case(self):
-        cases_dir = os.path.join(self.tmp_path, "cases")
-        return _write_handoff_case(cases_dir, "handoff-case")
-
-    def test_structural_case_refuses_baseline_arm(self):
-        case = self._structural_case()
-        with mock.patch.object(run, "run_conversation") as spy:
-            results = run.execute_case(
-                case, runs=2, claude_bin="claude", keep_scratch=False,
-                arm="baseline")
-        spy.assert_not_called()
-        self.assertEqual(len(results), 2)
-        for r in results:
-            self.assertFalse(r.passed)
-            self.assertIn("struct-case", r.failure)
-            self.assertIn("structural", r.failure.lower())
-
-    def test_structural_case_refuses_both_arm(self):
-        case = self._structural_case()
-        with mock.patch.object(run, "run_conversation") as spy:
-            results = run.execute_case(
-                case, runs=2, claude_bin="claude", keep_scratch=False,
-                arm="both")
-        spy.assert_not_called()
-        self.assertEqual(len(results), 2)
-        for r in results:
-            self.assertFalse(r.passed)
-            self.assertIn("struct-case", r.failure)
-            self.assertIn("structural", r.failure.lower())
-
-    def test_behavior_case_proceeds_under_baseline_arm(self):
-        case = self._behavior_case()
-        with mock.patch.object(
-                run, "run_conversation",
-                return_value=(True, None)) as spy:
-            run.execute_case(
-                case, runs=1, claude_bin="claude", keep_scratch=False,
-                arm="baseline")
-        spy.assert_called_once()
-
-    def test_behavior_case_proceeds_under_both_arm(self):
-        case = self._behavior_case()
-        with mock.patch.object(
-                run, "run_conversation",
-                return_value=(True, None)) as spy:
-            run.execute_case(
-                case, runs=1, claude_bin="claude", keep_scratch=False,
-                arm="both")
-        spy.assert_called_once()
-
-    def test_behavior_case_with_no_skill_token_refuses_baseline_arm(self):
-        """A behavior case whose prompt.md carries no leading /s:<skill>
-        token cannot derive a baseline prompt — the run is refused before a
-        session is spawned, naming the case."""
-        cases_dir = os.path.join(self.tmp_path, "cases")
-        case = _write_behavior_case(
-            cases_dir, "no-token-case",
-            fixture_tests={"test_shipped.py": _PASSING_TEST},
-            verify_tests={"test_held_out.py": _PASSING_TEST})
-        _write(case.prompt_path, "Just fix the bug, no skill token here.\n")
-        with mock.patch.object(run, "run_conversation") as spy:
-            results = run.execute_case(
-                case, runs=2, claude_bin="claude", keep_scratch=False,
-                arm="baseline")
-        spy.assert_not_called()
-        self.assertEqual(len(results), 2)
-        for r in results:
-            self.assertFalse(r.passed)
-            self.assertIn("no-token-case", r.failure)
-
-    def test_handoff_case_arm_refusal_returns_none_for_baseline(self):
-        """A handoff-graded case's grader asserts an outcome either arm can
-        reach, so ``_arm_refusal`` must not refuse it under ``baseline`` —
-        only a ``structural`` grader is refused."""
-        case = self._handoff_case()
-        self.assertIsNone(run._arm_refusal(case, "baseline"))
-
-
-class UnreadablePromptRefusalTests(TmpPathTestCase):
-    """Exercises ``_arm_refusal``'s handling of an unreadable
-    ``case.prompt_path`` (e.g. the file vanished, or a permission error) — it
-    must be recorded as a refusal naming the case, the same as the other
-    refusal reasons, rather than letting the ``OSError`` propagate out of
-    ``_arm_refusal`` and (via ``execute_case``, called outside its own broad
-    ``except Exception``) abort every remaining case in the run."""
-
-    def _case_with_unreadable_prompt(self):
-        # A structural case's grader check short-circuits _arm_refusal
-        # before the prompt is ever opened, so this must be a behavior
-        # case to actually exercise the file-read path.
-        cases_dir = os.path.join(self.tmp_path, "cases")
-        case = _write_behavior_case(
-            cases_dir, "unreadable-prompt-case",
-            fixture_tests={"test_shipped.py": _PASSING_TEST},
-            verify_tests={"test_held_out.py": _PASSING_TEST})
-        case.prompt_path = os.path.join(self.tmp_path, "does-not-exist.md")
-        return case
-
-    def test_arm_refusal_returns_a_message_instead_of_raising(self):
-        case = self._case_with_unreadable_prompt()
-        message = run._arm_refusal(case, "baseline")
-        self.assertIsNotNone(message)
-        self.assertIn("unreadable-prompt-case", message)
-
-    def test_execute_case_records_it_failed_without_propagating(self):
-        case = self._case_with_unreadable_prompt()
-        with mock.patch.object(run, "run_conversation") as spy:
-            results = run.execute_case(
-                case, runs=2, claude_bin="claude", keep_scratch=False,
-                arm="baseline")
-        spy.assert_not_called()
-        self.assertEqual(len(results), 2)
-        for r in results:
-            self.assertFalse(r.passed)
-            self.assertTrue(r.refused)
-            self.assertIn("unreadable-prompt-case", r.failure)
-
-
-class CombinedArmWholeRefusalTests(unittest.TestCase):
-    """Exercises the invocation-level refusal of a ``both`` request against a
-    structural case, driven through ``main`` rather than ``execute_case``
-    directly. ``main`` iterates the concrete arms of ``both`` — treatment,
-    then baseline — as separate ``execute_case`` calls; each call decides its
-    own refusal in isolation, so the treatment sub-call (for which
-    ``_arm_refusal`` always returns ``None``) used to run to completion,
-    spawning a real session, before the baseline sub-call refused. The fix
-    decides the refusal once for the whole selected arm set, before either
-    concrete arm executes, so a structural case's treatment session never
-    spawns under ``both`` either."""
-
-    def test_both_arm_refuses_whole_invocation_for_structural_case(self):
-        with mock.patch.object(run, "run_conversation") as spy:
-            exit_code = run.main(
-                ["--case", "plan-csv-export", "--arm", "both"])
-        spy.assert_not_called()
-        self.assertNotEqual(exit_code, 0)
-
-    def test_summary_reports_refusal_once_not_as_a_treatment_score(self):
-        """The treatment arm never ran, so the summary must not carry a
-        '[treatment]  0/N' row for it — that would misreport an unrun arm as
-        a measured failure, and misattribute the baseline refusal message to
-        the treatment arm's rate. The whole invocation is refused once,
-        rendered as a single row for the case (undecorated, since it is the
-        only arm represented for a single-case run)."""
-        buf = io.StringIO()
-        with mock.patch.object(run, "run_conversation") as spy:
-            with contextlib.redirect_stdout(buf):
-                exit_code = run.main(
-                    ["--case", "plan-csv-export", "--arm", "both"])
-        spy.assert_not_called()
-        self.assertNotEqual(exit_code, 0)
-        summary = buf.getvalue().split("Summary:", 1)[1]
-        case_rows = [
-            line for line in summary.splitlines()
-            if "plan-csv-export" in line and "run" not in line.split()[0]]
-        self.assertEqual(len(case_rows), 1, summary)
-        self.assertNotIn("[treatment]", case_rows[0])
-        self.assertNotIn("[baseline]", case_rows[0])
-        # And it must not be misreported as a scored 0/1 run under either
-        # concrete arm's label — the row exists, but unattributed to one.
-        self.assertIn("0/1", case_rows[0])
 
 
 # ---------------------------------------------------------------------------
@@ -1316,6 +1060,92 @@ class GraderAwareDrivingTests(TmpPathTestCase):
             turn_runner=fake_turn)
         self.assertFalse(os.path.exists(
             os.path.join(scratch, "tests", "test_held_out.py")))
+
+
+# ---------------------------------------------------------------------------
+# Grader-selected gate and reply (structural / behavior / handoff / unknown)
+# ---------------------------------------------------------------------------
+
+class GraderSelectedDrivingTests(TmpPathTestCase):
+    """Exercises ``run_conversation``'s per-grader selection of its resume
+    gate and reply, covering every recognized grader plus an unrecognized
+    one, with an injected turn runner (no live session). Written against
+    the current behavior-versus-everything-else branch, so the handoff and
+    unknown-grader cases below are expected to fail here; task 1b.2 repairs
+    ``run_conversation`` to make them pass."""
+
+    def test_handoff_case_sends_one_turn_and_is_not_resumed(self):
+        cases_dir = os.path.join(self.tmp_path, "cases")
+        case = _write_handoff_case(cases_dir, "handoff-drive")
+        scratch = _untouched_handoff_scratch(self, case)
+        calls = []
+
+        def fake_turn(prompt, scratch_dir, resume_id, turn_index, **kwargs):
+            calls.append((prompt, resume_id, turn_index))
+            return True, None, "sess-1"
+
+        ok, failure = run.run_conversation(
+            case, scratch, host_repo=REPO_ROOT, turn_runner=fake_turn)
+        self.assertTrue(ok, failure)
+        self.assertEqual(len(calls), 1)
+        # Turn 1 sends the case prompt with no resume id, and no second
+        # (resumed) turn is ever sent — a handoff-graded session is never
+        # told to continue.
+        self.assertIsNone(calls[0][1])
+
+    def test_structural_case_keeps_structural_gate_and_reply(self):
+        case = _fake_case(self.tmp_path)
+        scratch = _empty_scratch(self.tmp_path)
+        calls = []
+
+        def fake_turn(prompt, scratch_dir, resume_id, turn_index, **kwargs):
+            calls.append((prompt, resume_id, turn_index))
+            if resume_id is not None:
+                _write_change(scratch_dir, "demo", status="ready")
+            return True, None, "sess-1"
+
+        ok, failure = run.run_conversation(
+            case, scratch, host_repo=REPO_ROOT, turn_runner=fake_turn)
+        self.assertTrue(ok, failure)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1][0], run.GOAHEAD_REPLY)
+        self.assertTrue(run.grade(scratch, host_repo=REPO_ROOT).passed)
+
+    def test_behavior_case_keeps_behavior_gate_and_reply(self):
+        cases_dir = os.path.join(self.tmp_path, "cases")
+        case = _write_behavior_case(
+            cases_dir, "behave-drive",
+            fixture_tests={"test_shipped.py": _PASSING_TEST},
+            verify_tests={"test_held_out.py": _FAILING_TEST})
+        scratch = os.path.join(self.tmp_path, "scratch")
+        os.makedirs(scratch, exist_ok=True)
+        calls = []
+
+        def fake_turn(prompt, scratch_dir, resume_id, turn_index, **kwargs):
+            calls.append((prompt, resume_id, turn_index))
+            return True, None, "sess-1"
+
+        ok, failure = run.run_conversation(
+            case, scratch, host_repo=REPO_ROOT, max_resumes=1,
+            turn_runner=fake_turn)
+        self.assertTrue(ok, failure)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1][0], run.BEHAVIOR_GOAHEAD_REPLY)
+
+    def test_unknown_grader_fails_naming_it_without_driving(self):
+        base_case = _fake_case(self.tmp_path)
+        case = run.Case(name=base_case.name, prompt_path=base_case.prompt_path,
+                        fixture_path=base_case.fixture_path,
+                        grader="mystery")
+        scratch = _empty_scratch(self.tmp_path)
+
+        def fake_turn(prompt, scratch_dir, resume_id, turn_index, **kwargs):
+            self.fail("no turn should be sent for an undriveable grader")
+
+        ok, failure = run.run_conversation(
+            case, scratch, host_repo=REPO_ROOT, turn_runner=fake_turn)
+        self.assertFalse(ok)
+        self.assertIn("mystery", failure)
 
 
 if __name__ == "__main__":
