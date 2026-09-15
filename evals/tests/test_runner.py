@@ -10,6 +10,8 @@ lint-clean (and lint-dirty) change trees and point the grader at this repo as
 the host checkout.
 """
 
+import contextlib
+import io
 import os
 import shutil
 import subprocess
@@ -769,6 +771,46 @@ class ArmRefusalTests(TmpPathTestCase):
             self.assertIn("no-token-case", r.failure)
 
 
+class UnreadablePromptRefusalTests(TmpPathTestCase):
+    """Exercises ``_arm_refusal``'s handling of an unreadable
+    ``case.prompt_path`` (e.g. the file vanished, or a permission error) — it
+    must be recorded as a refusal naming the case, the same as the other
+    refusal reasons, rather than letting the ``OSError`` propagate out of
+    ``_arm_refusal`` and (via ``execute_case``, called outside its own broad
+    ``except Exception``) abort every remaining case in the run."""
+
+    def _case_with_unreadable_prompt(self):
+        # A structural case's grader check short-circuits _arm_refusal
+        # before the prompt is ever opened, so this must be a behavior
+        # case to actually exercise the file-read path.
+        cases_dir = os.path.join(self.tmp_path, "cases")
+        case = _write_behavior_case(
+            cases_dir, "unreadable-prompt-case",
+            fixture_tests={"test_shipped.py": _PASSING_TEST},
+            verify_tests={"test_held_out.py": _PASSING_TEST})
+        case.prompt_path = os.path.join(self.tmp_path, "does-not-exist.md")
+        return case
+
+    def test_arm_refusal_returns_a_message_instead_of_raising(self):
+        case = self._case_with_unreadable_prompt()
+        message = run._arm_refusal(case, "baseline")
+        self.assertIsNotNone(message)
+        self.assertIn("unreadable-prompt-case", message)
+
+    def test_execute_case_records_it_failed_without_propagating(self):
+        case = self._case_with_unreadable_prompt()
+        with mock.patch.object(run, "run_conversation") as spy:
+            results = run.execute_case(
+                case, runs=2, claude_bin="claude", keep_scratch=False,
+                arm="baseline")
+        spy.assert_not_called()
+        self.assertEqual(len(results), 2)
+        for r in results:
+            self.assertFalse(r.passed)
+            self.assertTrue(r.refused)
+            self.assertIn("unreadable-prompt-case", r.failure)
+
+
 class CombinedArmWholeRefusalTests(unittest.TestCase):
     """Exercises the invocation-level refusal of a ``both`` request against a
     structural case, driven through ``main`` rather than ``execute_case``
@@ -787,6 +829,31 @@ class CombinedArmWholeRefusalTests(unittest.TestCase):
                 ["--case", "plan-csv-export", "--arm", "both"])
         spy.assert_not_called()
         self.assertNotEqual(exit_code, 0)
+
+    def test_summary_reports_refusal_once_not_as_a_treatment_score(self):
+        """The treatment arm never ran, so the summary must not carry a
+        '[treatment]  0/N' row for it — that would misreport an unrun arm as
+        a measured failure, and misattribute the baseline refusal message to
+        the treatment arm's rate. The whole invocation is refused once,
+        rendered as a single row for the case (undecorated, since it is the
+        only arm represented for a single-case run)."""
+        buf = io.StringIO()
+        with mock.patch.object(run, "run_conversation") as spy:
+            with contextlib.redirect_stdout(buf):
+                exit_code = run.main(
+                    ["--case", "plan-csv-export", "--arm", "both"])
+        spy.assert_not_called()
+        self.assertNotEqual(exit_code, 0)
+        summary = buf.getvalue().split("Summary:", 1)[1]
+        case_rows = [
+            line for line in summary.splitlines()
+            if "plan-csv-export" in line and "run" not in line.split()[0]]
+        self.assertEqual(len(case_rows), 1, summary)
+        self.assertNotIn("[treatment]", case_rows[0])
+        self.assertNotIn("[baseline]", case_rows[0])
+        # And it must not be misreported as a scored 0/1 run under either
+        # concrete arm's label — the row exists, but unattributed to one.
+        self.assertIn("0/1", case_rows[0])
 
 
 # ---------------------------------------------------------------------------

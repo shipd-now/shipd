@@ -675,13 +675,18 @@ def _arm_refusal(case, arm):
     """Return the refusal message for ``case`` under ``arm``, or ``None`` when
     the arm may proceed.
 
-    A baseline-bearing arm (``"baseline"`` or ``"both"``) is refused for two
-    reasons, checked before any scratch repo is assembled: a ``"structural"``
-    grader could never pass without the plugin session that produces its
-    artifacts, so the comparison would carry no information; and a
-    ``prompt.md`` whose first line carries no leading ``/s:<skill>`` token
-    cannot be turned into a baseline prompt via :func:`baseline_prompt`. Both
-    messages name the case; the structural refusal also names the grader.
+    A baseline-bearing arm (``"baseline"`` or ``"both"``) is refused for
+    three reasons, checked before any scratch repo is assembled: a
+    ``"structural"`` grader could never pass without the plugin session that
+    produces its artifacts, so the comparison would carry no information; a
+    ``prompt.md`` that cannot be read (``OSError`` — missing file, permission
+    error, etc.); and a ``prompt.md`` whose first line carries no leading
+    ``/s:<skill>`` token, so it cannot be turned into a baseline prompt via
+    :func:`baseline_prompt`. Every message names the case; the structural
+    refusal also names the grader. The unreadable-prompt case is caught here,
+    rather than left to propagate, so one case's bad file fails that case
+    alone instead of aborting the run — mirroring how :func:`execute_case`'s
+    broad ``except Exception`` keeps one bad run from aborting the whole eval.
     """
     if arm == "treatment":
         return None
@@ -689,8 +694,12 @@ def _arm_refusal(case, arm):
         return ("case '%s': baseline arm refused — grader is 'structural', "
                  "which only a plugin session can produce; the comparison "
                  "would carry no information" % case.name)
-    with open(case.prompt_path, encoding="utf-8") as fh:
-        prompt_text = fh.read()
+    try:
+        with open(case.prompt_path, encoding="utf-8") as fh:
+            prompt_text = fh.read()
+    except OSError as exc:
+        return ("case '%s': baseline arm refused — could not read "
+                 "prompt.md: %s" % (case.name, exc))
     try:
         baseline_prompt(prompt_text)
     except ValueError as exc:
@@ -796,7 +805,8 @@ def execute_case(case, runs, claude_bin, keep_scratch,
 
 
 # Fixed row order when more than one arm is present: treatment first,
-# baseline second, anything else (there shouldn't be) sorted after by name.
+# baseline second, anything else — e.g. "refused", an invocation-level
+# refusal filed under neither concrete arm — sorted after by name.
 _ARM_ORDER = {"treatment": 0, "baseline": 1}
 
 
@@ -884,21 +894,30 @@ def main(argv=None):
         invocation_refusal = (
             _arm_refusal(case, "baseline") if args.arm != "treatment"
             else None)
+        plural = "" if args.runs == 1 else "s"
+        if invocation_refusal is not None:
+            # A 'both' request refused before either concrete arm executes:
+            # the treatment arm never ran, so it must not be scored as a
+            # failed 0/N alongside the baseline refusal. Report the refusal
+            # once for the case, under a synthetic "refused" arm rather than
+            # "treatment" or "baseline", so the summary row (or its absence
+            # of an [arm] tag, when this is the only row) is never mistaken
+            # for a treatment pass-rate measurement.
+            print("== case: %s (%d run%s) =="
+                  % (case.name, args.runs, plural))
+            results[(case.name, "refused")] = _refused_results(
+                case, args.runs, invocation_refusal)
+            continue
         for arm in arms:
-            plural = "" if args.runs == 1 else "s"
             if len(arms) == 1:
                 print("== case: %s (%d run%s) =="
                       % (case.name, args.runs, plural))
             else:
                 print("== case: %s [%s] (%d run%s) =="
                       % (case.name, arm, args.runs, plural))
-            if invocation_refusal is not None:
-                results[(case.name, arm)] = _refused_results(
-                    case, args.runs, invocation_refusal)
-            else:
-                results[(case.name, arm)] = execute_case(
-                    case, args.runs, args.claude_bin, args.keep_scratch,
-                    max_resumes=args.max_resumes, arm=arm)
+            results[(case.name, arm)] = execute_case(
+                case, args.runs, args.claude_bin, args.keep_scratch,
+                max_resumes=args.max_resumes, arm=arm)
     print()
     print("Summary:")
     lines, exit_code = summarize(results)
