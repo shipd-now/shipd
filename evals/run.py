@@ -72,14 +72,9 @@ class Case:
 @dataclasses.dataclass
 class RunResult:
     """The graded outcome of a single case run. ``failure`` names the first
-    failing assertion, or is ``None`` when the run passed. ``refused`` is
-    True when the run was turned away before any session spawned — a
-    baseline-bearing arm refused for a structural case or an unparseable
-    ``prompt.md`` — as opposed to a baseline arm that genuinely ran and
-    failed, which is an expected, informative outcome and not a refusal."""
+    failing assertion, or is ``None`` when the run passed."""
     passed: bool
     failure: str | None = None
-    refused: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -172,32 +167,6 @@ def discover_cases(cases_dir, case_filter=None):
                           fixture_path=fixture_path, grader=grader,
                           handoff_requirement=handoff_requirement))
     return cases
-
-
-# ---------------------------------------------------------------------------
-# Derived baseline prompt
-# ---------------------------------------------------------------------------
-
-_SKILL_TOKEN_RE = re.compile(r"^/s:([A-Za-z0-9_-]+)(\s|$)")
-
-
-def baseline_prompt(text):
-    """Derive a baseline run's prompt from a case's ``prompt.md`` text.
-
-    Strips a leading ``/s:<skill>`` token from the first line and returns the
-    remainder of the text verbatim (the rest of that first line, plus every
-    following line unchanged), so both arms receive identical wording. Raises
-    :class:`ValueError`, naming the offending first line, when it carries no
-    such leading token.
-    """
-    lines = text.splitlines(keepends=True)
-    first = lines[0] if lines else ""
-    m = _SKILL_TOKEN_RE.match(first)
-    if not m:
-        raise ValueError(
-            "prompt does not open with a '/s:<skill>' token: %r"
-            % (first.strip(),))
-    return first[m.end():] + "".join(lines[1:])
 
 
 # ---------------------------------------------------------------------------
@@ -302,15 +271,13 @@ _session_id_from_transcript = session_driver.session_id_from_transcript
 
 def _run_turn(prompt, scratch, resume_id=None, turn_index=1,
               claude_bin="claude", host_repo=HOST_REPO,
-              timeout=SESSION_TIMEOUT_SECONDS, arm="treatment"):
+              timeout=SESSION_TIMEOUT_SECONDS):
     """Run one turn of a headless Claude Code conversation inside ``scratch``.
 
     Launches ``<claude_bin> -p <prompt> --plugin-dir <host>/plugins/s
     --permission-mode bypassPermissions --output-format json`` with the scratch
     directory as cwd — plus ``--resume <resume_id>`` when continuing an
-    existing session. Under ``arm="baseline"``, the ``--plugin-dir`` pair is
-    omitted and nothing else about the command changes — the session runs
-    with no plugin loaded. The captured stdout is written to
+    existing session. The captured stdout is written to
     ``<scratch>/eval-transcript.json`` for turn 1 and
     ``eval-transcript-turn<N>.json`` for resumed turns.
 
@@ -318,12 +285,10 @@ def _run_turn(prompt, scratch, resume_id=None, turn_index=1,
     exits 0 within ``timeout``; ``session_id`` is parsed from the turn's JSON
     transcript (``None`` when unavailable).
     """
-    cmd = [claude_bin, "-p", prompt]
-    if arm != "baseline":
-        plugin_dir = os.path.join(host_repo, "plugins", "s")
-        cmd += ["--plugin-dir", plugin_dir]
-    cmd += ["--permission-mode", "bypassPermissions",
-            "--output-format", "json"]
+    plugin_dir = os.path.join(host_repo, "plugins", "s")
+    cmd = [claude_bin, "-p", prompt, "--plugin-dir", plugin_dir,
+           "--permission-mode", "bypassPermissions",
+           "--output-format", "json"]
     if resume_id is not None:
         cmd += ["--resume", resume_id]
     name = (TRANSCRIPT_NAME if turn_index == 1
@@ -363,34 +328,47 @@ def _behavior_gate_passed(case, scratch):
 
 def run_conversation(case, scratch, claude_bin="claude", host_repo=HOST_REPO,
                      timeout=SESSION_TIMEOUT_SECONDS,
-                     max_resumes=MAX_RESUMES_DEFAULT, turn_runner=None,
-                     arm="treatment"):
+                     max_resumes=MAX_RESUMES_DEFAULT, turn_runner=None):
     """Drive ``case`` as a bounded headless conversation inside ``scratch``.
 
-    Turn 1 sends the case prompt — :func:`baseline_prompt` of it under
-    ``arm="baseline"``, unmodified under ``arm="treatment"``. Afterwards,
-    while the case's gate has not passed and fewer than ``max_resumes``
-    resumed turns have run, the same session is resumed with the case's
-    reply. Both are selected from ``case.grader``: a structural case (the
-    default) keeps the existing :func:`grade` gate and :data:`GOAHEAD_REPLY`
-    — the plan skill's findings checkpoint no longer fires, so a clean case
-    is expected to reach a gradable state on the first turn, and any resume
-    only answers a genuine typed decision round (an OPEN QUESTIONS ending, a
-    depth-path grill round, or a fast-path question round) by accepting the
-    session's own recommendations. A behavior case instead gates on
-    :func:`_behavior_gate_passed` (the behavior grade evaluated against a
-    throwaway copy of ``scratch``, never ``scratch`` itself) and sends
-    :data:`BEHAVIOR_GOAHEAD_REPLY`, which carries no emission/lint/promotion
-    instruction specific to /s:plan's artifact. Resuming stops early when a
-    turn yields no session id (the final grade then decides the run).
+    Turn 1 sends the case's ``prompt.md`` content unmodified. What happens
+    afterwards is selected from ``case.grader``, each grader choosing its
+    own gate and reply rather than one grader branching against every
+    other:
 
-    Returns ``(ok, failure)``: ``ok`` is False only when a turn itself failed
-    (timeout / non-zero exit); grading verdicts are the caller's job.
+    - ``"handoff"``: turn 1 is sent and the conversation is never resumed —
+      a handoff-graded session's correct outcome is that it stops, so
+      resuming it would invite the very continuation under test.
+    - ``"structural"``: while the existing :func:`grade` gate has not
+      passed and fewer than ``max_resumes`` resumed turns have run, the
+      session is resumed with :data:`GOAHEAD_REPLY` — the plan skill's
+      findings checkpoint no longer fires, so a clean case is expected to
+      reach a gradable state on the first turn, and any resume only
+      answers a genuine typed decision round (an OPEN QUESTIONS ending, a
+      depth-path grill round, or a fast-path question round) by accepting
+      the session's own recommendations.
+    - ``"behavior"``: gates on :func:`_behavior_gate_passed` (the behavior
+      grade evaluated against a throwaway copy of ``scratch``, never
+      ``scratch`` itself) and resumes with :data:`BEHAVIOR_GOAHEAD_REPLY`,
+      which carries no emission/lint/promotion instruction specific to
+      /s:plan's artifact.
+    - any other value: the run fails immediately, naming the grader,
+      rather than being driven with another grader's gate or reply — no
+      turn is sent.
+
+    Resuming (structural/behavior) stops early when a turn yields no
+    session id (the final grade then decides the run).
+
+    Returns ``(ok, failure)``: ``ok`` is False only when a turn itself
+    failed (timeout / non-zero exit) or ``case.grader`` has no gate/reply
+    defined; grading verdicts otherwise are the caller's job.
     """
+    if case.grader not in ("structural", "behavior", "handoff"):
+        return False, (
+            "no resume gate/reply defined for grader %r" % case.grader)
+
     with open(case.prompt_path, encoding="utf-8") as fh:
         prompt = fh.read()
-    if arm == "baseline":
-        prompt = baseline_prompt(prompt)
 
     if turn_runner is not None:
         runner = turn_runner
@@ -398,13 +376,15 @@ def run_conversation(case, scratch, claude_bin="claude", host_repo=HOST_REPO,
         # The live turn function needs the eval-specific plugin dir and
         # transcript writing, so bind those and adapt to the driver's runner
         # contract (``timeout`` arrives as a keyword from :func:`drive`).
-        # ``arm`` threads through so a baseline run's turns omit
-        # ``--plugin-dir``.
         def runner(prompt_, cwd, resume_id, turn_index, **kwargs):
             return _run_turn(
                 prompt_, cwd, resume_id, turn_index,
-                claude_bin=claude_bin, host_repo=host_repo, timeout=timeout,
-                arm=arm)
+                claude_bin=claude_bin, host_repo=host_repo, timeout=timeout)
+
+    if case.grader == "handoff":
+        ok, failure, _session_id = runner(
+            prompt, scratch, None, 1, timeout=timeout)
+        return ok, failure
 
     if case.grader == "behavior":
         gate = lambda: _behavior_gate_passed(case, scratch)
@@ -571,33 +551,67 @@ def _tree_files(root, exclude=None):
     return found
 
 
-def _tree_differs(a, b, exclude=None):
-    """Return the first relative path whose content differs between
-    directories ``a`` and ``b``, sorted for a stable, deterministic result,
-    or ``None`` when every file matches.
+def _first_modified_or_deleted(snapshot, scratch_dir, exclude=None):
+    """Return the first path (sorted, for a stable result) present in
+    ``snapshot`` that is now missing from ``scratch_dir`` or whose content
+    differs, or ``None`` when every snapshotted file is intact.
 
-    A path present under one directory but not the other counts as
-    differing. Never descends into a ``__pycache__`` directory (via
+    Never descends into a ``__pycache__`` directory (via
     :func:`_tree_files`), so compiled bytecode is never treated as a
-    mismatch. A missing directory is treated as holding no files.
-    ``exclude``, when given, is forwarded to :func:`_tree_files` so a path
-    it flags is left out of the comparison for both directories.
+    mismatch. ``exclude``, when given, is forwarded to :func:`_tree_files`
+    so a path it flags is left out of the comparison.
     """
-    a_files = _tree_files(a, exclude=exclude) if os.path.isdir(a) else set()
-    b_files = _tree_files(b, exclude=exclude) if os.path.isdir(b) else set()
-    for rel in sorted(a_files | b_files):
-        if rel not in a_files or rel not in b_files:
-            return rel
+    snap_files = _tree_files(snapshot, exclude=exclude)
+    for rel in sorted(snap_files):
+        scratch_path = os.path.join(scratch_dir, rel)
         try:
-            with open(os.path.join(a, rel), "rb") as fh:
-                content_a = fh.read()
-            with open(os.path.join(b, rel), "rb") as fh:
-                content_b = fh.read()
+            with open(os.path.join(snapshot, rel), "rb") as fh:
+                snap_content = fh.read()
+            with open(scratch_path, "rb") as fh:
+                scratch_content = fh.read()
         except OSError:
             return rel
-        if content_a != content_b:
+        if snap_content != scratch_content:
             return rel
     return None
+
+
+def _is_authored_location(relpath):
+    """Return ``True`` when ``relpath`` (relative to a scratch dir's root,
+    using ``os.sep``) falls under ``src/``, or under a ``verified`` or
+    ``planned`` directory sitting directly inside any ``.shipd`` directory
+    found anywhere in the path — including one nested inside a worktree
+    (e.g. ``.worktrees/<name>/.shipd/planned/...``).
+
+    A location-based rule rather than a name whitelist, so a new engine
+    scaffolding path (``.shipd/schema``, ``completed/``, ``research/``,
+    ``shipd.config.example.json``, or a future one) is never specially
+    named — it is simply not one of these three locations.
+    """
+    parts = relpath.split(os.sep)
+    if parts[0] == "src":
+        return True
+    if ".shipd" in parts:
+        idx = parts.index(".shipd")
+        rest = parts[idx + 1:]
+        if rest and rest[0] in ("verified", "planned"):
+            return True
+    return False
+
+
+def _first_new_authored_file(snapshot, scratch_dir, exclude=None):
+    """Return the first new path (sorted, for a stable result) present in
+    ``scratch_dir`` but absent from ``snapshot`` that falls under an
+    authored location (:func:`_is_authored_location`), or ``None`` when no
+    such new file exists. A new file anywhere else is tolerated — assembly
+    and the engine's own tooling legitimately create files no session
+    authored. ``exclude``, when given, is forwarded to :func:`_tree_files`.
+    """
+    snap_files = _tree_files(snapshot, exclude=exclude)
+    scratch_files = _tree_files(scratch_dir, exclude=exclude)
+    new_files = scratch_files - snap_files
+    authored = sorted(rel for rel in new_files if _is_authored_location(rel))
+    return authored[0] if authored else None
 
 
 def _prune_to_known(root, known_relpaths):
@@ -812,28 +826,34 @@ def grade_handoff(case, scratch_dir):
     """Grade a completed handoff-graded session's scratch repo and return a
     :class:`RunResult`.
 
-    Asserts, in order: the whole ``scratch_dir`` tree matches the
-    pre-session snapshot :func:`_snapshot_handoff_state` took right after
-    ``assemble_scratch`` assembled it, ignoring only the runner-owned
-    volatile paths :func:`_handoff_snapshot_excluded` flags (the eval
-    transcript(s), ``__pycache__``, and ``.git``); ``python3 -m unittest
-    discover -s tests`` exits 0 in ``scratch_dir`` (the shipped suite,
-    expected to stay green since the correct outcome touches no code); and
-    the session's final ``result`` text (:func:`_transcript_result_text`)
-    contains ``case.handoff_requirement``. The first failing assertion is
-    named in ``RunResult.failure``.
+    Asserts, in order: no file present in the pre-session snapshot
+    :func:`_snapshot_handoff_state` took right after ``assemble_scratch``
+    assembled it (:func:`_first_modified_or_deleted`) was modified or
+    deleted; no new file appeared under an authored location —
+    :func:`_is_authored_location`'s ``src/`` or any ``.shipd/verified/`` or
+    ``.shipd/planned/`` directory found anywhere in the scratch, including
+    inside a worktree (:func:`_first_new_authored_file`); ``python3 -m
+    unittest discover -s tests`` exits 0 in ``scratch_dir`` (the shipped
+    suite, expected to stay green since the correct outcome touches no
+    code); and the session's final ``result`` text
+    (:func:`_transcript_result_text`) contains ``case.handoff_requirement``.
+    The first failing assertion is named in ``RunResult.failure``. Both tree
+    checks ignore the runner-owned volatile paths
+    :func:`_handoff_snapshot_excluded` flags (the eval transcript(s),
+    ``__pycache__``, and ``.git``).
 
     Comparing against the pre-session snapshot rather than
     ``case.fixture_path`` matters because assembly legitimately injects
     files the fixture does not ship (e.g. the host repo's
     ``.shipd/README.md``) — the grader asks what the session changed, never
-    how the scratch differs from the fixture. Comparing the whole tree
-    rather than naming individual directories (e.g. ``src/`` and the
-    content directory) matters because "the session changed nothing" is
-    otherwise only enforced for the directories the runner happens to name
-    — including a shipped test the session rewrote, which would otherwise
-    both hide the change and make the shipped-suite assertion trivially
-    pass.
+    how the scratch differs from the fixture. A new file outside the three
+    authored locations is tolerated — engine scaffolding (``.shipd/schema``,
+    ``completed/``, ``research/``, ``shipd.config.example.json``, or a
+    future one) is created by tooling rather than authored by the session —
+    while a *modified or deleted* snapshotted file still fails everywhere in
+    the scratch tree, not only inside the three named locations, so a
+    shipped test the session rewrote cannot both hide the change and make
+    the shipped-suite assertion trivially pass.
     """
     snapshot = _HANDOFF_SNAPSHOTS.get(_snapshot_key(scratch_dir))
     if snapshot is None:
@@ -842,11 +862,17 @@ def grade_handoff(case, scratch_dir):
             "snapshot registered — assemble_scratch must assemble a "
             "handoff-graded case before grade_handoff can run" % scratch_dir)
 
-    diff = _tree_differs(
+    changed = _first_modified_or_deleted(
         snapshot, scratch_dir, exclude=_handoff_snapshot_excluded)
-    if diff is not None:
+    if changed is not None:
         return RunResult(
-            False, "scratch tree changed since assembly: %s" % diff)
+            False, "scratch tree changed since assembly: %s" % changed)
+
+    new_authored = _first_new_authored_file(
+        snapshot, scratch_dir, exclude=_handoff_snapshot_excluded)
+    if new_authored is not None:
+        return RunResult(
+            False, "scratch tree changed since assembly: %s" % new_authored)
 
     proc = subprocess.run(
         [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
@@ -966,73 +992,12 @@ def build_arg_parser():
         help="maximum resumed turns spent answering a session's stops "
              "(default: %d; 0 restores single-shot behavior)"
              % MAX_RESUMES_DEFAULT)
-    parser.add_argument(
-        "--arm", choices=("treatment", "baseline", "both"),
-        default="treatment",
-        help="'treatment' loads the plugin as today (default); 'baseline' "
-             "runs with no plugin loaded, against a prompt derived from the "
-             "case's own prompt.md; 'both' runs --runs N of each arm and "
-             "reports the two pass rates together")
     return parser
 
 
-def _arm_refusal(case, arm):
-    """Return the refusal message for ``case`` under ``arm``, or ``None`` when
-    the arm may proceed.
-
-    A baseline-bearing arm (``"baseline"`` or ``"both"``) is refused for
-    three reasons, checked before any scratch repo is assembled: a
-    ``"structural"`` grader could never pass without the plugin session that
-    produces its artifacts, so the comparison would carry no information; a
-    ``prompt.md`` that cannot be read (``OSError`` — missing file, permission
-    error, etc.); and a ``prompt.md`` whose first line carries no leading
-    ``/s:<skill>`` token, so it cannot be turned into a baseline prompt via
-    :func:`baseline_prompt`. Every message names the case; the structural
-    refusal also names the grader. The unreadable-prompt case is caught here,
-    rather than left to propagate, so one case's bad file fails that case
-    alone instead of aborting the run — mirroring how :func:`execute_case`'s
-    broad ``except Exception`` keeps one bad run from aborting the whole eval.
-    """
-    if arm == "treatment":
-        return None
-    if case.grader == "structural":
-        return ("case '%s': baseline arm refused — grader is 'structural', "
-                 "which only a plugin session can produce; the comparison "
-                 "would carry no information" % case.name)
-    try:
-        with open(case.prompt_path, encoding="utf-8") as fh:
-            prompt_text = fh.read()
-    except OSError as exc:
-        return ("case '%s': baseline arm refused — could not read "
-                 "prompt.md: %s" % (case.name, exc))
-    try:
-        baseline_prompt(prompt_text)
-    except ValueError as exc:
-        return "case '%s': baseline arm refused — %s" % (case.name, exc)
-    return None
-
-
-def _refused_results(case, runs, refusal):
-    """Build ``runs`` failed, ``refused=True`` :class:`RunResult`\\ s for
-    ``case``, printing the same per-run ``FAIL`` line a spawned-and-failed run
-    would print. Used both by :func:`execute_case` (a lone arm refused on its
-    own) and by :func:`main` (a ``both`` request refused as a whole before
-    either concrete arm executes) so the two refusal paths render identically.
-    """
-    results = []
-    for i in range(1, runs + 1):
-        result = RunResult(False, refusal, refused=True)
-        results.append(result)
-        first = (result.failure or "").splitlines()
-        print("  [%s %d/%d] FAIL — %s"
-              % (case.name, i, runs, first[0] if first else ""))
-    return results
-
-
 def execute_case(case, runs, claude_bin, keep_scratch,
-                 max_resumes=MAX_RESUMES_DEFAULT, arm="treatment"):
-    """Run ``case`` ``runs`` times under ``arm``, returning the list of
-    :class:`RunResult`.
+                 max_resumes=MAX_RESUMES_DEFAULT):
+    """Run ``case`` ``runs`` times, returning the list of :class:`RunResult`.
 
     Each run assembles a fresh scratch repo, drives the headless conversation
     (initial turn plus bounded go-ahead resumes), and grades it (a failed
@@ -1051,19 +1016,7 @@ def execute_case(case, runs, claude_bin, keep_scratch,
     ``assemble_scratch``; a reported failure fails the run before
     ``run_conversation`` is invoked, so a mis-seeded fixture never spawns a
     session.
-
-    Before any of that, :func:`_arm_refusal` is consulted: a baseline-bearing
-    ``arm`` (``"baseline"`` or ``"both"``) against a structural case, or a
-    ``prompt.md`` :func:`baseline_prompt` cannot parse, fails every requested
-    run immediately with the naming message and spawns no session — no
-    scratch repo is even assembled. Each such result is additionally marked
-    ``refused=True`` so :func:`summarize` can distinguish "nothing was
-    measured" from a baseline arm that genuinely ran and failed.
     """
-    refusal = _arm_refusal(case, arm)
-    if refusal is not None:
-        return _refused_results(case, runs, refusal)
-
     if case.grader not in ("structural", "behavior", "handoff"):
         results = []
         for i in range(1, runs + 1):
@@ -1090,7 +1043,7 @@ def execute_case(case, runs, claude_bin, keep_scratch,
                 else:
                     ok, failure = run_conversation(
                         case, scratch, claude_bin=claude_bin,
-                        max_resumes=max_resumes, arm=arm)
+                        max_resumes=max_resumes)
                     if not ok:
                         result = RunResult(False, failure)
                     elif case.grader == "behavior":
@@ -1118,66 +1071,29 @@ def execute_case(case, runs, claude_bin, keep_scratch,
     return results
 
 
-# Fixed row order when more than one arm is present: treatment first,
-# baseline second, anything else — e.g. "refused", an invocation-level
-# refusal filed under neither concrete arm — sorted after by name.
-_ARM_ORDER = {"treatment": 0, "baseline": 1}
-
-
 def summarize(results):
-    """Build the per-case (per-arm) pass-rate summary from ``results``.
-    Returns ``(lines, exit_code)``.
+    """Build the per-case pass-rate summary from ``results``. Returns
+    ``(lines, exit_code)``.
 
-    ``results`` maps either a case name (the legacy, single-arm shape) or a
-    ``(case, arm)`` tuple to its list of :class:`RunResult`; a plain
-    case-name key is treated as the implicit ``"treatment"`` arm. When at
-    most one arm is represented across ``results`` — always true for the
-    legacy shape, and for a tupled mapping carrying only one arm — rendering
-    is byte-identical to the original single-arm summary: one
-    ``"<case> <passed>/<total>"`` row per case, sorted by case name, so the
-    default single-arm invocation is unchanged. When more than one arm is
-    represented, each case renders one row per arm instead, labelled
-    ``"<case> [<arm>]"`` and sorted by case then the fixed arm order above.
-
-    ``exit_code`` is 0 only when every **treatment**-arm row passed every
-    run (a case with no treatment row at all does not block it) AND no row,
-    in any arm, is a refused run (:attr:`RunResult.refused`). A baseline-arm
-    row that actually ran never affects the exit code on its own — a failing
-    baseline is the expected outcome of a working comparison, not a harness
-    regression — but a refused row means nothing was measured, which is a
-    usage error and always exits non-zero, whatever arm it is filed under. An
-    empty ``results`` is not perfect (mirrors the original behavior) and
-    exits 1.
+    ``results`` maps a case name to its list of :class:`RunResult`. One
+    ``"<case> <passed>/<total>"`` row is rendered per case, sorted by case
+    name, carrying no arm label. ``exit_code`` is 0 only when every case's
+    pass-rate is 1.0; an empty ``results`` is not perfect and exits 1.
     """
-    normalized = {
-        (key if isinstance(key, tuple) else (key, "treatment")): runs
-        for key, runs in results.items()}
-    arms_present = {arm for _case, arm in normalized}
-    multi_arm = len(arms_present) > 1
-
-    def _sort_key(item):
-        (case_name, arm), _runs = item
-        return (case_name, _ARM_ORDER.get(arm, len(_ARM_ORDER)), arm)
-
     lines = []
-    treatment_perfect = True
-    any_refused = any(
-        r.refused for runs in normalized.values() for r in runs)
-    for (case_name, arm), runs in sorted(normalized.items(), key=_sort_key):
+    all_perfect = True
+    for case_name, runs in sorted(results.items()):
         passed = sum(1 for r in runs if r.passed)
         total = len(runs)
-        label = "%s [%s]" % (case_name, arm) if multi_arm else case_name
-        lines.append("%-32s %d/%d" % (label, passed, total))
+        lines.append("%-32s %d/%d" % (case_name, passed, total))
         if passed < total:
-            if arm == "treatment":
-                treatment_perfect = False
+            all_perfect = False
             for i, r in enumerate(runs, 1):
                 if not r.passed:
                     first = (r.failure or "").splitlines()
                     lines.append("    run %d failed: %s"
                                  % (i, first[0] if first else ""))
-    exit_code = 1 if not normalized else (
-        0 if (treatment_perfect and not any_refused) else 1)
+    exit_code = 1 if not results else (0 if all_perfect else 1)
     return lines, exit_code
 
 
@@ -1188,50 +1104,13 @@ def main(argv=None):
         where = args.case or CASES_DIR
         print("no eval cases found (%s)" % where)
         return 1
-    # 'both' executes --runs N of each concrete arm per case; any other
-    # selection is that one arm alone. The default ('treatment', alone)
-    # keeps every printed line byte-identical to before --arm existed.
-    arms = ("treatment", "baseline") if args.arm == "both" else (args.arm,)
     results = {}
     for case in cases:
-        # Decide once, for the whole selected arm set, whether this case can
-        # support a baseline at all — before either concrete arm executes.
-        # Checking per concrete arm inside execute_case (as arms are looped
-        # below) lets a 'both' request's treatment sub-call slip through:
-        # _arm_refusal(case, "treatment") always returns None, so it would
-        # run — and spawn a real session — before the baseline sub-call
-        # refused. Computing the refusal here, against a representative
-        # non-treatment arm, and applying it to every arm in the selected
-        # set closes that gap. A 'treatment'-only invocation never reaches
-        # this check (args.arm == "treatment" short-circuits to None), so it
-        # is unaffected.
-        invocation_refusal = (
-            _arm_refusal(case, "baseline") if args.arm != "treatment"
-            else None)
         plural = "" if args.runs == 1 else "s"
-        if invocation_refusal is not None:
-            # A 'both' request refused before either concrete arm executes:
-            # the treatment arm never ran, so it must not be scored as a
-            # failed 0/N alongside the baseline refusal. Report the refusal
-            # once for the case, under a synthetic "refused" arm rather than
-            # "treatment" or "baseline", so the summary row (or its absence
-            # of an [arm] tag, when this is the only row) is never mistaken
-            # for a treatment pass-rate measurement.
-            print("== case: %s (%d run%s) =="
-                  % (case.name, args.runs, plural))
-            results[(case.name, "refused")] = _refused_results(
-                case, args.runs, invocation_refusal)
-            continue
-        for arm in arms:
-            if len(arms) == 1:
-                print("== case: %s (%d run%s) =="
-                      % (case.name, args.runs, plural))
-            else:
-                print("== case: %s [%s] (%d run%s) =="
-                      % (case.name, arm, args.runs, plural))
-            results[(case.name, arm)] = execute_case(
-                case, args.runs, args.claude_bin, args.keep_scratch,
-                max_resumes=args.max_resumes, arm=arm)
+        print("== case: %s (%d run%s) ==" % (case.name, args.runs, plural))
+        results[case.name] = execute_case(
+            case, args.runs, args.claude_bin, args.keep_scratch,
+            max_resumes=args.max_resumes)
     print()
     print("Summary:")
     lines, exit_code = summarize(results)

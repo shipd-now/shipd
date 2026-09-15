@@ -201,13 +201,14 @@ cycle, not for any dependency it carries.
 
 ## Evals
 
-`evals/run.py` is a local harness that drives the `s` plugin's LLM-facing
-skills as real headless Claude Code sessions and grades the result. Run
-`python3 evals/run.py` for every discovered case, or `python3 evals/run.py
---case <name>` for one; add `--runs N` to repeat a case and `--keep-scratch`
-to retain each run's scratch directory for inspection instead of deleting it.
-The harness's own unit tests live under `evals/tests/` — stdlib `unittest`,
-no third-party dependency — run via
+`evals/run.py` is a local, single-arm regression harness that drives the `s`
+plugin's LLM-facing skills as real headless Claude Code sessions and grades
+the result — every case runs against the plugin under test, graded by one of
+three graders. Run `python3 evals/run.py` for every discovered case, or
+`python3 evals/run.py --case <name>` for one; add `--runs N` to repeat a case
+and `--keep-scratch` to retain each run's scratch directory for inspection
+instead of deleting it. The harness's own unit tests live under
+`evals/tests/` — stdlib `unittest`, no third-party dependency — run via
 `python3 -m unittest discover -s evals/tests` (wired into `ci.yml`).
 
 Each case is a directory under `evals/cases/<name>/` holding a `prompt.md`
@@ -228,16 +229,29 @@ tree copied into a scratch git repo before the session runs). An optional
 - `{"grader": "handoff", "handoff_requirement": "<id>"}`: **handoff**. Grades
   a case whose *correct* outcome is that no code changes — the documented
   behavior itself is wrong, so the right move is to name the problem and stop
-  rather than patch the code or the spec. A run passes only when all four
-  hold: every file under the scratch `src/` matches the fixture's; every file
-  under the scratch content directory (`.shipd/`) matches the fixture's; the
-  shipped suite still exits 0; and the session's final result text (read from
-  the scratch transcript — the highest-numbered
-  `eval-transcript-turn<N>.json` if any resume ran, else
-  `eval-transcript.json`) contains the requirement id `handoff_requirement`
-  names. The `handoff_requirement` key is required — an `expect.json`
-  declaring `"handoff"` without it fails every run immediately, naming the
-  case and the missing key, spawning no session.
+  rather than patch the code or the spec. Immediately after assembly, the
+  runner snapshots the scratch tree; a run passes only when all four hold: no
+  file present in that snapshot was modified or deleted; no new file has
+  appeared under `src/` or under any `.shipd/verified/` or `.shipd/planned/`
+  directory anywhere in the scratch, including inside a worktree — a new file
+  anywhere else, such as engine scaffolding the assembly step or the engine's
+  own tooling creates, is tolerated; the shipped suite still exits 0; and the
+  session's final result text (read from `eval-transcript.json` — a handoff
+  case is never resumed, so this is always its only transcript) contains the
+  requirement id `handoff_requirement` names. The `handoff_requirement` key is
+  required — an `expect.json` declaring `"handoff"` without it fails every run
+  immediately, naming the case and the missing key, spawning no session.
+
+**Each grader selects its own resume gate and reply.** The runner's resume
+loop is driven per grader, never one grader branched against the rest: a
+handoff case sends turn 1 and is never resumed — its correct outcome is that
+the session stops, so resuming it would invite the very continuation the case
+tests against; a structural case resumes, while its structural grade has not
+passed, with a plan-specific reply that proceeds through emission, lint, and
+promotion to `ready`; a behavior case resumes with a skill-neutral reply
+carrying no such instruction. A case whose grader has no gate/reply defined
+fails the run immediately, naming the grader, rather than being driven with
+another grader's gate or reply.
 
 **The oracle is held out of the fixture.** A behavior case's regression test
 lives at `evals/cases/<name>/verify/`, outside `fixture/`, so the session
@@ -267,42 +281,15 @@ requirement fixes the name column at a width of six characters, its
 `ROWS` entry carries a name longer than six characters, so the printed table
 visibly misaligns for that row even though the code faithfully matches its
 documented contract — the shipped `tests/test_report.py` only asserts the
-rows that fit the width, so it stays green regardless of what a session
-does. `prompt.md` invokes `/s:fix` on the symptom (the columns don't line up
-for some rows) without naming the requirement, the width, or the file to
-edit. The positive signal the grader looks for is the requirement id
-(`report-column-width`) in the session's own words, never the skill's
-vocabulary (e.g. `/s:plan`) — a bare agent that correctly diagnosed the
-contract and a `/s:fix` session that did the same both name the requirement
-they read, whichever arm they ran in, so asserting a skill-specific term
-would penalize the baseline arm for not knowing it rather than measuring the
-outcome under test.
-
-**`--arm {treatment,baseline,both}` (default `treatment`) runs a no-skill
-baseline as an A/B.** `treatment` is today's behavior — every session loads
-the plugin via `--plugin-dir`. `baseline` runs the same fixture, content
-directory, permission mode, timeout, resume cap, and grader, but drops
-`--plugin-dir` so the session sees no plugin at all — a controlled
-experiment varies one thing. `both` runs `--runs N` of each arm and reports
-the two pass rates together, one labelled row per arm per case.
-
-The baseline run's prompt is **derived, never authored**: the harness strips
-the leading `/s:<skill>` token from the case's own `prompt.md` and sends the
-remainder verbatim, so both arms receive identical wording. A hand-authored
-sibling prompt file would make prompt parity a matter of trust — thin
-phrasing flattering the skill, a full brief flattering the baseline —
-deriving it from the one prompt file makes parity structural instead.
-
-The harness refuses a `baseline`/`both` arm on two cases, before assembling
-any scratch repo or spawning a session, naming the case in both messages:
-
-- A **structural**-graded case — structural grading asserts a change
-  directory, a clean `spec_lint.py`, and `Status: ready`, artifacts only the
-  plugin's skills produce, so a baseline arm would fail by construction and
-  the comparison would be theatre.
-- A `prompt.md` whose first line carries no `/s:<skill>` token — nothing to
-  derive a baseline prompt from.
-
-**The exit code gates on the treatment arm alone.** A failing baseline run is
-the expected, informative outcome of a working comparison, not a harness
-regression, so its pass rate is reported and never affects the exit code.
+rows that fit the width, so it stays green regardless of what a session does.
+`prompt.md` invokes `/s:fix` on the symptom (the columns don't line up for
+some rows) without naming the requirement, the width, or the file to edit.
+The positive signal the grader looks for is the requirement id
+(`report-column-width`) in the session's own words. This case passes:
+`/s:fix` diagnoses that the code faithfully implements its documented
+contract and stops at the hand-off rather than patching either side — the
+correct outcome the grader is built to recognize, and the case's own turn-1
+transcript records it. Before the runner was repaired to never resume a
+handoff case, it used to override that correct stop by resuming the session
+with a reply instructing it to emit, lint, and promote a change — which made
+the case fail for a reason that was the harness's fault, not the skill's.
