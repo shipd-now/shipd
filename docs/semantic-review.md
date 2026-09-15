@@ -59,28 +59,29 @@ leaked credential does not wait for confirmation.
 
 ## Where it runs
 
-The review takes one of two paths. A local run ends at the report. A run that
-posts to a pull request enters a loop that survives later pushes.
+The review takes one of two paths. A local run ends at the report, while a
+pull-request run posts to it by default and loops on later pushes.
 
 ```mermaid
 flowchart TD
     A[semdiff reads the diff] --> B[the review judges it]
-    B --> C{posting requested}
+    B --> C{PR target in scope}
     C -->|no| D[report, then stop]
     C -->|yes| E[read prior dispositions]
     E --> F[post findings, set the check]
-    F --> G[implement or answer each finding]
+    F --> H{disposition opted in}
+    H -->|no| I[threads stay open]
+    H -->|yes| G[implement or answer each finding]
     G -->|a later push| E
 ```
 
-Before it posts, the review reads back the findings this pull request already
-carries. It omits a finding a reviewer answered with a reasoned reply, and it
-states how many it omitted. It keeps a finding that only a commit cleared,
-because a recurrence after a fix is a regression.
-
-Each posted finding carries a hidden identity, hashed from its path and its
-text. Line numbers stay out of that hash, so a finding whose line moved still
-matches.
+Before it posts, the review reads back this pull request's findings. It
+omits one a reviewer answered with a reasoned reply, and states the omitted
+count. It keeps a finding only a commit cleared, since a recurrence after a
+fix is a regression. The posted findings stay open for that pull request's
+owner; implementing and resolving them is opt-in the invoker asks for. Each
+finding carries a hidden identity, hashed from its path and text, with line
+numbers excluded so a moved line still matches.
 
 ## When a tool is missing
 

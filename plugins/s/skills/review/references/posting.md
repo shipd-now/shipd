@@ -1,6 +1,8 @@
 # Posting a review to a PR
 
-The skill reads this file only when posting was explicitly requested, by the user or by a driving session.
+The skill reads this file when a pull request is in scope for the review — a
+pull request URL, `#<number>`, a bare number, or a branch the invoker points
+at a pull request.
 
 The review verdict gates a PR only once it reaches GitHub. Posting is a
 **mechanical** step handled by a companion script — you supply the judgement
@@ -10,16 +12,17 @@ The review verdict gates a PR only once it reaches GitHub. Posting is a
 python3 "$CLAUDE_PLUGIN_ROOT/skills/review/scripts/review_gate.py" post <pr> --from <json|->
 ```
 
-**Post only on an explicit request** — the user asking to "post the review to
-the PR", or a driving session (the autopilot's `review` stage) instructing you
-to. Never post as a side effect of a plain review; a review with no posting
-request stays local and touches no `gh` write.
+**A named pull request is posted to by default** — no ask required. Where the
+invocation names a pull request, the review's verdict is published to it
+through the poster. Where the invocation names no pull request, `/s:review`
+reviews locally and posts nothing: a bare `/s:review` may describe code the
+pull request's head does not carry, so it never posts as a side effect.
 
 ## Review stage options
 
 The invoker — a driving session or the user — may pass two options with the
-posting request. Both default to today's behaviour, so a plain "post the
-review" changes nothing:
+review. Each carries a default, so an invocation passing neither changes
+nothing:
 
 - `disposition=<all|high-only|none>` (default `all`) — how much per-finding
   judgement this review is worth. It selects the posting flow's step 6 (see
@@ -43,15 +46,22 @@ Never resolve the pipeline configuration yourself — this skill reads no
 `autonomous-pipeline` key and infers no options. Whatever the invoker did not
 pass, take as the default.
 
-When posting is requested:
+The flow:
 
-1. **Resolve the PR.** `gh pr view <branch> --json number,headRefOid,url` (or
-   pass the PR number/URL directly). The branch is usually the current
-   `change/<name>`.
+1. **Resolve the target.** Accept whatever form the invocation named it in —
+   a pull request URL, `#<number>`, a bare number, or a branch the invoker
+   points at a pull request (usually the current `change/<name>`):
+
+   ```
+   gh pr view <target> --json number,headRefOid,baseRefName,url
+   ```
+
+   This one call resolves the pull request's number, head SHA, base branch,
+   and URL together.
 2. **Review head vs base with merge-base semantics.** Run the review as
-   `diff <base> <head>` (default base `main`) so the "after" side is the PR's
-   head exactly as GitHub shows it — the same three-dot semantics described
-   under "Determine what to review". Do the full analysis; do not shortcut it.
+   `diff <baseRefName> <headRefOid>` so both sides match the PR exactly as
+   GitHub shows it — the same three-dot semantics described under "Determine
+   what to review". Do the full analysis; do not shortcut it.
 3. **Read prior dispositions and drop what was already answered.** Run
    `review_gate.py prior <pr>` and, for every finding this review is about to
    post, compare its `hash` — the same identity `_finding_hash(<path>,
@@ -80,10 +90,22 @@ When posting is requested:
    for in-diff findings (folding the rest into the summary), and sets the
    `semantic-review` commit status on the head SHA by scope — under the default
    `all`, `success` iff the verdict is `pass`, else `failure`.
-6. **Disposition the findings — by scope.** A posted finding is advice nobody
-   is required to read until it is dispositioned, and every gate thread must
-   end up carrying disposition evidence. How much judgement you spend depends
-   on the acting scope:
+
+**The default ending, once posted.** Where the invoker asked for nothing
+beyond the review, stop here: implement no finding, author no reply, run
+neither `autoreply` nor `resolve` (steps 6 and 7 below), and leave every
+posted thread open for the pull request's owner to action and resolve. Skip
+straight to step 8's report.
+
+6. **Disposition the findings — only where asked, by scope.** Run this step
+   only when the invoker asked for the posted findings to be dispositioned —
+   a driving session declaring `disposition=<scope>` (see "Review stage
+   options" above), or the user asking for the findings to be implemented or
+   answered. Absent that ask, skip straight to step 8: implement nothing,
+   author no reply. Where dispositioning was asked for, a posted finding is
+   advice nobody is required to read until it is dispositioned, and every
+   gate thread must end up carrying disposition evidence. How much judgement
+   you spend depends on the acting scope:
    - **`all` (the default) — every finding, low included.** Walk the findings
      (newest post first) and give each exactly one of two dispositions — never
      leave a finding with neither. A finding that is neither implemented (by
@@ -134,8 +156,9 @@ When posting is requested:
 
    `autoreply` skips threads that already carry a reply, so re-running it after
    a push is safe.
-7. **Resolve the threads.** Once every finding is implemented, answered, or
-   auto-replied, run
+7. **Resolve the threads — only where dispositioning was asked for.** Skip
+   this step too when step 6 did not run. Otherwise, once every finding is
+   implemented, answered, or auto-replied, run
 
    ```
    review_gate.py resolve <pr>
@@ -147,11 +170,14 @@ When posting is requested:
    never touches human-authored threads — humans resolve their own. Use
    `resolve <pr> --check` to read the unresolved count without mutating.
 8. **Report back** the posted status state (`success`/`failure`), the summary
-   comment URL, the acting disposition scope when it is not `all`, the
+   comment URL, the acting disposition scope when it is not `all`, and, when
+   step 3 omitted any finding, how many and the pull request whose threads
+   answered them. Where steps 6 and 7 ran, additionally report the
    `unresolved=` count from `resolve` — which is **zero** on a completed
-   disposition — and, when step 3 omitted any finding, how many and the pull
-   request whose threads answered them. Any non-zero `unresolved=` count means
-   a finding still has no disposition; go back to step 6.
+   disposition; any non-zero count means a finding still has no disposition,
+   so go back to step 6. Where they did not run — the default ending —
+   report that every posted thread was left open, with no `unresolved=`
+   count to give.
 
 The poster is idempotent: re-running after a new push edits the same summary
 comment in place and re-stamps the status on the new head SHA. It performs no

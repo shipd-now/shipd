@@ -127,7 +127,10 @@ The body's shape, in this order:
 
 The 🔴/🟠/🟡 dots of the table and the ✅/❌ of the verdict header are the only
 emoji this report carries. Nowhere else: not in prose, in the detail, or in
-other tables.
+other tables. The gate workflow's own posting step prefixes that same dot
+onto a severity wherever a posted finding names it — an anchored inline
+comment's leading marker, and each folded-findings bullet — which is
+sanctioned too, even though it never appears in the report body you write.
 
 **Also write the findings as data.** Beside the report body, write a
 machine-readable findings file at

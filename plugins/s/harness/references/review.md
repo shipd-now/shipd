@@ -1,11 +1,14 @@
 # /s:review — posting the verdict as a pull request's merge gate
 
 The long form the router points at. Read it before posting anything; a plain
-review stays local and touches no write API.
+review naming no pull request stays local and touches no write API.
 
-**Post only on an explicit request** — the user asking for the review to be
-posted, or a driving session instructing you to. Posting as a side effect of
-an ordinary review is never correct.
+**A named pull request is posted to by default** — no ask required. Where
+the invocation names a pull request, its verdict is published through the
+poster without being asked. Dispositioning the findings — implementing or
+resolving them — is a separate, opt-in step: a driving session declaring a
+disposition scope, or the user asking for the findings to be implemented or
+answered.
 
 ## The machine payload
 
@@ -56,32 +59,42 @@ object whose `could_not_verify` explains why.
    `semantic-review` commit status on the head SHA. It is idempotent:
    re-running after a push edits the same summary in place and re-stamps the
    status on the new head.
-5. **Disposition every finding.** A posted finding is advice nobody has to
-   read until it is dispositioned, and every gate thread must end up carrying
-   disposition evidence. Each finding gets exactly one of two dispositions,
-   never neither:
+**The default ending, once posted.** Where nothing beyond the review was
+asked for, stop here: implement no finding, author no reply, run neither
+step 5 nor step 6, and leave every posted thread open for the pull request's
+owner to action and resolve.
+
+5. **Disposition every finding — only where asked.** Run this step only when
+   a driving session declared a disposition scope, or the user asked for the
+   findings to be implemented or answered. A posted finding is advice nobody
+   has to read until it is dispositioned, and every gate thread must end up
+   carrying disposition evidence. Each finding gets exactly one of two
+   dispositions, never neither:
    - **Implement it** when the suggestion is correct — edit, commit, push.
      The push invalidates the status, so re-run the review and the poster
      afterwards against the new head.
    - **Push back** when it is not worth implementing — reply on that finding's
      thread with a concrete, reasoned explanation. A bare "won't fix" is not a
      disposition: name the reason.
-6. **Resolve the threads.** The resolve verb closes only the gate-authored
-   threads that carry disposition evidence, refuses any that carry neither
-   (listing them and exiting non-zero), and never touches human-authored
-   threads — humans resolve their own.
-7. **Report back** the posted status state, the summary comment's URL, and the
-   unresolved count, which is **zero** on a completed disposition. Any
-   non-zero count means a finding still has no disposition — go back to
-   step 5.
+6. **Resolve the threads — only where step 5 ran.** The resolve verb closes
+   only the gate-authored threads that carry disposition evidence, refuses
+   any that carry neither (listing them and exiting non-zero), and never
+   touches human-authored threads — humans resolve their own.
+7. **Report back** the posted status state and the summary comment's URL.
+   Where steps 5 and 6 ran, additionally report the unresolved count, which
+   is **zero** on a completed disposition — any non-zero count means a
+   finding still has no disposition, so go back to step 5. Where they did
+   not run, report that every posted thread was left open.
 
 ## Disposition scope
 
-A driving session may narrow how much per-finding judgement the review is
-worth. The findings and the rendered verdict stay severity-honest in every
-scope; only the merge-gating status is policy-aware, and a narrowed scope is
-stamped on the summary comment so a green status over visible findings is
-explained on the pull request.
+The scope narrows an opted-in disposition, never the posting itself, which
+always happens by default. Once a driving session or the user has opted in,
+the scope sets how much per-finding judgement the review is worth. The
+findings and the rendered verdict stay severity-honest in every scope; only
+the merge-gating status is policy-aware, and a narrowed scope is stamped on
+the summary comment so a green status over visible findings is explained on
+the pull request.
 
 | scope | judgement spent | status is green when |
 | --- | --- | --- |

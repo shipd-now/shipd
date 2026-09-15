@@ -270,7 +270,10 @@ def render_summary(review, unanchored, disposition="all", model=None):
         for f in unanchored:
             sev = f.get("severity", "low")
             loc = f.get("location") or "(no location)"
-            out.append("- **%s** [%s] — %s" % (loc, sev, f.get("what") or ""))
+            dot = _SEV_DOT.get(sev, "")
+            rated_sev = ("%s %s" % (dot, sev)) if dot else sev
+            out.append(
+                "- **%s** [%s] — %s" % (loc, rated_sev, f.get("what") or ""))
             why, fix = f.get("why"), f.get("fix")
             if why:
                 out.append("  - Why: %s" % why)
@@ -288,18 +291,34 @@ def has_gate_marker(body):
     return MARKER in text or LEGACY_MARKER in text
 
 
+# The marker an inline finding comment opens with: ``**<dot> <severity> — ``.
+# One format string carries both placeholders — a dot prefix and the
+# severity word — so `_sev_marker` (the renderer) and `_SEV_MARKER_RE` (the
+# parser) are both derived from it and cannot drift apart.
+_SEV_MARKER_FMT = "**%s%s — "
+
+
 def _sev_marker(severity):
-    """The marker an inline finding comment opens with. The renderer below and
-    ``parse_severity`` both go through this one format, so the pair cannot
+    """The marker an inline finding comment opens with. The renderer here and
+    ``parse_severity`` both go through ``_SEV_MARKER_FMT``, so the pair cannot
     drift — the tests cover the render → parse round trip."""
-    return "**%s — " % severity
+    dot = _SEV_DOT.get(severity, "")
+    return _SEV_MARKER_FMT % (("%s " % dot) if dot else "", severity)
 
 
-# The parser side of `_sev_marker`, derived from it via a sentinel so the
-# literal format lives in exactly one place.
+# The parser side of `_sev_marker`, derived from `_SEV_MARKER_FMT` via a pair
+# of sentinels so the literal format lives in exactly one place. The dot
+# group is optional and non-capturing — a finding comment posted before the
+# dot existed carries none — so the severity stays capture group 1 either
+# way. `_DOT_SENTINEL` and its trailing space are substituted together so an
+# absent dot does not leave a stray space behind.
+_DOT_SENTINEL = "\x01"
+_SEV_SENTINEL = "\x00"
 _SEV_MARKER_RE = re.compile(
-    "^" + re.escape(_sev_marker("\x00")).replace(
-        "\x00", "(%s)" % "|".join(_SEV_DOT)))
+    "^" + re.escape(_SEV_MARKER_FMT % (_DOT_SENTINEL + " ", _SEV_SENTINEL))
+    .replace(re.escape(_DOT_SENTINEL + " "),
+             "(?:(?:%s) )?" % "|".join(_SEV_DOT.values()))
+    .replace(re.escape(_SEV_SENTINEL), "(%s)" % "|".join(_SEV_DOT)))
 
 
 def parse_severity(body):
