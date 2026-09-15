@@ -677,6 +677,22 @@ class HandoffAuthoredContentGradingTests(TmpPathTestCase):
         self.assertFalse(result.passed)
         self.assertIn(os.path.join("src", "helper.py"), result.failure)
 
+    def test_new_file_under_src_inside_worktree_fails_naming_it(self):
+        """The ``src/`` rule is depth-independent exactly like the
+        ``.shipd/planned/`` rule below: a new file under a worktree's own
+        ``src/`` (e.g. ``.worktrees/<name>/src/...``) must fail the run too,
+        not just one at the scratch root."""
+        case = self._make_case("case-src-wt")
+        scratch = _untouched_handoff_scratch(self, case)
+        _write(os.path.join(
+            scratch, ".worktrees", "x", "src", "helper.py"), "X = 1\n")
+        _write_handoff_transcript(scratch, "req-id")
+        result = run.grade_handoff(case, scratch)
+        self.assertFalse(result.passed)
+        self.assertIn(
+            os.path.join(".worktrees", "x", "src", "helper.py"),
+            result.failure)
+
     def test_new_file_under_planned_at_scratch_root_fails_naming_it(self):
         case = self._make_case("case-planned-root")
         scratch = _untouched_handoff_scratch(self, case)

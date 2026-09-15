@@ -578,10 +578,12 @@ def _first_modified_or_deleted(snapshot, scratch_dir, exclude=None):
 
 def _is_authored_location(relpath):
     """Return ``True`` when ``relpath`` (relative to a scratch dir's root,
-    using ``os.sep``) falls under ``src/``, or under a ``verified`` or
-    ``planned`` directory sitting directly inside any ``.shipd`` directory
-    found anywhere in the path — including one nested inside a worktree
-    (e.g. ``.worktrees/<name>/.shipd/planned/...``).
+    using ``os.sep``) has a ``src`` component anywhere in its path, or falls
+    under a ``verified`` or ``planned`` directory sitting directly inside any
+    ``.shipd`` directory found anywhere in the path — both checks are
+    depth-independent, so a nested location (e.g. inside a worktree, such as
+    ``.worktrees/<name>/src/...`` or ``.worktrees/<name>/.shipd/planned/...``)
+    is caught exactly like the scratch-root one.
 
     A location-based rule rather than a name whitelist, so a new engine
     scaffolding path (``.shipd/schema``, ``completed/``, ``research/``,
@@ -589,7 +591,7 @@ def _is_authored_location(relpath):
     named — it is simply not one of these three locations.
     """
     parts = relpath.split(os.sep)
-    if parts[0] == "src":
+    if "src" in parts:
         return True
     if ".shipd" in parts:
         idx = parts.index(".shipd")

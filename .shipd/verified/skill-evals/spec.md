@@ -283,6 +283,17 @@ fail the run, because assembly and the engine's own tooling legitimately create
 files no session authored. The grader SHALL NOT assert that the session named
 any particular skill, command, or hand-off destination.
 
+The `.shipd` segment in the new-file check above is a literal name match, not
+a resolution of a fixture's configured content directory (the `dir` key a
+`.shipd-config.json` may set to something other than `.shipd`). A fixture
+that configures a different content-directory name therefore gets no
+new-file protection for a newly added specification file under that
+directory — only for `src/`, which is unaffected by this configuration. The
+modified-or-deleted rule is unaffected by this gap: an existing spec file's
+edit or deletion is still caught regardless of the content directory's name,
+since that comparison walks the whole snapshot rather than matching a
+literal path segment.
+
 #### Scenario: A correct hand-off passes through the real assembly path
 - **WHEN** a scratch repository assembled by the runner's own assembly step is
   left with no snapshotted file modified, no authored file added, the shipped
