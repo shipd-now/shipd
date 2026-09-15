@@ -579,11 +579,20 @@ cmd_sweep() {
           done
           echo "kept: $wt ($joined)"
         else
-          if [ "$dry_run" -eq 0 ]; then
-            git worktree remove "$wt"
+          # The removal runs as an `if` condition so the script's global
+          # `set -e` does not abort the sweep when it fails (a locked
+          # worktree, a permission error). Housekeeping must never take the
+          # whole pass — or the caller's exit code — down with one worktree
+          # it cannot reclaim, so a failure is reported and the loop and the
+          # branch prune below carry on.
+          if [ "$dry_run" -eq 1 ]; then
+            echo "swept: $wt"
+          elif git worktree remove "$wt"; then
             git worktree prune
+            echo "swept: $wt"
+          else
+            echo "kept: $wt (removal failed)"
           fi
-          echo "swept: $wt"
         fi
       else
         tip=$(git -C "$wt" log -1 --format=%ct 2>/dev/null || true)

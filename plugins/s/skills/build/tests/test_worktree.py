@@ -940,6 +940,39 @@ class SweepTest(WorktreeScriptTestBase):
         self.assertIn("pruned: change/gone", out)
         self.assertFalse(self.branch_exists("change/gone"))
 
+    def make_sweepable(self, name):
+        """A worktree whose branch is one commit ahead of the base and whose
+        content has been squash-merged into it -- the shape the sweep
+        reclaims."""
+        wt = self.make_worktree(name)
+        with open(os.path.join(wt, name + ".txt"), "w") as fh:
+            fh.write(name + " work\n")
+        self.git_in(wt, "add", "-A")
+        self.git_in(wt, "commit", "-q", "-m", name + " work")
+        self.squash_merge("change/" + name)
+        self.age_tree(wt)
+        return wt
+
+    def test_unremovable_worktree_never_takes_the_pass_down(self):
+        """A worktree `git worktree remove` cannot reclaim is reported and
+        skipped, never allowed to abort the pass: the sweep still exits 0,
+        still sweeps the worktrees after it, and still prunes branches."""
+        locked = self.make_sweepable("locked")
+        later = self.make_sweepable("later")
+        self.branch_with_commit("gone")
+        self.squash_merge("change/gone")
+        self.git("worktree", "lock", ".worktrees/locked")
+
+        r = self.run_helper("sweep")
+        out = self.combined(r)
+        self.assertEqual(r.returncode, 0, out)
+        self.assertIn("kept: .worktrees/locked", out)
+        self.assertTrue(os.path.isdir(locked))
+        self.assertIn("swept: .worktrees/later", out)
+        self.assertFalse(os.path.exists(later))
+        self.assertIn("pruned: change/gone", out)
+        self.assertFalse(self.branch_exists("change/gone"))
+
     def test_dry_run_changes_nothing(self):
         wt = self.make_worktree("shipped")
         with open(os.path.join(wt, "feature.txt"), "w") as fh:
