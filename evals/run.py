@@ -29,6 +29,7 @@ are unit-tested under ``evals/tests/`` without a live session.
 from __future__ import annotations
 
 import argparse
+import atexit
 import dataclasses
 import glob
 import json
@@ -545,21 +546,32 @@ def grade(scratch_dir, host_repo=HOST_REPO):
 # Behavior grading
 # ---------------------------------------------------------------------------
 
-def _tree_files(root):
+def _tree_files(root, exclude=None):
     """Return the set of file paths under ``root``, relative to ``root``.
 
     Never descends into a ``__pycache__`` directory, so compiled bytecode is
-    never treated as a known source file.
+    never treated as a known source file. When ``exclude`` is given, it is
+    called with each candidate relative path (a directory's, before
+    descending into it, or a file's) and that path is left out entirely
+    when it returns true.
     """
     found = set()
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+        dirnames[:] = [
+            d for d in dirnames
+            if d != "__pycache__"
+            and not (exclude and exclude(
+                os.path.relpath(os.path.join(dirpath, d), root)))
+        ]
         for name in filenames:
-            found.add(os.path.relpath(os.path.join(dirpath, name), root))
+            relpath = os.path.relpath(os.path.join(dirpath, name), root)
+            if exclude and exclude(relpath):
+                continue
+            found.add(relpath)
     return found
 
 
-def _tree_differs(a, b):
+def _tree_differs(a, b, exclude=None):
     """Return the first relative path whose content differs between
     directories ``a`` and ``b``, sorted for a stable, deterministic result,
     or ``None`` when every file matches.
@@ -568,9 +580,11 @@ def _tree_differs(a, b):
     differing. Never descends into a ``__pycache__`` directory (via
     :func:`_tree_files`), so compiled bytecode is never treated as a
     mismatch. A missing directory is treated as holding no files.
+    ``exclude``, when given, is forwarded to :func:`_tree_files` so a path
+    it flags is left out of the comparison for both directories.
     """
-    a_files = _tree_files(a) if os.path.isdir(a) else set()
-    b_files = _tree_files(b) if os.path.isdir(b) else set()
+    a_files = _tree_files(a, exclude=exclude) if os.path.isdir(a) else set()
+    b_files = _tree_files(b, exclude=exclude) if os.path.isdir(b) else set()
     for rel in sorted(a_files | b_files):
         if rel not in a_files or rel not in b_files:
             return rel
@@ -651,7 +665,7 @@ def grade_behavior(case, scratch_dir):
 # ---------------------------------------------------------------------------
 
 # Registry mapping a scratch dir's canonical path to the directory holding
-# its pre-session snapshot of src/ and the content directory — the state
+# its pre-session snapshot of the whole scratch tree — the state
 # assemble_scratch leaves right after assembly, before any session runs.
 # assemble_scratch populates this (via _snapshot_handoff_state) as its last
 # step for a handoff-graded case; grade_handoff reads it back so the grader
@@ -662,23 +676,78 @@ def grade_behavior(case, scratch_dir):
 # fixture.
 _HANDOFF_SNAPSHOTS = {}
 
+_TURN_TRANSCRIPT_RE = re.compile(r"^eval-transcript-turn(\d+)\.json$")
+
 
 def _snapshot_key(scratch_dir):
     return os.path.realpath(scratch_dir)
 
 
+def _discard_all_handoff_snapshots():
+    """Remove every pre-session snapshot still registered in
+    ``_HANDOFF_SNAPSHOTS``. Registered with :mod:`atexit` (below) so a
+    caller that forgets to call :func:`discard_handoff_snapshot` cannot
+    leave an orphan snapshot directory behind once the process exits;
+    :func:`discard_handoff_snapshot` itself still pops the registry
+    immediately, so this only ever cleans up what was left forgotten.
+    """
+    for snapshot in list(_HANDOFF_SNAPSHOTS.values()):
+        shutil.rmtree(snapshot, ignore_errors=True)
+    _HANDOFF_SNAPSHOTS.clear()
+
+
+atexit.register(_discard_all_handoff_snapshots)
+
+
+def _handoff_snapshot_excluded(relpath):
+    """Return ``True`` when ``relpath`` — a path relative to a handoff
+    scratch dir's root, as produced by :func:`os.walk` — is a runner-owned
+    volatile path that must never be treated as a session change: an eval
+    transcript any turn writes (``eval-transcript.json`` or
+    ``eval-transcript-turn<N>.json``), a ``__pycache__`` bytecode cache, or
+    the ``.git`` tree :func:`assemble_scratch` itself creates.
+
+    Used both when :func:`_snapshot_handoff_state` takes its pre-session
+    snapshot and when :func:`grade_handoff` compares against it, so a path
+    excluded from one side is excluded from the other too.
+    """
+    parts = relpath.split(os.sep)
+    if parts[0] == ".git":
+        return True
+    if "__pycache__" in parts:
+        return True
+    name = parts[-1]
+    return name == TRANSCRIPT_NAME or bool(_TURN_TRANSCRIPT_RE.match(name))
+
+
 def _snapshot_handoff_state(scratch_dir):
-    """Copy ``<scratch_dir>/src`` and ``<scratch_dir>/.shipd`` into a fresh
-    temp directory and register it against ``scratch_dir`` for
+    """Copy the whole ``scratch_dir`` tree — every file except the
+    runner-owned volatile paths :func:`_handoff_snapshot_excluded` flags —
+    into a fresh temp directory and register it against ``scratch_dir`` for
     :func:`grade_handoff` to compare the post-session tree against. Called
     once, from :func:`assemble_scratch`, immediately after assembly and
     before any session runs.
+
+    Snapshotting the whole tree, rather than naming individual directories
+    such as ``src/`` or the content directory, means "the session changed
+    nothing" is enforced everywhere in the scratch tree, not only in the
+    directories the runner happens to name.
     """
     snapshot = tempfile.mkdtemp(prefix="s-eval-handoff-snapshot-")
-    for name in ("src", ".shipd"):
-        source = os.path.join(scratch_dir, name)
-        if os.path.isdir(source):
-            shutil.copytree(source, os.path.join(snapshot, name))
+    for dirpath, dirnames, filenames in os.walk(scratch_dir):
+        dirnames[:] = [
+            d for d in dirnames
+            if not _handoff_snapshot_excluded(
+                os.path.relpath(os.path.join(dirpath, d), scratch_dir))
+        ]
+        for name in filenames:
+            relpath = os.path.relpath(
+                os.path.join(dirpath, name), scratch_dir)
+            if _handoff_snapshot_excluded(relpath):
+                continue
+            dest = os.path.join(snapshot, relpath)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.copy2(os.path.join(dirpath, name), dest)
     _HANDOFF_SNAPSHOTS[_snapshot_key(scratch_dir)] = snapshot
     return snapshot
 
@@ -691,9 +760,6 @@ def discard_handoff_snapshot(scratch_dir):
     snapshot = _HANDOFF_SNAPSHOTS.pop(_snapshot_key(scratch_dir), None)
     if snapshot is not None:
         shutil.rmtree(snapshot, ignore_errors=True)
-
-
-_TURN_TRANSCRIPT_RE = re.compile(r"^eval-transcript-turn(\d+)\.json$")
 
 
 def _latest_transcript_path(scratch_dir):
@@ -746,21 +812,28 @@ def grade_handoff(case, scratch_dir):
     """Grade a completed handoff-graded session's scratch repo and return a
     :class:`RunResult`.
 
-    Asserts, in order: every file under ``<scratch_dir>/src`` matches the
+    Asserts, in order: the whole ``scratch_dir`` tree matches the
     pre-session snapshot :func:`_snapshot_handoff_state` took right after
-    ``assemble_scratch`` assembled ``scratch_dir``; every file under
-    ``<scratch_dir>/.shipd`` matches that same snapshot; ``python3 -m
-    unittest discover -s tests`` exits 0 in ``scratch_dir`` (the shipped
-    suite, expected to stay green since the correct outcome touches no
-    code); and the session's final ``result`` text
-    (:func:`_transcript_result_text`) contains ``case.handoff_requirement``.
-    The first failing assertion is named in ``RunResult.failure``.
+    ``assemble_scratch`` assembled it, ignoring only the runner-owned
+    volatile paths :func:`_handoff_snapshot_excluded` flags (the eval
+    transcript(s), ``__pycache__``, and ``.git``); ``python3 -m unittest
+    discover -s tests`` exits 0 in ``scratch_dir`` (the shipped suite,
+    expected to stay green since the correct outcome touches no code); and
+    the session's final ``result`` text (:func:`_transcript_result_text`)
+    contains ``case.handoff_requirement``. The first failing assertion is
+    named in ``RunResult.failure``.
 
     Comparing against the pre-session snapshot rather than
     ``case.fixture_path`` matters because assembly legitimately injects
     files the fixture does not ship (e.g. the host repo's
     ``.shipd/README.md``) — the grader asks what the session changed, never
-    how the scratch differs from the fixture.
+    how the scratch differs from the fixture. Comparing the whole tree
+    rather than naming individual directories (e.g. ``src/`` and the
+    content directory) matters because "the session changed nothing" is
+    otherwise only enforced for the directories the runner happens to name
+    — including a shipped test the session rewrote, which would otherwise
+    both hide the change and make the shipped-suite assertion trivially
+    pass.
     """
     snapshot = _HANDOFF_SNAPSHOTS.get(_snapshot_key(scratch_dir))
     if snapshot is None:
@@ -769,21 +842,11 @@ def grade_handoff(case, scratch_dir):
             "snapshot registered — assemble_scratch must assemble a "
             "handoff-graded case before grade_handoff can run" % scratch_dir)
 
-    scratch_src = os.path.join(scratch_dir, "src")
-    snapshot_src = os.path.join(snapshot, "src")
-    diff = _tree_differs(snapshot_src, scratch_src)
+    diff = _tree_differs(
+        snapshot, scratch_dir, exclude=_handoff_snapshot_excluded)
     if diff is not None:
         return RunResult(
-            False, "src/ changed since assembly: %s"
-                   % os.path.join("src", diff))
-
-    scratch_content = os.path.join(scratch_dir, ".shipd")
-    snapshot_content = os.path.join(snapshot, ".shipd")
-    diff = _tree_differs(snapshot_content, scratch_content)
-    if diff is not None:
-        return RunResult(
-            False, "content directory changed since assembly: %s"
-                   % os.path.join(".shipd", diff))
+            False, "scratch tree changed since assembly: %s" % diff)
 
     proc = subprocess.run(
         [sys.executable, "-m", "unittest", "discover", "-s", "tests"],

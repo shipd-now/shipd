@@ -598,6 +598,37 @@ class HandoffGradingTests(TmpPathTestCase):
         self.assertIn("report-column-width", result.failure)
         self.assertNotIn("changed since assembly", result.failure)
 
+    def test_rewritten_shipped_test_fails_naming_its_path(self):
+        """The unchanged assertion covers the whole scratch tree, not just
+        ``src/`` and the content directory: a session that rewrites the
+        shipped ``tests/`` file — which would otherwise both hide the real
+        change and make the shipped-suite assertion trivially pass — must
+        still fail the run, naming the rewritten path."""
+        case = self._make_case("case-f")
+        scratch = _untouched_handoff_scratch(self, case)
+        _write(os.path.join(scratch, "tests", "test_shipped.py"),
+              "import unittest\n\n\n"
+              "class T(unittest.TestCase):\n"
+              "    def test_nop(self):\n"
+              "        pass\n")
+        _write_handoff_transcript(scratch, "req-id")
+        result = run.grade_handoff(case, scratch)
+        self.assertFalse(result.passed)
+        self.assertIn(
+            os.path.join("tests", "test_shipped.py"), result.failure)
+
+    def test_stray_root_file_fails_naming_its_path(self):
+        """A file a session drops anywhere in the scratch tree — not only
+        under ``src/`` or the content directory — must fail the run, naming
+        that path."""
+        case = self._make_case("case-g")
+        scratch = _untouched_handoff_scratch(self, case)
+        _write(os.path.join(scratch, "NOTES.md"), "stray notes\n")
+        _write_handoff_transcript(scratch, "req-id")
+        result = run.grade_handoff(case, scratch)
+        self.assertFalse(result.passed)
+        self.assertIn("NOTES.md", result.failure)
+
 
 # ---------------------------------------------------------------------------
 # Behavior fixture sanity check
