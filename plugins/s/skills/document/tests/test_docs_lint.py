@@ -264,6 +264,98 @@ class MermaidTests(LintTestCase):
             [ln for ln in out.splitlines() if "diagram" in ln.lower()], [], out)
 
 
+class ConfigFilenameTests(LintTestCase):
+    """A doc naming a config file the engine does not read is an error.
+
+    ``shipd-config.json`` is a substring of the correct ``.shipd-config.json``,
+    so the dot-less check must not fire on the correct name.
+    """
+
+    def test_dotted_wrong_name_in_prose_is_an_error(self):
+        path = self.write("concept.md", [
+            "<!-- doc-type: concept -->",
+            "",
+            "Configure the engine in `shipd.config.json`.",
+        ])
+        code, out = self.run_lint(path)
+        self.assertEqual(code, 1)
+        errs = self.errors(out)
+        self.assertEqual(len(errs), 1, out)
+        self.assertIn(".shipd-config.json", errs[0])
+
+    def test_the_correct_filename_is_clean(self):
+        path = self.write("concept.md", [
+            "<!-- doc-type: concept -->",
+            "",
+            "Configure the engine in `.shipd-config.json`.",
+        ])
+        code, out = self.run_lint(path)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.errors(out), [])
+
+    def test_the_sample_filename_is_clean(self):
+        path = self.write("concept.md", [
+            "<!-- doc-type: concept -->",
+            "",
+            "See the annotated sample at `shipd.config.example.json`.",
+        ])
+        code, out = self.run_lint(path)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.errors(out), [])
+
+    def test_dot_less_wrong_name_is_an_error(self):
+        path = self.write("concept.md", [
+            "<!-- doc-type: concept -->",
+            "",
+            "Configure the engine in `shipd-config.json`.",
+        ])
+        code, out = self.run_lint(path)
+        self.assertEqual(code, 1)
+        errs = self.errors(out)
+        self.assertEqual(len(errs), 1, out)
+        self.assertIn(".shipd-config.json", errs[0])
+
+    def test_wrong_name_inside_a_code_fence_is_still_an_error(self):
+        path = self.write("concept.md", [
+            "<!-- doc-type: concept -->",
+            "",
+            "```json",
+            "{\"file\": \"shipd.config.json\"}",
+            "```",
+        ])
+        code, out = self.run_lint(path)
+        self.assertEqual(code, 1)
+        errs = self.errors(out)
+        self.assertEqual(len(errs), 1, out)
+        self.assertIn(".shipd-config.json", errs[0])
+
+    def test_matches_the_engines_constant(self):
+        """docs_lint's CONFIG_FILENAME must track spec_common's real one.
+
+        Nothing at import time ties the lint's copy of the filename to the
+        engine's — docs_lint stays stdlib-only and never imports the engine
+        at runtime. Without this test, a rename of spec_common.CONFIG_FILENAME
+        would silently desync the lint: it would keep accepting the old name
+        and start flagging the new, correct one. This test crosses the
+        boundary the lint itself must not cross, so that rename fails the
+        suite instead of drifting unnoticed.
+        """
+        build_scripts = os.path.normpath(os.path.join(
+            HERE, "..", "..", "build", "scripts"))
+        if build_scripts not in sys.path:
+            sys.path.insert(0, build_scripts)
+        try:
+            import spec_common  # noqa: WPS433 (local import by design)
+        except ImportError as exc:
+            self.skipTest(
+                "spec_common not importable from the build skill's "
+                "scripts/ (%s); cannot verify docs_lint.CONFIG_FILENAME "
+                "against the engine's real constant: %s"
+                % (build_scripts, exc))
+        self.assertEqual(
+            docs_lint.CONFIG_FILENAME, spec_common.CONFIG_FILENAME)
+
+
 class CodeFenceTests(LintTestCase):
     """Prose analysis stops at a fence; code is never measured."""
 
