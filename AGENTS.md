@@ -225,6 +225,19 @@ tree copied into a scratch git repo before the session runs). An optional
   session edit to a shipped test — copies in the case's held-out `verify/`
   tree, and runs `python3 -m unittest discover -s tests` in the scratch root;
   the run passes only on exit 0.
+- `{"grader": "handoff", "handoff_requirement": "<id>"}`: **handoff**. Grades
+  a case whose *correct* outcome is that no code changes — the documented
+  behavior itself is wrong, so the right move is to name the problem and stop
+  rather than patch the code or the spec. A run passes only when all four
+  hold: every file under the scratch `src/` matches the fixture's; every file
+  under the scratch content directory (`.shipd/`) matches the fixture's; the
+  shipped suite still exits 0; and the session's final result text (read from
+  the scratch transcript — the highest-numbered
+  `eval-transcript-turn<N>.json` if any resume ran, else
+  `eval-transcript.json`) contains the requirement id `handoff_requirement`
+  names. The `handoff_requirement` key is required — an `expect.json`
+  declaring `"handoff"` without it fails every run immediately, naming the
+  case and the missing key, spawning no session.
 
 **The oracle is held out of the fixture.** A behavior case's regression test
 lives at `evals/cases/<name>/verify/`, outside `fixture/`, so the session
@@ -233,7 +246,11 @@ grading. Before each behavior run, the harness sanity-checks the fixture
 itself: the shipped suite must exit 0 before the session runs, and must exit
 non-zero once `verify/` is copied in — a mis-seeded fixture (the seeded bug
 absent, or the held-out test already passing) fails the run immediately,
-naming which check failed, without spawning a session.
+naming which check failed, without spawning a session. A handoff case is
+sanity-checked the same way minus the second probe: the shipped suite must
+exit 0 before the session runs, since the code is expected to implement its
+documented contract faithfully — there is no held-out oracle to flip, because
+the correct outcome leaves the code untouched.
 
 `evals/cases/fix-report-drift/` is the worked example: its `fixture/` ships
 a `.shipd/verified/report-output/` capability documenting a row sort order
@@ -242,6 +259,24 @@ that only checks the header and column padding; its held-out
 `verify/test_report_order.py` asserts the documented order; and `prompt.md`
 invokes `/s:fix` on the symptom (rows print in the wrong order) without
 naming the sorting rule or the file to edit.
+
+`evals/cases/fix-spec-wrong/` is the handoff grader's worked example: its
+`.shipd/verified/report-output/` capability's `report-column-width`
+requirement fixes the name column at a width of six characters, its
+`src/report.py` implements that width exactly (`"%-6s  %3d  %s"`), and one
+`ROWS` entry carries a name longer than six characters, so the printed table
+visibly misaligns for that row even though the code faithfully matches its
+documented contract — the shipped `tests/test_report.py` only asserts the
+rows that fit the width, so it stays green regardless of what a session
+does. `prompt.md` invokes `/s:fix` on the symptom (the columns don't line up
+for some rows) without naming the requirement, the width, or the file to
+edit. The positive signal the grader looks for is the requirement id
+(`report-column-width`) in the session's own words, never the skill's
+vocabulary (e.g. `/s:plan`) — a bare agent that correctly diagnosed the
+contract and a `/s:fix` session that did the same both name the requirement
+they read, whichever arm they ran in, so asserting a skill-specific term
+would penalize the baseline arm for not knowing it rather than measuring the
+outcome under test.
 
 **`--arm {treatment,baseline,both}` (default `treatment`) runs a no-skill
 baseline as an A/B.** `treatment` is today's behavior — every session loads

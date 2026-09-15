@@ -12,6 +12,7 @@ the host checkout.
 
 import contextlib
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -165,24 +166,44 @@ class CaseDiscoveryTests(TmpPathTestCase):
 # ---------------------------------------------------------------------------
 
 class ReadExpectTests(TmpPathTestCase):
+    """``read_expect`` returns a ``(grader, handoff_requirement)`` pair;
+    ``handoff_requirement`` is ``None`` for every grader but ``handoff``."""
 
     def test_absent_expect_json_is_structural(self):
         case_dir = os.path.join(self.tmp_path, "some-case")
         os.makedirs(case_dir)
-        self.assertEqual(run.read_expect(case_dir), "structural")
+        self.assertEqual(run.read_expect(case_dir), ("structural", None))
 
     def test_expect_json_without_grader_key_is_structural(self):
         case_dir = os.path.join(self.tmp_path, "some-case")
         os.makedirs(case_dir)
         _write(os.path.join(case_dir, "expect.json"), "{}\n")
-        self.assertEqual(run.read_expect(case_dir), "structural")
+        self.assertEqual(run.read_expect(case_dir), ("structural", None))
 
     def test_expect_json_behavior_grader(self):
         case_dir = os.path.join(self.tmp_path, "some-case")
         os.makedirs(case_dir)
         _write(os.path.join(case_dir, "expect.json"),
               '{"grader": "behavior"}\n')
-        self.assertEqual(run.read_expect(case_dir), "behavior")
+        self.assertEqual(run.read_expect(case_dir), ("behavior", None))
+
+    def test_expect_json_handoff_grader(self):
+        case_dir = os.path.join(self.tmp_path, "some-case")
+        os.makedirs(case_dir)
+        _write(os.path.join(case_dir, "expect.json"),
+              '{"grader": "handoff", "handoff_requirement": "x"}\n')
+        self.assertEqual(run.read_expect(case_dir), ("handoff", "x"))
+
+    def test_expect_json_handoff_without_requirement_raises(self):
+        case_dir = os.path.join(self.tmp_path, "no-req-case")
+        os.makedirs(case_dir)
+        _write(os.path.join(case_dir, "expect.json"),
+              '{"grader": "handoff"}\n')
+        with self.assertRaises(ValueError) as ctx:
+            run.read_expect(case_dir)
+        message = str(ctx.exception)
+        self.assertIn("no-req-case", message)
+        self.assertIn("handoff_requirement", message)
 
     def test_expect_json_unrecognized_grader_raises(self):
         case_dir = os.path.join(self.tmp_path, "weird-case")
@@ -432,6 +453,184 @@ class BehaviorGradingTests(TmpPathTestCase):
 
 
 # ---------------------------------------------------------------------------
+# Handoff grading
+# ---------------------------------------------------------------------------
+
+def _write_handoff_case(cases_dir, name, handoff_requirement="req-id",
+                        shipped_test=_PASSING_TEST):
+    """Create ``<cases_dir>/<name>/fixture/{src,.shipd,tests}/...`` — a
+    minimal handoff fixture whose shipped suite passes against its own
+    ``src/`` and content directory (unless ``shipped_test`` is overridden to
+    model a mis-seeded fixture) — plus a placeholder ``prompt.md``, and
+    return the corresponding handoff-graded :class:`run.Case`."""
+    case_dir = os.path.join(cases_dir, name)
+    _write(os.path.join(case_dir, "prompt.md"), "/s:fix do a thing\n")
+    _write(os.path.join(case_dir, "fixture", "src", "report.py"),
+          "VALUE = 1\n")
+    _write(os.path.join(case_dir, "fixture", ".shipd", "verified", "x",
+                        "spec.md"), "spec text\n")
+    _write(os.path.join(case_dir, "fixture", "tests", "test_shipped.py"),
+          shipped_test)
+    return run.Case(name=name,
+                    prompt_path=os.path.join(case_dir, "prompt.md"),
+                    fixture_path=os.path.join(case_dir, "fixture"),
+                    grader="handoff",
+                    handoff_requirement=handoff_requirement)
+
+
+def _untouched_handoff_scratch(test_case, case):
+    """Build a scratch dir via the runner's own ``assemble_scratch`` — the
+    real assembly path a live run takes — representing the state a session
+    that made no edits at all would leave (before a transcript is written on
+    top). Registers cleanup of the assembled tree and its pre-session
+    snapshot on ``test_case``."""
+    scratch = run.assemble_scratch(case)
+    test_case.addCleanup(run.discard_handoff_snapshot, scratch)
+    test_case.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+    return scratch
+
+
+def _write_handoff_transcript(scratch_dir, result_text, turn=None):
+    """Write a fake session transcript into ``scratch_dir`` carrying
+    ``result_text`` as the session's final ``result`` text, mirroring the
+    shape a real turn writes. ``turn=None`` writes turn 1's
+    ``eval-transcript.json``; an int N writes the resumed
+    ``eval-transcript-turn<N>.json``."""
+    name = (run.TRANSCRIPT_NAME if turn is None
+            else "eval-transcript-turn%d.json" % turn)
+    _write(os.path.join(scratch_dir, name),
+          json.dumps({"type": "result", "session_id": "s1",
+                      "result": result_text}))
+
+
+class HandoffGradingTests(TmpPathTestCase):
+    """Exercises ``grade_handoff`` against prebaked scratch trees — no live
+    session, no real fixture."""
+
+    def _make_case(self, name, handoff_requirement="req-id"):
+        cases_dir = os.path.join(self.tmp_path, "cases")
+        return _write_handoff_case(cases_dir, name, handoff_requirement)
+
+    def test_untouched_tree_naming_requirement_passes(self):
+        case = self._make_case("case-a")
+        scratch = _untouched_handoff_scratch(self, case)
+        _write_handoff_transcript(
+            scratch, "The req-id requirement documents the width; no code "
+                     "change is warranted.")
+        result = run.grade_handoff(case, scratch)
+        self.assertTrue(result.passed, result.failure)
+
+    def test_edited_src_file_fails_naming_path(self):
+        case = self._make_case("case-b")
+        scratch = _untouched_handoff_scratch(self, case)
+        _write(os.path.join(scratch, "src", "report.py"), "VALUE = 2\n")
+        _write_handoff_transcript(scratch, "req-id")
+        result = run.grade_handoff(case, scratch)
+        self.assertFalse(result.passed)
+        self.assertIn(os.path.join("src", "report.py"), result.failure)
+
+    def test_edited_content_directory_file_fails_naming_path(self):
+        case = self._make_case("case-c")
+        scratch = _untouched_handoff_scratch(self, case)
+        _write(os.path.join(scratch, ".shipd", "verified", "x", "spec.md"),
+              "edited\n")
+        _write_handoff_transcript(scratch, "req-id")
+        result = run.grade_handoff(case, scratch)
+        self.assertFalse(result.passed)
+        self.assertIn(
+            os.path.join(".shipd", "verified", "x", "spec.md"),
+            result.failure)
+
+    def test_transcript_missing_requirement_fails_naming_it(self):
+        case = self._make_case("case-d")
+        scratch = _untouched_handoff_scratch(self, case)
+        _write_handoff_transcript(scratch, "Nothing relevant here.")
+        result = run.grade_handoff(case, scratch)
+        self.assertFalse(result.passed)
+        self.assertIn("req-id", result.failure)
+
+    def test_no_mention_of_destination_skill_still_passes(self):
+        """The grader asserts the requirement id only — it never requires
+        the session to have named ``/s:plan`` or any other hand-off
+        destination."""
+        case = self._make_case("case-e")
+        scratch = _untouched_handoff_scratch(self, case)
+        transcript_text = (
+            "The req-id requirement documents the fixed width; the table "
+            "is behaving exactly as specified, so no code change is "
+            "warranted here.")
+        self.assertNotIn("/s:plan", transcript_text)
+        _write_handoff_transcript(scratch, transcript_text)
+        result = run.grade_handoff(case, scratch)
+        self.assertTrue(result.passed, result.failure)
+
+    def test_edited_content_directory_spec_names_the_edited_path(self):
+        """Against the real ``fix-spec-wrong`` case, whose assembled
+        content directory also carries the injected ``.shipd/README.md``,
+        editing only the fixture's own spec must be named exactly — not
+        ``.shipd/README.md``, which sorts first and previously always read
+        as the diff regardless of what the session actually touched."""
+        case = run.discover_cases(
+            run.CASES_DIR, case_filter="fix-spec-wrong")[0]
+        scratch = _untouched_handoff_scratch(self, case)
+        _write(os.path.join(scratch, ".shipd", "verified", "report-output",
+                            "spec.md"), "edited\n")
+        _write_handoff_transcript(scratch, "report-column-width")
+        result = run.grade_handoff(case, scratch)
+        self.assertFalse(result.passed)
+        self.assertIn(
+            os.path.join(".shipd", "verified", "report-output", "spec.md"),
+            result.failure)
+        self.assertNotIn(os.path.join(".shipd", "README.md"), result.failure)
+
+    def test_missing_requirement_id_names_the_id_not_a_path(self):
+        """The mirror case: an untouched real ``fix-spec-wrong`` scratch
+        whose transcript omits the requirement id fails naming the id, not
+        any content-directory path — including the injected
+        ``.shipd/README.md``, which must not be mistaken for a session
+        edit."""
+        case = run.discover_cases(
+            run.CASES_DIR, case_filter="fix-spec-wrong")[0]
+        scratch = _untouched_handoff_scratch(self, case)
+        _write_handoff_transcript(scratch, "Nothing relevant here.")
+        result = run.grade_handoff(case, scratch)
+        self.assertFalse(result.passed)
+        self.assertIn("report-column-width", result.failure)
+        self.assertNotIn("changed since assembly", result.failure)
+
+    def test_rewritten_shipped_test_fails_naming_its_path(self):
+        """The unchanged assertion covers the whole scratch tree, not just
+        ``src/`` and the content directory: a session that rewrites the
+        shipped ``tests/`` file — which would otherwise both hide the real
+        change and make the shipped-suite assertion trivially pass — must
+        still fail the run, naming the rewritten path."""
+        case = self._make_case("case-f")
+        scratch = _untouched_handoff_scratch(self, case)
+        _write(os.path.join(scratch, "tests", "test_shipped.py"),
+              "import unittest\n\n\n"
+              "class T(unittest.TestCase):\n"
+              "    def test_nop(self):\n"
+              "        pass\n")
+        _write_handoff_transcript(scratch, "req-id")
+        result = run.grade_handoff(case, scratch)
+        self.assertFalse(result.passed)
+        self.assertIn(
+            os.path.join("tests", "test_shipped.py"), result.failure)
+
+    def test_stray_root_file_fails_naming_its_path(self):
+        """A file a session drops anywhere in the scratch tree — not only
+        under ``src/`` or the content directory — must fail the run, naming
+        that path."""
+        case = self._make_case("case-g")
+        scratch = _untouched_handoff_scratch(self, case)
+        _write(os.path.join(scratch, "NOTES.md"), "stray notes\n")
+        _write_handoff_transcript(scratch, "req-id")
+        result = run.grade_handoff(case, scratch)
+        self.assertFalse(result.passed)
+        self.assertIn("NOTES.md", result.failure)
+
+
+# ---------------------------------------------------------------------------
 # Behavior fixture sanity check
 # ---------------------------------------------------------------------------
 
@@ -479,6 +678,55 @@ class CheckBehaviorFixtureTests(TmpPathTestCase):
         failure = run.check_behavior_fixture(case, scratch)
         self.assertIsNotNone(failure)
         self.assertIn("held-out", failure.lower())
+
+
+# ---------------------------------------------------------------------------
+# Handoff fixture sanity check
+# ---------------------------------------------------------------------------
+
+class CheckHandoffFixtureTests(TmpPathTestCase):
+    """Exercises ``check_handoff_fixture`` against prebaked case/scratch
+    trees representing the state right after ``assemble_scratch`` — before
+    any session runs."""
+
+    def _scratch_for(self, case):
+        return _untouched_handoff_scratch(self, case)
+
+    def test_passing_shipped_suite_has_no_failure(self):
+        cases_dir = os.path.join(self.tmp_path, "cases")
+        case = _write_handoff_case(cases_dir, "seeded-ok")
+        scratch = self._scratch_for(case)
+        self.assertIsNone(run.check_handoff_fixture(case, scratch))
+
+    def test_red_shipped_suite_names_the_check(self):
+        """A fixture whose own shipped suite does not exit 0 before the
+        session fails the sanity check, naming the check."""
+        cases_dir = os.path.join(self.tmp_path, "cases")
+        case = _write_handoff_case(
+            cases_dir, "seeded-red", shipped_test=_FAILING_TEST)
+        scratch = self._scratch_for(case)
+        failure = run.check_handoff_fixture(case, scratch)
+        self.assertIsNotNone(failure)
+        self.assertIn("sanity", failure.lower())
+
+
+class HandoffFixtureSanityDispatchTests(TmpPathTestCase):
+    """Exercises ``execute_case``'s dispatch of the handoff sanity check —
+    a failure it reports records the run as failed and spawns no
+    session."""
+
+    def test_red_fixture_fails_run_and_spawns_no_session(self):
+        cases_dir = os.path.join(self.tmp_path, "cases")
+        case = _write_handoff_case(
+            cases_dir, "seeded-red", shipped_test=_FAILING_TEST)
+        with mock.patch.object(run, "run_conversation") as spy:
+            results = run.execute_case(
+                case, runs=1, claude_bin="claude", keep_scratch=False,
+                arm="treatment")
+        spy.assert_not_called()
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].passed)
+        self.assertIn("sanity", results[0].failure.lower())
 
 
 # ---------------------------------------------------------------------------
@@ -704,6 +952,10 @@ class ArmRefusalTests(TmpPathTestCase):
             fixture_tests={"test_shipped.py": _PASSING_TEST},
             verify_tests={"test_held_out.py": _FAILING_TEST})
 
+    def _handoff_case(self):
+        cases_dir = os.path.join(self.tmp_path, "cases")
+        return _write_handoff_case(cases_dir, "handoff-case")
+
     def test_structural_case_refuses_baseline_arm(self):
         case = self._structural_case()
         with mock.patch.object(run, "run_conversation") as spy:
@@ -769,6 +1021,13 @@ class ArmRefusalTests(TmpPathTestCase):
         for r in results:
             self.assertFalse(r.passed)
             self.assertIn("no-token-case", r.failure)
+
+    def test_handoff_case_arm_refusal_returns_none_for_baseline(self):
+        """A handoff-graded case's grader asserts an outcome either arm can
+        reach, so ``_arm_refusal`` must not refuse it under ``baseline`` —
+        only a ``structural`` grader is refused."""
+        case = self._handoff_case()
+        self.assertIsNone(run._arm_refusal(case, "baseline"))
 
 
 class UnreadablePromptRefusalTests(TmpPathTestCase):
