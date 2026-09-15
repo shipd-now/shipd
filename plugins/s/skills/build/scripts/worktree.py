@@ -8,9 +8,10 @@ teardown verbs straight through to ``worktree.sh``, which keeps owning them.
 
 Dispatch mirrors ``worktree.sh``'s, so the two are invoked identically:
 
-  * ``remove`` and ``prune-branches`` re-execute ``worktree.sh`` with the
-    arguments passed through verbatim, preserving its output and exit code —
-    no behavior of the battle-tested guarded teardown is reimplemented here.
+  * ``remove``, ``prune-branches``, and ``sweep`` re-execute ``worktree.sh``
+    with the arguments passed through verbatim, preserving its output and
+    exit code — no behavior of the battle-tested guarded teardown or the
+    opportunistic sweep is reimplemented here.
   * ``hooks`` selects the hook-management verb family, which edits the
     ``post-worktree-scripts`` declaration so no flow ever hand-edits
     ``.shipd-config.json``, and records this machine's trust in it.
@@ -22,7 +23,11 @@ It then runs ``worktree.sh``'s create path from the repo root with output
 inherited and, when that succeeds and ``.worktrees/<name>`` did not exist
 beforehand, runs the configured scripts in order against the new worktree. A
 *reused* worktree was already set up when it was created, so its scripts are
-skipped; ``hooks run`` covers a manual re-run.
+skipped; ``hooks run`` covers a manual re-run. Where the resolved
+configuration does not disable ``worktree_sweep``, the create path then runs
+``worktree.sh``'s ``sweep`` verb, reporting only the lines naming a worktree
+it removed or a branch it deleted and never altering the create path's own
+exit code.
 
 Every execution passes through the consent gate first: a resolved list runs
 only while a machine-local ledger records this machine's user as trusting
@@ -74,7 +79,7 @@ HOOKS_KEY = "post-worktree-scripts"
 TRUST_FILENAME = ".shipd-trust.json"
 
 # The verbs that are not change names.
-PASSTHROUGH_VERBS = ("remove", "prune-branches")
+PASSTHROUGH_VERBS = ("remove", "prune-branches", "sweep")
 
 # The exit code a failing post-worktree script produces — deliberately distinct
 # from worktree.sh's `1` (usage/error) and `2` (guard refusal), so a caller can
@@ -84,6 +89,7 @@ HOOK_FAILURE_EXIT = 3
 USAGE = """usage: worktree.py <change-name> [--fresh] [--root DIR]
        worktree.py remove <change> [--force]
        worktree.py prune-branches
+       worktree.py sweep [--dry-run]
        worktree.py hooks list [--json] [--root DIR]
        worktree.py hooks add <item> [--root DIR]
        worktree.py hooks remove <item-or-index> [--root DIR]
@@ -323,10 +329,39 @@ def cmd_passthrough(argv):
     return subprocess.run(["bash", WORKTREE_SH, *argv]).returncode
 
 
+def maybe_sweep(root):
+    """Run ``worktree.sh``'s ``sweep`` verb after the create path has
+    otherwise completed, when the resolved configuration does not disable it
+    (shipd-config worktree-sweep-keys). Prints only the lines naming a
+    worktree it removed or a branch it deleted, suppressing its
+    ``kept:``/``stale:`` lines and the `prune-branches:` summary, so
+    `worktree.py <change>` stays quiet on a clean repo. Never raises and
+    never influences the create path's own return value — a failed, refused,
+    or disabled sweep must never fail a worktree creation
+    (worktree-hooks engine-worktree-create)."""
+    try:
+        config, _prov = sc.resolve_config(root)
+    except sc.ConfigError:
+        return
+    if not sc.worktree_sweep(config):
+        return
+    try:
+        result = subprocess.run(
+            ["bash", WORKTREE_SH, "sweep"], cwd=root,
+            capture_output=True, text=True)
+    except OSError:
+        return
+    for line in (result.stdout or "").splitlines():
+        if line.startswith("swept:") or line.startswith("pruned:"):
+            sys.stdout.write(line + "\n")
+
+
 def cmd_create(argv):
     """The create path: validate the config, run ``worktree.sh``'s git
     mechanics, then run the configured scripts for a newly created or attached
-    worktree (worktree-hooks engine-worktree-create)."""
+    worktree (worktree-hooks engine-worktree-create). Once the create path has
+    otherwise completed, opportunistically runs the sweep
+    (:func:`maybe_sweep`) without altering the result computed here."""
     try:
         root, rest = _take_root(argv)
     except ValueError as exc:
@@ -356,13 +391,18 @@ def cmd_create(argv):
         ["bash", WORKTREE_SH, name, *flags], cwd=root).returncode
     if code != 0:
         return code
+
     # A reused worktree was set up when it was created; only a fresh create or
     # a branch attach is a new checkout needing setup.
     if pre_existed or not items:
-        return 0
-    if not ensure_hooks_trusted(items, source, worktree=worktree):
-        return HOOK_FAILURE_EXIT
-    return run_hooks(items, worktree, root, name)
+        result = 0
+    elif not ensure_hooks_trusted(items, source, worktree=worktree):
+        result = HOOK_FAILURE_EXIT
+    else:
+        result = run_hooks(items, worktree, root, name)
+
+    maybe_sweep(root)
+    return result
 
 
 # ---------------------------------------------------------------------------

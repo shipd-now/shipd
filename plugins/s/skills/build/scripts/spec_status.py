@@ -2560,8 +2560,13 @@ def cmd_config_show(root):
     resolved wiki store: the nearest workspace's store, the repo-local
     fallback path marked ``(repo-local fallback)`` where the chain is empty and
     the content directory exists, or ``none`` naming both missing prerequisites
-    (shipd-wiki wiki-store-layout). Does not require a workspace; exits zero on
-    a default-only resolution (spec-status config-show-verb)."""
+    (shipd-wiki wiki-store-layout). Always prints ``worktree-sweep:``,
+    ``worktree-idle-minutes:``, and ``worktree-stale-days:`` lines carrying the
+    resolved worktree housekeeping settings, whether a layer declared them or
+    they fell back to their built-in defaults, so the bash worktree helper can
+    read them through this seam (shipd-config worktree-sweep-keys). Does not
+    require a workspace; exits zero on a default-only resolution (spec-status
+    config-show-verb)."""
     try:
         config, provenance = sc.resolve_config(root)
         content_dir = sc.specs_dirname(config)
@@ -2595,6 +2600,12 @@ def cmd_config_show(root):
         anchor, is_fallback = wiki_resolution
         print("wiki: %s%s" % (sc.wiki_dir(anchor),
                               " (repo-local fallback)" if is_fallback else ""))
+    print("worktree-sweep: %s"
+          % ("true" if sc.worktree_sweep(config) else "false"))
+    print("worktree-idle-minutes: %s"
+          % sc.worktree_idle_minutes(config, os.environ))
+    print("worktree-stale-days: %s"
+          % sc.worktree_stale_days(config, os.environ))
     return 0
 
 

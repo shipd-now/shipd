@@ -576,8 +576,16 @@ whole chain in nearest-first order. The verb SHALL additionally print a
 `wiki:` line reporting the resolved wiki store: the nearest workspace's
 store path when a chain exists, the repo-local fallback path annotated
 `(repo-local fallback)` when the chain is empty and the content directory
-exists, and `wiki: none` naming the missing prerequisites otherwise. The
-verb SHALL NOT require a discoverable workspace and SHALL exit zero on a
+exists, and `wiki: none` naming the missing prerequisites otherwise.
+
+The verb SHALL always print three further keyed lines carrying the resolved
+worktree housekeeping settings — `worktree-sweep:` as `true` or `false`,
+`worktree-idle-minutes:`, and `worktree-stale-days:` — whether a layer declared
+them or they fell back to their built-in defaults, so the bash worktree helper
+reads them through the same seam it already reads `content-dir:` and `store:`
+through rather than resolving configuration itself.
+
+The verb SHALL NOT require a discoverable workspace and SHALL exit zero on a
 default-only resolution.
 
 #### Scenario: Provenance is printed per key
@@ -608,6 +616,18 @@ default-only resolution.
   content directory, and in an uninitialized directory
 - **THEN** the `wiki:` line names the workspace store, the fallback path
   with `(repo-local fallback)`, and `none`, respectively
+
+#### Scenario: Worktree lines print on a default-only resolution
+- **WHEN** `config-show` runs where no layer declares any worktree key
+- **THEN** the output carries `worktree-sweep: true`,
+  `worktree-idle-minutes: 30`, and `worktree-stale-days: 7`
+
+#### Scenario: Worktree lines carry a declared value
+- **GIVEN** a repo layer declaring `worktree_sweep` false and
+  `worktree_stale_days` as 14
+- **WHEN** `config-show` runs
+- **THEN** the output carries `worktree-sweep: false` and
+  `worktree-stale-days: 14`
 
 ### Requirement: Epic initiative header verb
 id: epic-set-initiative-verb

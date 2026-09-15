@@ -342,6 +342,62 @@ class PassthroughVerbTest(WorktreeEngineTestBase):
         self.assertNotEqual(engine.returncode, 0)
         self.assertEqual(engine.stderr, direct.stderr)
 
+    def test_sweep_dry_run_passes_through(self):
+        # engine-worktree-create: Sweep passes through to the helper.
+        engine = self.run_engine("sweep", "--dry-run")
+        direct = self.run_shell("sweep", "--dry-run")
+        self.assertEqual(engine.returncode, direct.returncode)
+        self.assertEqual(self.combined(engine), self.combined(direct))
+
+
+class CreateSweepTest(WorktreeEngineTestBase):
+    """The create path's opportunistic sweep call (engine-worktree-create,
+    worktree-sweep-keys)."""
+
+    def squash_merge_worktree(self, name):
+        """Create `name` via the engine, commit one file in it, and squash it
+        onto the base the way `gh pr merge --squash` does — leaving it merged
+        and guard-clean, a sweep candidate."""
+        self.run_engine(name)
+        wt = self.worktree_path(name)
+        self.write(os.path.join(wt, "feature.txt"), "feature work\n")
+        self.git("add", "-A", cwd=wt)
+        self.git("commit", "-q", "-m", "feature work", cwd=wt)
+        self.git("merge", "--squash", "change/" + name)
+        self.git("commit", "-q", "-m", "squash merge of change/" + name)
+        return wt
+
+    def test_create_reclaims_a_merged_worktree_alongside(self):
+        shipped = self.squash_merge_worktree("shipped")
+
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        # The newly created worktree survives its own create-path sweep.
+        self.assertTrue(os.path.isdir(self.worktree_path("my-change")))
+        self.assertFalse(os.path.exists(shipped))
+        out = self.combined(r)
+        self.assertIn("shipped", out)
+        self.assertNotIn("swept: .worktrees/my-change", out)
+
+    def test_create_in_detached_head_repo_still_succeeds(self):
+        # worktree-sweep-keys: A repository whose root checkout has a
+        # detached HEAD so the sweep can reclaim nothing.
+        self.git("checkout", "-q", "--detach")
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertTrue(os.path.isdir(self.worktree_path("my-change")))
+
+    def test_disabled_sweep_config_runs_no_sweep(self):
+        # worktree-sweep-keys: The sweep gate is declared false.
+        self.write_config({"dir": ".shipd", "worktree_sweep": False})
+        shipped = self.squash_merge_worktree("shipped")
+
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertTrue(os.path.isdir(self.worktree_path("my-change")))
+        self.assertTrue(os.path.isdir(shipped))
+        self.assertNotIn("swept:", self.combined(r))
+
 
 class HooksVerbTest(WorktreeEngineTestBase):
     """The `hooks` verb family manages the declaration without hand-editing

@@ -43,10 +43,16 @@
 # branches whose content already landed on the base branch, which a
 # squash-merged PR leaves behind because it deletes only the remote branch.
 #
+# `sweep [--dry-run]` combines the two: it reclaims every worktree whose
+# branch is merged and guard-clean, reports the rest (`kept:`/`stale:`), then
+# runs `prune-branches`'s own branch reclamation. Never forces past a guard,
+# and always exits 0.
+#
 # Usage (run from the repository root):
 #   <plugin>/skills/build/scripts/worktree.sh <change-name> [--fresh]
 #   <plugin>/skills/build/scripts/worktree.sh remove <change-name> [--force]
 #   <plugin>/skills/build/scripts/worktree.sh prune-branches
+#   <plugin>/skills/build/scripts/worktree.sh sweep [--dry-run]
 #
 # Bash 3.2-safe (macOS system bash): no mapfile, no associative arrays.
 set -e
@@ -59,7 +65,8 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 usage() {
   echo "usage: worktree.sh <change-name> [--fresh]    # create .worktrees/<change-name>" >&2
   echo "       worktree.sh remove <change> [--force]  # guarded removal + prune" >&2
-  echo "       worktree.sh prune-branches             # delete merged local change/* branches" >&2
+  echo "       worktree.sh prune-branches [--dry-run]  # delete merged local change/* branches" >&2
+  echo "       worktree.sh sweep [--dry-run]           # reclaim merged worktrees + branches" >&2
   echo "  <change-name> must be kebab-case (lowercase letters, digits, hyphens)" >&2
   echo "  --fresh: never adopt an existing worktree or unmerged branch" >&2
 }
@@ -153,71 +160,84 @@ planned_is_base_content() {
   return 0
 }
 
+# resolve_worktree_settings <root>
+#
+# Reads the three layered worktree-housekeeping settings (shipd-config
+# worktree-sweep-keys) through `spec_status.py config-show` at `<root>`, the
+# same seam and `sed -n 's/^<key>: //p'` idiom the guard chain already uses to
+# resolve `content-dir:` and `store:`. Sets the globals `WORKTREE_SWEEP`
+# (`true` or `false`), `IDLE` (minutes), and `STALE_DAYS` (days). Any
+# resolution failure — python3 absent, malformed config, no matching line —
+# falls back to the built-in defaults `true`, `30`, and `7`, mirroring the
+# layered loader's own tolerance, so this helper never depends on anything
+# beyond git. `config-show` itself already resolves `SHIPD_WORKTREE_IDLE_MINUTES`
+# and `SHIPD_WORKTREE_STALE_DAYS` ahead of the config layer, so those
+# environment overrides keep working with no separate handling here.
+resolve_worktree_settings() {
+  local root="$1" config_show
+
+  config_show=$(python3 "$SCRIPT_DIR/spec_status.py" --root "$root" \
+    config-show 2>/dev/null || true)
+
+  WORKTREE_SWEEP=$(printf '%s\n' "$config_show" \
+    | sed -n 's/^worktree-sweep: //p' | head -n 1)
+  case "$WORKTREE_SWEEP" in
+    true|false) ;;
+    *) WORKTREE_SWEEP="true" ;;
+  esac
+
+  IDLE=$(printf '%s\n' "$config_show" \
+    | sed -n 's/^worktree-idle-minutes: //p' | head -n 1)
+  case "$IDLE" in
+    ''|*[!0-9]*) IDLE=30 ;;
+  esac
+
+  STALE_DAYS=$(printf '%s\n' "$config_show" \
+    | sed -n 's/^worktree-stale-days: //p' | head -n 1)
+  case "$STALE_DAYS" in
+    ''|*[!0-9]*) STALE_DAYS=7 ;;
+  esac
+}
+
 # --- remove verb ------------------------------------------------------------
 #
 # Guards run in order dirty -> unshipped -> claims/lock -> recent activity,
 # accumulating every failing reason into one refusal report (never
 # first-failure-only — the human should see the whole picture). Exit codes
 # mirror the gate engine: 0 removed, 2 refused, 1 usage/error.
-cmd_remove() {
-  CHANGE="${1:-}"
-  [ $# -gt 0 ] && shift
-  FORCE=0
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --force) FORCE=1 ;;
-      *) echo "error: unknown argument '$1'" >&2; usage; return 1 ;;
-    esac
-    shift
-  done
 
-  if [ -z "$CHANGE" ]; then
-    usage
-    return 1
-  fi
-
-  # Same kebab-case rule as the create path: names never contain slashes, so
-  # `remove ../foo` cannot resolve a path outside `.worktrees/`.
-  if ! printf '%s' "$CHANGE" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$'; then
-    echo "error: '$CHANGE' is not kebab-case (lowercase letters, digits, hyphens)" >&2
-    return 1
-  fi
-
-  # Must run from the repository root: it has a real `.git` directory.
-  if [ ! -d ".git" ]; then
-    echo "error: run this from the repo root (no .git directory here)" >&2
-    return 1
-  fi
-
-  WORKTREE=".worktrees/$CHANGE"
-  if [ ! -d "$WORKTREE" ]; then
-    echo "error: no worktree at $WORKTREE" >&2
-    return 1
-  fi
-
-  IDLE="${SHIPD_WORKTREE_IDLE_MINUTES:-30}"
-  case "$IDLE" in
-    ''|*[!0-9]*)
-      echo "error: SHIPD_WORKTREE_IDLE_MINUTES must be a non-negative integer" >&2
-      return 1 ;;
-  esac
-
-  # The base for guard #2's carve-out, resolved once. Fail closed: a detached
-  # root HEAD resolves empty, and a base that *is* the worktree's own branch
-  # would carve out the worktree's own work — both leave BASE empty, so every
-  # planned change guards exactly as it did before the carve-out.
-  BASE=$(resolve_base_branch)
-  WT_BRANCH=$(git -C "$WORKTREE" symbolic-ref -q --short HEAD 2>/dev/null || true)
-  if [ "$BASE" = "$WT_BRANCH" ]; then
-    BASE=""
-  fi
+# collect_remove_reasons <worktree> <change>
+#
+# Populates the global `reasons` array with every guard reason firing against
+# `<worktree>` (a `.worktrees/<change>`-style path) and prints nothing. Reset
+# at the top of every call, so a caller iterating several worktrees — the
+# `sweep` verb — gets a fresh array each time rather than an accumulating one.
+# `cmd_remove` and `cmd_sweep` both call this; a guard added here applies to
+# both, and `cmd_sweep` never forces past what it finds. Guard 4 reads the
+# idle window from the global `$IDLE`, which the caller resolves once before
+# looping.
+collect_remove_reasons() {
+  local worktree="$1" change="$2"
+  local base wt_branch porcelain config_show content_dir store_dir
+  local planned store_planned d dir t l hit
 
   reasons=()
 
+  # The base for guard #2's carve-out, resolved once per worktree. Fail
+  # closed: a detached root HEAD resolves empty, and a base that *is* the
+  # worktree's own branch would carve out the worktree's own work — both
+  # leave `base` empty, so every planned change guards exactly as it did
+  # before the carve-out.
+  base=$(resolve_base_branch)
+  wt_branch=$(git -C "$worktree" symbolic-ref -q --short HEAD 2>/dev/null || true)
+  if [ "$base" = "$wt_branch" ]; then
+    base=""
+  fi
+
   # 1. Dirty tree: any uncommitted or untracked path. Computed once and reused
   # by guard 4 below, which only runs while this is non-empty.
-  PORCELAIN=$(git -C "$WORKTREE" status --porcelain 2>/dev/null)
-  if [ -n "$PORCELAIN" ]; then
+  porcelain=$(git -C "$worktree" status --porcelain 2>/dev/null)
+  if [ -n "$porcelain" ]; then
     reasons+=("dirty worktree: uncommitted or untracked files")
   fi
 
@@ -233,7 +253,7 @@ cmd_remove() {
   # configuration relocates the content directory into an external store
   # (`store_root`); guards 2 and 3 then also check the store, scoped to the
   # change under removal.
-  config_show=$(python3 "$SCRIPT_DIR/spec_status.py" --root "$WORKTREE" \
+  config_show=$(python3 "$SCRIPT_DIR/spec_status.py" --root "$worktree" \
     config-show 2>/dev/null || true)
   content_dir=$(printf '%s\n' "$config_show" \
     | sed -n 's/^content-dir: //p' | head -n 1)
@@ -242,13 +262,13 @@ cmd_remove() {
   fi
   store_dir=$(printf '%s\n' "$config_show" | sed -n 's/^store: //p' | head -n 1)
 
-  planned="$WORKTREE/$content_dir/planned"
+  planned="$worktree/$content_dir/planned"
   # Only this change's directory in the store: the store is shared by every
   # worktree of the repository, so scanning the whole `planned/` would block
   # removing any worktree while any change is in flight.
   store_planned=""
   if [ -n "$store_dir" ]; then
-    store_planned="$store_dir/planned/$CHANGE"
+    store_planned="$store_dir/planned/$change"
   fi
 
   # 2. Unshipped changes still parked under <content-dir>/planned/ — except the
@@ -260,7 +280,7 @@ cmd_remove() {
     for d in "$planned"/*/; do
       [ -d "$d" ] || continue
       dir="${d%/}"
-      if planned_is_base_content "$WORKTREE" "$BASE" "${dir#$WORKTREE/}"; then
+      if planned_is_base_content "$worktree" "$base" "${dir#$worktree/}"; then
         continue
       fi
       reasons+=("unshipped change under $content_dir/planned: $dir")
@@ -299,7 +319,7 @@ cmd_remove() {
   fi
 
   # 4. Recent activity inside the idle window (skipped when IDLE=0), and only
-  # while the tree is dirty (guard 1's $PORCELAIN, reused rather than
+  # while the tree is dirty (guard 1's $porcelain, reused rather than
   # recomputed). This makes the probe non-decisive: a dirty tree already
   # refuses through guard 1, so this can only add a second reason line beside
   # it — a clean tree is indistinguishable from a finished close-out, so there
@@ -307,12 +327,57 @@ cmd_remove() {
   # `find -mmin`, which both GNU and BSD (macOS) find implement — unlike
   # `-newermt`/`-quit`, whose grammar/availability differs across find flavors.
   # `| head -n1` stops the walk at the first hit without the GNU-only `-quit`.
-  if [ "$IDLE" -gt 0 ] && [ -n "$PORCELAIN" ]; then
-    hit=$(find "$WORKTREE" -mmin "-$IDLE" -print 2>/dev/null | head -n 1 || true)
+  if [ "$IDLE" -gt 0 ] && [ -n "$porcelain" ]; then
+    hit=$(find "$worktree" -mmin "-$IDLE" -print 2>/dev/null | head -n 1 || true)
     if [ -n "$hit" ]; then
       reasons+=("file modified within the idle window (last $IDLE minutes): $hit")
     fi
   fi
+}
+
+cmd_remove() {
+  CHANGE="${1:-}"
+  [ $# -gt 0 ] && shift
+  FORCE=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --force) FORCE=1 ;;
+      *) echo "error: unknown argument '$1'" >&2; usage; return 1 ;;
+    esac
+    shift
+  done
+
+  if [ -z "$CHANGE" ]; then
+    usage
+    return 1
+  fi
+
+  # Same kebab-case rule as the create path: names never contain slashes, so
+  # `remove ../foo` cannot resolve a path outside `.worktrees/`.
+  if ! printf '%s' "$CHANGE" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$'; then
+    echo "error: '$CHANGE' is not kebab-case (lowercase letters, digits, hyphens)" >&2
+    return 1
+  fi
+
+  # Must run from the repository root: it has a real `.git` directory.
+  if [ ! -d ".git" ]; then
+    echo "error: run this from the repo root (no .git directory here)" >&2
+    return 1
+  fi
+
+  WORKTREE=".worktrees/$CHANGE"
+  if [ ! -d "$WORKTREE" ]; then
+    echo "error: no worktree at $WORKTREE" >&2
+    return 1
+  fi
+
+  # Resolves `IDLE` (guard 4's window) through the layered config, with
+  # `SHIPD_WORKTREE_IDLE_MINUTES` as the higher-precedence override —
+  # `config-show` itself applies that precedence (shipd-config
+  # worktree-sweep-keys).
+  resolve_worktree_settings "$WORKTREE"
+
+  collect_remove_reasons "$WORKTREE" "$CHANGE"
 
   if [ "${#reasons[@]}" -gt 0 ]; then
     if [ "$FORCE" -eq 1 ]; then
@@ -348,13 +413,18 @@ cmd_remove() {
 # worktree, never anything outside `change/*`. `git branch -d` is deliberately
 # not used — it judges by ancestry alone and so cannot see the squash merges
 # that are the whole problem. Every candidate is reported, pruned or kept, and
-# the verb exits 0 whether or not anything was deleted.
+# the verb exits 0 whether or not anything was deleted. `--dry-run` reports
+# the same candidates without deleting anything — used internally by `sweep`,
+# which reuses this verb wholesale for its own branch pass.
 cmd_prune_branches() {
-  if [ $# -gt 0 ]; then
-    echo "error: unknown argument '$1'" >&2
-    usage
-    return 1
-  fi
+  local dry_run=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dry-run) dry_run=1 ;;
+      *) echo "error: unknown argument '$1'" >&2; usage; return 1 ;;
+    esac
+    shift
+  done
 
   # Must run from the repository root: it has a real `.git` directory.
   if [ ! -d ".git" ]; then
@@ -403,11 +473,11 @@ cmd_prune_branches() {
       continue
     fi
     if branch_is_merged "$base" "$branch"; then
-      git branch -D "$branch" >/dev/null
+      [ "$dry_run" -eq 1 ] || git branch -D "$branch" >/dev/null
       echo "pruned: $branch"
       pruned=$((pruned + 1))
     elif [ "$remote_probe_available" -eq 1 ] && branch_remote_ref_gone "$branch"; then
-      git branch -D "$branch" >/dev/null
+      [ "$dry_run" -eq 1 ] || git branch -D "$branch" >/dev/null
       echo "pruned: $branch"
       pruned=$((pruned + 1))
     else
@@ -419,8 +489,140 @@ cmd_prune_branches() {
   echo "prune-branches: $pruned pruned, $kept kept (base $base)."
 }
 
-# Subcommand dispatch: `remove` and `prune-branches` are the verbs; any other
-# first argument is a change name for the create path (backward compatible).
+# --- sweep verb --------------------------------------------------------------
+#
+# Opportunistic housekeeping: reclaims the worktrees under `.worktrees/`
+# whose work has already shipped, then runs `prune-branches`'s own branch
+# reclamation. Judges each worktree's merged-ness with the same two probes
+# `prune-branches` consults, in the same order, and reuses the `remove`
+# guard chain (`collect_remove_reasons`) on merged candidates so a sweep
+# never forces past a guard `remove` itself would refuse on. Always exits 0,
+# whether or not anything was reclaimed, so a caller's own outcome never
+# depends on it (worktree-sweep worktree-sweep-verb).
+cmd_sweep() {
+  local dry_run=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dry-run) dry_run=1 ;;
+      *) echo "error: unknown argument '$1'" >&2; usage; return 1 ;;
+    esac
+    shift
+  done
+
+  # Must run from the repository root: it has a real `.git` directory.
+  if [ ! -d ".git" ]; then
+    echo "error: run this from the repo root (no .git directory here)" >&2
+    return 1
+  fi
+
+  local base
+  base=$(resolve_base_branch)
+  if [ -z "$base" ]; then
+    echo "sweep: no base branch resolves — the root checkout's HEAD is detached; skipping the worktree pass and the branch prune" >&2
+    return 0
+  fi
+
+  resolve_worktree_settings "."
+
+  # Refresh remote-tracking refs once, before judging any worktree's
+  # merged-ness — the same refresh `prune-branches` does for its own branch
+  # pass below, run here too so this pass's `branch_remote_ref_gone` calls see
+  # current state. Never depends on the network: no remote, or a failed
+  # fetch, just leaves the remote probe unavailable and the loop falls back
+  # to the content probe alone.
+  local remote_probe_available=0
+  if [ -n "$(git remote 2>/dev/null)" ]; then
+    if git fetch --prune --all --quiet 2>/dev/null; then
+      remote_probe_available=1
+    fi
+  fi
+
+  local now stale_seconds wt name branch counts merged tip age_seconds age_days joined r
+
+  now=$(date +%s)
+  stale_seconds=$((STALE_DAYS * 86400))
+
+  if [ -d ".worktrees" ]; then
+    for wt in .worktrees/*/; do
+      [ -d "$wt" ] || continue
+      wt="${wt%/}"
+      name="${wt#.worktrees/}"
+
+      branch=$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null || true)
+      [ -n "$branch" ] || continue
+
+      # A branch with no commits ahead of the base is never a sweep
+      # candidate — otherwise the create-path sweep would delete the
+      # worktree it just created.
+      counts=$(branch_counts "$base" "$branch")
+      case "$counts" in
+        "ahead 0,"*) continue ;;
+      esac
+
+      merged=0
+      if branch_is_merged "$base" "$branch"; then
+        merged=1
+      elif [ "$remote_probe_available" -eq 1 ] && branch_remote_ref_gone "$branch"; then
+        merged=1
+      fi
+
+      if [ "$merged" -eq 1 ]; then
+        collect_remove_reasons "$wt" "$name"
+        if [ "${#reasons[@]}" -gt 0 ]; then
+          joined=""
+          for r in "${reasons[@]}"; do
+            if [ -z "$joined" ]; then
+              joined="$r"
+            else
+              joined="$joined; $r"
+            fi
+          done
+          echo "kept: $wt ($joined)"
+        else
+          # The removal runs as an `if` condition so the script's global
+          # `set -e` does not abort the sweep when it fails (a locked
+          # worktree, a permission error). Housekeeping must never take the
+          # whole pass — or the caller's exit code — down with one worktree
+          # it cannot reclaim, so a failure is reported and the loop and the
+          # branch prune below carry on.
+          if [ "$dry_run" -eq 1 ]; then
+            echo "swept: $wt"
+          elif git worktree remove "$wt"; then
+            git worktree prune
+            echo "swept: $wt"
+          else
+            echo "kept: $wt (removal failed)"
+          fi
+        fi
+      else
+        tip=$(git -C "$wt" log -1 --format=%ct 2>/dev/null || true)
+        if [ -n "$tip" ]; then
+          age_seconds=$((now - tip))
+          if [ "$age_seconds" -gt "$stale_seconds" ]; then
+            age_days=$((age_seconds / 86400))
+            echo "stale: $wt (unmerged; branch tip ${age_days}d old)"
+          else
+            echo "kept: $wt (unmerged; branch tip recent)"
+          fi
+        else
+          echo "kept: $wt (unmerged)"
+        fi
+      fi
+    done
+  fi
+
+  if [ "$dry_run" -eq 1 ]; then
+    cmd_prune_branches --dry-run
+  else
+    cmd_prune_branches
+  fi
+
+  return 0
+}
+
+# Subcommand dispatch: `remove`, `prune-branches`, and `sweep` are the verbs;
+# any other first argument is a change name for the create path (backward
+# compatible).
 if [ "${1:-}" = "remove" ]; then
   shift
   cmd_remove "$@"
@@ -430,6 +632,12 @@ fi
 if [ "${1:-}" = "prune-branches" ]; then
   shift
   cmd_prune_branches "$@"
+  exit $?
+fi
+
+if [ "${1:-}" = "sweep" ]; then
+  shift
+  cmd_sweep "$@"
   exit $?
 fi
 

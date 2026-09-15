@@ -402,6 +402,9 @@ RECOGNIZED_CONFIG_KEYS = (
     "wiki_base",
     "workspace",
     "workspaces_root",
+    "worktree_idle_minutes",
+    "worktree_stale_days",
+    "worktree_sweep",
 )
 
 # Built-in defaults beneath all config files. Only ``dir`` and
@@ -413,6 +416,17 @@ DEFAULT_DIR = ".shipd"
 # (shipd-config completed-retention-key).
 COMPLETED_RETENTION_KEY = "completed_retention_days"
 DEFAULT_COMPLETED_RETENTION_DAYS = 30
+
+# The three worktree-housekeeping keys (shipd-config worktree-sweep-keys):
+# whether the engine's worktree create path runs the sweep, the idle window
+# the ``remove`` verb's recent-activity guard uses, and the staleness window
+# beyond which the sweep reports an unmerged worktree.
+WORKTREE_SWEEP_KEY = "worktree_sweep"
+DEFAULT_WORKTREE_SWEEP = True
+WORKTREE_IDLE_MINUTES_KEY = "worktree_idle_minutes"
+DEFAULT_WORKTREE_IDLE_MINUTES = 30
+WORKTREE_STALE_DAYS_KEY = "worktree_stale_days"
+DEFAULT_WORKTREE_STALE_DAYS = 7
 
 
 def _load_config_file(path):
@@ -531,6 +545,73 @@ def completed_retention_days(config):
         return None
     if value < 0:
         return DEFAULT_COMPLETED_RETENTION_DAYS
+    return value
+
+
+def worktree_sweep(config):
+    """Return whether the worktree sweep is enabled, from a resolved config's
+    ``worktree_sweep`` key (shipd-config worktree-sweep-keys).
+
+    A boolean is used as declared; anything else — a string, a number, an
+    absent key — is treated as undeclared and yields the built-in default
+    rather than raising, mirroring ``completed_retention_days``'s tolerance."""
+    value = config.get(WORKTREE_SWEEP_KEY, DEFAULT_WORKTREE_SWEEP)
+    if not isinstance(value, bool):
+        return DEFAULT_WORKTREE_SWEEP
+    return value
+
+
+def _env_int_in_range(env, name, minimum):
+    """Parse ``env[name]`` as an integer at least ``minimum``, returning
+    ``None`` when the variable is unset or its value does not parse as one —
+    letting the caller fall through to the config layer."""
+    raw = env.get(name)
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if value < minimum:
+        return None
+    return value
+
+
+def worktree_idle_minutes(config, env):
+    """Return the worktree idle window in minutes: ``SHIPD_WORKTREE_IDLE_MINUTES``
+    in ``env`` where it is set to a valid value, else a resolved config's
+    ``worktree_idle_minutes`` key (shipd-config worktree-sweep-keys), else the
+    built-in default.
+
+    A non-negative integer is used as declared (``0`` disables the ``remove``
+    verb's recent-activity guard); anything else at either layer — a boolean,
+    a negative number, a non-integer — is treated as undeclared there,
+    mirroring ``completed_retention_days``'s tolerance."""
+    env_value = _env_int_in_range(env, "SHIPD_WORKTREE_IDLE_MINUTES", 0)
+    if env_value is not None:
+        return env_value
+    value = config.get(
+        WORKTREE_IDLE_MINUTES_KEY, DEFAULT_WORKTREE_IDLE_MINUTES)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return DEFAULT_WORKTREE_IDLE_MINUTES
+    return value
+
+
+def worktree_stale_days(config, env):
+    """Return the worktree staleness window in days:
+    ``SHIPD_WORKTREE_STALE_DAYS`` in ``env`` where it is set to a valid value,
+    else a resolved config's ``worktree_stale_days`` key (shipd-config
+    worktree-sweep-keys), else the built-in default.
+
+    A positive integer is used as declared; anything else at either layer —
+    a boolean, zero, a negative number, a non-integer — is treated as
+    undeclared there, mirroring ``completed_retention_days``'s tolerance."""
+    env_value = _env_int_in_range(env, "SHIPD_WORKTREE_STALE_DAYS", 1)
+    if env_value is not None:
+        return env_value
+    value = config.get(WORKTREE_STALE_DAYS_KEY, DEFAULT_WORKTREE_STALE_DAYS)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return DEFAULT_WORKTREE_STALE_DAYS
     return value
 
 

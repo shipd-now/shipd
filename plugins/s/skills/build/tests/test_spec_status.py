@@ -3051,6 +3051,26 @@ class ConfigShowTest(SpecStatusTestBase):
         self.assertIn("workspace", wiki_lines[0])
         self.assertIn(os.path.join(self.root, ".shipd"), wiki_lines[0])
 
+    # -- worktree housekeeping keys (worktree-sweep worktree-sweep-keys) -----
+
+    def test_worktree_lines_print_on_a_default_only_resolution(self):
+        r = self.cli("config-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertIn("worktree-sweep: true", lines)
+        self.assertIn("worktree-idle-minutes: 30", lines)
+        self.assertIn("worktree-stale-days: 7", lines)
+
+    def test_worktree_lines_carry_a_declared_value(self):
+        self._write_config(
+            self.root,
+            {"worktree_sweep": False, "worktree_stale_days": 14})
+        r = self.cli("config-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertIn("worktree-sweep: false", lines)
+        self.assertIn("worktree-stale-days: 14", lines)
+
 
 class PipelineShowTest(SpecStatusTestBase):
     """`pipeline-show` prints the effective autonomous pipeline: one line per

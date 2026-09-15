@@ -2383,6 +2383,63 @@ class CompletedRetentionKeyTest(unittest.TestCase):
         self.assertEqual(sc.completed_retention_days(config), 30)
 
 
+class WorktreeSweepConfigKeysTest(unittest.TestCase):
+    """worktree_sweep / worktree_idle_minutes / worktree_stale_days: the three
+    layered worktree-housekeeping keys and their accessors (shipd-config
+    worktree-sweep-keys)."""
+
+    def test_worktree_sweep_defaults_true(self):
+        self.assertIs(sc.worktree_sweep({}), True)
+
+    def test_worktree_sweep_reads_declared_layer_value(self):
+        self.assertIs(sc.worktree_sweep({"worktree_sweep": False}), False)
+
+    def test_worktree_sweep_malformed_value_falls_back_to_default(self):
+        self.assertIs(sc.worktree_sweep({"worktree_sweep": "nope"}), True)
+
+    def test_worktree_idle_minutes_defaults_30(self):
+        self.assertEqual(sc.worktree_idle_minutes({}, {}), 30)
+
+    def test_worktree_idle_minutes_reads_declared_layer_value(self):
+        self.assertEqual(
+            sc.worktree_idle_minutes({"worktree_idle_minutes": 0}, {}), 0)
+
+    def test_worktree_idle_minutes_env_overrides_layer(self):
+        config = {"worktree_idle_minutes": 5}
+        env = {"SHIPD_WORKTREE_IDLE_MINUTES": "15"}
+        self.assertEqual(sc.worktree_idle_minutes(config, env), 15)
+
+    def test_worktree_idle_minutes_malformed_value_falls_back_to_default(self):
+        config = {"worktree_idle_minutes": "soon"}
+        self.assertEqual(sc.worktree_idle_minutes(config, {}), 30)
+
+    def test_worktree_idle_minutes_malformed_env_falls_through_to_layer(self):
+        config = {"worktree_idle_minutes": 12}
+        env = {"SHIPD_WORKTREE_IDLE_MINUTES": "soon"}
+        self.assertEqual(sc.worktree_idle_minutes(config, env), 12)
+
+    def test_worktree_stale_days_defaults_7(self):
+        self.assertEqual(sc.worktree_stale_days({}, {}), 7)
+
+    def test_worktree_stale_days_reads_declared_layer_value(self):
+        self.assertEqual(
+            sc.worktree_stale_days({"worktree_stale_days": 14}, {}), 14)
+
+    def test_worktree_stale_days_env_overrides_layer(self):
+        config = {"worktree_stale_days": 14}
+        env = {"SHIPD_WORKTREE_STALE_DAYS": "2"}
+        self.assertEqual(sc.worktree_stale_days(config, env), 2)
+
+    def test_worktree_stale_days_malformed_value_falls_back_to_default(self):
+        config = {"worktree_stale_days": "soon"}
+        self.assertEqual(sc.worktree_stale_days(config, {}), 7)
+
+    def test_worktree_stale_days_malformed_env_falls_through_to_layer(self):
+        config = {"worktree_stale_days": 21}
+        env = {"SHIPD_WORKTREE_STALE_DAYS": "soon"}
+        self.assertEqual(sc.worktree_stale_days(config, env), 21)
+
+
 class ExternalStoreRootTest(unittest.TestCase):
     """store_root_dir / repo_store_folder / specs_dir's external branch: the
     optional `store_root` key relocating a repo's content directory into an
