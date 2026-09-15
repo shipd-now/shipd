@@ -15,6 +15,10 @@ Errors (exit 1):
     where the standard puts procedural steps, 25 words everywhere else
   * a paragraph over six sentences
   * a second mermaid fence, where the standard allows one diagram per doc
+  * a shipd configuration filename the engine does not read
+    (``shipd.config.json``, or a dot-less ``shipd-config.json``), checked
+    over every line including fenced blocks; the engine reads
+    ``.shipd-config.json``
 
 Warning only, never affecting the exit code (exit 0):
   * a passive-voice match, because detecting passive voice without a
@@ -57,6 +61,18 @@ NUMBERED_RE = re.compile(r"^\s*\d+[.)]\s+")
 BULLET_RE = re.compile(r"^\s*[-*+]\s+")
 FENCE_RE = re.compile(r"^\s*(```+|~~~+)(.*)$")
 INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
+
+# The shipd configuration file the engine reads.
+CONFIG_FILENAME = ".shipd-config.json"
+
+# Wrong spellings a page might name instead of CONFIG_FILENAME. The dotted
+# form never occurs inside the correct filename, so a plain search is safe.
+# The dot-less form does occur inside it (".shipd-config.json" contains
+# "shipd-config.json"), so it matches only when nothing that could precede
+# a valid filename character — a dot, a word character, or a hyphen — sits
+# immediately before it.
+CONFIG_WRONG_DOTTED_RE = re.compile(r"shipd\.config\.json")
+CONFIG_WRONG_DASHED_RE = re.compile(r"(?<![.\w-])shipd-config\.json")
 
 # Periods that end one of these tokens never end a sentence.
 ABBREVIATIONS = {"e.g.", "i.e.", "etc.", "vs."}
@@ -322,6 +338,24 @@ def check_marker(path, lines):
     return None, value
 
 
+def check_config_filename(path, lines):
+    """Every line naming a shipd configuration file the engine does not read.
+
+    Runs over every raw line, fenced code blocks included: a wrong filename
+    inside a fenced example misleads a reader exactly as one in prose does,
+    so this does not go through ``collect_units``, which strips fences.
+    """
+    findings = []
+    for number, raw in enumerate(lines, start=1):
+        if (CONFIG_WRONG_DOTTED_RE.search(raw)
+                or CONFIG_WRONG_DASHED_RE.search(raw)):
+            findings.append(Finding(
+                path, number, "error",
+                "names a shipd configuration file the engine does not "
+                "read; the engine reads '%s'" % CONFIG_FILENAME))
+    return findings
+
+
 def check_file(path):
     """Every finding in one file, in line order.
 
@@ -332,6 +366,7 @@ def check_file(path):
         lines = handle.read().splitlines()
 
     findings = []
+    findings.extend(check_config_filename(path, lines))
     marker_finding, doc_type = check_marker(path, lines)
     if marker_finding:
         findings.append(marker_finding)

@@ -77,6 +77,14 @@ a doc that cannot fit is really two docs.
 Write one doc for one job. A concept doc that starts listing flags has become
 a reference doc; move the flags.
 
+### The configuration filename
+
+The engine reads configuration only from `.shipd-config.json`. A doc naming a
+configuration file under any other spelling — `shipd.config.json` or a
+dot-less `shipd-config.json` — is an error, because that filename misconfigures
+a reader in silence. `shipd.config.example.json` is the annotated sample, not
+a file the engine reads, so naming it is clean.
+
 ### Diagrams — the structural test
 
 A mermaid diagram earns its place only when it carries structure that prose

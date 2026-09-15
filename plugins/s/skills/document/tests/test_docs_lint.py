@@ -264,6 +264,72 @@ class MermaidTests(LintTestCase):
             [ln for ln in out.splitlines() if "diagram" in ln.lower()], [], out)
 
 
+class ConfigFilenameTests(LintTestCase):
+    """A doc naming a config file the engine does not read is an error.
+
+    ``shipd-config.json`` is a substring of the correct ``.shipd-config.json``,
+    so the dot-less check must not fire on the correct name.
+    """
+
+    def test_dotted_wrong_name_in_prose_is_an_error(self):
+        path = self.write("concept.md", [
+            "<!-- doc-type: concept -->",
+            "",
+            "Configure the engine in `shipd.config.json`.",
+        ])
+        code, out = self.run_lint(path)
+        self.assertEqual(code, 1)
+        errs = self.errors(out)
+        self.assertEqual(len(errs), 1, out)
+        self.assertIn(".shipd-config.json", errs[0])
+
+    def test_the_correct_filename_is_clean(self):
+        path = self.write("concept.md", [
+            "<!-- doc-type: concept -->",
+            "",
+            "Configure the engine in `.shipd-config.json`.",
+        ])
+        code, out = self.run_lint(path)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.errors(out), [])
+
+    def test_the_sample_filename_is_clean(self):
+        path = self.write("concept.md", [
+            "<!-- doc-type: concept -->",
+            "",
+            "See the annotated sample at `shipd.config.example.json`.",
+        ])
+        code, out = self.run_lint(path)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.errors(out), [])
+
+    def test_dot_less_wrong_name_is_an_error(self):
+        path = self.write("concept.md", [
+            "<!-- doc-type: concept -->",
+            "",
+            "Configure the engine in `shipd-config.json`.",
+        ])
+        code, out = self.run_lint(path)
+        self.assertEqual(code, 1)
+        errs = self.errors(out)
+        self.assertEqual(len(errs), 1, out)
+        self.assertIn(".shipd-config.json", errs[0])
+
+    def test_wrong_name_inside_a_code_fence_is_still_an_error(self):
+        path = self.write("concept.md", [
+            "<!-- doc-type: concept -->",
+            "",
+            "```json",
+            "{\"file\": \"shipd.config.json\"}",
+            "```",
+        ])
+        code, out = self.run_lint(path)
+        self.assertEqual(code, 1)
+        errs = self.errors(out)
+        self.assertEqual(len(errs), 1, out)
+        self.assertIn(".shipd-config.json", errs[0])
+
+
 class CodeFenceTests(LintTestCase):
     """Prose analysis stops at a fence; code is never measured."""
 
