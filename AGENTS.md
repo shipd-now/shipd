@@ -242,3 +242,32 @@ that only checks the header and column padding; its held-out
 `verify/test_report_order.py` asserts the documented order; and `prompt.md`
 invokes `/s:fix` on the symptom (rows print in the wrong order) without
 naming the sorting rule or the file to edit.
+
+**`--arm {treatment,baseline,both}` (default `treatment`) runs a no-skill
+baseline as an A/B.** `treatment` is today's behavior — every session loads
+the plugin via `--plugin-dir`. `baseline` runs the same fixture, content
+directory, permission mode, timeout, resume cap, and grader, but drops
+`--plugin-dir` so the session sees no plugin at all — a controlled
+experiment varies one thing. `both` runs `--runs N` of each arm and reports
+the two pass rates together, one labelled row per arm per case.
+
+The baseline run's prompt is **derived, never authored**: the harness strips
+the leading `/s:<skill>` token from the case's own `prompt.md` and sends the
+remainder verbatim, so both arms receive identical wording. A hand-authored
+sibling prompt file would make prompt parity a matter of trust — thin
+phrasing flattering the skill, a full brief flattering the baseline —
+deriving it from the one prompt file makes parity structural instead.
+
+The harness refuses a `baseline`/`both` arm on two cases, before assembling
+any scratch repo or spawning a session, naming the case in both messages:
+
+- A **structural**-graded case — structural grading asserts a change
+  directory, a clean `spec_lint.py`, and `Status: ready`, artifacts only the
+  plugin's skills produce, so a baseline arm would fail by construction and
+  the comparison would be theatre.
+- A `prompt.md` whose first line carries no `/s:<skill>` token — nothing to
+  derive a baseline prompt from.
+
+**The exit code gates on the treatment arm alone.** A failing baseline run is
+the expected, informative outcome of a working comparison, not a harness
+regression, so its pass rate is reported and never affects the exit code.

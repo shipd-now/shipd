@@ -68,9 +68,14 @@ class Case:
 @dataclasses.dataclass
 class RunResult:
     """The graded outcome of a single case run. ``failure`` names the first
-    failing assertion, or is ``None`` when the run passed."""
+    failing assertion, or is ``None`` when the run passed. ``refused`` is
+    True when the run was turned away before any session spawned — a
+    baseline-bearing arm refused for a structural case or an unparseable
+    ``prompt.md`` — as opposed to a baseline arm that genuinely ran and
+    failed, which is an expected, informative outcome and not a refusal."""
     passed: bool
     failure: str | None = None
+    refused: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +154,32 @@ def discover_cases(cases_dir, case_filter=None):
         cases.append(Case(name=name, prompt_path=prompt_path,
                           fixture_path=fixture_path, grader=grader))
     return cases
+
+
+# ---------------------------------------------------------------------------
+# Derived baseline prompt
+# ---------------------------------------------------------------------------
+
+_SKILL_TOKEN_RE = re.compile(r"^/s:([A-Za-z0-9_-]+)(\s|$)")
+
+
+def baseline_prompt(text):
+    """Derive a baseline run's prompt from a case's ``prompt.md`` text.
+
+    Strips a leading ``/s:<skill>`` token from the first line and returns the
+    remainder of the text verbatim (the rest of that first line, plus every
+    following line unchanged), so both arms receive identical wording. Raises
+    :class:`ValueError`, naming the offending first line, when it carries no
+    such leading token.
+    """
+    lines = text.splitlines(keepends=True)
+    first = lines[0] if lines else ""
+    m = _SKILL_TOKEN_RE.match(first)
+    if not m:
+        raise ValueError(
+            "prompt does not open with a '/s:<skill>' token: %r"
+            % (first.strip(),))
+    return first[m.end():] + "".join(lines[1:])
 
 
 # ---------------------------------------------------------------------------
@@ -242,13 +273,15 @@ _session_id_from_transcript = session_driver.session_id_from_transcript
 
 def _run_turn(prompt, scratch, resume_id=None, turn_index=1,
               claude_bin="claude", host_repo=HOST_REPO,
-              timeout=SESSION_TIMEOUT_SECONDS):
+              timeout=SESSION_TIMEOUT_SECONDS, arm="treatment"):
     """Run one turn of a headless Claude Code conversation inside ``scratch``.
 
     Launches ``<claude_bin> -p <prompt> --plugin-dir <host>/plugins/s
     --permission-mode bypassPermissions --output-format json`` with the scratch
     directory as cwd — plus ``--resume <resume_id>`` when continuing an
-    existing session. The captured stdout is written to
+    existing session. Under ``arm="baseline"``, the ``--plugin-dir`` pair is
+    omitted and nothing else about the command changes — the session runs
+    with no plugin loaded. The captured stdout is written to
     ``<scratch>/eval-transcript.json`` for turn 1 and
     ``eval-transcript-turn<N>.json`` for resumed turns.
 
@@ -256,11 +289,12 @@ def _run_turn(prompt, scratch, resume_id=None, turn_index=1,
     exits 0 within ``timeout``; ``session_id`` is parsed from the turn's JSON
     transcript (``None`` when unavailable).
     """
-    plugin_dir = os.path.join(host_repo, "plugins", "s")
-    cmd = [claude_bin, "-p", prompt,
-           "--plugin-dir", plugin_dir,
-           "--permission-mode", "bypassPermissions",
-           "--output-format", "json"]
+    cmd = [claude_bin, "-p", prompt]
+    if arm != "baseline":
+        plugin_dir = os.path.join(host_repo, "plugins", "s")
+        cmd += ["--plugin-dir", plugin_dir]
+    cmd += ["--permission-mode", "bypassPermissions",
+            "--output-format", "json"]
     if resume_id is not None:
         cmd += ["--resume", resume_id]
     name = (TRANSCRIPT_NAME if turn_index == 1
@@ -300,19 +334,21 @@ def _behavior_gate_passed(case, scratch):
 
 def run_conversation(case, scratch, claude_bin="claude", host_repo=HOST_REPO,
                      timeout=SESSION_TIMEOUT_SECONDS,
-                     max_resumes=MAX_RESUMES_DEFAULT, turn_runner=None):
+                     max_resumes=MAX_RESUMES_DEFAULT, turn_runner=None,
+                     arm="treatment"):
     """Drive ``case`` as a bounded headless conversation inside ``scratch``.
 
-    Turn 1 sends the case prompt. Afterwards, while the case's gate has not
-    passed and fewer than ``max_resumes`` resumed turns have run, the same
-    session is resumed with the case's reply. Both are selected from
-    ``case.grader``: a structural case (the default) keeps the existing
-    :func:`grade` gate and :data:`GOAHEAD_REPLY` — the plan skill's findings
-    checkpoint no longer fires, so a clean case is expected to reach a
-    gradable state on the first turn, and any resume only answers a genuine
-    typed decision round (an OPEN QUESTIONS ending, a depth-path grill round,
-    or a fast-path question round) by accepting the session's own
-    recommendations. A behavior case instead gates on
+    Turn 1 sends the case prompt — :func:`baseline_prompt` of it under
+    ``arm="baseline"``, unmodified under ``arm="treatment"``. Afterwards,
+    while the case's gate has not passed and fewer than ``max_resumes``
+    resumed turns have run, the same session is resumed with the case's
+    reply. Both are selected from ``case.grader``: a structural case (the
+    default) keeps the existing :func:`grade` gate and :data:`GOAHEAD_REPLY`
+    — the plan skill's findings checkpoint no longer fires, so a clean case
+    is expected to reach a gradable state on the first turn, and any resume
+    only answers a genuine typed decision round (an OPEN QUESTIONS ending, a
+    depth-path grill round, or a fast-path question round) by accepting the
+    session's own recommendations. A behavior case instead gates on
     :func:`_behavior_gate_passed` (the behavior grade evaluated against a
     throwaway copy of ``scratch``, never ``scratch`` itself) and sends
     :data:`BEHAVIOR_GOAHEAD_REPLY`, which carries no emission/lint/promotion
@@ -324,6 +360,8 @@ def run_conversation(case, scratch, claude_bin="claude", host_repo=HOST_REPO,
     """
     with open(case.prompt_path, encoding="utf-8") as fh:
         prompt = fh.read()
+    if arm == "baseline":
+        prompt = baseline_prompt(prompt)
 
     if turn_runner is not None:
         runner = turn_runner
@@ -331,10 +369,13 @@ def run_conversation(case, scratch, claude_bin="claude", host_repo=HOST_REPO,
         # The live turn function needs the eval-specific plugin dir and
         # transcript writing, so bind those and adapt to the driver's runner
         # contract (``timeout`` arrives as a keyword from :func:`drive`).
+        # ``arm`` threads through so a baseline run's turns omit
+        # ``--plugin-dir``.
         def runner(prompt_, cwd, resume_id, turn_index, **kwargs):
             return _run_turn(
                 prompt_, cwd, resume_id, turn_index,
-                claude_bin=claude_bin, host_repo=host_repo, timeout=timeout)
+                claude_bin=claude_bin, host_repo=host_repo, timeout=timeout,
+                arm=arm)
 
     if case.grader == "behavior":
         gate = lambda: _behavior_gate_passed(case, scratch)
@@ -620,12 +661,64 @@ def build_arg_parser():
         help="maximum resumed turns spent answering a session's stops "
              "(default: %d; 0 restores single-shot behavior)"
              % MAX_RESUMES_DEFAULT)
+    parser.add_argument(
+        "--arm", choices=("treatment", "baseline", "both"),
+        default="treatment",
+        help="'treatment' loads the plugin as today (default); 'baseline' "
+             "runs with no plugin loaded, against a prompt derived from the "
+             "case's own prompt.md; 'both' runs --runs N of each arm and "
+             "reports the two pass rates together")
     return parser
 
 
+def _arm_refusal(case, arm):
+    """Return the refusal message for ``case`` under ``arm``, or ``None`` when
+    the arm may proceed.
+
+    A baseline-bearing arm (``"baseline"`` or ``"both"``) is refused for two
+    reasons, checked before any scratch repo is assembled: a ``"structural"``
+    grader could never pass without the plugin session that produces its
+    artifacts, so the comparison would carry no information; and a
+    ``prompt.md`` whose first line carries no leading ``/s:<skill>`` token
+    cannot be turned into a baseline prompt via :func:`baseline_prompt`. Both
+    messages name the case; the structural refusal also names the grader.
+    """
+    if arm == "treatment":
+        return None
+    if case.grader == "structural":
+        return ("case '%s': baseline arm refused — grader is 'structural', "
+                 "which only a plugin session can produce; the comparison "
+                 "would carry no information" % case.name)
+    with open(case.prompt_path, encoding="utf-8") as fh:
+        prompt_text = fh.read()
+    try:
+        baseline_prompt(prompt_text)
+    except ValueError as exc:
+        return "case '%s': baseline arm refused — %s" % (case.name, exc)
+    return None
+
+
+def _refused_results(case, runs, refusal):
+    """Build ``runs`` failed, ``refused=True`` :class:`RunResult`\\ s for
+    ``case``, printing the same per-run ``FAIL`` line a spawned-and-failed run
+    would print. Used both by :func:`execute_case` (a lone arm refused on its
+    own) and by :func:`main` (a ``both`` request refused as a whole before
+    either concrete arm executes) so the two refusal paths render identically.
+    """
+    results = []
+    for i in range(1, runs + 1):
+        result = RunResult(False, refusal, refused=True)
+        results.append(result)
+        first = (result.failure or "").splitlines()
+        print("  [%s %d/%d] FAIL — %s"
+              % (case.name, i, runs, first[0] if first else ""))
+    return results
+
+
 def execute_case(case, runs, claude_bin, keep_scratch,
-                 max_resumes=MAX_RESUMES_DEFAULT):
-    """Run ``case`` ``runs`` times, returning the list of :class:`RunResult`.
+                 max_resumes=MAX_RESUMES_DEFAULT, arm="treatment"):
+    """Run ``case`` ``runs`` times under ``arm``, returning the list of
+    :class:`RunResult`.
 
     Each run assembles a fresh scratch repo, drives the headless conversation
     (initial turn plus bounded go-ahead resumes), and grades it (a failed
@@ -641,7 +734,19 @@ def execute_case(case, runs, claude_bin, keep_scratch,
     :func:`check_behavior_fixture` immediately after ``assemble_scratch``; a
     reported failure fails the run before ``run_conversation`` is invoked, so
     a mis-seeded fixture never spawns a session.
+
+    Before any of that, :func:`_arm_refusal` is consulted: a baseline-bearing
+    ``arm`` (``"baseline"`` or ``"both"``) against a structural case, or a
+    ``prompt.md`` :func:`baseline_prompt` cannot parse, fails every requested
+    run immediately with the naming message and spawns no session — no
+    scratch repo is even assembled. Each such result is additionally marked
+    ``refused=True`` so :func:`summarize` can distinguish "nothing was
+    measured" from a baseline arm that genuinely ran and failed.
     """
+    refusal = _arm_refusal(case, arm)
+    if refusal is not None:
+        return _refused_results(case, runs, refusal)
+
     if case.grader not in ("structural", "behavior"):
         results = []
         for i in range(1, runs + 1):
@@ -665,7 +770,7 @@ def execute_case(case, runs, claude_bin, keep_scratch,
                 else:
                     ok, failure = run_conversation(
                         case, scratch, claude_bin=claude_bin,
-                        max_resumes=max_resumes)
+                        max_resumes=max_resumes, arm=arm)
                     if not ok:
                         result = RunResult(False, failure)
                     elif case.grader == "behavior":
@@ -690,26 +795,66 @@ def execute_case(case, runs, claude_bin, keep_scratch,
     return results
 
 
+# Fixed row order when more than one arm is present: treatment first,
+# baseline second, anything else (there shouldn't be) sorted after by name.
+_ARM_ORDER = {"treatment": 0, "baseline": 1}
+
+
 def summarize(results):
-    """Build the per-case pass-rate summary from ``results`` (a mapping of case
-    name to its list of :class:`RunResult`). Returns ``(lines, exit_code)``;
-    ``exit_code`` is 0 only when every executed case passed every run, else 1.
+    """Build the per-case (per-arm) pass-rate summary from ``results``.
+    Returns ``(lines, exit_code)``.
+
+    ``results`` maps either a case name (the legacy, single-arm shape) or a
+    ``(case, arm)`` tuple to its list of :class:`RunResult`; a plain
+    case-name key is treated as the implicit ``"treatment"`` arm. When at
+    most one arm is represented across ``results`` — always true for the
+    legacy shape, and for a tupled mapping carrying only one arm — rendering
+    is byte-identical to the original single-arm summary: one
+    ``"<case> <passed>/<total>"`` row per case, sorted by case name, so the
+    default single-arm invocation is unchanged. When more than one arm is
+    represented, each case renders one row per arm instead, labelled
+    ``"<case> [<arm>]"`` and sorted by case then the fixed arm order above.
+
+    ``exit_code`` is 0 only when every **treatment**-arm row passed every
+    run (a case with no treatment row at all does not block it) AND no row,
+    in any arm, is a refused run (:attr:`RunResult.refused`). A baseline-arm
+    row that actually ran never affects the exit code on its own — a failing
+    baseline is the expected outcome of a working comparison, not a harness
+    regression — but a refused row means nothing was measured, which is a
+    usage error and always exits non-zero, whatever arm it is filed under. An
+    empty ``results`` is not perfect (mirrors the original behavior) and
+    exits 1.
     """
+    normalized = {
+        (key if isinstance(key, tuple) else (key, "treatment")): runs
+        for key, runs in results.items()}
+    arms_present = {arm for _case, arm in normalized}
+    multi_arm = len(arms_present) > 1
+
+    def _sort_key(item):
+        (case_name, arm), _runs = item
+        return (case_name, _ARM_ORDER.get(arm, len(_ARM_ORDER)), arm)
+
     lines = []
-    all_perfect = bool(results)
-    for name in sorted(results):
-        runs = results[name]
+    treatment_perfect = True
+    any_refused = any(
+        r.refused for runs in normalized.values() for r in runs)
+    for (case_name, arm), runs in sorted(normalized.items(), key=_sort_key):
         passed = sum(1 for r in runs if r.passed)
         total = len(runs)
-        lines.append("%-32s %d/%d" % (name, passed, total))
+        label = "%s [%s]" % (case_name, arm) if multi_arm else case_name
+        lines.append("%-32s %d/%d" % (label, passed, total))
         if passed < total:
-            all_perfect = False
+            if arm == "treatment":
+                treatment_perfect = False
             for i, r in enumerate(runs, 1):
                 if not r.passed:
                     first = (r.failure or "").splitlines()
                     lines.append("    run %d failed: %s"
                                  % (i, first[0] if first else ""))
-    return lines, (0 if all_perfect else 1)
+    exit_code = 1 if not normalized else (
+        0 if (treatment_perfect and not any_refused) else 1)
+    return lines, exit_code
 
 
 def main(argv=None):
@@ -719,13 +864,41 @@ def main(argv=None):
         where = args.case or CASES_DIR
         print("no eval cases found (%s)" % where)
         return 1
+    # 'both' executes --runs N of each concrete arm per case; any other
+    # selection is that one arm alone. The default ('treatment', alone)
+    # keeps every printed line byte-identical to before --arm existed.
+    arms = ("treatment", "baseline") if args.arm == "both" else (args.arm,)
     results = {}
     for case in cases:
-        plural = "" if args.runs == 1 else "s"
-        print("== case: %s (%d run%s) ==" % (case.name, args.runs, plural))
-        results[case.name] = execute_case(
-            case, args.runs, args.claude_bin, args.keep_scratch,
-            max_resumes=args.max_resumes)
+        # Decide once, for the whole selected arm set, whether this case can
+        # support a baseline at all — before either concrete arm executes.
+        # Checking per concrete arm inside execute_case (as arms are looped
+        # below) lets a 'both' request's treatment sub-call slip through:
+        # _arm_refusal(case, "treatment") always returns None, so it would
+        # run — and spawn a real session — before the baseline sub-call
+        # refused. Computing the refusal here, against a representative
+        # non-treatment arm, and applying it to every arm in the selected
+        # set closes that gap. A 'treatment'-only invocation never reaches
+        # this check (args.arm == "treatment" short-circuits to None), so it
+        # is unaffected.
+        invocation_refusal = (
+            _arm_refusal(case, "baseline") if args.arm != "treatment"
+            else None)
+        for arm in arms:
+            plural = "" if args.runs == 1 else "s"
+            if len(arms) == 1:
+                print("== case: %s (%d run%s) =="
+                      % (case.name, args.runs, plural))
+            else:
+                print("== case: %s [%s] (%d run%s) =="
+                      % (case.name, arm, args.runs, plural))
+            if invocation_refusal is not None:
+                results[(case.name, arm)] = _refused_results(
+                    case, args.runs, invocation_refusal)
+            else:
+                results[(case.name, arm)] = execute_case(
+                    case, args.runs, args.claude_bin, args.keep_scratch,
+                    max_resumes=args.max_resumes, arm=arm)
     print()
     print("Summary:")
     lines, exit_code = summarize(results)

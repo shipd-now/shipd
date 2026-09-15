@@ -12,9 +12,11 @@ the host checkout.
 
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 EVALS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO_ROOT = os.path.dirname(EVALS_DIR)
@@ -478,6 +480,34 @@ class CheckBehaviorFixtureTests(TmpPathTestCase):
 
 
 # ---------------------------------------------------------------------------
+# Derived baseline prompt
+# ---------------------------------------------------------------------------
+
+class BaselinePromptTests(unittest.TestCase):
+
+    def test_strips_leading_skill_token(self):
+        text = ("/s:fix The report CLI prints its rows in the wrong "
+                "order.\nSecond line stays.\n")
+        result = run.baseline_prompt(text)
+        self.assertEqual(
+            result,
+            "The report CLI prints its rows in the wrong order.\n"
+            "Second line stays.\n")
+
+    def test_strips_a_different_skill_token(self):
+        text = "/s:plan Add a CSV export button.\nMore detail here.\n"
+        result = run.baseline_prompt(text)
+        self.assertEqual(
+            result, "Add a CSV export button.\nMore detail here.\n")
+
+    def test_no_skill_token_raises(self):
+        text = "Just a plain request with no skill token.\n"
+        with self.assertRaises(ValueError) as ctx:
+            run.baseline_prompt(text)
+        self.assertIn("/s:", str(ctx.exception))
+
+
+# ---------------------------------------------------------------------------
 # Pass-rate aggregation and exit code
 # ---------------------------------------------------------------------------
 
@@ -502,6 +532,261 @@ class SummarizeTests(unittest.TestCase):
         }
         _lines, code = run.summarize(results)
         self.assertNotEqual(code, 0)
+
+
+class SummarizeArmTests(unittest.TestCase):
+    """Exercises ``summarize`` against the ``(case, arm)``-keyed results shape
+    a multi-arm run produces, alongside the legacy plain-case-name shape
+    :class:`SummarizeTests` covers above."""
+
+    def test_single_arm_mapping_renders_like_today(self):
+        """A results mapping carrying only one arm — even when keyed by the
+        new ``(case, arm)`` tuple shape — renders byte-identically to the
+        legacy plain-case-name shape: the default single-arm invocation is
+        unchanged."""
+        legacy_lines, legacy_code = run.summarize(
+            {"a": [_res(True), _res(True), _res(False)]})
+        tupled_lines, tupled_code = run.summarize(
+            {("a", "treatment"): [_res(True), _res(True), _res(False)]})
+        self.assertEqual(tupled_lines, legacy_lines)
+        self.assertEqual(tupled_code, legacy_code)
+
+    def test_two_arm_mapping_renders_one_labelled_row_per_arm(self):
+        results = {
+            ("a", "treatment"): [_res(True), _res(True)],
+            ("a", "baseline"): [_res(False), _res(False)],
+        }
+        lines, _code = run.summarize(results)
+        treatment_rows = [ln for ln in lines
+                          if "a" in ln and "treatment" in ln]
+        baseline_rows = [ln for ln in lines
+                         if "a" in ln and "baseline" in ln]
+        self.assertEqual(len(treatment_rows), 1)
+        self.assertEqual(len(baseline_rows), 1)
+        self.assertIn("2/2", treatment_rows[0])
+        self.assertIn("0/2", baseline_rows[0])
+
+    def test_all_pass_treatment_all_fail_baseline_exits_zero(self):
+        results = {
+            ("fix-report-drift", "treatment"): [_res(True), _res(True)],
+            ("fix-report-drift", "baseline"): [_res(False), _res(False)],
+        }
+        _lines, code = run.summarize(results)
+        self.assertEqual(code, 0)
+
+    def test_failing_treatment_exits_nonzero_whatever_baseline_did(self):
+        for baseline_runs in ([_res(True), _res(True)],
+                              [_res(False), _res(False)]):
+            with self.subTest(baseline_runs=baseline_runs):
+                results = {
+                    ("fix-report-drift", "treatment"):
+                        [_res(True), _res(False)],
+                    ("fix-report-drift", "baseline"): baseline_runs,
+                }
+                _lines, code = run.summarize(results)
+                self.assertNotEqual(code, 0)
+
+
+class SummarizeRefusalTests(unittest.TestCase):
+    """Exercises ``summarize``'s distinction between a refused run — a
+    baseline-bearing arm turned away before any session spawned, because
+    nothing was measured — and a baseline arm that actually ran and failed,
+    which is the expected, informative outcome of a working comparison."""
+
+    def test_refused_baseline_only_rows_exit_nonzero(self):
+        refused = run.RunResult(
+            False,
+            "case 'plan-csv-export': baseline arm refused — grader is "
+            "'structural', which only a plugin session can produce; the "
+            "comparison would carry no information",
+            refused=True)
+        results = {("plan-csv-export", "baseline"): [refused, refused]}
+        _lines, code = run.summarize(results)
+        self.assertNotEqual(code, 0)
+
+    def test_all_pass_treatment_all_fail_baseline_that_ran_exits_zero(self):
+        """A baseline arm that genuinely ran (``refused`` False, the
+        default) and failed every run must still exit 0 alongside an
+        all-pass treatment — this is the case the fix must not regress."""
+        results = {
+            ("fix-report-drift", "treatment"): [_res(True), _res(True)],
+            ("fix-report-drift", "baseline"): [_res(False), _res(False)],
+        }
+        _lines, code = run.summarize(results)
+        self.assertEqual(code, 0)
+
+
+# ---------------------------------------------------------------------------
+# Session turn command construction (arm selection)
+# ---------------------------------------------------------------------------
+
+def _stub_completed_process(stdout='{"type": "result", "session_id": "s1"}'):
+    return subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=stdout, stderr="")
+
+
+class RunTurnCommandTests(TmpPathTestCase):
+    """Exercises the command ``_run_turn`` builds for each arm, with
+    ``subprocess.run`` monkeypatched so no real ``claude`` process is
+    spawned."""
+
+    def _capture_cmd(self, **run_turn_kwargs):
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["kwargs"] = kwargs
+            return _stub_completed_process()
+
+        with mock.patch.object(run.subprocess, "run", fake_run):
+            run._run_turn(
+                "hello", self.tmp_path, host_repo=REPO_ROOT,
+                **run_turn_kwargs)
+        return captured
+
+    def test_treatment_arm_includes_plugin_dir(self):
+        captured = self._capture_cmd()
+        self.assertIn("--plugin-dir", captured["cmd"])
+
+    def test_baseline_arm_omits_plugin_dir(self):
+        captured = self._capture_cmd(arm="baseline")
+        self.assertNotIn("--plugin-dir", captured["cmd"])
+
+    def test_cwd_permission_mode_and_output_format_identical_across_arms(self):
+        treatment = self._capture_cmd()
+        baseline = self._capture_cmd(arm="baseline")
+        self.assertEqual(
+            treatment["kwargs"]["cwd"], baseline["kwargs"]["cwd"])
+        self.assertEqual(treatment["kwargs"]["cwd"], self.tmp_path)
+
+        def _drop_plugin_dir(cmd):
+            if "--plugin-dir" not in cmd:
+                return list(cmd)
+            i = cmd.index("--plugin-dir")
+            return cmd[:i] + cmd[i + 2:]
+
+        self.assertEqual(
+            _drop_plugin_dir(treatment["cmd"]), baseline["cmd"])
+        for flag in ("--permission-mode", "--output-format"):
+            self.assertIn(flag, treatment["cmd"])
+            self.assertIn(flag, baseline["cmd"])
+            t_i = treatment["cmd"].index(flag)
+            b_i = baseline["cmd"].index(flag)
+            self.assertEqual(
+                treatment["cmd"][t_i + 1], baseline["cmd"][b_i + 1])
+
+
+# ---------------------------------------------------------------------------
+# Arm refusal — baseline arm requires a behavior-graded case
+# ---------------------------------------------------------------------------
+
+class ArmRefusalTests(TmpPathTestCase):
+    """Exercises ``execute_case``'s refusal of a baseline-bearing arm for a
+    structural case, and confirms a behavior case proceeds under the same
+    arms — with ``run_conversation`` mocked so no real session is spawned."""
+
+    def _structural_case(self):
+        cases = os.path.join(self.tmp_path, "cases")
+        _make_case(cases, "struct-case")
+        found = run.discover_cases(cases, case_filter="struct-case")
+        return found[0]
+
+    def _behavior_case(self):
+        # A correctly-seeded fixture: the shipped suite passes on its own,
+        # and the held-out test fails against the fixture's original code —
+        # the shape :func:`check_behavior_fixture`'s sanity check requires,
+        # so the mocked ``run_conversation`` is actually reached.
+        cases_dir = os.path.join(self.tmp_path, "cases")
+        return _write_behavior_case(
+            cases_dir, "behave-case",
+            fixture_tests={"test_shipped.py": _PASSING_TEST},
+            verify_tests={"test_held_out.py": _FAILING_TEST})
+
+    def test_structural_case_refuses_baseline_arm(self):
+        case = self._structural_case()
+        with mock.patch.object(run, "run_conversation") as spy:
+            results = run.execute_case(
+                case, runs=2, claude_bin="claude", keep_scratch=False,
+                arm="baseline")
+        spy.assert_not_called()
+        self.assertEqual(len(results), 2)
+        for r in results:
+            self.assertFalse(r.passed)
+            self.assertIn("struct-case", r.failure)
+            self.assertIn("structural", r.failure.lower())
+
+    def test_structural_case_refuses_both_arm(self):
+        case = self._structural_case()
+        with mock.patch.object(run, "run_conversation") as spy:
+            results = run.execute_case(
+                case, runs=2, claude_bin="claude", keep_scratch=False,
+                arm="both")
+        spy.assert_not_called()
+        self.assertEqual(len(results), 2)
+        for r in results:
+            self.assertFalse(r.passed)
+            self.assertIn("struct-case", r.failure)
+            self.assertIn("structural", r.failure.lower())
+
+    def test_behavior_case_proceeds_under_baseline_arm(self):
+        case = self._behavior_case()
+        with mock.patch.object(
+                run, "run_conversation",
+                return_value=(True, None)) as spy:
+            run.execute_case(
+                case, runs=1, claude_bin="claude", keep_scratch=False,
+                arm="baseline")
+        spy.assert_called_once()
+
+    def test_behavior_case_proceeds_under_both_arm(self):
+        case = self._behavior_case()
+        with mock.patch.object(
+                run, "run_conversation",
+                return_value=(True, None)) as spy:
+            run.execute_case(
+                case, runs=1, claude_bin="claude", keep_scratch=False,
+                arm="both")
+        spy.assert_called_once()
+
+    def test_behavior_case_with_no_skill_token_refuses_baseline_arm(self):
+        """A behavior case whose prompt.md carries no leading /s:<skill>
+        token cannot derive a baseline prompt — the run is refused before a
+        session is spawned, naming the case."""
+        cases_dir = os.path.join(self.tmp_path, "cases")
+        case = _write_behavior_case(
+            cases_dir, "no-token-case",
+            fixture_tests={"test_shipped.py": _PASSING_TEST},
+            verify_tests={"test_held_out.py": _PASSING_TEST})
+        _write(case.prompt_path, "Just fix the bug, no skill token here.\n")
+        with mock.patch.object(run, "run_conversation") as spy:
+            results = run.execute_case(
+                case, runs=2, claude_bin="claude", keep_scratch=False,
+                arm="baseline")
+        spy.assert_not_called()
+        self.assertEqual(len(results), 2)
+        for r in results:
+            self.assertFalse(r.passed)
+            self.assertIn("no-token-case", r.failure)
+
+
+class CombinedArmWholeRefusalTests(unittest.TestCase):
+    """Exercises the invocation-level refusal of a ``both`` request against a
+    structural case, driven through ``main`` rather than ``execute_case``
+    directly. ``main`` iterates the concrete arms of ``both`` — treatment,
+    then baseline — as separate ``execute_case`` calls; each call decides its
+    own refusal in isolation, so the treatment sub-call (for which
+    ``_arm_refusal`` always returns ``None``) used to run to completion,
+    spawning a real session, before the baseline sub-call refused. The fix
+    decides the refusal once for the whole selected arm set, before either
+    concrete arm executes, so a structural case's treatment session never
+    spawns under ``both`` either."""
+
+    def test_both_arm_refuses_whole_invocation_for_structural_case(self):
+        with mock.patch.object(run, "run_conversation") as spy:
+            exit_code = run.main(
+                ["--case", "plan-csv-export", "--arm", "both"])
+        spy.assert_not_called()
+        self.assertNotEqual(exit_code, 0)
 
 
 # ---------------------------------------------------------------------------
