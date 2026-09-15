@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import glob
+import json
 import os
 import re
 import shutil
@@ -50,6 +51,7 @@ class Case:
     name: str
     prompt_path: str
     fixture_path: str
+    grader: str = "structural"
 
 
 @dataclasses.dataclass
@@ -64,13 +66,55 @@ class RunResult:
 # Case discovery
 # ---------------------------------------------------------------------------
 
+RECOGNIZED_GRADERS = ("structural", "behavior")
+
+
+def read_expect(case_dir):
+    """Return the grader name a case's ``expect.json`` selects.
+
+    An absent ``expect.json``, or one present without a ``grader`` key,
+    selects ``"structural"``. A file declaring ``{"grader": "behavior"}``
+    selects ``"behavior"``. Raises :class:`ValueError`, naming the case
+    (``os.path.basename(case_dir)``) and the offending value, when the file
+    is unreadable (missing/invalid JSON) or declares a grader outside
+    :data:`RECOGNIZED_GRADERS`.
+    """
+    name = os.path.basename(case_dir.rstrip(os.sep))
+    expect_path = os.path.join(case_dir, "expect.json")
+    if not os.path.isfile(expect_path):
+        return "structural"
+    try:
+        with open(expect_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise ValueError(
+            "case '%s': expect.json is unreadable: %s" % (name, exc))
+    if not isinstance(data, dict):
+        raise ValueError(
+            "case '%s': expect.json must be a JSON object" % name)
+    grader = data.get("grader", "structural")
+    if grader not in RECOGNIZED_GRADERS:
+        raise ValueError(
+            "case '%s': unrecognized grader %r in expect.json"
+            % (name, grader))
+    return grader
+
+
 def discover_cases(cases_dir, case_filter=None):
     """Return the sorted list of :class:`Case` under ``cases_dir``.
 
     A directory qualifies as a case only when it contains both a ``prompt.md``
     file and a ``fixture/`` subdirectory; anything else is skipped silently.
     When ``case_filter`` is given, only the case of that exact name is
-    returned (an empty list if it does not exist or does not qualify).
+    returned (an empty list if it does not exist or does not qualify). Each
+    returned case's ``grader`` is populated from the case directory's
+    ``expect.json`` via :func:`read_expect`. A case whose ``expect.json`` is
+    unreadable or names an unrecognized grader is not dropped from discovery
+    (dropping it would silently skip its runs rather than failing them); its
+    ``grader`` field instead carries :func:`read_expect`'s ``ValueError``
+    message verbatim — already naming the case and the offending value — so
+    ``execute_case`` can fail its runs with that message without spawning a
+    session.
     """
     if not os.path.isdir(cases_dir):
         return []
@@ -87,8 +131,12 @@ def discover_cases(cases_dir, case_filter=None):
             continue
         if not os.path.isdir(fixture_path):
             continue
+        try:
+            grader = read_expect(case_dir)
+        except ValueError as exc:
+            grader = str(exc)
         cases.append(Case(name=name, prompt_path=prompt_path,
-                          fixture_path=fixture_path))
+                          fixture_path=fixture_path, grader=grader))
     return cases
 
 
@@ -161,8 +209,18 @@ GOAHEAD_REPLY = (
     "take the option you yourself recommend. Complete the plan through "
     "emission, lint, and promotion to ready.")
 
-# How many resumed turns a run may spend answering stops before the
-# structural grade decides the outcome.
+# The skill-neutral counterpart for a behavior-graded case: it answers a
+# stop the same way (accept the session's own recommendation and keep
+# going), but carries no mention of emitting, linting, or promoting a
+# change — that instruction is specific to /s:plan's artifact, and a
+# behavior case may be driving any skill (e.g. /s:fix) toward a working
+# fix instead.
+BEHAVIOR_GOAHEAD_REPLY = (
+    "Proceed. For any open question or decision, now or in later rounds, "
+    "take the option you yourself recommend.")
+
+# How many resumed turns a run may spend answering stops before the grade
+# decides the outcome.
 MAX_RESUMES_DEFAULT = 4
 
 
@@ -213,20 +271,42 @@ def _run_turn(prompt, scratch, resume_id=None, turn_index=1,
     return True, None, _session_id_from_transcript(proc.stdout or "")
 
 
+def _behavior_gate_passed(case, scratch):
+    """Evaluate the behavior grade for the resume gate without disturbing the
+    scratch tree the session is still operating in.
+
+    Copies ``scratch`` to a throwaway directory and grades that copy with
+    :func:`grade_behavior`, so probing the gate mid-conversation never copies
+    the case's held-out ``verify/`` tree into the working tree itself.
+    """
+    throwaway = tempfile.mkdtemp(prefix="s-eval-gate-%s-" % case.name)
+    try:
+        shutil.copytree(scratch, throwaway, dirs_exist_ok=True)
+        return grade_behavior(case, throwaway).passed
+    finally:
+        shutil.rmtree(throwaway, ignore_errors=True)
+
+
 def run_conversation(case, scratch, claude_bin="claude", host_repo=HOST_REPO,
                      timeout=SESSION_TIMEOUT_SECONDS,
                      max_resumes=MAX_RESUMES_DEFAULT, turn_runner=None):
     """Drive ``case`` as a bounded headless conversation inside ``scratch``.
 
-    Turn 1 sends the case prompt. The plan skill's findings checkpoint (the
-    go-ahead prompt) no longer fires, so a clean case is expected to reach a
-    gradable state on the first turn. Afterwards, while :func:`grade` has not
+    Turn 1 sends the case prompt. Afterwards, while the case's gate has not
     passed and fewer than ``max_resumes`` resumed turns have run, the same
-    session is resumed with :data:`GOAHEAD_REPLY` — answering only genuine
-    typed decision rounds (an OPEN QUESTIONS ending, a depth-path grill round,
+    session is resumed with the case's reply. Both are selected from
+    ``case.grader``: a structural case (the default) keeps the existing
+    :func:`grade` gate and :data:`GOAHEAD_REPLY` — the plan skill's findings
+    checkpoint no longer fires, so a clean case is expected to reach a
+    gradable state on the first turn, and any resume only answers a genuine
+    typed decision round (an OPEN QUESTIONS ending, a depth-path grill round,
     or a fast-path question round) by accepting the session's own
-    recommendations. Resuming stops early when a turn yields no session id
-    (the final grade then decides the run).
+    recommendations. A behavior case instead gates on
+    :func:`_behavior_gate_passed` (the behavior grade evaluated against a
+    throwaway copy of ``scratch``, never ``scratch`` itself) and sends
+    :data:`BEHAVIOR_GOAHEAD_REPLY`, which carries no emission/lint/promotion
+    instruction specific to /s:plan's artifact. Resuming stops early when a
+    turn yields no session id (the final grade then decides the run).
 
     Returns ``(ok, failure)``: ``ok`` is False only when a turn itself failed
     (timeout / non-zero exit); grading verdicts are the caller's job.
@@ -245,9 +325,16 @@ def run_conversation(case, scratch, claude_bin="claude", host_repo=HOST_REPO,
                 prompt_, cwd, resume_id, turn_index,
                 claude_bin=claude_bin, host_repo=host_repo, timeout=timeout)
 
+    if case.grader == "behavior":
+        gate = lambda: _behavior_gate_passed(case, scratch)
+        reply = BEHAVIOR_GOAHEAD_REPLY
+    else:
+        gate = lambda: grade(scratch, host_repo=host_repo).passed
+        reply = GOAHEAD_REPLY
+
     ok, _session_id, failure = session_driver.drive(
-        prompt, scratch, lambda: grade(scratch, host_repo=host_repo).passed,
-        GOAHEAD_REPLY, max_resumes=max_resumes, timeout=timeout, runner=runner)
+        prompt, scratch, gate, reply, max_resumes=max_resumes, timeout=timeout,
+        runner=runner)
     return ok, failure
 
 
@@ -375,6 +462,86 @@ def grade(scratch_dir, host_repo=HOST_REPO):
 
 
 # ---------------------------------------------------------------------------
+# Behavior grading
+# ---------------------------------------------------------------------------
+
+def grade_behavior(case, scratch_dir):
+    """Grade a completed behavior-graded session's scratch repo and return a
+    :class:`RunResult`.
+
+    Restores the case's shipped ``fixture/tests/`` tree over ``<scratch>/
+    tests/`` — reverting any session edit to a shipped test while leaving any
+    new file the session added in place, so a weakened or deleted shipped
+    test cannot rescue a run — then copies the case's held-out ``verify/``
+    tree over the same ``tests/`` directory. It then runs
+    ``python3 -m unittest discover -s tests`` with ``scratch_dir`` as the
+    working directory, and the run passes only if that command exits 0.
+    """
+    case_dir = os.path.dirname(case.fixture_path)
+    fixture_tests = os.path.join(case.fixture_path, "tests")
+    verify_dir = os.path.join(case_dir, "verify")
+    scratch_tests = os.path.join(scratch_dir, "tests")
+
+    if os.path.isdir(fixture_tests):
+        shutil.copytree(fixture_tests, scratch_tests, dirs_exist_ok=True)
+    if os.path.isdir(verify_dir):
+        shutil.copytree(verify_dir, scratch_tests, dirs_exist_ok=True)
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
+        cwd=scratch_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True)
+    if proc.returncode != 0:
+        return RunResult(False, proc.stdout)
+    return RunResult(True, None)
+
+
+def check_behavior_fixture(case, scratch_dir):
+    """Sanity-check a behavior case's fixture before a session runs.
+
+    Probes a throwaway copy of ``scratch_dir`` (so probing never disturbs the
+    real scratch tree the session is about to work in) twice: first the
+    shipped suite alone, which must exit 0 — a fixture whose own tests don't
+    pass against its original code is mis-seeded; then, with the case's
+    ``verify/`` tree overlaid onto ``tests/``, which must exit non-zero — a
+    held-out test that already passes means the seeded bug is absent.
+
+    Returns ``None`` when both probes hold, else a message naming the case,
+    which check failed, and the captured output.
+    """
+    throwaway = tempfile.mkdtemp(prefix="s-eval-sanity-%s-" % case.name)
+    try:
+        shutil.copytree(scratch_dir, throwaway, dirs_exist_ok=True)
+        proc = subprocess.run(
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
+            cwd=throwaway, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True)
+        if proc.returncode != 0:
+            return (
+                "behavior fixture sanity check failed for case '%s': the "
+                "shipped suite did not exit 0 before the session:\n%s"
+                % (case.name, proc.stdout))
+
+        verify_dir = os.path.join(
+            os.path.dirname(case.fixture_path), "verify")
+        throwaway_tests = os.path.join(throwaway, "tests")
+        if os.path.isdir(verify_dir):
+            shutil.copytree(verify_dir, throwaway_tests, dirs_exist_ok=True)
+        proc = subprocess.run(
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
+            cwd=throwaway, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True)
+        if proc.returncode == 0:
+            return (
+                "behavior fixture sanity check failed for case '%s': the "
+                "held-out test already passes against the fixture's "
+                "original code:\n%s" % (case.name, proc.stdout))
+        return None
+    finally:
+        shutil.rmtree(throwaway, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -411,16 +578,47 @@ def execute_case(case, runs, claude_bin, keep_scratch,
     (initial turn plus bounded go-ahead resumes), and grades it (a failed
     turn short-circuits to a failed run without grading). Scratch dirs are
     removed afterward unless ``keep_scratch``.
+
+    Grading dispatches on ``case.grader``: ``"structural"`` calls :func:`grade`,
+    ``"behavior"`` calls :func:`grade_behavior`. A ``case.grader`` outside
+    those two values — set by :func:`discover_cases` to the offending
+    ``expect.json``'s error message when it is unreadable or names an
+    unrecognized grader — fails every run immediately with that message,
+    spawning no session. A behavior case is additionally sanity-checked with
+    :func:`check_behavior_fixture` immediately after ``assemble_scratch``; a
+    reported failure fails the run before ``run_conversation`` is invoked, so
+    a mis-seeded fixture never spawns a session.
     """
+    if case.grader not in ("structural", "behavior"):
+        results = []
+        for i in range(1, runs + 1):
+            result = RunResult(False, case.grader)
+            results.append(result)
+            first = (result.failure or "").splitlines()
+            print("  [%s %d/%d] FAIL — %s"
+                  % (case.name, i, runs, first[0] if first else ""))
+        return results
+
     results = []
     for i in range(1, runs + 1):
         scratch = assemble_scratch(case)
         try:
             try:
-                ok, failure = run_conversation(
-                    case, scratch, claude_bin=claude_bin,
-                    max_resumes=max_resumes)
-                result = RunResult(False, failure) if not ok else grade(scratch)
+                sanity_failure = (
+                    check_behavior_fixture(case, scratch)
+                    if case.grader == "behavior" else None)
+                if sanity_failure is not None:
+                    result = RunResult(False, sanity_failure)
+                else:
+                    ok, failure = run_conversation(
+                        case, scratch, claude_bin=claude_bin,
+                        max_resumes=max_resumes)
+                    if not ok:
+                        result = RunResult(False, failure)
+                    elif case.grader == "behavior":
+                        result = grade_behavior(case, scratch)
+                    else:
+                        result = grade(scratch)
             except Exception as exc:  # noqa: BLE001 — one bad run must not
                 # abort the whole eval; record it as failed and continue.
                 result = RunResult(False, "harness error: %s" % exc)
