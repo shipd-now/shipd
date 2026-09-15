@@ -409,6 +409,23 @@ class BehaviorGradingTests(TmpPathTestCase):
         result = run.grade_behavior(case, scratch)
         self.assertFalse(result.passed)
 
+    def test_session_authored_test_cannot_fail_a_correct_fix(self):
+        """A session that fixes the bug but also writes its own subtly wrong
+        regression test is graded on the known file set only — the
+        session-authored test is pruned before discovery, not run."""
+        case = self._make_case(
+            "case-e",
+            fixture_tests={"test_shipped.py": _PASSING_TEST},
+            verify_tests={"test_held_out.py": _PASSING_TEST})
+        scratch = self._scratch()
+        # The session added its own test file, subtly wrong.
+        _write(os.path.join(scratch, "tests", "test_session_authored.py"),
+              _FAILING_TEST)
+        result = run.grade_behavior(case, scratch)
+        self.assertTrue(result.passed, result.failure)
+        self.assertFalse(os.path.exists(
+            os.path.join(scratch, "tests", "test_session_authored.py")))
+
 
 # ---------------------------------------------------------------------------
 # Behavior fixture sanity check

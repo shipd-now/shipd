@@ -4,10 +4,21 @@
 Each eval *case* is a directory under ``evals/cases/<name>/`` holding a
 ``prompt.md`` (the request handed to a headless Claude Code session) and a
 ``fixture/`` (a minimal repo tree with a ``.shipd/`` layout). For every run the
-harness copies the fixture to a scratch directory, launches a real headless
-session against the working tree's plugin (``--plugin-dir``), and grades the
-result with the host repo's own ``spec_lint.py`` plus a couple of structural
-assertions.
+harness copies the fixture to a scratch directory and launches a real
+headless session against the working tree's plugin (``--plugin-dir``). Which
+grader then judges the result is selected per case by an optional
+``expect.json`` (``{"grader": ...}``, default ``"structural"``):
+
+- ``"structural"`` (:func:`grade`) — grades a spec-authoring session against
+  the host repo's own ``spec_lint.py`` plus a couple of structural
+  assertions (one change directory, lint-clean, ``Status: ready``).
+- ``"behavior"`` (:func:`grade_behavior`) — grades whether the produced
+  software actually works, against a held-out oracle: the case's
+  ``verify/`` tree, kept out of the session-visible ``fixture/`` and copied
+  into the scratch repo's ``tests/`` only after the session ends, alongside
+  the shipped ``fixture/tests/`` tree restored over any session edit.
+  :func:`check_behavior_fixture` sanity-checks that oracle before a session
+  is even spawned.
 
 The runner is Python 3 standard library only (no third-party imports, no
 network beyond the ``claude`` subprocess it spawns), matching the repo's
@@ -465,27 +476,69 @@ def grade(scratch_dir, host_repo=HOST_REPO):
 # Behavior grading
 # ---------------------------------------------------------------------------
 
+def _tree_files(root):
+    """Return the set of file paths under ``root``, relative to ``root``.
+
+    Never descends into a ``__pycache__`` directory, so compiled bytecode is
+    never treated as a known source file.
+    """
+    found = set()
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+        for name in filenames:
+            found.add(os.path.relpath(os.path.join(dirpath, name), root))
+    return found
+
+
+def _prune_to_known(root, known_relpaths):
+    """Remove every file under ``root`` whose path relative to ``root`` is
+    not in ``known_relpaths``, then remove any directory left empty as a
+    result (``root`` itself is never removed).
+
+    This also discards stray ``__pycache__`` directories, since bytecode
+    caches are never members of ``known_relpaths``.
+    """
+    if not os.path.isdir(root):
+        return
+    for dirpath, dirnames, filenames in os.walk(root, topdown=False):
+        for name in filenames:
+            filepath = os.path.join(dirpath, name)
+            if os.path.relpath(filepath, root) not in known_relpaths:
+                os.remove(filepath)
+        if dirpath != root and not os.listdir(dirpath):
+            os.rmdir(dirpath)
+
+
 def grade_behavior(case, scratch_dir):
     """Grade a completed behavior-graded session's scratch repo and return a
     :class:`RunResult`.
 
     Restores the case's shipped ``fixture/tests/`` tree over ``<scratch>/
     tests/`` — reverting any session edit to a shipped test while leaving any
-    new file the session added in place, so a weakened or deleted shipped
-    test cannot rescue a run — then copies the case's held-out ``verify/``
-    tree over the same ``tests/`` directory. It then runs
-    ``python3 -m unittest discover -s tests`` with ``scratch_dir`` as the
-    working directory, and the run passes only if that command exits 0.
+    new file the session added in place — then copies the case's held-out
+    ``verify/`` tree over the same ``tests/`` directory. Any file under
+    ``<scratch>/tests/`` that belongs to neither the shipped ``fixture/
+    tests/`` tree nor the held-out ``verify/`` tree — including a test file a
+    session wrote of its own accord — is then removed, so grading exercises
+    only the known file set and a session cannot fail its own run by shipping
+    a subtly wrong regression test (nor pass one by shipping a lenient one).
+    It then runs ``python3 -m unittest discover -s tests`` with
+    ``scratch_dir`` as the working directory, and the run passes only if that
+    command exits 0.
     """
     case_dir = os.path.dirname(case.fixture_path)
     fixture_tests = os.path.join(case.fixture_path, "tests")
     verify_dir = os.path.join(case_dir, "verify")
     scratch_tests = os.path.join(scratch_dir, "tests")
 
+    known_files = set()
     if os.path.isdir(fixture_tests):
         shutil.copytree(fixture_tests, scratch_tests, dirs_exist_ok=True)
+        known_files |= _tree_files(fixture_tests)
     if os.path.isdir(verify_dir):
         shutil.copytree(verify_dir, scratch_tests, dirs_exist_ok=True)
+        known_files |= _tree_files(verify_dir)
+    _prune_to_known(scratch_tests, known_files)
 
     proc = subprocess.run(
         [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
