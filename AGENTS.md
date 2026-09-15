@@ -91,6 +91,14 @@ merge deletes only the *remote* branch, so reclaim the local `change/*`
 branches whose content already landed with
 `plugins/s/skills/build/scripts/worktree.sh prune-branches`, which deletes
 merged ones (squash merges included) and lists everything it keeps.
+`plugins/s/skills/build/scripts/worktree.sh sweep [--dry-run]` reclaims a
+merged worktree and its branch together — everything `remove` plus
+`prune-branches` would, run across every worktree at once, reporting an
+unmerged one on a `stale:` line rather than touching it — and the engine's
+`shipd worktree` create path already runs it automatically after every create
+unless the layered config declares `worktree_sweep` false, so an abandoned
+`pr-mode: draft` worktree or one orphaned by a crashed build session is
+usually reclaimed on its own by the next `worktree` invocation.
 
 **Epic status derivations** (`epic-sync`/`epic-set-status`) on a merged epic
 run in a fresh `epic-close-<slug>` worktree — created with

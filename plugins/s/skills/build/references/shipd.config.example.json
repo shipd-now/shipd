@@ -15,6 +15,9 @@
   "// post-worktree-scripts": "An ordered list of shell command lines run in a freshly created worktree, e.g. copying a .env or seeding a database. Undeclared means no hooks run; register entries through `shipd worktree hooks add` (or /s:worktree-hooks) rather than by hand.",
   "// clone_sources": "Local directories the workspace sync planner probes for an existing clone of an absent member before cloning it fresh. A list of directory paths with `~` expansion; undeclared means no probing.",
   "// lint": "Configures `semdiff lint`. `run_scripts` (boolean, default false) permits the subcommand to execute a repository-defined lint script (e.g. a `package.json` `lint` script) instead of only reporting it as detected. `disable` (a list of linter names, default `[]`) names detected linters the subcommand SHALL NOT run even where a marker and binary are both present. Omitted here so copying this file runs no repository script and disables no detected linter.",
+  "// worktree_sweep": "Gates whether the engine's worktree create path runs `worktree.sh sweep` after creating a worktree, reclaiming merged, guard-clean worktrees and pruning their branches. A boolean; default `true`.",
+  "// worktree_idle_minutes": "The idle window, in minutes, the `remove` verb's recent-activity guard uses before a dirty worktree stops counting as freshly touched. A non-negative integer; default 30, and `0` disables the guard. `SHIPD_WORKTREE_IDLE_MINUTES` overrides it.",
+  "// worktree_stale_days": "The window, in days, beyond which `worktree.sh sweep` reports an unmerged worktree's branch tip as stale on a `stale:` line rather than staying quiet about it. A positive integer; default 7. `SHIPD_WORKTREE_STALE_DAYS` overrides it.",
   "build": {
     "//": "Settings for a /s:build run and the flows sharing its config: telemetry, plus the design and video-ingest roots.",
     "logging_enabled": true,

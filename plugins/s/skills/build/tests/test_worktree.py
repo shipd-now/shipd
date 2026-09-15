@@ -111,6 +111,17 @@ class WorktreeScriptTestBase(unittest.TestCase):
 
     # --- helpers shared by the branch-hygiene tests ----------------------
 
+    def git_dated(self, cwd, epoch, *args):
+        """Run a git subcommand with both the author and committer date pinned
+        to `epoch` (unix seconds), so a branch tip's age can be tested without
+        sleeping."""
+        env = dict(os.environ)
+        env["GIT_AUTHOR_DATE"] = str(epoch)
+        env["GIT_COMMITTER_DATE"] = str(epoch)
+        return subprocess.run(
+            ["git", *args], cwd=cwd, env=env,
+            capture_output=True, text=True, check=True)
+
     def branch_sha(self, ref):
         return self.git("rev-parse", ref).stdout.strip()
 
@@ -457,6 +468,18 @@ class PruneBranchesTest(WorktreeScriptTestBase):
         self.assertIn("kept: change/active", out)
         self.assertTrue(self.branch_exists("change/wip"))
         self.assertTrue(self.branch_exists("change/active"))
+
+    def test_dry_run_deletes_no_branch(self):
+        """`--dry-run` reports the same `pruned:` line but keeps the branch,
+        so the sweep can preview a reclamation without performing it."""
+        self.branch_with_commit("a")
+        self.squash_merge("change/a")
+
+        r = self.run_helper("prune-branches", "--dry-run")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertIn("pruned: change/a", self.combined(r))
+        self.assertTrue(self.branch_exists("change/a"))
+        self.assertFalse(self.prune_worktree_created())
 
     def test_non_change_branch_is_untouched(self):
         # Merged by ancestry (it sits on the base tip) but out of scope.
@@ -809,6 +832,145 @@ class RemoveWorktreeTest(WorktreeScriptTestBase):
     def test_unknown_change_exits_1(self):
         r = self.run_helper("remove", "no-such-change")
         self.assertEqual(r.returncode, 1, self.combined(r))
+
+
+class SweepTest(WorktreeScriptTestBase):
+    """The opportunistic `sweep [--dry-run]` verb: reclaims merged,
+    guard-clean worktrees under `.worktrees/`, reports the rest, then runs
+    `prune-branches` (worktree-sweep worktree-sweep-verb)."""
+
+    def test_merged_clean_worktree_is_swept(self):
+        wt = self.make_worktree("shipped")
+        with open(os.path.join(wt, "feature.txt"), "w") as fh:
+            fh.write("feature work\n")
+        self.git_in(wt, "add", "-A")
+        self.git_in(wt, "commit", "-q", "-m", "feature work")
+        self.squash_merge("change/shipped")
+        self.age_tree(wt)
+
+        r = self.run_helper("sweep")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertFalse(os.path.exists(wt))
+        self.assertFalse(self.worktree_listed(wt))
+        out = self.combined(r)
+        self.assertIn("swept:", out)
+        self.assertIn(".worktrees/shipped", out)
+
+    def test_fresh_worktree_is_never_swept(self):
+        # No commits beyond the base -- branch_counts reports zero ahead, so
+        # the sweep must skip it entirely, even on the run that just created
+        # it.
+        wt = self.make_worktree("new-change")
+
+        r = self.run_helper("sweep")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertTrue(os.path.isdir(wt))
+        out = self.combined(r)
+        self.assertNotIn(".worktrees/new-change", out)
+
+    def test_merged_worktree_with_live_work_is_kept(self):
+        # branch_is_merged fails here by construction (the planned/claim
+        # content never lands on the base at all), so merged-ness comes from
+        # the second probe: a pushed-then-deleted remote-tracking ref, the
+        # same signal `prune-branches` falls back to when the base has moved.
+        self.add_origin()
+        wt = self.make_worktree("shipped")
+        planned = os.path.join(wt, ".shipd", "planned", "foo")
+        os.makedirs(planned)
+        with open(os.path.join(planned, "spec.md"), "w") as fh:
+            fh.write("# spec\n")
+        with open(os.path.join(planned, "tasks.md"), "w") as fh:
+            fh.write("# Tasks\n\n- [~] 1.1 claimed by a live session\n")
+        self.git_in(wt, "add", "-A")
+        self.git_in(wt, "commit", "-q", "-m", "planned change with claim")
+        self.git_in(wt, "push", "-q", "-u", "origin", "change/shipped")
+        subprocess.run(
+            ["git", "push", "-q", "origin", "--delete", "change/shipped"],
+            cwd=self.root, capture_output=True, text=True, check=True)
+        self.age_tree(wt)
+
+        r = self.run_helper("sweep")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertTrue(os.path.isdir(wt))
+        out = self.combined(r)
+        self.assertIn("kept:", out)
+        self.assertIn(".worktrees/shipped", out)
+        low = out.lower()
+        self.assertIn("unshipped change", out)
+        self.assertIn("claim", low)
+
+    def test_abandoned_unmerged_worktree_reported_stale(self):
+        wt = self.make_worktree("abandoned")
+        with open(os.path.join(wt, "wip.txt"), "w") as fh:
+            fh.write("still going\n")
+        self.git_in(wt, "add", "-A")
+        old = int(time.time()) - 10 * 86400  # 10 days, beyond the 7-day default
+        self.git_dated(wt, old, "commit", "-q", "-m", "wip commit")
+        self.age_tree(wt, minutes=10 * 24 * 60)
+
+        r = self.run_helper("sweep")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertTrue(os.path.isdir(wt))
+        out = self.combined(r)
+        self.assertIn("stale:", out)
+        self.assertIn(".worktrees/abandoned", out)
+
+    def test_recent_unmerged_worktree_kept_quietly(self):
+        wt = self.make_worktree("abandoned")
+        with open(os.path.join(wt, "wip.txt"), "w") as fh:
+            fh.write("still going\n")
+        self.git_in(wt, "add", "-A")
+        self.git_in(wt, "commit", "-q", "-m", "wip commit")  # tip is now
+
+        r = self.run_helper("sweep")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertTrue(os.path.isdir(wt))
+        out = self.combined(r)
+        self.assertIn("kept:", out)
+        self.assertIn(".worktrees/abandoned", out)
+        self.assertNotIn("stale:", out)
+
+    def test_merged_branch_with_no_worktree_is_pruned(self):
+        self.branch_with_commit("gone")
+        self.squash_merge("change/gone")
+
+        r = self.run_helper("sweep")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        out = self.combined(r)
+        self.assertIn("pruned: change/gone", out)
+        self.assertFalse(self.branch_exists("change/gone"))
+
+    def test_dry_run_changes_nothing(self):
+        wt = self.make_worktree("shipped")
+        with open(os.path.join(wt, "feature.txt"), "w") as fh:
+            fh.write("feature work\n")
+        self.git_in(wt, "add", "-A")
+        self.git_in(wt, "commit", "-q", "-m", "feature work")
+        self.squash_merge("change/shipped")
+        self.age_tree(wt)
+        self.branch_with_commit("gone")
+        self.squash_merge("change/gone")
+
+        r = self.run_helper("sweep", "--dry-run")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        out = self.combined(r)
+        self.assertIn("swept:", out)
+        self.assertIn("pruned: change/gone", out)
+        self.assertTrue(os.path.isdir(wt))
+        self.assertTrue(self.worktree_listed(wt))
+        self.assertTrue(self.branch_exists("change/gone"))
+
+    def test_detached_root_head_removes_nothing_and_exits_zero(self):
+        wt = self.make_worktree("shipped")
+        self.git("checkout", "-q", "--detach")
+
+        r = self.run_helper("sweep")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertTrue(os.path.isdir(wt))
+        out = self.combined(r).lower()
+        self.assertIn("no base", out)
+        self.assertNotIn("swept:", out)
+        self.assertNotIn("pruned:", out)
 
 
 if __name__ == "__main__":
