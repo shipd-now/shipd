@@ -198,3 +198,47 @@ installs `textual` and always passes without it. Declared-pipeline validation
 (`pipeline_schema.py`) is likewise stdlib-only, imported lazily by
 `spec_common.resolve_pipeline` only to keep the two modules free of an import
 cycle, not for any dependency it carries.
+
+## Evals
+
+`evals/run.py` is a local harness that drives the `s` plugin's LLM-facing
+skills as real headless Claude Code sessions and grades the result. Run
+`python3 evals/run.py` for every discovered case, or `python3 evals/run.py
+--case <name>` for one; add `--runs N` to repeat a case and `--keep-scratch`
+to retain each run's scratch directory for inspection instead of deleting it.
+The harness's own unit tests live under `evals/tests/` — stdlib `unittest`,
+no third-party dependency — run via
+`python3 -m unittest discover -s evals/tests` (wired into `ci.yml`).
+
+Each case is a directory under `evals/cases/<name>/` holding a `prompt.md`
+(the request sent to the headless session) and a `fixture/` (the minimal repo
+tree copied into a scratch git repo before the session runs). An optional
+`evals/cases/<name>/expect.json` selects the **grader** via a `grader` key:
+
+- Absent, or present without a `grader` key: **structural** (the default).
+  Grades the scratch repo against `spec_lint.py` and a few structural
+  assertions — one change directory, lint-clean, `Status: ready`. The three
+  `/s:plan` cases use this.
+- `{"grader": "behavior"}`: **behavior**. Grades whether the produced
+  software actually works. After the session ends, the runner restores the
+  case's shipped `fixture/tests/` tree over the scratch copy — reverting any
+  session edit to a shipped test — copies in the case's held-out `verify/`
+  tree, and runs `python3 -m unittest discover -s tests` in the scratch root;
+  the run passes only on exit 0.
+
+**The oracle is held out of the fixture.** A behavior case's regression test
+lives at `evals/cases/<name>/verify/`, outside `fixture/`, so the session
+under test never sees it and cannot read, weaken, or delete it before
+grading. Before each behavior run, the harness sanity-checks the fixture
+itself: the shipped suite must exit 0 before the session runs, and must exit
+non-zero once `verify/` is copied in — a mis-seeded fixture (the seeded bug
+absent, or the held-out test already passing) fails the run immediately,
+naming which check failed, without spawning a session.
+
+`evals/cases/fix-report-drift/` is the worked example: its `fixture/` ships
+a `.shipd/verified/report-output/` capability documenting a row sort order
+its `src/report.py` doesn't implement, plus a green `tests/test_report.py`
+that only checks the header and column padding; its held-out
+`verify/test_report_order.py` asserts the documented order; and `prompt.md`
+invokes `/s:fix` on the symptom (rows print in the wrong order) without
+naming the sorting rule or the file to edit.
