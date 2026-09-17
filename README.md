@@ -251,7 +251,9 @@ New here? [**docs/getting-started.md**](docs/getting-started.md) walks from
 the install above to your first shipd-built change in six steps: install,
 the `shipd doctor` preflight, the guided `/s:onboard` tour, a first
 `/s:plan` and `/s:build` in your own repository, and watching the result on
-the delivery board.
+the delivery board. Already running, and wondering what you can configure?
+[**docs/customise.md**](docs/customise.md) maps every customisation surface
+shipd offers.
 
 ## Skills
 

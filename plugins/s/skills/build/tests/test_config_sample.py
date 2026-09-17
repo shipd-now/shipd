@@ -14,6 +14,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
 REFERENCE = os.path.normpath(os.path.join(
     HERE, "..", "references", "shipd.config.example.json"))
+# tests -> build -> skills -> s -> plugins -> repository root
+REPO_ROOT = os.path.normpath(os.path.join(HERE, "..", "..", "..", "..", ".."))
+CUSTOMISE_DOC = os.path.join(REPO_ROOT, "docs", "customise.md")
 if SCRIPTS not in sys.path:
     sys.path.insert(0, SCRIPTS)
 
@@ -108,6 +111,50 @@ class TestConfigSample(unittest.TestCase):
                 "%s = %r is not a member of RECOGNIZED_CONFIG_KEYS"
                 % (name, value))
         self.assertTrue(checked, "no *_KEY constants found in spec_common")
+
+    def test_every_registry_key_appears_in_the_customise_guide(self):
+        """Scenario: Every recognized key is inventoried.
+
+        Guards ``docs/customise.md``'s key table against drift: a key added
+        to ``RECOGNIZED_CONFIG_KEYS`` and never mentioned in the guide fails
+        here, naming the key, rather than silently going undocumented. Matches
+        the backticked form (``` `key` ```) rather than a bare substring — a
+        bare match passes on incidental prose (``dir`` inside "working
+        directory", ``build`` inside a references path, ``workspace`` inside
+        "A workspace root's config"), while every table row is written
+        ``| `key` | …``, so the backticked form still passes today and still
+        fails the moment a row goes missing.
+        """
+        with open(CUSTOMISE_DOC) as fh:
+            text = fh.read()
+        missing = sorted(
+            key for key in sc.RECOGNIZED_CONFIG_KEYS
+            if ("`%s`" % key) not in text)
+        self.assertEqual(
+            missing, [],
+            "recognized keys absent from docs/customise.md: %s" % missing)
+
+    def test_customise_guide_guard_fails_on_an_undocumented_key(self):
+        """Scenario: Every recognized key is inventoried (the guard's own
+        failure mode).
+
+        Applies the guard above's own matching rule to the guide's text with
+        every key-table row (``^\\| `...``) stripped out, and asserts the
+        result names the missing keys rather than coming back empty — so the
+        guard itself is proven to fail when a key goes undocumented, not just
+        to pass today.
+        """
+        with open(CUSTOMISE_DOC) as fh:
+            lines = fh.readlines()
+        stripped_text = "".join(
+            line for line in lines if not line.startswith("| `"))
+        missing = sorted(
+            key for key in sc.RECOGNIZED_CONFIG_KEYS
+            if ("`%s`" % key) not in stripped_text)
+        self.assertTrue(
+            missing,
+            "expected the guard to name keys missing once the table rows "
+            "are stripped, but it came back empty")
 
     def test_declared_values_equal_the_built_in_defaults(self):
         """Scenario: Copying the sample changes no behavior."""
