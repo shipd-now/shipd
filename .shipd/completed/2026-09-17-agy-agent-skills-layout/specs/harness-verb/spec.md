@@ -1,7 +1,8 @@
-# harness-verb
+## MODIFIED Requirements
 
 ### Requirement: Generation actions
 id: harness-add-remove
+base: 462d187ee71e
 
 The `shipd harness` verb SHALL provide `add` and `remove` actions taking one or more harness ids or `--all`, a `--root DIR` selecting repo surfaces, and `--user` selecting user-global surfaces. `add` SHALL write one generated file per command into the registry-declared path, including command-specific directories declared through `{command}` in `user_dir`, and SHALL render each body with the harness's declared features.
 
@@ -59,60 +60,3 @@ Where the registry declares legacy user patterns, successful user-mode `add` and
 - **GIVEN** current AGY packages and marker-owned legacy files exist in user mode
 - **WHEN** `shipd harness remove agy --user` runs
 - **THEN** both generated surfaces are removed while unmarked legacy files remain
-
-### Requirement: Installation state report
-id: harness-status
-
-The `shipd harness` verb SHALL provide a read-only `status` action taking
-optional harness ids (default: all), `--root DIR`, `--user`, and `--json`,
-reporting
-per harness and surface one of `installed` (every expected file present and
-byte-identical to a fresh render), `stale` (present but differing),
-`foreign` (a target exists without the ownership marker), or `absent`. The
-action SHALL create or modify no files.
-
-#### Scenario: Status reflects the lifecycle
-- **WHEN** `status` runs before an `add`, after it, and after one generated
-  file is edited in place
-- **THEN** the harness reports `absent`, then `installed`, then `stale`,
-  and the temp root's contents are unchanged by every `status` run
-
-#### Scenario: JSON status is machine-readable
-- **WHEN** `shipd harness status --root <tmp> --json` runs
-- **THEN** stdout parses as one JSON document keyed by harness id
-
-### Requirement: Dialect rendering
-id: dialect-rendering
-
-The generation SHALL render each harness's files per its registry dialect:
-`yaml` emits `---`-delimited frontmatter carrying exactly the entry's
-declared `frontmatter` fields with the fixed value table (`name`/`id`/
-`title`: `shipd-<command>`; `description`: the body template's declared
-description; `category`/`tags`: `shipd`; `invokable`: `true`;
-`argument-hint`: `[input]`; an undeclared-value field is omitted), values
-escaped for YAML; `markdown-headers` emits a `# shipd-<command>` heading and
-the description line instead of frontmatter. In both dialects the rendered
-body follows, and the file extension comes from the surface pattern. The
-`conventions-file` dialect SHALL render the single conventions file from
-the `plugins/s/harness/bodies/_conventions.md` template, substituting
-`{preamble}` with `_preamble.md`'s content and `{command_index}` with one
-line per body-template command carrying its `shipd-<command>` name and
-declared description, emitting the ownership marker first; the rendered
-file SHALL carry no unresolved placeholder.
-
-#### Scenario: YAML dialect carries the declared fields
-- **WHEN** cursor's `shipd-plan` file is generated
-- **THEN** its frontmatter contains exactly `name`, `id`, `category`, and
-  `description` with `name: shipd-plan`, and the github-copilot variant of
-  the same command carries only `description`
-
-#### Scenario: Markdown-headers dialect carries no frontmatter
-- **WHEN** cline's `shipd-plan` file is generated
-- **THEN** it contains no `---` frontmatter block and begins with
-  `# shipd-plan` followed by the description
-
-#### Scenario: The conventions file indexes every command
-- **WHEN** aider's conventions file is generated
-- **THEN** it names `shipd-<command>` with its description for every
-  body-template command, contains the preamble's engine-scripts snippet,
-  and carries no `{preamble}` or `{command_index}` text

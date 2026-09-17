@@ -121,14 +121,17 @@ class ResearchedPathsTest(unittest.TestCase):
         entry = hr.get("agy")
         self.assertEqual(entry["name"], "Antigravity CLI")
         self.assertEqual(entry["repo_pattern"],
-                         ".agents/skills/shipd-{command}.md")
+                         ".agents/skills/shipd-{command}/SKILL.md")
         self.assertEqual(entry["user_dir"],
-                         "~/.gemini/antigravity-cli/skills/")
+                         "~/.gemini/config/skills/shipd-{command}/")
         self.assertEqual(entry["dialect"], "yaml")
         self.assertEqual(entry["frontmatter"], ("name", "description"))
         self.assertEqual(
             entry["features"],
             ("subagents", "file-references", "background-tasks"))
+        self.assertEqual(
+            hr.LEGACY_USER_PATTERNS["agy"],
+            ("~/.gemini/antigravity-cli/skills/shipd-{command}.md",))
 
     def test_agy_and_antigravity_are_separate(self):
         self.assertIn("antigravity", hr.ids())
@@ -215,8 +218,8 @@ class HarnessVerbTest(unittest.TestCase):
     def test_show_prints_agy_skill_paths(self):
         r = self.cli("harness", "show", "agy")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn(".agents/skills/shipd-{command}.md", r.stdout)
-        self.assertIn("~/.gemini/antigravity-cli/skills/", r.stdout)
+        self.assertIn(".agents/skills/shipd-{command}/SKILL.md", r.stdout)
+        self.assertIn("~/.gemini/config/skills/shipd-{command}/", r.stdout)
 
     def test_json_list_is_machine_readable(self):
         r = self.cli("harness", "--json")

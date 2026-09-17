@@ -254,10 +254,12 @@ def user_basename(entry, command):
 
 def user_path(entry, command=None):
     """``command``'s generated file for ``entry`` in the user-global surface,
-    absolute with ``~`` expanded, or ``None`` when it has no ``user_dir``."""
+    absolute with ``~`` and an optional ``{command}`` directory placeholder
+    expanded, or ``None`` when it has no ``user_dir``."""
     directory = entry["user_dir"]
     if directory is None:
         return None
+    directory = directory.format(command=command)
     return os.path.join(os.path.expanduser(directory),
                         user_basename(entry, command))
 
@@ -328,6 +330,22 @@ def reference_paths(mode, root=None, base_dir=None):
     return [os.path.join(directory, "%s.md" % command)
             for command in harness_bodies.commands(base_dir)
             if harness_bodies.reference(command, base_dir) is not None]
+
+
+def legacy_command_paths(entry, mode, base_dir=None):
+    """Marker-owned paths from superseded user surfaces for ``entry``.
+
+    Legacy paths are user-only migration data. Repo generation never reaches
+    outside the selected root.
+    """
+    if mode != USER_MODE:
+        return []
+    patterns = harness_registry.LEGACY_USER_PATTERNS.get(entry["id"], ())
+    return [
+        os.path.expanduser(pattern.format(command=command))
+        for pattern in patterns
+        for command in harness_bodies.commands(base_dir)
+    ]
 
 
 def display(path, mode, root=None):
@@ -485,6 +503,19 @@ def _wiring_note(entry):
             % (entry["id"], entry["repo_pattern"], CONVENTIONS_CONF))
 
 
+def _remove_owned_legacy(entries, mode, base_dir, lines):
+    """Delete only shipd-owned files from superseded registry paths."""
+    removed = 0
+    for entry in entries:
+        for path in legacy_command_paths(entry, mode, base_dir):
+            if not owned(path):
+                continue
+            os.remove(path)
+            lines.append("removed obsolete %s" % display(path, mode))
+            removed += 1
+    return removed
+
+
 def add(entries, mode, root=None, force=False, base_dir=None):
     """Write every selected harness's files. Returns ``(lines, error)``:
     ``error`` is a single reason string when a target this install does not
@@ -511,6 +542,7 @@ def add(entries, mode, root=None, force=False, base_dir=None):
             continue
         _atomic_write(path, data)
         lines.append("wrote %s" % display(path, mode, root))
+    _remove_owned_legacy(entries, mode, base_dir, lines)
     if current:
         lines.append("%d file%s already current"
                      % (current, "" if current == 1 else "s"))
@@ -571,6 +603,7 @@ def remove(entries, mode, root=None, force=False, base_dir=None):
         emptied.add(os.path.dirname(os.path.abspath(path)))
         removed += 1
         lines.append("removed %s" % display(path, mode, root))
+    removed += _remove_owned_legacy(entries, mode, base_dir, lines)
     boundaries = _boundaries(mode, root)
     # Deepest first, so a parent is considered only after its children are.
     for directory in sorted(emptied, key=len, reverse=True):

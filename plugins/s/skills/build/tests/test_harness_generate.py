@@ -287,6 +287,7 @@ class SurfaceTest(unittest.TestCase):
             "github-copilot": ".github/prompts/shipd-plan.prompt.md",
             "continue": ".continue/prompts/shipd-plan.prompt",
             "claude-code": ".claude/commands/shipd/plan.md",
+            "agy": ".agents/skills/shipd-plan/SKILL.md",
         }
         for harness_id, expected in cases.items():
             with self.subTest(harness=harness_id):
@@ -315,6 +316,11 @@ class SurfaceTest(unittest.TestCase):
         self.assertEqual(
             os.path.basename(hg.user_path(hr.get("codex"), "plan")),
             "shipd-plan.md")
+
+    def test_agy_user_path_is_a_named_skill_package(self):
+        expected = os.path.expanduser(
+            "~/.gemini/config/skills/shipd-plan/SKILL.md")
+        self.assertEqual(hg.user_path(hr.get("agy"), "plan"), expected)
 
     def test_a_harness_without_a_user_dir_has_no_user_surface(self):
         for harness_id in ("github-copilot", "cline", "aider"):
@@ -536,6 +542,68 @@ class ConventionsFileTest(ActionTestCase):
                   encoding="utf-8") as handle:
             handle.write("\nedited by hand\n")
         self.assertEqual(state(), "stale")
+
+
+class AgentSkillsTest(ActionTestCase):
+    def legacy_path(self, command):
+        return os.path.join(
+            self.home, ".gemini", "antigravity-cli", "skills",
+            "shipd-%s.md" % command)
+
+    def write_legacy(self, command, body):
+        path = self.legacy_path(command)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(body)
+        return path
+
+    def test_agy_repo_mode_writes_one_skill_package_per_command(self):
+        result = self.cli("add", "agy", "--root", self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for command in hb.commands():
+            path = os.path.join(
+                self.root, ".agents", "skills", "shipd-%s" % command,
+                "SKILL.md")
+            with self.subTest(command=command):
+                self.assertTrue(os.path.isfile(path), path)
+
+    def test_agy_user_mode_writes_one_skill_package_per_command(self):
+        result = self.cli("add", "agy", "--user")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for command in hb.commands():
+            path = os.path.join(
+                self.home, ".gemini", "config", "skills",
+                "shipd-%s" % command, "SKILL.md")
+            with self.subTest(command=command):
+                self.assertTrue(os.path.isfile(path), path)
+
+    def test_agy_user_add_removes_owned_legacy_files(self):
+        legacy = self.write_legacy("plan", hg.MARKER + "\nold\n")
+        result = self.cli("add", "agy", "--user")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(os.path.exists(legacy))
+
+    def test_agy_user_add_preserves_foreign_legacy_files(self):
+        legacy = self.write_legacy("plan", "mine\n")
+        result = self.cli("add", "agy", "--user")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(legacy, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "mine\n")
+
+    def test_agy_user_remove_cleans_current_and_owned_legacy_files(self):
+        self.assertEqual(self.cli("add", "agy", "--user").returncode, 0)
+        owned = self.write_legacy("plan", hg.MARKER + "\nold\n")
+        foreign = self.write_legacy("build", "mine\n")
+        result = self.cli("remove", "agy", "--user")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(os.path.exists(owned))
+        with open(foreign, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "mine\n")
+        for command in hb.commands():
+            current = os.path.join(
+                self.home, ".gemini", "config", "skills",
+                "shipd-%s" % command, "SKILL.md")
+            self.assertFalse(os.path.exists(current), current)
 
 
 class OwnershipTest(ActionTestCase):
