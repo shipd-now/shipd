@@ -1,7 +1,8 @@
-# harness-registry
+## MODIFIED Requirements
 
 ### Requirement: Registry data
 id: registry-data
+base: b8578dcdf086
 
 The engine SHALL provide a stdlib-only module `plugins/s/skills/build/scripts/harness_registry.py` declaring `FEATURES` — exactly the vocabulary `subagents`, `question-dialogs`, `file-references`, `background-tasks` — and `HARNESSES`, fifteen harness entries (`claude-code`, `cursor`, `github-copilot`, `windsurf`, `aider`, `codex`, `cline`, `roocode`, `continue`, `antigravity`, `agy`, `devin`, `oh-my-pi`, `opencode`, `pi`) each carrying a unique kebab-case `id`, display `name`, `repo_pattern`, `user_dir`, supported `dialect`, `frontmatter` tuple, and `features` tuple that is a subset of `FEATURES`.
 
@@ -44,32 +45,3 @@ The module SHALL declare data-driven legacy user patterns for generated surfaces
 #### Scenario: Unknown id returns None
 - **WHEN** `get("no-such-harness")` is called
 - **THEN** it returns `None` and `ids()` does not contain that id
-
-### Requirement: Harness read verbs
-id: harness-read-verbs
-
-The `shipd` binary SHALL provide a read-only `harness` verb whose bare and `list` forms print one line per registry entry, whose `show <id>` form prints every field of one entry, and whose `--json` form emits the corresponding machine-readable document. Unknown ids SHALL produce one `Error:` line and a nonzero exit. The read actions SHALL create or modify no files.
-
-#### Scenario: List names every harness
-- **WHEN** `shipd harness` runs
-- **THEN** stdout contains all fifteen registry ids, including `agy`, and the exit code is 0
-
-#### Scenario: Show prints one entry's data
-- **WHEN** `shipd harness show cursor` runs
-- **THEN** stdout contains `.cursor/commands/shipd-{command}.md` and the entry's dialect
-
-#### Scenario: Show prints the AGY CLI entry
-- **WHEN** `shipd harness show agy` runs
-- **THEN** stdout contains `.agents/skills/shipd-{command}.md`, `~/.gemini/antigravity-cli/skills/`, and the entry's dialect and features
-
-#### Scenario: JSON is machine-readable
-- **WHEN** `shipd harness --json` runs
-- **THEN** stdout parses as JSON with fifteen entries whose ids match `ids()`
-
-#### Scenario: Unknown id is a single-line error
-- **WHEN** `shipd harness show no-such-harness` runs
-- **THEN** stderr carries a single line beginning `Error: ` and the exit code is nonzero
-
-#### Scenario: The read actions write nothing
-- **WHEN** `shipd harness`, `shipd harness show cursor`, and `shipd harness show agy` run in a temporary directory
-- **THEN** the directory's contents are unchanged
