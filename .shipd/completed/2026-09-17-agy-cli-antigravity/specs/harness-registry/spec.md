@@ -1,7 +1,8 @@
-# harness-registry
+## MODIFIED Requirements
 
 ### Requirement: Registry data
 id: registry-data
+base: e6632a095962
 
 The engine SHALL provide a stdlib-only module `plugins/s/skills/build/scripts/harness_registry.py` declaring `FEATURES` — exactly the vocabulary `subagents`, `question-dialogs`, `file-references`, `background-tasks` — and `HARNESSES`, fifteen harness entries (`claude-code`, `cursor`, `github-copilot`, `windsurf`, `aider`, `codex`, `cline`, `roocode`, `continue`, `antigravity`, `agy`, `devin`, `oh-my-pi`, `opencode`, `pi`) each carrying a unique kebab-case `id`, display `name`, `repo_pattern`, `user_dir`, supported `dialect`, `frontmatter` tuple, and `features` tuple that is a subset of `FEATURES`.
 
@@ -45,6 +46,7 @@ For every dialect other than `conventions-file`, a non-`None` `repo_pattern` SHA
 
 ### Requirement: Harness read verbs
 id: harness-read-verbs
+base: f527dd8c95b6
 
 The `shipd` binary SHALL provide a read-only `harness` verb whose bare and `list` forms print one line per registry entry, whose `show <id>` form prints every field of one entry, and whose `--json` form emits the corresponding machine-readable document. Unknown ids SHALL produce one `Error:` line and a nonzero exit. The read actions SHALL create or modify no files.
 

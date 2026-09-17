@@ -138,6 +138,15 @@ HARNESSES = (
         "features": ("file-references",),
     },
     {
+        "id": "agy",
+        "name": "Antigravity CLI",
+        "repo_pattern": ".agents/skills/shipd-{command}.md",
+        "user_dir": "~/.gemini/antigravity-cli/skills/",
+        "dialect": "yaml",
+        "frontmatter": ("name", "description"),
+        "features": ("subagents", "file-references", "background-tasks"),
+    },
+    {
         "id": "devin",
         "name": "Devin",
         "repo_pattern": ".devin/workflows/shipd-{command}.md",
