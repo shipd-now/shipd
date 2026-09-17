@@ -12,11 +12,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
+
+      - name: Guard the plugin version
+        if: github.event_name == 'pull_request'
+        run: |
+          python3 plugins/s/skills/build/scripts/version_guard.py \
+            --base "origin/${{ github.base_ref }}" --head HEAD
 
       - name: Run engine test suite
         run: python3 -m unittest discover -s plugins/s/skills/build/tests -v
