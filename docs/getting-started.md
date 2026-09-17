@@ -57,7 +57,9 @@ lines mark optional extras. This verb installs and edits nothing.
 Cheapening a delivery needs nothing installed: `{"autonomous-pipeline":
 "eco"}` in `.shipd-config.json` opts a delivery into the cheap preset.
 Separately, `{"pr-mode": "draft"}` at a workspace root stops deliveries
-beneath it at a draft PR instead of auto-merging.
+beneath it at a draft PR instead of auto-merging. See
+[Customising shipd](customise.md) for every preset and every other
+surface.
 
 ## 3. Take the guided tour: `/s:onboard`
 

@@ -5,7 +5,8 @@
 A lookup reference for the `/s:` commands and the `shipd` CLI — not a
 walkthrough. New to shipd? Start with [Getting started](getting-started.md)
 instead; come back here once you know the loop and just need the invocation
-you forgot.
+you forgot. Looking for a config key or a customisation surface instead?
+See [Customising shipd](customise.md).
 
 ## Conventions
 
