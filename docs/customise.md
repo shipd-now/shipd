@@ -27,9 +27,10 @@ leaves undeclared.
 
 ## The recognized keys
 
-One row per key the engine recognizes. `plugins/s/skills/build/references/
-shipd.config.example.json` is the governed, copyable reference — copy it to
-`.shipd-config.json` and edit; a repo's own `.shipd/` copy may be behind it.
+One row per key the engine recognizes.
+`plugins/s/skills/build/references/shipd.config.example.json` is the
+governed, copyable reference — copy it to `.shipd-config.json` and edit; a
+repo's own `.shipd/` copy may be behind it.
 
 | Key | Governs |
 | --- | --- |

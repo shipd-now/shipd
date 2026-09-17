@@ -117,15 +117,44 @@ class TestConfigSample(unittest.TestCase):
 
         Guards ``docs/customise.md``'s key table against drift: a key added
         to ``RECOGNIZED_CONFIG_KEYS`` and never mentioned in the guide fails
-        here, naming the key, rather than silently going undocumented.
+        here, naming the key, rather than silently going undocumented. Matches
+        the backticked form (``` `key` ```) rather than a bare substring — a
+        bare match passes on incidental prose (``dir`` inside "working
+        directory", ``build`` inside a references path, ``workspace`` inside
+        "A workspace root's config"), while every table row is written
+        ``| `key` | …``, so the backticked form still passes today and still
+        fails the moment a row goes missing.
         """
         with open(CUSTOMISE_DOC) as fh:
             text = fh.read()
         missing = sorted(
-            key for key in sc.RECOGNIZED_CONFIG_KEYS if key not in text)
+            key for key in sc.RECOGNIZED_CONFIG_KEYS
+            if ("`%s`" % key) not in text)
         self.assertEqual(
             missing, [],
             "recognized keys absent from docs/customise.md: %s" % missing)
+
+    def test_customise_guide_guard_fails_on_an_undocumented_key(self):
+        """Scenario: Every recognized key is inventoried (the guard's own
+        failure mode).
+
+        Applies the guard above's own matching rule to the guide's text with
+        every key-table row (``^\\| `...``) stripped out, and asserts the
+        result names the missing keys rather than coming back empty — so the
+        guard itself is proven to fail when a key goes undocumented, not just
+        to pass today.
+        """
+        with open(CUSTOMISE_DOC) as fh:
+            lines = fh.readlines()
+        stripped_text = "".join(
+            line for line in lines if not line.startswith("| `"))
+        missing = sorted(
+            key for key in sc.RECOGNIZED_CONFIG_KEYS
+            if ("`%s`" % key) not in stripped_text)
+        self.assertTrue(
+            missing,
+            "expected the guard to name keys missing once the table rows "
+            "are stripped, but it came back empty")
 
     def test_declared_values_equal_the_built_in_defaults(self):
         """Scenario: Copying the sample changes no behavior."""
