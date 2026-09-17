@@ -74,7 +74,7 @@ def find_finding(base_version, head_version, changed_paths):
     )
 
 
-def _read_version(ref):
+def _read_version(ref, cwd=None):
     """Resolve the plugin manifest's ``version`` field at ``ref``.
 
     Exits 2, naming ``ref``, when the manifest cannot be read at that ref or
@@ -86,6 +86,7 @@ def _read_version(ref):
             capture_output=True,
             text=True,
             check=True,
+            cwd=cwd,
         )
     except subprocess.CalledProcessError:
         print(
@@ -95,27 +96,42 @@ def _read_version(ref):
         sys.exit(2)
     try:
         manifest = json.loads(result.stdout)
-        return manifest["version"]
+        version = manifest["version"]
     except (json.JSONDecodeError, KeyError, TypeError):
         print(
             f"error: could not parse {MANIFEST_PATH} at ref {ref!r}",
             file=sys.stderr,
         )
         sys.exit(2)
+    if not isinstance(version, str):
+        print(
+            f"error: could not parse {MANIFEST_PATH} at ref {ref!r}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    return version
 
 
-def _changed_paths(base, head):
+def _changed_paths(base, head, cwd=None):
     """List the paths that differ between ``base`` and ``head``."""
-    result = subprocess.run(
-        ["git", "diff", "--name-only", f"{base}...{head}"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", f"{base}...{head}"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=cwd,
+        )
+    except subprocess.CalledProcessError:
+        print(
+            f"error: could not diff {base!r}...{head!r}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     return [line for line in result.stdout.splitlines() if line]
 
 
-def main(argv=None):
+def main(argv=None, cwd=None):
     parser = argparse.ArgumentParser(
         description=(
             "Fail a pull request that touches plugins/s/ without advancing "
@@ -126,9 +142,9 @@ def main(argv=None):
     parser.add_argument("--head", required=True, help="head ref to compare")
     args = parser.parse_args(argv)
 
-    base_version = _read_version(args.base)
-    head_version = _read_version(args.head)
-    changed_paths = _changed_paths(args.base, args.head)
+    base_version = _read_version(args.base, cwd=cwd)
+    head_version = _read_version(args.head, cwd=cwd)
+    changed_paths = _changed_paths(args.base, args.head, cwd=cwd)
 
     finding = find_finding(base_version, head_version, changed_paths)
     if finding is not None:
