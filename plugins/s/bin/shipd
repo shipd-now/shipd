@@ -605,14 +605,19 @@ def check_store(root):
 
     Report-only: never fails the preflight and mutates nothing. ``ok`` names
     the in-repo content directory when no ``store_root`` is declared, or the
-    resolved absolute content directory when one is. Where a directory
-    exists at the store root joined with the basename-fallback path while
-    the resolved (registry-path) directory does not exist, this warns naming
-    both paths and a `git mv` remedy — a store stranded under the previous
-    flat layout (shipd-config store-repo-folder-name). A malformed
-    configuration is reported as the detail rather than failing the
-    preflight: the `config` check owns config failures, and this line must
-    never double-fail them."""
+    resolved absolute content directory when one is. Where the basename-
+    fallback path joined onto the store root differs from the resolved
+    (registry-path) directory and that flat folder still holds content — any
+    of the ``verified``, ``planned``, ``completed``, or ``research``
+    content-layout subdirectories — this warns naming both paths and a
+    `git mv` remedy, a store stranded under the previous flat layout
+    (shipd-config store-repo-folder-name). The warning is keyed on the flat
+    folder still holding content rather than on the resolved directory being
+    absent, so it keeps firing after the engine's first write creates the
+    resolved directory and the prior spec library is left orphaned under the
+    flat folder. A malformed configuration is reported as the detail rather
+    than failing the preflight: the `config` check owns config failures, and
+    this line must never double-fail them."""
     _load_engine()
     try:
         store = sc.store_root_dir(root)
@@ -622,8 +627,11 @@ def check_store(root):
                     "no `store_root` declared — content directory is "
                     "in-repo at %s" % resolved)
         flat = os.path.join(store, _store_basename_fallback(root))
+        flat_has_content = os.path.isdir(flat) and any(
+            os.path.isdir(os.path.join(flat, sub))
+            for sub in ("verified", "planned", "completed", "research"))
         if (os.path.normpath(flat) != os.path.normpath(resolved)
-                and os.path.isdir(flat) and not os.path.isdir(resolved)):
+                and flat_has_content):
             return ("warn", "store",
                     "%s is stranded under the previous flat layout — the "
                     "content directory now resolves to %s; run `git mv %s "

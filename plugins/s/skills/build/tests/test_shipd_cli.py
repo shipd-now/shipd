@@ -1551,7 +1551,8 @@ class DoctorCheckTest(unittest.TestCase):
 
     def test_stranded_flat_folder_warns_with_both_paths(self):
         # A declared registry member whose store root holds a directory at
-        # the basename fallback path while the registry-path directory —
+        # the basename fallback path — still holding content under a
+        # content-layout subdirectory — while the registry-path directory —
         # nested under the member's manifest path — is absent.
         ws = os.path.join(self.tmp, "stranded")
         repo = os.path.join(ws, "shipd", "shipd-app")
@@ -1564,13 +1565,37 @@ class DoctorCheckTest(unittest.TestCase):
                 "store_root": "store",
             }, fh)
         flat = os.path.join(ws, "store", "shipd-app")
-        os.makedirs(flat)
+        os.makedirs(os.path.join(flat, "verified"))
         resolved = os.path.join(ws, "store", "shipd", "shipd-app")
         level, name, detail = self.store_check(repo)
         self.assertEqual((level, name), ("warn", "store"))
         self.assertIn(flat, detail)
         self.assertIn(resolved, detail)
         self.assertIn("git mv", detail)
+
+    def test_stranded_flat_folder_warns_even_once_resolved_exists(self):
+        # The state that actually persists in the field: the engine's first
+        # write after an upgrade creates the resolved (registry-path)
+        # directory, but the flat folder still holds the prior spec library
+        # under `verified/` — the warning must not self-disarm just because
+        # the resolved directory now exists.
+        ws = os.path.join(self.tmp, "stranded-both-present")
+        repo = os.path.join(ws, "shipd", "shipd-app")
+        os.makedirs(repo)
+        with open(os.path.join(ws, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({
+                "workspace": {"projects": {
+                    "shipd": {"repos": ["shipd/shipd-app"]}}},
+                "store_root": "store",
+            }, fh)
+        flat = os.path.join(ws, "store", "shipd-app")
+        os.makedirs(os.path.join(flat, "verified"))
+        resolved = os.path.join(ws, "store", "shipd", "shipd-app")
+        os.makedirs(resolved)
+        level, name, detail = self.store_check(repo)
+        self.assertEqual((level, name), ("warn", "store"))
+        self.assertIn(flat, detail)
 
     def test_store_check_moves_nothing(self):
         ws = os.path.join(self.tmp, "stranded-untouched")

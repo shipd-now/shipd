@@ -2667,6 +2667,60 @@ class ExternalStoreRootTest(unittest.TestCase):
             with home_set_to(os.path.realpath(home)):
                 self.assertEqual(sc.repo_store_folder(root), "plain-dir")
 
+    def test_absolute_entry_path_falls_back_to_the_basename(self):
+        # A matched registry entry that is an absolute path (rather than a
+        # workspace-root-relative manifest path) is rejected — accepting it
+        # verbatim would return an absolute string to join onto the store
+        # root — and resolution falls back to the basename derivation.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "shipd", "shipd-app")
+            os.makedirs(repo)
+            _write_ws_config(
+                ws, {"projects": {"shipd": {"repos": [repo]}}},
+                extra={"store_root": "store"})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.repo_store_folder(repo), "shipd-app")
+
+    def test_backslash_entry_path_falls_back_to_the_basename(self):
+        # A matched registry entry carrying a backslash component is
+        # rejected the same way `specs_dirname` rejects one in `dir`, and
+        # resolution falls back to the basename derivation rather than the
+        # full (invalid) manifest path.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "shipd\\x", "shipd-app")
+            os.makedirs(repo)
+            _write_ws_config(
+                ws,
+                {"projects": {"shipd": {"repos": ["shipd\\x/shipd-app"]}}},
+                extra={"store_root": "store"})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.repo_store_folder(repo), "shipd-app")
+
+    def test_dot_dot_entry_path_falls_back_to_the_basename(self):
+        # A matched registry entry carrying a `..` component is rejected,
+        # and resolution falls back to the basename derivation rather than
+        # the traversal-carrying manifest path. The entry's `..` cancels out
+        # under `os.path.normpath` for matching purposes (so it still
+        # resolves against the real nested target), but the raw spelling —
+        # what `_registry_member_of` actually returns — still carries the
+        # `..` component that must be rejected.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "shipd", "shipd-app")
+            os.makedirs(repo)
+            _write_ws_config(
+                ws,
+                {"projects": {
+                    "shipd": {"repos": ["foo/../shipd/shipd-app"]}}},
+                extra={"store_root": "store"})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.repo_store_folder(repo), "shipd-app")
+
     def test_two_entries_sharing_a_directory_name_no_longer_collide(self):
         # Registry entries "shipd/dittor" and "cai/dittor" differ only in
         # their leading project segment; each resolves a distinct store path

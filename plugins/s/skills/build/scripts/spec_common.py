@@ -628,6 +628,26 @@ STORE_ROOT_KEY = "store_root"
 _STORE_FOLDER_CACHE = {}
 
 
+def _is_safe_manifest_path(path):
+    """True when a registry manifest path is safe to join onto a store root:
+    not absolute, contains no backslash, and every ``/``-separated component
+    is non-empty and neither ``.`` nor ``..``. Mirrors
+    :func:`specs_dirname`'s validation of the config ``dir`` key, applied to
+    a registry entry's path instead — :func:`repo_store_folder` is fail-soft
+    throughout, so a path failing this check is rejected rather than raised
+    on, and the caller falls back to the basename derivation."""
+    if not isinstance(path, str) or not path:
+        return False
+    if os.path.isabs(path) or path.startswith("/"):
+        return False
+    if "\\" in path:
+        return False
+    for part in path.split("/"):
+        if part in ("", ".", ".."):
+            return False
+    return True
+
+
 def repo_store_folder(root):
     """Return the per-repo folder path for ``root`` inside an external store
     (shipd-config store-repo-folder-name).
@@ -638,10 +658,15 @@ def repo_store_folder(root):
     the registry declares it (``/``-separated, joined onto the store root by
     the caller) — so a linked worktree and a member relocated by the
     machine-local member map both resolve their declaring member's path.
-    Where no registry is discoverable or no member matches — an undeclared
-    repository, no discoverable registry, or an unloadable one — this falls
-    back to the basename of the *main checkout's* directory, so every linked
-    worktree still resolves the same store folder as the main checkout: probe
+    That manifest path is validated with :func:`_is_safe_manifest_path`
+    (not absolute, no backslash, no empty/``.``/``..`` component) before it
+    is accepted; a path failing that check is treated the same as no match at
+    all, and resolution falls through to the basename derivation below —
+    display code must never crash on an invalid registry. Where no registry
+    is discoverable or no member matches — an undeclared repository, no
+    discoverable registry, or an unloadable one — this falls back to the
+    basename of the *main checkout's* directory, so every linked worktree
+    still resolves the same store folder as the main checkout: probe
     ``git rev-parse --path-format=absolute --git-common-dir`` from ``root``
     and take the basename of the printed path's parent directory. Any git
     failure (git absent, not a repository) falls back to the basename of
@@ -657,7 +682,7 @@ def repo_store_folder(root):
         ws_root = None
     if ws_root is not None:
         _slug, manifest_path = _registry_member_of(ws_root, root)
-        if manifest_path:
+        if manifest_path and _is_safe_manifest_path(manifest_path):
             name = manifest_path
     if not name:
         try:
