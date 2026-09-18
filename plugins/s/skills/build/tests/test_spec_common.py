@@ -2558,13 +2558,33 @@ class ExternalStoreRootTest(unittest.TestCase):
                 os.path.join(root, "store", os.path.basename(root)))
             self.assertNotIn("specs", resolved.split(os.sep))
 
-    def test_worktree_resolves_the_main_checkouts_folder(self):
-        # A real repo plus a real linked worktree: both resolve one store
-        # folder, named for the main checkout's directory.
+    def test_declared_member_resolves_its_registry_path(self):
+        # A registry declaring project "shipd" with a repo entry at
+        # "shipd/shipd-app": the content directory lands under that manifest
+        # path, not the checkout's bare basename (shipd-config
+        # store-repo-folder-name).
         with tempfile.TemporaryDirectory() as tmp, \
                 tempfile.TemporaryDirectory() as home:
             ws = os.path.realpath(tmp)
-            repo = os.path.join(ws, "cai-backend")
+            repo = os.path.join(ws, "shipd", "shipd-app")
+            os.makedirs(repo)
+            _write_ws_config(
+                ws, {"projects": {"shipd": {"repos": ["shipd/shipd-app"]}}},
+                extra={"store_root": "store"})
+            expected = os.path.join(ws, "store", "shipd", "shipd-app")
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.repo_store_folder(repo), "shipd/shipd-app")
+                self.assertEqual(sc.specs_dir(repo), expected)
+
+    def test_worktree_resolves_its_members_registry_path(self):
+        # A real repo declared as a registry member, plus a real linked
+        # worktree: both resolve the declaring member's manifest path,
+        # identical to the main checkout's resolution.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "shipd", "shipd-app")
             os.makedirs(repo)
             _git("init", "-q", repo)
             _git("-C", repo, "config", "user.email", "test@example.com")
@@ -2576,19 +2596,160 @@ class ExternalStoreRootTest(unittest.TestCase):
             _git("-C", repo, "commit", "-q", "-m", "init")
             wt = os.path.join(repo, ".worktrees", "some-change")
             _git("-C", repo, "worktree", "add", "-q", "-b", "some-change", wt)
-            self._write_config(ws, {"store_root": "store"})
-            expected = os.path.join(ws, "store", "cai-backend")
+            _write_ws_config(
+                ws, {"projects": {"shipd": {"repos": ["shipd/shipd-app"]}}},
+                extra={"store_root": "store"})
+            expected = os.path.join(ws, "store", "shipd", "shipd-app")
             with home_set_to(os.path.realpath(home)):
-                self.assertEqual(sc.repo_store_folder(repo), "cai-backend")
-                self.assertEqual(sc.repo_store_folder(wt), "cai-backend")
+                self.assertEqual(
+                    sc.repo_store_folder(repo), "shipd/shipd-app")
+                self.assertEqual(
+                    sc.repo_store_folder(wt), "shipd/shipd-app")
                 self.assertEqual(sc.specs_dir(repo), expected)
                 self.assertEqual(sc.specs_dir(wt), expected)
 
+    def test_mapped_member_resolves_its_manifest_path(self):
+        # A member map relocating the declared entry "shipd/shipd-app" to a
+        # checkout outside the workspace, with a reverse pointer at that
+        # checkout so it can find its governing registry: the store path is
+        # still the manifest path, not the checkout's own location.
+        # `store_root` resolution itself is unchanged by this delta (plan.md
+        # non-goals) and never follows the reverse pointer, so it is declared
+        # in the ``$HOME`` layer here — the one config layer that already
+        # applies from any directory on the machine — rather than at `ws`,
+        # which the checkout's own ancestor walk never reaches.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.join(os.path.realpath(tmp), "ws")
+            outside = os.path.join(os.path.realpath(tmp), "outside")
+            checkout = os.path.join(outside, "shipd-app")
+            os.makedirs(checkout, exist_ok=True)
+            home_dir = os.path.realpath(home)
+            _write_ws_config(
+                ws, {"projects": {"shipd": {"repos": ["shipd/shipd-app"]}}})
+            _write_ws_config(home_dir, None, {"store_root": "store"})
+            _write_repo_map(ws, {"shipd/shipd-app": checkout})
+            _write_ws_pointer(checkout, ws)
+            expected = os.path.join(home_dir, "store", "shipd", "shipd-app")
+            with home_set_to(home_dir):
+                self.assertEqual(
+                    sc.repo_store_folder(checkout), "shipd/shipd-app")
+                self.assertEqual(sc.specs_dir(checkout), expected)
+
+    def test_undeclared_repo_keeps_the_basename_derivation(self):
+        # A registry declaring one member; a second repository inside the
+        # same workspace that no entry declares keeps the basename fallback.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            declared = os.path.join(ws, "shipd", "shipd-app")
+            os.makedirs(declared)
+            undeclared = os.path.join(ws, "other-repo")
+            os.makedirs(undeclared)
+            _git("init", "-q", undeclared)
+            _git("-C", undeclared, "config", "user.email", "test@example.com")
+            _git("-C", undeclared, "config", "user.name", "Test")
+            _write_ws_config(
+                ws, {"projects": {"shipd": {"repos": ["shipd/shipd-app"]}}},
+                extra={"store_root": "store"})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.repo_store_folder(undeclared), "other-repo")
+                self.assertEqual(
+                    sc.specs_dir(undeclared),
+                    os.path.join(ws, "store", "other-repo"))
+
     def test_non_git_root_falls_back_to_its_basename(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
             root = os.path.join(os.path.realpath(tmp), "plain-dir")
             os.makedirs(root)
-            self.assertEqual(sc.repo_store_folder(root), "plain-dir")
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.repo_store_folder(root), "plain-dir")
+
+    def test_absolute_entry_path_falls_back_to_the_basename(self):
+        # A matched registry entry that is an absolute path (rather than a
+        # workspace-root-relative manifest path) is rejected — accepting it
+        # verbatim would return an absolute string to join onto the store
+        # root — and resolution falls back to the basename derivation.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "shipd", "shipd-app")
+            os.makedirs(repo)
+            _write_ws_config(
+                ws, {"projects": {"shipd": {"repos": [repo]}}},
+                extra={"store_root": "store"})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.repo_store_folder(repo), "shipd-app")
+
+    def test_backslash_entry_path_falls_back_to_the_basename(self):
+        # A matched registry entry carrying a backslash component is
+        # rejected the same way `specs_dirname` rejects one in `dir`, and
+        # resolution falls back to the basename derivation rather than the
+        # full (invalid) manifest path.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "shipd\\x", "shipd-app")
+            os.makedirs(repo)
+            _write_ws_config(
+                ws,
+                {"projects": {"shipd": {"repos": ["shipd\\x/shipd-app"]}}},
+                extra={"store_root": "store"})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.repo_store_folder(repo), "shipd-app")
+
+    def test_dot_dot_entry_path_falls_back_to_the_basename(self):
+        # A matched registry entry carrying a `..` component is rejected,
+        # and resolution falls back to the basename derivation rather than
+        # the traversal-carrying manifest path. The entry's `..` cancels out
+        # under `os.path.normpath` for matching purposes (so it still
+        # resolves against the real nested target), but the raw spelling —
+        # what `_registry_member_of` actually returns — still carries the
+        # `..` component that must be rejected.
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "shipd", "shipd-app")
+            os.makedirs(repo)
+            _write_ws_config(
+                ws,
+                {"projects": {
+                    "shipd": {"repos": ["foo/../shipd/shipd-app"]}}},
+                extra={"store_root": "store"})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.repo_store_folder(repo), "shipd-app")
+
+    def test_two_entries_sharing_a_directory_name_no_longer_collide(self):
+        # Registry entries "shipd/dittor" and "cai/dittor" differ only in
+        # their leading project segment; each resolves a distinct store path
+        # (shipd-config store-repo-folder-name).
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            shipd_dittor = os.path.join(ws, "shipd", "dittor")
+            cai_dittor = os.path.join(ws, "cai", "dittor")
+            os.makedirs(shipd_dittor)
+            os.makedirs(cai_dittor)
+            _write_ws_config(
+                ws, {"projects": {
+                    "shipd": {"repos": ["shipd/dittor"]},
+                    "cai": {"repos": ["cai/dittor"]}}},
+                extra={"store_root": "store"})
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.repo_store_folder(shipd_dittor), "shipd/dittor")
+                self.assertEqual(
+                    sc.repo_store_folder(cai_dittor), "cai/dittor")
+                self.assertEqual(
+                    sc.specs_dir(shipd_dittor),
+                    os.path.join(ws, "store", "shipd", "dittor"))
+                self.assertEqual(
+                    sc.specs_dir(cai_dittor),
+                    os.path.join(ws, "store", "cai", "dittor"))
+                self.assertNotEqual(
+                    sc.specs_dir(shipd_dittor), sc.specs_dir(cai_dittor))
 
     def test_probe_is_cached_per_root(self):
         with tempfile.TemporaryDirectory() as tmp:

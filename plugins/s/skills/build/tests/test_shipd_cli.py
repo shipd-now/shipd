@@ -1135,7 +1135,7 @@ class DoctorCheckTest(unittest.TestCase):
 
     # The full preflight roster, in the order ``default_checks`` reports it.
     ALL_CHECKS = ("python", "git", "config", "pipeline", "schema", "wiki",
-                  "gh", "difft", "textual", "snapshot", "statusline",
+                  "store", "gh", "difft", "textual", "snapshot", "statusline",
                   "protection", "automerge", "copilot-secret")
 
     def probed_check_names(self, root):
@@ -1522,6 +1522,113 @@ class DoctorCheckTest(unittest.TestCase):
         names = self.probed_check_names(self.tmp)
         self.assertEqual(names.index("wiki"), names.index("schema") + 1)
 
+    # -- store (shipd-cli doctor-store-check) -------------------------------
+
+    def store_check(self, root):
+        """``check_store`` with ``HOME`` pointed at the throwaway home, so the
+        outermost config layer can never be the real user's."""
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            return shipd.check_store(root)
+
+    def test_no_store_declared_reports_in_repo(self):
+        root = os.path.join(self.tmp, "nostore")
+        os.makedirs(root)
+        level, name, detail = self.store_check(root)
+        self.assertEqual((level, name), ("ok", "store"))
+        self.assertIn("in-repo", detail)
+        self.assertIn(os.path.join(root, ".shipd"), detail)
+
+    def test_resolved_store_is_named(self):
+        root, _path = self.repo_with_config(
+            "storeok", {"store_root": "store"})
+        resolved = os.path.join(root, "store", os.path.basename(root))
+        os.makedirs(resolved)
+        level, name, detail = self.store_check(root)
+        self.assertEqual((level, name), ("ok", "store"))
+        self.assertIn(resolved, detail)
+
+    def test_stranded_flat_folder_warns_with_both_paths(self):
+        # A declared registry member whose store root holds a directory at
+        # the basename fallback path — still holding content under a
+        # content-layout subdirectory — while the registry-path directory —
+        # nested under the member's manifest path — is absent.
+        ws = os.path.join(self.tmp, "stranded")
+        repo = os.path.join(ws, "shipd", "shipd-app")
+        os.makedirs(repo)
+        with open(os.path.join(ws, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({
+                "workspace": {"projects": {
+                    "shipd": {"repos": ["shipd/shipd-app"]}}},
+                "store_root": "store",
+            }, fh)
+        flat = os.path.join(ws, "store", "shipd-app")
+        os.makedirs(os.path.join(flat, "verified"))
+        resolved = os.path.join(ws, "store", "shipd", "shipd-app")
+        level, name, detail = self.store_check(repo)
+        self.assertEqual((level, name), ("warn", "store"))
+        self.assertIn(flat, detail)
+        self.assertIn(resolved, detail)
+        self.assertIn("git mv", detail)
+
+    def test_stranded_flat_folder_warns_even_once_resolved_exists(self):
+        # The state that actually persists in the field: the engine's first
+        # write after an upgrade creates the resolved (registry-path)
+        # directory, but the flat folder still holds the prior spec library
+        # under `verified/` — the warning must not self-disarm just because
+        # the resolved directory now exists.
+        ws = os.path.join(self.tmp, "stranded-both-present")
+        repo = os.path.join(ws, "shipd", "shipd-app")
+        os.makedirs(repo)
+        with open(os.path.join(ws, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({
+                "workspace": {"projects": {
+                    "shipd": {"repos": ["shipd/shipd-app"]}}},
+                "store_root": "store",
+            }, fh)
+        flat = os.path.join(ws, "store", "shipd-app")
+        os.makedirs(os.path.join(flat, "verified"))
+        resolved = os.path.join(ws, "store", "shipd", "shipd-app")
+        os.makedirs(resolved)
+        level, name, detail = self.store_check(repo)
+        self.assertEqual((level, name), ("warn", "store"))
+        self.assertIn(flat, detail)
+
+    def test_store_check_moves_nothing(self):
+        ws = os.path.join(self.tmp, "stranded-untouched")
+        repo = os.path.join(ws, "shipd", "shipd-app")
+        os.makedirs(repo)
+        with open(os.path.join(ws, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({
+                "workspace": {"projects": {
+                    "shipd": {"repos": ["shipd/shipd-app"]}}},
+                "store_root": "store",
+            }, fh)
+        flat = os.path.join(ws, "store", "shipd-app")
+        os.makedirs(flat)
+        resolved = os.path.join(ws, "store", "shipd", "shipd-app")
+        self.store_check(repo)
+        self.assertTrue(os.path.isdir(flat))
+        self.assertFalse(os.path.isdir(resolved))
+
+    def test_store_malformed_config_is_ok_carrying_the_error(self):
+        # The `config` check owns config failures; this one only reports.
+        root = os.path.join(self.tmp, "store-broken")
+        os.makedirs(root)
+        with open(os.path.join(root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("{not json")
+        level, name, _detail = self.store_check(root)
+        self.assertEqual((level, name), ("ok", "store"))
+
+    def test_default_checks_report_store_after_wiki(self):
+        names = self.probed_check_names(self.tmp)
+        self.assertEqual(names.index("store"), names.index("wiki") + 1)
+
     # -- gh ----------------------------------------------------------------
 
     def test_gh_authenticated_is_ok(self):
@@ -1660,9 +1767,9 @@ class DoctorCheckTest(unittest.TestCase):
     def test_default_checks_run_in_the_documented_order(self):
         self.assertEqual(self.probed_check_names(self.tmp),
                          ["python", "git", "config", "pipeline", "schema",
-                          "wiki", "gh", "difft", "textual", "snapshot",
-                          "statusline", "protection", "automerge",
-                          "copilot-secret"])
+                          "wiki", "store", "gh", "difft", "textual",
+                          "snapshot", "statusline", "protection",
+                          "automerge", "copilot-secret"])
 
     # -- statusline --------------------------------------------------------
 

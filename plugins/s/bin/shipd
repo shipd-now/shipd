@@ -572,6 +572,75 @@ def check_wiki(root):
     return ("ok", "wiki", "%s (workspace store, %s)" % (store, presence))
 
 
+def _store_basename_fallback(root):
+    """The basename-only per-repo store folder name — the layout every
+    external store used before the registry-path derivation, for
+    :func:`check_store`'s stranded-folder comparison (shipd-cli
+    doctor-store-check).
+
+    Mirrors ``spec_common.repo_store_folder``'s fallback probe exactly, but
+    never consults the registry, so a repo whose registry-path resolution
+    now differs can still be compared against its old flat folder: probe
+    ``git rev-parse --path-format=absolute --git-common-dir`` from ``root``
+    and take the basename of the printed path's parent directory, falling
+    back to the basename of ``root`` itself on any git failure. Local git
+    only — never the network, and never a write."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", root, "rev-parse", "--path-format=absolute",
+             "--git-common-dir"],
+            capture_output=True, text=True)
+    except OSError:
+        result = None
+    if result is not None and result.returncode == 0:
+        common = result.stdout.strip()
+        if common:
+            return os.path.basename(os.path.dirname(os.path.abspath(common)))
+    return os.path.basename(os.path.abspath(root))
+
+
+def check_store(root):
+    """The external store the working directory resolves (shipd-cli
+    doctor-store-check).
+
+    Report-only: never fails the preflight and mutates nothing. ``ok`` names
+    the in-repo content directory when no ``store_root`` is declared, or the
+    resolved absolute content directory when one is. Where the basename-
+    fallback path joined onto the store root differs from the resolved
+    (registry-path) directory and that flat folder still holds content — any
+    of the ``verified``, ``planned``, ``completed``, or ``research``
+    content-layout subdirectories — this warns naming both paths and a
+    `git mv` remedy, a store stranded under the previous flat layout
+    (shipd-config store-repo-folder-name). The warning is keyed on the flat
+    folder still holding content rather than on the resolved directory being
+    absent, so it keeps firing after the engine's first write creates the
+    resolved directory and the prior spec library is left orphaned under the
+    flat folder. A malformed configuration is reported as the detail rather
+    than failing the preflight: the `config` check owns config failures, and
+    this line must never double-fail them."""
+    _load_engine()
+    try:
+        store = sc.store_root_dir(root)
+        resolved = sc.specs_dir(root)
+        if store is None:
+            return ("ok", "store",
+                    "no `store_root` declared — content directory is "
+                    "in-repo at %s" % resolved)
+        flat = os.path.join(store, _store_basename_fallback(root))
+        flat_has_content = os.path.isdir(flat) and any(
+            os.path.isdir(os.path.join(flat, sub))
+            for sub in ("verified", "planned", "completed", "research"))
+        if (os.path.normpath(flat) != os.path.normpath(resolved)
+                and flat_has_content):
+            return ("warn", "store",
+                    "%s is stranded under the previous flat layout — the "
+                    "content directory now resolves to %s; run `git mv %s "
+                    "%s` to relocate it" % (flat, resolved, flat, resolved))
+        return ("ok", "store", resolved)
+    except sc.ConfigError as exc:
+        return ("ok", "store", "%s" % exc)
+
+
 def check_gh(which=shutil.which, gh_status=_gh_auth_status):
     """The GitHub CLI. A warning, never a failure: planning and building work
     without it, and shipping is its first touchpoint."""
@@ -979,6 +1048,7 @@ def default_checks(root):
             check_pipeline(root),
             check_schema(root),
             check_wiki(root),
+            check_store(root),
             check_gh(),
             check_difft(),
             check_textual(root),
