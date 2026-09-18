@@ -629,11 +629,19 @@ _STORE_FOLDER_CACHE = {}
 
 
 def repo_store_folder(root):
-    """Return the per-repo folder name for ``root`` inside an external store
+    """Return the per-repo folder path for ``root`` inside an external store
     (shipd-config store-repo-folder-name).
 
-    The name is the basename of the *main checkout's* directory, so every
-    linked worktree resolves the same store folder as the main checkout: probe
+    Registry-first: where :func:`registry_root` resolves a governing
+    registry and :func:`_registry_member_of` matches ``root`` against a
+    declared member, the result is that member's manifest path exactly as
+    the registry declares it (``/``-separated, joined onto the store root by
+    the caller) — so a linked worktree and a member relocated by the
+    machine-local member map both resolve their declaring member's path.
+    Where no registry is discoverable or no member matches — an undeclared
+    repository, no discoverable registry, or an unloadable one — this falls
+    back to the basename of the *main checkout's* directory, so every linked
+    worktree still resolves the same store folder as the main checkout: probe
     ``git rev-parse --path-format=absolute --git-common-dir`` from ``root``
     and take the basename of the printed path's parent directory. Any git
     failure (git absent, not a repository) falls back to the basename of
@@ -644,16 +652,26 @@ def repo_store_folder(root):
         return _STORE_FOLDER_CACHE[key]
     name = ""
     try:
-        result = subprocess.run(
-            ["git", "-C", root, "rev-parse", "--path-format=absolute",
-             "--git-common-dir"],
-            capture_output=True, text=True)
-    except OSError:
-        result = None
-    if result is not None and result.returncode == 0:
-        common = result.stdout.strip()
-        if common:
-            name = os.path.basename(os.path.dirname(os.path.abspath(common)))
+        ws_root = registry_root(root)
+    except ConfigError:
+        ws_root = None
+    if ws_root is not None:
+        _slug, manifest_path = _registry_member_of(ws_root, root)
+        if manifest_path:
+            name = manifest_path
+    if not name:
+        try:
+            result = subprocess.run(
+                ["git", "-C", root, "rev-parse", "--path-format=absolute",
+                 "--git-common-dir"],
+                capture_output=True, text=True)
+        except OSError:
+            result = None
+        if result is not None and result.returncode == 0:
+            common = result.stdout.strip()
+            if common:
+                name = os.path.basename(
+                    os.path.dirname(os.path.abspath(common)))
     if not name:
         name = os.path.basename(os.path.abspath(root))
     _STORE_FOLDER_CACHE[key] = name
@@ -707,16 +725,20 @@ def specs_dir(root):
 
     Where the layered configuration declares ``store_root``, the external store
     governs: the content directory is
-    ``<resolved store root>/<repo folder name>``, that per-repo folder directly
+    ``<resolved store root>/<repo store path>``, that per-repo folder directly
     holding ``verified/``, ``planned/``, ``completed/`` and ``research/``, and
-    the ``dir`` key does not apply. Otherwise it is ``root`` joined with the
-    ``dir`` name resolved from ``root``'s layered configuration — a possibly
-    nested, always ``/``-separated value whose components are joined onto
-    ``root`` with the host's native separator."""
+    the ``dir`` key does not apply. :func:`repo_store_folder`'s result is a
+    possibly nested, always ``/``-separated value (shipd-config
+    store-repo-folder-name) whose components are joined onto the store root
+    with the host's native separator, mirroring the in-repo branch below.
+    Otherwise it is ``root`` joined with the ``dir`` name resolved from
+    ``root``'s layered configuration — a possibly nested, always
+    ``/``-separated value whose components are joined onto ``root`` with the
+    host's native separator."""
     config, provenance = resolve_config(root)
     store = _resolve_store_root(config, provenance, root)
     if store is not None:
-        return os.path.join(store, repo_store_folder(root))
+        return os.path.join(store, *repo_store_folder(root).split("/"))
     return os.path.join(root, *specs_dirname(config).split("/"))
 
 
@@ -2205,29 +2227,35 @@ def _contains_path(base, target):
         return False
 
 
-def project_of(ws_root, path):
-    """Resolve which project owns ``path`` (shipd-workspace project-resolution).
+def _registry_member_of(ws_root, path):
+    """Resolve which registry member owns ``path``, returning
+    ``(project_slug, manifest_path)`` — or ``(None, None)`` when nothing
+    matches (shipd-workspace project-resolution, shipd-config
+    store-repo-folder-name).
 
-    Loads the registry from ``ws_root``, normalizes ``path`` relative to it, and
-    returns the slug of the project whose repo entry equals or contains the path,
-    the longest (most specific) matching entry winning across projects. Where the
-    machine-local member map (:func:`load_repo_map`) holds an entry for a repo's
-    manifest path, the path is *additionally* matched against that mapped
-    destination's real path under the same equality-or-containment rule, so a
-    mapped external checkout resolves to its declaring project; specificity is
-    scored by the manifest path's part count either way. Ties (an exact duplicate
-    path, which ``validate_workspace`` flags) break on first-declaration order,
-    so display code never crashes on an invalid registry. Returns ``None`` when
+    Loads the registry from ``ws_root``, normalizes ``path`` relative to it,
+    and matches it against every project's repo entries: the entry equals or
+    contains the path, the longest (most specific) matching entry winning
+    across projects. Where the machine-local member map (:func:`load_repo_map`)
+    holds an entry for a repo's manifest path, the path is *additionally*
+    matched against that mapped destination's real path under the same
+    equality-or-containment rule, so a mapped external checkout resolves to
+    its declaring member; specificity is scored by the manifest path's part
+    count either way. Ties (an exact duplicate path, which
+    ``validate_workspace`` flags) break on first-declaration order, so display
+    code never crashes on an invalid registry. Returns ``(None, None)`` when
     nothing matches — the anonymous implicit default project — or when the
     registry is unloadable or declares no projects. A malformed member map is
-    ignored here (the report verbs raise on it), keeping resolution fail-soft."""
+    ignored here (the report verbs raise on it), keeping resolution
+    fail-soft. The returned manifest path is exactly as the registry declares
+    it (``/``-separated), the entry's own spelling, never re-derived."""
     try:
         registry = load_workspace(ws_root)
     except ConfigError:
-        return None
+        return None, None
     projects = registry.get("projects")
     if not isinstance(projects, dict):
-        return None
+        return None, None
     try:
         repo_map = load_repo_map(ws_root)
     except ConfigError:
@@ -2236,6 +2264,7 @@ def project_of(ws_root, path):
     target_real = os.path.realpath(
         path if os.path.isabs(path) else os.path.join(ws_root, path))
     best_slug = None
+    best_path = None
     best_len = -1
     for slug, entry in projects.items():
         if not isinstance(entry, dict):
@@ -2257,7 +2286,17 @@ def project_of(ws_root, path):
             if matched:
                 best_len = len(parts)
                 best_slug = slug
-    return best_slug
+                best_path = rel
+    return best_slug, best_path
+
+
+def project_of(ws_root, path):
+    """Resolve which project owns ``path`` (shipd-workspace project-resolution).
+
+    A thin wrapper over :func:`_registry_member_of`'s slug, returning ``None``
+    for the anonymous implicit default project exactly as before."""
+    slug, _manifest_path = _registry_member_of(ws_root, path)
+    return slug
 
 
 # ---------------------------------------------------------------------------

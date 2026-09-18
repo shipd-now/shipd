@@ -60,14 +60,22 @@ code is `1` when a required check failed, `0` otherwise.
 
 Parse each line into `(level, check, detail)` and keep the whole output
 verbatim as the **before** state. The checks are `python`, `git`, `config`,
-`pipeline`, `wiki`, `gh`, `difft`, `textual`, `snapshot`, `statusline`,
-`protection`, `automerge`, and `copilot-secret`.
+`pipeline`, `wiki`, `store`, `gh`, `difft`, `textual`, `snapshot`,
+`statusline`, `protection`, `automerge`, and `copilot-secret`.
 
 `wiki` is **report-only** and always `ok`: it names the wiki store the working
 directory resolves — a workspace store, the repo-local fallback store, or
 neither — so the durable-knowledge tier is visible at a glance. It has no
 remedy row in the table below, so never scaffold a store on its behalf; relay
 its line in the diagnosis exactly as the other informational checks.
+
+`store` is **report-only**: it names the external store the working directory
+resolves, or states that the content directory is in-repo when no
+`store_root` is declared. It has no remedy row in the table below, so never
+move, create, or delete a store directory on its behalf — including on a
+`warn store` finding naming a folder stranded under the previous flat layout
+and its `git mv` remedy: relay that line and its remedy text to the user
+exactly as the other informational checks, and let a human run the move.
 
 **Unparseable output is your own failure.** If the command produced no output,
 no closing `doctor:` line, or lines that do not match the format above, report
