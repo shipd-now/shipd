@@ -735,12 +735,15 @@ class HookRegistration(unittest.TestCase):
                'guardrails.py"')
     VOICE_COMMAND = ('python3 "${CLAUDE_PLUGIN_ROOT}/skills/document/'
                      'scripts/voice_digest.py"')
+    STORE_SYNC_COMMAND = ('python3 "${CLAUDE_PLUGIN_ROOT}/skills/workspace/'
+                          'scripts/store_sync.py"')
 
     def test_hooks_json_declares_the_three_events(self):
         with open(HOOKS_JSON, encoding="utf-8") as fh:
             hooks = json.load(fh)["hooks"]
         self.assertEqual(
-            sorted(hooks), ["PostToolUse", "PreToolUse", "SessionStart"])
+            sorted(hooks),
+            ["PostToolUse", "PreToolUse", "SessionEnd", "SessionStart"])
         for event in ("PreToolUse", "PostToolUse"):
             self.assertEqual(len(hooks[event]), 1, event)
             entry = hooks[event][0]
@@ -749,16 +752,28 @@ class HookRegistration(unittest.TestCase):
             command = entry["hooks"][0]
             self.assertEqual(command["type"], "command", event)
             self.assertEqual(command["command"], self.COMMAND, event)
+        self.assertEqual(len(hooks["SessionStart"]), 1)
+        start_entry = hooks["SessionStart"][0]
+        self.assertEqual(len(start_entry["hooks"]), 2)
+        for command in start_entry["hooks"]:
+            self.assertEqual(command["type"], "command")
+        self.assertEqual(
+            [c["command"] for c in start_entry["hooks"]],
+            [self.VOICE_COMMAND, self.STORE_SYNC_COMMAND])
+        self.assertEqual(len(hooks["SessionEnd"]), 1)
+        end_entry = hooks["SessionEnd"][0]
+        self.assertEqual(len(end_entry["hooks"]), 1)
+        end_command = end_entry["hooks"][0]
+        self.assertEqual(end_command["type"], "command")
+        self.assertEqual(end_command["command"], self.STORE_SYNC_COMMAND)
 
     def test_hooks_json_declares_the_voice_digest_session_start(self):
         with open(HOOKS_JSON, encoding="utf-8") as fh:
             hooks = json.load(fh)["hooks"]
         self.assertEqual(len(hooks["SessionStart"]), 1)
         entry = hooks["SessionStart"][0]
-        self.assertEqual(len(entry["hooks"]), 1)
-        command = entry["hooks"][0]
-        self.assertEqual(command["type"], "command")
-        self.assertEqual(command["command"], self.VOICE_COMMAND)
+        commands = [c["command"] for c in entry["hooks"]]
+        self.assertIn(self.VOICE_COMMAND, commands)
 
 
 if __name__ == "__main__":

@@ -70,11 +70,11 @@ shared list per machine, and one after every change to it.
 
 ## Concurrency expectations
 
-The engine takes no locks and runs no networked git — it never pushes, pulls,
-or fetches on your behalf. Every wiki write (`/s:teach`, a queued question, an
-answer, a discard) auto-commits **locally**, scoped to exactly the files that
-write touched. Two engineers at once produce two local histories, and git —
-not shipd — reconciles them:
+Every wiki write (`/s:teach`, a queued question, an answer, a discard)
+auto-commits **locally** under an exclusive lock. Concurrent writers land
+their own commits, never racing git's index lock. A session-boundary hook
+fetches, fast-forward merges, and pushes at session start, then pushes again
+at session end. Git — not shipd — reconciles whatever stays unsynced:
 
 - **Per-page files merge cleanly**. Concurrent edits to distinct `wiki/*.md`
   pages never conflict.
@@ -93,9 +93,9 @@ not shipd — reconciles them:
   a concatenation of the two: the block holds a single `Answer:` value. Pick
   the answer the team stands behind, and say so in the resolving commit.
 
-The protocol is the one [getting started](getting-started.md) recommends for a
-single engineer: **`git pull` at the session start, `git push` at its end**.
-Branch the workspace repo, or don't, exactly as your team prefers.
+`store_autocommit` turns off the local auto-commit; `store_sync` turns off
+the session-boundary hook's fetch, merge, and push. Both default `true`, and
+branching the workspace repo, or not, remains entirely your team's call.
 
 ## An enterprise example: one workspaces repository
 

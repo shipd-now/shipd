@@ -50,6 +50,9 @@ jobs:
       - name: Run document test suite
         run: python3 -m unittest discover -s plugins/s/skills/document/tests -v
 
+      - name: Run workspace test suite
+        run: python3 -m unittest discover -s plugins/s/skills/workspace/tests -v
+
       - name: Lint master spec library
         run: python3 plugins/s/skills/build/scripts/spec_lint.py
 

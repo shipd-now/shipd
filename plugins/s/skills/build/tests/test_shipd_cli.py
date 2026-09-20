@@ -1135,8 +1135,8 @@ class DoctorCheckTest(unittest.TestCase):
 
     # The full preflight roster, in the order ``default_checks`` reports it.
     ALL_CHECKS = ("python", "git", "config", "pipeline", "schema", "wiki",
-                  "store", "gh", "difft", "textual", "snapshot", "statusline",
-                  "protection", "automerge", "copilot-secret")
+                  "store", "store-sync", "gh", "difft", "textual", "snapshot",
+                  "statusline", "protection", "automerge", "copilot-secret")
 
     def probed_check_names(self, root):
         """The check names ``default_checks`` reports, with every check — and
@@ -1629,6 +1629,98 @@ class DoctorCheckTest(unittest.TestCase):
         names = self.probed_check_names(self.tmp)
         self.assertEqual(names.index("store"), names.index("wiki") + 1)
 
+    # -- store-sync (shipd-cli doctor-store-sync-check) ---------------------
+
+    def _git(self, *args):
+        subprocess.run(
+            ["git", *args], capture_output=True, text=True, check=True)
+
+    def make_git_store(self, name, ahead=0, behind=0, with_upstream=True):
+        """A workspace-declaring repo cloned from a bare origin, whose clone
+        is ``ahead`` commits ahead of and ``behind`` commits behind its
+        upstream. Returns the clone's root — the directory the check runs
+        from."""
+        remote = os.path.join(self.tmp, "%s-remote.git" % name)
+        self._git("init", "-q", "--bare", "-b", "main", remote)
+        seed = os.path.join(self.tmp, "%s-seed" % name)
+        self._git("clone", "-q", remote, seed)
+        self._git("-C", seed, "config", "user.email", "test@example.com")
+        self._git("-C", seed, "config", "user.name", "Test")
+        with open(os.path.join(seed, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"workspace": {}}, fh)
+        os.makedirs(os.path.join(seed, ".shipd", "wiki"))
+        with open(os.path.join(seed, ".shipd", "wiki", "index.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("v1\n")
+        self._git("-C", seed, "add", "-A")
+        self._git("-C", seed, "commit", "-q", "-m", "seed")
+        self._git("-C", seed, "push", "-q", "origin", "main")
+
+        ws = os.path.join(self.tmp, "%s-ws" % name)
+        self._git("clone", "-q", remote, ws)
+        self._git("-C", ws, "config", "user.email", "test@example.com")
+        self._git("-C", ws, "config", "user.name", "Test")
+
+        for i in range(ahead):
+            page = os.path.join(ws, ".shipd", "wiki", "local-%d.md" % i)
+            with open(page, "w", encoding="utf-8") as fh:
+                fh.write("local %d\n" % i)
+            self._git("-C", ws, "add", "-A")
+            self._git("-C", ws, "commit", "-q", "-m", "local %d" % i)
+
+        if behind:
+            other = os.path.join(self.tmp, "%s-other" % name)
+            self._git("clone", "-q", remote, other)
+            self._git("-C", other, "config", "user.email", "test@example.com")
+            self._git("-C", other, "config", "user.name", "Test")
+            for i in range(behind):
+                page = os.path.join(other, ".shipd", "wiki", "remote-%d.md" % i)
+                with open(page, "w", encoding="utf-8") as fh:
+                    fh.write("remote %d\n" % i)
+                self._git("-C", other, "add", "-A")
+                self._git("-C", other, "commit", "-q", "-m", "remote %d" % i)
+            self._git("-C", other, "push", "-q", "origin", "main")
+
+        if not with_upstream:
+            self._git("-C", ws, "branch", "--unset-upstream", "main")
+
+        return ws
+
+    def store_sync_check(self, root):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            return shipd.check_store_sync(root)
+
+    def test_unpushed_commits_warn_with_their_count(self):
+        ws = self.make_git_store("ahead", ahead=12)
+        level, name, detail = self.store_sync_check(ws)
+        self.assertEqual((level, name), ("warn", "store-sync"))
+        self.assertIn("12", detail)
+        self.assertIn(os.path.join(ws, ".shipd", "wiki"), detail)
+
+    def test_synced_store_reports_ok(self):
+        ws = self.make_git_store("synced")
+        level, name, _detail = self.store_sync_check(ws)
+        self.assertEqual((level, name), ("ok", "store-sync"))
+
+    def test_no_upstream_reports_ok(self):
+        ws = self.make_git_store("noup", with_upstream=False)
+        level, name, detail = self.store_sync_check(ws)
+        self.assertEqual((level, name), ("ok", "store-sync"))
+        self.assertIn("no upstream", detail.lower())
+
+    def test_in_repo_fallback_store_reports_ok(self):
+        root = os.path.join(self.tmp, "fallback")
+        os.makedirs(os.path.join(root, ".shipd", "wiki"))
+        level, name, _detail = self.store_sync_check(root)
+        self.assertEqual((level, name), ("ok", "store-sync"))
+
+    def test_default_checks_report_store_sync_after_store(self):
+        names = self.probed_check_names(self.tmp)
+        self.assertEqual(names.index("store-sync"), names.index("store") + 1)
+
     # -- gh ----------------------------------------------------------------
 
     def test_gh_authenticated_is_ok(self):
@@ -1767,8 +1859,8 @@ class DoctorCheckTest(unittest.TestCase):
     def test_default_checks_run_in_the_documented_order(self):
         self.assertEqual(self.probed_check_names(self.tmp),
                          ["python", "git", "config", "pipeline", "schema",
-                          "wiki", "store", "gh", "difft", "textual",
-                          "snapshot", "statusline", "protection",
+                          "wiki", "store", "store-sync", "gh", "difft",
+                          "textual", "snapshot", "statusline", "protection",
                           "automerge", "copilot-secret"])
 
     # -- statusline --------------------------------------------------------

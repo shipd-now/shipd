@@ -104,9 +104,9 @@ git push -u origin main
 - **Never remove the managed `.gitignore` block** (`# >>> shipd-workspace
   members` … `# <<< shipd-workspace members`). It keeps `api/` and its
   siblings out of the workspace repo — no submodules, ever.
-- Wiki writes (`/s:teach`, queued oracle questions) **auto-commit locally** and
-  never push. End a session with `git push`, and start one with `git pull`. The
-  wiki then travels between your machines, and between everyone sharing it.
+- Wiki writes (`/s:teach`, queued oracle questions) **auto-commit locally**, and
+  a session-boundary hook fetches and pushes them for you. The wiki travels
+  between your machines, and between everyone sharing it, with no manual step.
 - Sharing the repo across **several engineers** works the same way, with a few
   conflict surfaces — see [Sharing a workspace with a team](teams.md).
 
