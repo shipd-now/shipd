@@ -5,7 +5,8 @@ store-sync-hook).
 
 Registered on both ``SessionStart`` and ``SessionEnd``. On ``SessionStart`` it
 fetches the store's upstream, fast-forward merges it, then pushes any local
-commits; on ``SessionEnd`` it only pushes. It never touches the *working*
+commits; on ``SessionEnd`` it only pushes. Any other event — or a payload
+naming none — exits 0 having run no git at all. It never touches the *working*
 repository — only a resolved workspace or external store, and only while the
 resolved ``store_sync`` key (shipd-config store-sync-keys) is true.
 
@@ -108,10 +109,29 @@ def resolve_store(start):
     return store
 
 
+def _upstream_remote(store):
+    """The remote the current branch's upstream tracks, from
+    ``git rev-parse --abbrev-ref @{u}`` (e.g. ``origin/main`` -> ``origin``).
+
+    Raises ``RuntimeError`` when the branch has no upstream, so the caller
+    warns once rather than fetching a remote the merge will not read."""
+    ref = _run(
+        ["git", "-C", store, "rev-parse", "--abbrev-ref", "@{u}"]
+    ).stdout.strip()
+    remote, _, _branch = ref.partition("/")
+    if not remote or not _branch:
+        raise RuntimeError("upstream %r names no remote" % ref)
+    return remote
+
+
 def sync_session_start(store):
     """Fetch the store's upstream, fast-forward merge it, then push any local
-    commits."""
-    _run(["git", "-C", store, "fetch", "origin"])
+    commits.
+
+    The fetch targets the remote the branch's upstream actually tracks, not a
+    hardcoded ``origin`` — otherwise a branch tracking another remote would
+    fast-forward onto a ref the fetch never refreshed."""
+    _run(["git", "-C", store, "fetch", _upstream_remote(store)])
     _run(["git", "-C", store, "merge", "--ff-only", "@{u}"])
     _run(["git", "-C", store, "push"])
 
@@ -141,6 +161,11 @@ def main():
         return 0
     except Exception as exc:
         sys.stderr.write("warning: store sync skipped: %s\n" % exc)
+        return 0
+    if event not in ("SessionStart", "SessionEnd"):
+        # An unrecognized or absent event never reaches the network: the hook
+        # is registered for exactly two, and a malformed payload must not be
+        # read as a push request.
         return 0
     try:
         if event == "SessionStart":

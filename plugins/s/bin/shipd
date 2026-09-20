@@ -672,15 +672,27 @@ def check_store_sync(root):
         return ("ok", "store-sync",
                 "%s is not inside a git work tree — no comparison applies"
                 % store)
+    upstream = subprocess.run(
+        ["git", "-C", store, "rev-parse", "--abbrev-ref",
+         "--symbolic-full-name", "@{u}"],
+        capture_output=True, text=True)
+    if upstream.returncode != 0:
+        return ("ok", "store-sync",
+                "%s has no upstream configured — no comparison applies"
+                % store)
     result = subprocess.run(
         ["git", "-C", store, "rev-list", "--count", "--left-right",
          "@{u}...HEAD"],
         capture_output=True, text=True)
     parts = result.stdout.split() if result.returncode == 0 else []
-    if result.returncode != 0 or len(parts) != 2:
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        # The branch does have an upstream, so this is some other failure —
+        # a corrupt store, a wedged git. Name it rather than asserting a
+        # cause the check never established.
+        detail = (result.stderr or "").strip().splitlines()
         return ("ok", "store-sync",
-                "%s has no upstream configured — no comparison applies"
-                % store)
+                "%s: sync state unreadable (%s)"
+                % (store, detail[0] if detail else "git rev-list failed"))
     behind, ahead = (int(part) for part in parts)
     if ahead == 0 and behind == 0:
         return ("ok", "store-sync", "%s is in sync with its upstream" % store)

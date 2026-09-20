@@ -1148,10 +1148,20 @@ undeclared and fall back to the built-in default rather than raising,
 mirroring the `worktree_sweep` key's tolerance. Both keys SHALL appear in the
 engine's registry of recognized top-level keys and SHALL be documented in the
 plugin's copyable config reference, so the existing agreement check over the
-two covers them. Neither key SHALL change the repo-local fallback store's
-behaviour: while the content directory resolves in-repo with no `store_root`
-declared, engine writes SHALL NOT auto-commit whatever `store_autocommit`
-resolves to.
+two covers them. `store_autocommit` SHALL resolve from the repository the
+engine verb was invoked in, never from the store directory, so a repo layer
+governs writes into a shared workspace store and an externally redirected one
+alike; the personal memory store is the one exception, resolving from its own
+tree so no repository can silence a user's memory commits. Neither key SHALL
+change the repo-local fallback store's behaviour: while the content directory
+resolves in-repo with no `store_root` declared, engine writes SHALL NOT
+auto-commit whatever `store_autocommit` resolves to.
+
+#### Scenario: A repo layer gates a workspace-store write
+- **GIVEN** a workspace store and a member repo whose own configuration layer
+  declares `store_autocommit` as false
+- **WHEN** a queue write runs from that repo
+- **THEN** the write exits zero and no commit lands in the workspace store
 
 #### Scenario: Both keys default true when undeclared
 - **WHEN** the keys are resolved from a repo whose configuration layers

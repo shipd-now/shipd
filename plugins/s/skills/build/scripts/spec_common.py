@@ -1444,7 +1444,9 @@ def _store_commit_lock(store_dir):
     The lock file lives in the system temp directory, never inside the store,
     named ``shipd-store-<first 16 hex of sha256 of the store's absolute
     path>.lock`` so every writer targeting the same store contends on the same
-    file. Yields a no-op lock — never raising — when ``fcntl`` is unavailable
+    file. That name is predictable, so the file is opened ``O_NOFOLLOW`` and
+    without truncation: a symlink planted at it by another local user is
+    refused rather than followed. Yields a no-op lock — never raising — when ``fcntl`` is unavailable
     (an unsupported platform) or the lock cannot be acquired, so locking is
     strictly an improvement on the race, never a new failure mode."""
     if fcntl is None:
@@ -1452,10 +1454,17 @@ def _store_commit_lock(store_dir):
         return
     digest = hashlib.sha256(
         os.path.abspath(store_dir).encode("utf-8")).hexdigest()[:16]
-    lock_path = os.path.join(tempfile.gettempdir(), "shipd-store-%s.lock" % digest)
+    lock_path = os.path.join(
+        tempfile.gettempdir(), "shipd-store-%s.lock" % digest)
     fh = None
     try:
-        fh = open(lock_path, "w")
+        # O_NOFOLLOW refuses a symlink planted at this predictable name in a
+        # world-writable temp dir, and O_RDWR never truncates what it opens —
+        # a lock file's contents are irrelevant, only its existence.
+        fh = os.fdopen(
+            os.open(lock_path,
+                    os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600),
+            "r+")
         fcntl.flock(fh, fcntl.LOCK_EX)
     except OSError:
         if fh is not None:

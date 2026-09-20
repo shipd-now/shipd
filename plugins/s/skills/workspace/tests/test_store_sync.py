@@ -208,3 +208,58 @@ class TestNonGitStore(StoreSyncTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUnknownEvent(StoreSyncTestCase):
+    def test_unrecognized_event_runs_no_git(self):
+        """store-sync-hook: only the two registered events reach the network.
+
+        A payload naming another event — or none at all — must not be read as
+        a push request.
+        """
+        remote = self.make_remote()
+        ws = self.make_clone(remote)
+        self.write(os.path.join(ws, ".shipd", "wiki", "page.md"), "local\n")
+        _git("-C", ws, "add", "-A")
+        _git("-C", ws, "commit", "-q", "-m", "local change")
+
+        for event in ("PreToolUse", None):
+            rc, out, err = self.run_hook(event, ws)
+            self.assertEqual(rc, 0)
+            self.assertEqual(out, "")
+            self.assertEqual(err, "")
+            self.assertNotIn("local change", self.remote_log(remote))
+
+
+class TestNonOriginUpstream(StoreSyncTestCase):
+    def test_fetch_targets_the_upstream_remote(self):
+        """store-sync-hook: session start fetches the remote the branch's
+        upstream tracks, not a hardcoded `origin`.
+
+        The clone keeps an `origin` (so the hook's gate passes) but tracks a
+        second remote, `publish`, which alone carries the upstream commit. A
+        hook fetching `origin` would never see it.
+        """
+        remote = self.make_remote()
+        ws = self.make_clone(remote)
+        publish = os.path.join(self.tmp, "publish.git")
+        _git("clone", "-q", "--bare", ws, publish)
+        _git("-C", ws, "remote", "add", "publish", publish)
+
+        # Track `publish` BEFORE it moves, so ws's own refs are up to date
+        # and only the hook's fetch can discover the commit added below.
+        _git("-C", ws, "fetch", "-q", "publish")
+        _git("-C", ws, "branch", "--set-upstream-to", "publish/main", "main")
+
+        other = os.path.join(self.tmp, "other")
+        _git("clone", "-q", publish, other)
+        _git("-C", other, "config", "user.email", "test@example.com")
+        _git("-C", other, "config", "user.name", "Test")
+        self.write(os.path.join(other, ".shipd", "wiki", "upstream.md"), "up\n")
+        _git("-C", other, "add", "-A")
+        _git("-C", other, "commit", "-q", "-m", "publish change")
+        _git("-C", other, "push", "-q", "origin", "main")
+
+        rc, _out, err = self.run_hook("SessionStart", ws)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("publish change", self.local_log(ws))
