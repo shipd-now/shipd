@@ -5,10 +5,7 @@ readiness attestation is due, or when the context gate parks a change.
 
 ## The readiness bar
 
-Four items, all of which must hold before you author anything. Print them as a
-markdown table of one row per item, each row citing the evidence that
-discharges it — internal reasoning does not count, and an item you cannot cite
-is unmet.
+Four items, all of which must hold before you author anything.
 
 1. **The problem is clear.** You can state what is wrong (or missing) today
    and what "fixed" looks like, in the repository's own terms.
@@ -19,10 +16,29 @@ is unmet.
 4. **No open decision would change the task list.** Every remaining unknown is
    an implementation detail the executor can settle from the spec.
 
+**What you print.** One plain statement per item, in this order, as visible
+text — `**<item name>** — <a sentence or two stating counts and reasons>` —
+then a closing line `Full evidence: <absolute path to the change's plan.md>`.
+Settle the change name before printing, so that path is the real destination.
+Keep the terminal clean: no table, no citations, no command output. Internal
+reasoning does not count; if it is not printed, it did not happen.
+
+**Where the evidence goes.** `plan.md` carries a `## Readiness attestation`
+section — one `###` subsection per item, named for the item, each opening with
+the plain statement and then an `Evidence:` dash list citing capability names,
+`file:line` references, and requirement ids. An item whose subsection carries
+no evidence is unmet: go back to step 2 or step 4 rather than installing. The
+linter does not check this section, so the self-review pass is what enforces
+it. Write it in settled prose that carries none of the context gate's
+placeholder markers — the gate scans it with the rest of the file.
+
 **The runnable-premise rule.** Where the plan asserts how an existing command,
-script, or flag behaves, and a task depends on that behaviour, *run it* and
-cite what it printed. Two individually reasonable decisions can be jointly
-broken, and only running the command reveals it.
+script, or flag behaves, and a task depends on that behaviour, *run it* before
+emitting. Two individually reasonable decisions can be jointly broken, and only
+running the command reveals it. The observation is evidence under the
+affected-capabilities-and-files item, not a fifth item: name the invocation and
+what it printed in that subsection's evidence, and summarize the premise in
+plain language in the printed attestation.
 
 ## The emission grammar
 
@@ -59,7 +75,20 @@ What this change deliberately does not do.
 The binding technical decisions — the ones the implementer must not
 re-litigate. Rationale belongs here, where an executor with a clean context
 can find it.
+
+## Readiness attestation
+
+### <checklist item name>
+The plain statement you printed.
+
+Evidence:
+
+- <capability name, file:line, requirement id, or a premise's invocation and
+  what running it showed>
 ```
+
+The attestation section comes last, after every other section the plan
+carries, and holds all four subsections in checklist order.
 
 ### specs/<capability>/spec.md
 

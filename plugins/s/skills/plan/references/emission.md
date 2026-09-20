@@ -50,6 +50,12 @@ specific and stable — it is how the change is referenced from here on. The emi
 engine refuses an existing destination without `--replace`, so a colliding slug
 fails loudly rather than clobbering.
 
+Pick it **before** the readiness attestation prints: the attestation's closing
+line names the absolute path of this change's `plan.md`, so by the time it
+prints the name is already settled and the path it names is the real
+destination — inside a worktree,
+`<repo-root>/.worktrees/<change>/.shipd/planned/<change>/plan.md`.
+
 ## Staging layout
 
 Author the artifact set inside a throwaway **staging directory** with this shape
@@ -257,6 +263,93 @@ those markers. Trim to the decision, the options, and the answer — the plan's
 - **Answer:** Default to `light` — following the OS appearance is explicitly a
   non-goal for this change, and a fixed default keeps first paint deterministic.
 - **Queued:** q-theme-default
+```
+
+### `## Readiness attestation` — the evidence record
+
+Every `plan.md` carries a `## Readiness attestation` section: the durable
+record of the evidence that discharged the readiness gate's four items
+(`readiness.md`). The terminal gets four plain statements and a path; this
+section gets the citations behind them.
+
+**Placement.** After `## Implementation`, and after `## Questions and answers`
+when that section exists.
+
+**Shape.** One level-3 subsection per checklist item, in checklist order, named
+for the item and nothing else:
+
+- `### Problem and motivation`
+- `### Scope and non-goals`
+- `### Affected capabilities and files`
+- `### No open task-shaping decision`
+
+Each subsection opens with the item's plain statement — the same one or two
+sentences printed in the terminal — then a line reading `Evidence:` and a dash
+list of citations to the standards in `readiness.md`. Statement above
+evidence, always: the reader who wants the summary stops at the first
+paragraph, and the reader who wants the proof keeps going. Verified runnable
+premises live under `### Affected capabilities and files`, each named with its
+invocation and its observed output or exit code.
+
+**The self-review pass enforces it, not the linter.** `spec_lint.py` requires
+only `## Idea` and `## Implementation`, so nothing mechanical catches a missing
+or hollow attestation. Before installing, re-read the staged `plan.md` and
+confirm all four subsections are present and each carries evidence
+dot-points. An item without them is **unmet**: go back to investigate, consult
+the oracle, or ask the user, and do not run the emit engine until it is
+discharged.
+
+**Phrasing rule — stay clear of the gate's marker scans.** The
+context-sufficiency gate scans this section like the rest of `plan.md`, so
+write settled prose carrying none of the placeholder markers listed under the
+oracle ledger's phrasing rule above. An unresolved item is not written down as
+a placeholder; it is resolved before emission or it blocks it.
+
+```markdown
+## Readiness attestation
+
+### Problem and motivation
+
+The settings panel renders light-only, and users on OLED displays asked for a
+dark theme.
+
+Evidence:
+
+- `src/ui/theme.py:12-30` defines a single light palette with no alternative.
+- Capability `ui-theming` documents the panel's rendering contract.
+
+### Scope and non-goals
+
+The change touches the settings panel and the theme module; OS-appearance
+following and custom palettes stay out.
+
+Evidence:
+
+- In scope: `src/ui/settings.py:44-90`, `src/ui/theme.py:12-30`.
+- Out of scope: `src/ui/palette.py` is not edited.
+
+### Affected capabilities and files
+
+Two files and one capability are affected, because the toggle is rendered in
+the panel and applied by the theme module.
+
+Evidence:
+
+- Capability `ui-theming`: requirement `theme-persistence` (base a1b2c3d4e5f6),
+  hash from `spec_status.py base-hash`.
+- Files: `src/ui/settings.py`, `src/ui/theme.py`.
+- Runnable premise: `python3 -m app.settings --dump` → exit 0, printed the
+  settings schema without a `theme` key.
+
+### No open task-shaping decision
+
+Every task-shaping decision is settled; none remain.
+
+Evidence:
+
+- Storage location (settings store over a dedicated file): settled by the
+  oracle, Q1.
+- First-run default (`light`): settled by the user, Q2.
 ```
 
 ## Delta specs — the contract
