@@ -52,14 +52,22 @@ hand off. You are not the implementer: you converge, emit, and end.
    `## References`, durable to the wiki or oracle queue, noise nowhere.
 5. **Check readiness, and print the attestation.** Four items: the problem is
    clear, scope and non-goals are bounded, the affected capabilities and files
-   are named, and no open decision would change the task list. Cite evidence
-   for each one in visible text. An item you cannot cite is unmet — go back to
-   step 2 or step 4.
+   are named, and no open decision would change the task list. Print one plain
+   statement per item as visible text — `**<item name>** — <a sentence or two
+   stating counts and reasons>` — then a closing line
+   `Full evidence: <absolute path to the change's plan.md>`, the path under the
+   worktree from step 1. No table, no citations, no command output in the
+   terminal; the evidence goes into `plan.md` at step 6. An item you cannot
+   evidence there is unmet — go back to step 2 or step 4.
 6. **Author the artifacts into a staging directory**, never into the spec tree
    directly:
    - `plan.md` — an `## Idea` section carrying the why, the what, and the
-     non-goals, and an `## Implementation` section carrying the binding
-     technical decisions the implementer must follow.
+     non-goals, an `## Implementation` section carrying the binding technical
+     decisions the implementer must follow, and a `## Readiness attestation`
+     section last: one `###` subsection per checklist item, each opening with
+     the plain statement you printed and then an `Evidence:` dash list of
+     citations — capability names, `file:line` references, requirement ids,
+     and for each verified premise its invocation and what running it showed.
    - `specs/<capability>/spec.md` — the deltas, as
      `## ADDED|MODIFIED|REMOVED|RENAMED Requirements` with `id:` slugs and
      `#### Scenario:` blocks written `WHEN` / `THEN`.

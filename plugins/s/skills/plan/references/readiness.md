@@ -52,27 +52,52 @@ Item 4 is the sharpest test: if you find yourself unsure whether a decision
 matters, ask whether resolving it one way versus another would change the tasks
 you write. If yes, it blocks emission until resolved.
 
-## Attestation — evidence, printed, before emission
+## Attestation — plain in the terminal, evidenced in the plan
 
 Meeting the checklist is not enough on its own: before proceeding from
-investigation to emission, print a **user-visible readiness attestation** that
-discharges each of the four items with concrete evidence. Internal reasoning
-does not satisfy this — if it is not printed as response text, it does not
-count.
+investigation to emission, print a **user-visible readiness attestation**, and
+carry the evidence that discharges each of the four items into the emitted
+`plan.md`. Internal reasoning does not satisfy either half — if it is not
+printed as response text, and if the evidence is not in the staged `plan.md`,
+it does not count.
 
-Print it as a **markdown table** with one row per checklist item, so it can be
-scanned at a glance — three columns, `#`, `Item`, and `Evidence`:
+### What you print
+
+Four plain-language statements, one per checklist item, in checklist order —
+each the item's name in bold, an em dash, then one or two sentences saying how
+the item is met. State counts and reasons (how many files are affected and
+why, which capabilities and what they cover), not citations. Close with one
+line naming the absolute path of the change's `plan.md`:
 
 ```
-| # | Item | Evidence |
-|---|------|----------|
-| 1 | Problem and motivation | … |
-| 2 | Scope and non-goals | … |
-| 3 | Affected capabilities and files | … |
-| 4 | No open task-shaping decision | … |
+**Problem and motivation** — <one or two sentences>
+**Scope and non-goals** — <one or two sentences>
+**Affected capabilities and files** — <one or two sentences>
+**No open task-shaping decision** — <one or two sentences>
+
+Full evidence: <absolute path to the change's plan.md>
 ```
 
-Each row's `Evidence` cell carries that item's citation, to these standards:
+No table, no citations, no command output in the terminal — long evidence
+cells stack into an unreadable wall and defeat the at-a-glance scan this
+attestation exists for. Pick the change name first (`emission.md`'s "Pick the
+change name"), so the closing line names the real destination: inside a
+worktree, `planned/<change>/plan.md` under the resolved content directory —
+by default `<repo-root>/.worktrees/<change>/.shipd/planned/<change>/plan.md`.
+
+Summarize verified runnable premises in plain language here — that they ran
+and what they showed — without reproducing the invocations.
+
+### What the plan carries
+
+The emitted `plan.md` carries a `## Readiness attestation` section holding one
+level-3 subsection per checklist item — `### Problem and motivation`,
+`### Scope and non-goals`, `### Affected capabilities and files`,
+`### No open task-shaping decision` — each opening with that item's plain
+statement and then an `Evidence:` dot-point list. `emission.md` gives the
+section's grammar and placement; the citation standards below are unchanged.
+
+Each item's evidence dot-points carry that item's citation, to these standards:
 
 - **Item 1 (problem and motivation).** Cite the `file:line`, requirement id, or
   capability name grounding the motivation — not a restatement of the
@@ -85,11 +110,11 @@ Each row's `Evidence` cell carries that item's citation, to these standards:
   are evidence here, not a fifth item:** where the plan asserts how an
   existing command, script, or flag behaves and a task or delta requirement
   depends on that assertion, the command must have been run before emission,
-  and the citation must name the invocation and its observed output or exit
-  code — a citation of the command's implementation source does not satisfy
-  it. Two exemptions: assertions about behavior **this change will create**
-  need no run (there is nothing to run yet), and assertions **no task or
-  delta requirement depends on** need no run (the premise shapes nothing the
+  and this subsection's evidence must name the invocation and its observed
+  output or exit code — a citation of the command's implementation source does
+  not satisfy it. Two exemptions: assertions about behavior **this change will
+  create** need no run (there is nothing to run yet), and assertions **no task
+  or delta requirement depends on** need no run (the premise shapes nothing the
   plan hands the executor).
 - **Item 4 (no open task-shaping decision).** Name every task-shaping decision
   and the rung that settled it — investigation, the personal memory store, the
@@ -97,7 +122,15 @@ Each row's `Evidence` cell carries that item's citation, to these standards:
   "nothing is open" without naming the decisions considered is not sufficient
   once any decision existed to settle.
 
-**An item with no such citation is unmet**, exactly like an item left
-unaddressed — go back to investigate, consult the oracle, or ask the user, per
-"How to use the gate" above. Print the attestation as a markdown table with one
-cited row per checklist item before authoring any artifact.
+**An item whose subsection carries no such evidence dot-point is unmet**,
+exactly like an item left unaddressed — go back to investigate, consult the
+oracle, or ask the user, per "How to use the gate" above, and do not install
+the change until every item is discharged.
+
+**Phrasing rule.** The context-sufficiency gate scans all of `plan.md` outside
+its own `## Context insufficient` section, so write the section in settled
+prose that carries none of the gate's placeholder markers — the same caution
+the oracle ledger already carries (`emission.md`, "the oracle ledger").
+
+Print the four plain statements and the path line before authoring any
+artifact.
