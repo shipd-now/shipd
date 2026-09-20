@@ -394,12 +394,16 @@ answered by reading is a failure of this skill.
    readiness bar, ask nothing and go straight to step 6.
 5. **Check readiness.** Gate on the four-item checklist in
    `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/readiness.md`, and print its
-   **Attestation** as user-visible response text — a markdown table with one
-   cited row per checklist item — before authoring any artifact. Internal
-   reasoning does not satisfy this; if it is not printed, it does not count.
-   Any item that cannot be discharged with a citation (per the Attestation
-   section) is unmet → go back to investigate or ask. All four met and cited →
-   emit.
+   **Attestation** as user-visible response text before authoring any
+   artifact — four plain-language statements, one per checklist item, plus a
+   closing `Full evidence:` line naming the absolute path of this change's
+   `plan.md`. Settle the change name first (`references/emission.md`, "Pick
+   the change name") so that path is the real destination. The full evidence
+   is not printed: it is authored into the staged `plan.md`'s
+   `## Readiness attestation` section at step 6. Internal reasoning does not
+   satisfy this; if it is not printed, it does not count. Any item that cannot
+   be discharged with evidence there (per the Attestation section) is unmet →
+   go back to investigate or ask. All four met and evidenced → emit.
 6. **Emit** the lean shipd artifacts (`plan.md`, delta specs, `tasks.md`) into a
    **staging directory**, then install them through `spec_emit.py change` —
    silently, following
@@ -407,8 +411,12 @@ answered by reading is a failure of this skill.
    the spec tree directly or construct its path.
 7. **Self-review** before installing: re-read the staged `plan.md`, delta specs,
    and `tasks.md` for placeholders, internal contradictions, and decisions left
-   unresolved for the executor, and fix what you find before installing. The
-   emit engine's lint checks structure; this pass checks sense.
+   unresolved for the executor, and fix what you find before installing. Check
+   the staged `plan.md`'s `## Readiness attestation` section item by item: each
+   of the four subsections must carry evidence dot-points. An item without them
+   is **unmet** — go back to investigate, consult the oracle, or ask the user,
+   and do not install until it is discharged. The emit engine's lint checks
+   structure; this pass checks sense.
 8. **Install** the staged change via `spec_emit.py change` and fix findings
    until it installs clean (see the emission gate below).
 
@@ -429,8 +437,9 @@ conditions still end a turn and wait for the user:
 - **An `INSUFFICIENT` oracle verdict** — a task-shaping decision the oracle
   could not answer reaches the typed round (step 2's OPEN QUESTIONS ending,
   the fast path's step 4, or enrichment's true-gap round).
-- **An undischargeable readiness item** — a checklist item the attestation
-  cannot cite (`references/readiness.md`).
+- **An undischargeable readiness item** — a checklist item whose
+  `## Readiness attestation` subsection cannot carry evidence
+  (`references/readiness.md`).
 - **A gate rejection that is a true gap** — `spec_gate.py` exits 2 on a
   finding the enrichment loop cannot resolve from the repository itself (see
   the Ending section).
