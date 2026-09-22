@@ -506,11 +506,12 @@ def _text_entry(old, new, path, diff_spec, kind):
 def cmd_diff(args):
     if not have("git"):
         die("required tool 'git' not found on PATH. install git.", code=127)
-    if not have("difft"):
-        die("required tool 'difft' not found on PATH. install difftastic "
-            "(run `semdiff doctor --fix`, or: brew install difftastic).")
     if not in_git_repo():
         die("not inside a git repository.")
+    if not have("difft"):
+        die("required tool 'difft' not found on PATH. install difftastic "
+            "(run `semdiff doctor --fix`, or: brew install difftastic).",
+            code=127)
 
     old_ref, new_ref, diff_spec, meta = resolve_endpoints(
         args.base, args.head, args.linear)

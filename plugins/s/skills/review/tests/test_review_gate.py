@@ -1533,6 +1533,26 @@ class GateTemplateDifftPinTest(unittest.TestCase):
             semdiff.DIFFT_VERSION, text,
             "the gate template does not name the pinned difftastic version")
 
+    def test_the_ci_workflow_pins_the_same_version(self):
+        """The third pin. `DIFFT_VERSION` binds the engine's installer and,
+        above, the gate template — but CI carries its own literal. Without
+        this, bumping the constant leaves CI installing the previous release
+        with nothing to announce it, and the engine reads difftastic's JSON
+        under `DFT_UNSTABLE=yes`, whose shape that release is free to change.
+        """
+        repo_root = os.path.normpath(
+            os.path.join(PLUGIN_S_ROOT, "..", ".."))
+        path = os.path.join(repo_root, ".github", "workflows", "ci.yml")
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertNotIn(
+            "releases/latest/download/", text,
+            "the ci workflow names the unversioned asset")
+        self.assertIn(
+            semdiff.DIFFT_VERSION, text,
+            "the ci workflow does not pin the same difftastic version as "
+            "the engine's DIFFT_VERSION")
+
 
 if __name__ == "__main__":
     unittest.main()
