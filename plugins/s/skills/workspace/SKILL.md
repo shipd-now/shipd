@@ -5,13 +5,15 @@ description: >-
   workspace marker with a guided target-root choice (init), report the
   workspace roster of projects and initiatives (show), bootstrap a job
   workspace from its repository URL (clone), materialize its members by
-  executing the engine's plan with real git (sync), or map members to the
-  checkouts they already have on this machine (map). Use when asked to "set up
+  executing the engine's plan with real git (sync), map members to the
+  checkouts they already have on this machine (map), or build a nested team
+  workspace beneath a discoverable base (team). Use when asked to "set up
   a workspace", "create a workspace", "initialize a workspace", "clone a
-  workspace", "sync the workspace", "materialize members", "map a member", or
-  to see what a workspace contains. Trigger phrases: "workspace", "set up a
-  workspace", "workspace init", "clone a workspace", "sync the workspace",
-  "materialize members", "map the workspace", "/s:workspace".
+  workspace", "sync the workspace", "materialize members", "map a member",
+  "set up a team workspace", or to see what a workspace contains. Trigger
+  phrases: "workspace", "set up a workspace", "workspace init", "clone a
+  workspace", "sync the workspace", "materialize members", "map the
+  workspace", "team workspace", "/s:workspace".
 ---
 
 # /s:workspace — Guided workspace setup & roster
@@ -70,6 +72,9 @@ section below:
 - **`/s:workspace map`** → guided member mapping: point unmapped members at
   the checkouts they already have on this machine, through the engine's
   `workspace-map set` verb.
+- **`/s:workspace team`** → guided nested team workspace setup, mirroring the
+  `workspace-team` wizard's own steps and driving that verb rather than
+  reimplementing it.
 
 ---
 
@@ -86,7 +91,8 @@ section below:
    prints, create nothing, and stop.** There is nothing to initialize; nesting a
    second workspace is a deliberate hand edit, not this skill's job. (The
    `workspace-init` verb itself refuses under an existing workspace, so this is
-   also enforced downstream.)
+   also enforced downstream.) To add a **nested team workspace** beneath that
+   discoverable root instead, point the user at `/s:workspace team`.
 
 2. **When no workspace is discoverable** (the command exits non-zero with its
    no-workspace error), first **read the resolved configuration** — the
@@ -455,6 +461,65 @@ through the engine's `workspace-map set` verb — **never** hand-edit
    Summarize it plainly, alongside the members you left unmapped. To undo an
    entry later, `workspace-map remove <member-path>` is the counterpart — again
    the engine's verb, never a hand edit.
+
+## `team` — guided team workspace setup
+
+Build the blessed nested team layout: a team directory per team beneath a
+discoverable base workspace, each initialized as its own nested workspace,
+declaring its own repos in the project registry, with any checkout the
+engineer already has mapped rather than cloned. This is the guided front
+door for `workspace-team`, the engine's interactive wizard (shipd-workspace
+workspace-team-wizard); mirror its steps one at a time and **drive that verb
+rather than reimplementing it** — hand-write no manifest, gitignore block,
+project registry, or map file of your own.
+
+`workspace-team` is genuinely interactive: it prompts on the terminal itself
+and, exactly like `shipd install`, refuses — writing nothing — whenever
+standard input is not one. A scripted or piped invocation can never answer
+it, so unlike every verb above, do not drive it as a background command call.
+Instead:
+
+1. **Check for a base workspace first.** Run `workspace-show` from the repo
+   root:
+
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" workspace-show
+   ```
+
+   If it exits non-zero with the no-workspace error, report that verbatim and
+   point the user at `/s:workspace init` — a team workspace nests beneath a
+   base one, and there is no base to nest beneath yet.
+
+2. **Preview the wizard's steps**, in the order it asks them, so the user
+   knows what is coming before running it:
+   - **Team name(s)**, one at a time — held to the project-name pattern
+     (letters and digits joined by `-`, `_`, or `.`), re-asked on a malformed
+     or duplicate name, finished with a blank line.
+   - **Per accepted team, its repos** — a manifest-relative path, then an
+     optional clone url, an optional branch, and an optional existing local
+     checkout path, repeated until a blank path ends that team's list.
+   - A team directory that already declares a workspace is reported and
+     skipped, never re-initialized.
+
+3. **Hand off to the real command.** Tell the user to run it from a terminal,
+   against the base root reported in step 1:
+
+   ```
+   shipd workspace team
+   ```
+
+   The wizard creates each team directory, initializes it as a git-seeded
+   nested workspace (`workspace-init --nested --git`), declares its repos
+   through the project registry writer (`workspace-project add`), and records
+   a member map entry for every existing checkout it was pointed at
+   (`workspace-map set`) — no network call, no clone. It closes on its own
+   completion report, naming every team created, every repo declared, every
+   member mapped, and `shipd workspace sync` as the way to materialize the
+   rest.
+
+4. **Report.** Once the user confirms the wizard finished, run `workspace-show`
+   from the base root and summarize the new team project(s) it now lists —
+   there is nothing left to do; the wizard already wrote everything.
 
 ## The question contract (AskUserQuestion)
 

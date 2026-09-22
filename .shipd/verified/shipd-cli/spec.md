@@ -26,8 +26,9 @@ no trailing arguments, the binary SHALL delegate to `metrics.py summary`.
 When invoked as `shipd workspace`, the binary SHALL select the delegate by
 the first trailing argument: the bare word `init` SHALL be consumed and
 delegate to `spec_status.py workspace-init`, the bare word `sync` SHALL be
-consumed and delegate to `spec_status.py workspace-sync`, and any other
-first trailing argument (or none) SHALL delegate to
+consumed and delegate to `spec_status.py workspace-sync`, the bare word
+`team` SHALL be consumed and delegate to `spec_status.py workspace-team`,
+and any other first trailing argument (or none) SHALL delegate to
 `spec_status.py workspace-show` with all trailing arguments intact. When
 invoked as `shipd wiki`, the binary SHALL select the delegate by the first
 trailing argument: the bare word `init` SHALL be consumed and delegate to
@@ -62,6 +63,11 @@ SHALL print the same banner to stdout and exit `0`.
 #### Scenario: Workspace sync mode
 - **WHEN** `shipd workspace sync --help` runs
 - **THEN** the output is identical to `spec_status.py workspace-sync --help`
+  and the exit code is `0`
+
+#### Scenario: Workspace team mode
+- **WHEN** `shipd workspace team --help` runs
+- **THEN** the output is identical to `spec_status.py workspace-team --help`
   and the exit code is `0`
 
 #### Scenario: Bare workspace is still the roster report

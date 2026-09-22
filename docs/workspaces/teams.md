@@ -100,29 +100,28 @@ branching the workspace repo, or not, remains entirely your team's call.
 ## An enterprise example: one workspaces repository
 
 Take an enterprise with several engineering groups — `discovery` and
-`platform`, each holding three or four teams — over repos the whole
-organization shares. Anyone contributes to any repo, and discipline codeowners
-approve the pull requests.
+`platform`, each holding three or four teams. They share repos the whole
+organization owns, with discipline codeowners approving every pull request.
 
-**One dedicated workspaces repository, one folder per team or group**. Each
-folder is a job workspace with its own manifest and wiki, and
-[multi-workspace repos](multi-workspace-repos.md) carries the mechanics of
-that shape. Clone it once with plain `git clone`:
+**One dedicated workspaces repository, itself a workspace, holding one
+`--nested` team workspace per team or group**. The repo root carries an
+organization-wide manifest and wiki. Each team's own folder is its own nested
+workspace, with its own manifest and wiki store.
+[Practical examples](multi-workspace-repos.md) carries the layout's mechanics.
+Build it with the guided wizard, run from inside the base:
 
 ```sh
 git clone git@github.com:acme/workspaces.git ~/workspaces/acme
-cd ~/workspaces/acme/discovery && shipd workspace sync
+cd ~/workspaces/acme
+shipd workspace team
 ```
 
-```
-~/workspaces/acme/                 <- the one workspaces repo clone
-  discovery/                       <- WORKSPACE — the discovery group
-    .shipd-config.json             tracked: manifest — projects, focus
-    .shipd/wiki/  initiatives/     tracked: the group's shared knowledge
-    main-app/  api/                machine-local: shared repos, materialized
-    .shipd-workspace.local.json    machine-local: your member map, if any
-  platform/                        <- WORKSPACE — another group, same shape
-```
+**Reads fall through, writes land nearest.** A team folder that declares no
+`projects` of its own inherits the base's; one that does shadows it instead.
+Every wiki write — `/s:teach`, a queued question, an answer — lands in the
+nearest store. That's a team's own when run from inside it, the base's only
+when run from the base itself. A question queued at the base is answerable
+only there.
 
 **Projects are systems, not teams**. The manifest forbids two projects
 claiming one repo path, and shared repos are exactly that: no team owns
@@ -130,7 +129,7 @@ claiming one repo path, and shared repos are exactly that: no team owns
 `main-app` project takes the frontend and mobile repos, `api` the repos the
 backend discipline owns, and `infra` the deployment and platform repos. Two
 folders declaring the same `api-core` duplicate nothing: uniqueness holds per
-manifest, and each is that group's own view. A team is instead who works an
+manifest, and each is that team's own view. A team is instead who works an
 **initiative** — a `Project:`-scoped brief every clone reads.
 
 **Nobody materializes everything**. The sync plan is advisory per member. An
@@ -142,9 +141,10 @@ machine-local and never committed, so one layout never leaks into another.
 
 **A group whose knowledge must stay isolated gets its own repository**. Git
 has no per-directory permissions, so everyone who clones the workspaces repo
-reads every folder in it. Give that group a workspace repository of its own —
+reads every team folder in it. That includes the base wiki and every nested
+team's own store. Give that group a workspace repository of its own —
 **separate repos, not directories, are the isolation boundary.**
 
-Day to day, `shipd workspace` prints the group's roster of projects, members,
-and initiatives. `shipd workspace sync` re-checks the members you use, and
+Day to day, `shipd workspace` prints a team's roster of projects, members, and
+initiatives. `shipd workspace sync` re-checks the members you use, and
 `shipd board` reports delivery across every declared project's repos.

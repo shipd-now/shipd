@@ -300,6 +300,14 @@ class DispatchTest(ShipdCliTestBase):
         self.assertEqual(r.stdout, direct.stdout)
         self.assertIn("workspace-sync", r.stdout)
 
+    def test_workspace_team_delegates_to_workspace_team(self):
+        direct = self.script("spec_status.py", "workspace-team", "--help")
+        r = self.cli("workspace", "team", "--help")
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+        self.assertIn("workspace-team", r.stdout)
+
     def test_bare_workspace_is_still_the_roster_report(self):
         # ``init`` and ``sync`` are the only workspace mode words, so anything
         # else falls through to ``workspace-show`` with its arguments intact.
@@ -328,12 +336,13 @@ class DispatchTest(ShipdCliTestBase):
 
     def test_workspace_modes_map_to_the_status_script(self):
         """The workspace mode table: a mode-less default of the roster report,
-        with ``init`` and ``sync`` the two consumed mode words (shipd-cli
-        cli-dispatch)."""
+        with ``init``, ``sync``, and ``team`` the three consumed mode words
+        (shipd-cli cli-dispatch)."""
         self.assertEqual(shipd.WORKSPACE_MODES,
                          {None: ("spec_status.py", ["workspace-show"]),
                           "init": ("spec_status.py", ["workspace-init"]),
-                          "sync": ("spec_status.py", ["workspace-sync"])})
+                          "sync": ("spec_status.py", ["workspace-sync"]),
+                          "team": ("spec_status.py", ["workspace-team"])})
 
     def test_wiki_modes_map_to_the_status_script(self):
         """The wiki mode table: a mode-less default of the store report, with
@@ -382,7 +391,7 @@ class DispatchTest(ShipdCliTestBase):
         rows = [line.strip() for line in r.stdout.splitlines()
                 if line.strip().startswith("workspace ")]
         self.assertEqual(len(rows), 1, r.stdout)
-        self.assertIn("[init|sync]", rows[0])
+        self.assertIn("[init|sync|team]", rows[0])
 
     def test_related_is_a_curated_verb_mapped_to_the_status_script(self):
         """The `related` row delegates to ``spec_status.py related``

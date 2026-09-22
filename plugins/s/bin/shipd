@@ -8,7 +8,7 @@ a versioned plugin cache snapshot alike. Delegation is process replacement
 (:func:`os.execv`), so the delegate's stdout, stderr, interactivity, and exit
 code are this binary's own — nothing is reimplemented or reformatted here.
 
-Only read/inspect verbs are exposed, with nine deliberate exceptions, each
+Only read/inspect verbs are exposed, with ten deliberate exceptions, each
 writing user-domain files and never a spec artifact, and each only under an
 explicit word: ``statusline install`` writes the statusline registration into
 the user's own Claude Code settings file, ``copilot add`` / ``copilot remove``
@@ -20,7 +20,10 @@ directories, ``install`` asks which harnesses the user works in and
 installs the chosen ones' commands into their home directory, ``init``
 creates the content directory's empty layout directories, ``workspace init``
 writes the workspace marker (and, under ``--git``, the marked member-repos
-``.gitignore`` block), ``workspace sync --write-gitignore`` rewrites that same
+``.gitignore`` block), ``workspace team`` interactively builds a nested team
+workspace beneath a discoverable base — team directories, each team's own
+workspace marker and project registry, and member map entries, all local,
+``workspace sync --write-gitignore`` rewrites that same
 marked block, and ``wiki init`` scaffolds the wiki store — never a spec
 artifact, and never modifying anything already there. The mutating
 verbs over the spec library (``set-status``,
@@ -109,13 +112,14 @@ RENDER_MODES = {
 }
 
 # ``workspace`` reads the same way: the roster report is the default, and the
-# two bare words ``init`` and ``sync`` are consumed to select the setup and
-# materialization verbs. ``workspace-show`` takes no positionals, so the mode
-# words shadow nothing.
+# three bare words ``init``, ``sync``, and ``team`` are consumed to select the
+# setup, materialization, and interactive team-wizard verbs. ``workspace-show``
+# takes no positionals, so the mode words shadow nothing.
 WORKSPACE_MODES = {
     None: ("spec_status.py", ["workspace-show"]),
     "init": ("spec_status.py", ["workspace-init"]),
     "sync": ("spec_status.py", ["workspace-sync"]),
+    "team": ("spec_status.py", ["workspace-team"]),
 }
 
 # ``wiki`` likewise: the store report by default, with ``init`` the one word
@@ -147,8 +151,9 @@ verbs:
   epic <slug>                an epic's status, metadata, and member states
   prd [slug]                 a PRD's report and citing epics; bare: the
                              workspace's PRD roster
-  workspace [init|sync]      the workspace root, its projects, and initiatives
-                             (init: create one; sync: materialize its members)
+  workspace [init|sync|team] the workspace root, its projects, and initiatives
+                             (init: create one; sync: materialize its members;
+                             team: interactively build a nested team workspace)
   wiki [init]                the wiki store (init: scaffold it)
   config                     the layered configuration this root resolves
   board [text] [args]        the delivery board (default: full-screen)
