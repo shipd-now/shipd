@@ -4,147 +4,96 @@
 
 [← Workspaces](../workspaces.md)
 
-One repo can carry several workspaces. A team clones it once, and each
-engineer syncs only the jobs they work on. The rest cost a few KB of manifest
-and wiki on disk, and materialize nothing.
+One repo can carry several team workspaces. A team clones it once, and each
+engineer syncs only the team workspaces they use. The rest cost a few KB of
+manifest and wiki on disk, and materialize nothing.
 
-Two shapes support that. Choose between them by whether the jobs share
-knowledge. Sibling workspaces in a plain repo (**Shape A**) keep every job's
-wiki to itself. A base workspace with nested jobs (**Shape B**) gives every
-job an inherited base wiki.
+## The shape: a base workspace, nested team workspaces
 
-## Shape A — sibling workspaces in a plain repo
-
-The repo root declares no workspace. It is a plain container, and each job is
-an ordinary workspace directory beneath it, created exactly as
-[Getting started](getting-started.md) creates a standalone one.
-
-```
-~/workspaces/company/             ← A PLAIN GIT REPO — its root declares
-                                    no workspace, it only holds the two below
-  workspace-myapp/                ← WORKSPACE — the myapp job
-    .shipd-config.json            ← this job's manifest                       (tracked)
-    .gitignore                    ← this job's members block, engine-managed  (tracked)
-    .shipd/
-      wiki/                       ← this job's knowledge store                (tracked)
-      initiatives/  projects/     ← this job's goals & context                (tracked)
-    api/  web/                    ← this job's member repos                   (ignored)
-  ws-tasks-management/            ← WORKSPACE — an unrelated job
-    .shipd-config.json            ← its own manifest                          (tracked)
-    .gitignore                    ← its own members block                     (tracked)
-    .shipd/wiki/                  ← its own store — nothing is shared         (tracked)
-    tasks/  incentives/           ← its own member repos                      (ignored)
-```
-
-Discovery is nearest-ancestor. A session inside `workspace-myapp/` never
-sees `ws-tasks-management/`, so siblings neither interfere nor inherit.
-
-Create (or clone) the container repo, then initialize each workspace in it:
-
-```sh
-mkdir -p ~/workspaces/company/workspace-myapp
-mkdir -p ~/workspaces/company/ws-tasks-management
-cd ~/workspaces/company && git init
-shipd workspace init ~/workspaces/company/workspace-myapp
-shipd workspace init ~/workspaces/company/ws-tasks-management
-```
-
-This shape takes no `--nested`: nothing is discoverable above either target.
-Fill each manifest as [Getting started](getting-started.md) shows, then run
-`shipd wiki init` and `shipd workspace sync` inside each workspace.
-
-`--git` is optional here, and it never nests a repo inside the container. The
-verb skips `git init` when the target already sits inside a git work tree, and
-seeds only that workspace's own members `.gitignore` block. A plain `init`
-gets the block on the first `shipd workspace sync --write-gitignore`, so
-either route ends in the same tracked state.
-
-## Shape B — a base workspace with nested jobs
-
-Here the repo root is a workspace, the base of
-[Nesting and external stores](nesting-and-stores.md). Each job is a `--nested`
-workspace filed directly beneath it.
+The repo root is itself a workspace — the base of
+[Nesting and external stores](nesting-and-stores.md). Each team gets a
+`--nested` workspace directly beneath it. That nested workspace inherits the
+base's wiki, initiatives, and project registry wherever it declares none of
+its own.
 
 ```
 ~/workspaces/acme-base/           ← THE BASE WORKSPACE REPO — clone this
-  .shipd-config.json              ← the base manifest                         (tracked)
-  .shipd/wiki/                    ← knowledge every job below inherits        (tracked)
-  myapp/                          ← NESTED JOB WORKSPACE
-    .shipd-config.json            ← this job's own manifest                   (tracked)
-    .gitignore                    ← this job's members block                  (tracked)
-    .shipd/wiki/                  ← this job's own store — writes land here   (tracked)
-    api/  web/                    ← this job's member repos                   (ignored)
-  billing-rollout/                ← ANOTHER NESTED JOB WORKSPACE
-    .shipd-config.json            ← its own manifest                          (tracked)
-    .shipd/wiki/                  ← its own store, plus the base's by         (tracked)
-                                    inheritance
-    billing/  tasks/              ← its own member repos                      (ignored)
+  .shipd-config.json              ← the base manifest                        (tracked)
+  .shipd/wiki/                    ← knowledge every team below inherits      (tracked)
+  myapp/                          ← NESTED TEAM WORKSPACE
+    .shipd-config.json            ← this team's own manifest                 (tracked)
+    .gitignore                    ← this team's members block                (tracked)
+    .shipd/wiki/                  ← this team's own store — writes land here (tracked)
+    api/  web/                    ← this team's member repos                 (ignored)
+  billing-rollout/                ← ANOTHER NESTED TEAM WORKSPACE
+    .shipd-config.json            ← its own manifest                        (tracked)
+    .shipd/wiki/                  ← its own store, plus the base's by       (tracked)
+                                     inheritance
+    billing/  tasks/              ← its own member repos                    (ignored)
 ```
-
-```sh
-mkdir -p ~/workspaces/acme-base/myapp
-mkdir -p ~/workspaces/acme-base/billing-rollout
-shipd workspace init ~/workspaces/acme-base/myapp --nested --git
-shipd workspace init ~/workspaces/acme-base/billing-rollout --nested --git
-```
-
-`shipd workspace init` requires `--nested` here, and deliberately so. The
-bare verb refuses to create a workspace under an already-discoverable one, so
-no job nests by accident.
-
-Inheritance is [Nesting and external stores](nesting-and-stores.md)'s,
-unchanged. Reads fall through the chain nearest-first, so a job sees the
-base's pages, initiatives, and project registry wherever it declares none of
-its own. Every write lands in the nested job's own store, never the base's.
-Teaching the base is its own deliberate act, run from the base workspace.
 
 ## What lives where
 
-| | Shape A — siblings | Shape B — base + nested jobs |
+| | Base workspace | Each nested team workspace |
 |---|---|---|
-| **Manifest** (`.shipd-config.json`) | one per workspace directory — tracked in the shared repo | one at the base plus one per job — tracked in the shared repo |
-| **Wiki pages** (`.shipd/wiki/`) | one store per workspace, private to it — tracked | one store per job, plus the base's — tracked |
-| **Oracle queue** (`.shipd/wiki/queue.md`) | per workspace; a question queued in one is invisible in the other — tracked | per job for writes, aggregating the base's questions on read — tracked |
-| **Initiatives** (`.shipd/initiatives/`) | per workspace — tracked | per job, falling back to the base's brief — tracked |
-| **Member repos** | inside each workspace, held out by its members block — machine-local | inside each job, held out by its members block — machine-local |
-| **Inherited base wiki** | none — the siblings share nothing | the base's `.shipd/wiki/`, read nearest-first by every job — tracked |
+| **Manifest** (`.shipd-config.json`) | tracked, at the repo root | tracked, one per team folder |
+| **Wiki pages** (`.shipd/wiki/`) | tracked — every team below inherits it on read | tracked — writes land here, never at the base |
+| **Oracle queue** (`.shipd/wiki/queue.md`) | tracked — a question queued here is answerable only here | tracked — the team's own pending questions |
+| **Initiatives** (`.shipd/initiatives/`) | tracked, falls back to it when a team declares none | tracked, shadows the base's when declared |
+| **Member repos** | none — the base holds no members of its own | machine-local, held out by the team's members block |
 
-## Using either shape
+## Setup: `shipd workspace team`
 
-Clone the repo with plain `git clone`. The `/s:workspace clone` verb of
-[Getting started](getting-started.md) bootstraps one workspace from a
-repository URL, so it is the wrong front door for a repo holding several:
+Build the layout with the guided wizard, run from inside the base workspace:
 
 ```sh
-git clone git@github.com:acme/company-workspaces.git ~/workspaces/company
-cd ~/workspaces/company/workspace-myapp
+shipd workspace init ~/workspaces/acme-base --git
+cd ~/workspaces/acme-base
+shipd workspace team
+```
+
+`shipd workspace team` asks for one or more team names. For each team, it
+asks for repo paths, clone URLs, and any checkout you already have on this
+machine. It creates the team's folder, initializes a nested workspace,
+declares the repos, and maps the checkouts you named. The wizard reaches the
+network never — `shipd workspace sync` materializes members afterward, inside
+the team workspace that needs them.
+
+## Cloning and day-to-day use
+
+Clone the shared repo with plain `git clone` — it holds several workspaces,
+so the single-workspace `/s:workspace clone` verb is the wrong front door:
+
+```sh
+git clone git@github.com:acme/workspaces.git ~/workspaces/acme-base
+cd ~/workspaces/acme-base/myapp
 shipd workspace sync
 ```
 
-`cd` into the workspace you care about, and plan its materialization there.
+`cd` into the team workspace you work in, and plan its materialization there.
 `shipd workspace sync` only prints the plan, so run `/s:workspace sync` in a
-Claude session to execute it. Sync reads only that workspace's own manifest.
-The jobs you ignore stay unmaterialized, and cost nothing but their tracked
+Claude session to execute it. Sync reads only that team's own manifest. The
+teams you ignore stay unmaterialized, and cost nothing but their tracked
 manifest and wiki.
 
-Knowledge travels as [Sharing a workspace with a team](teams.md) describes:
-`git pull` at the start of a session, `git push` at the end. The conflict
-surfaces are the ones that page names. Wiki auto-commits land in the enclosing
-work tree, which in both shapes is the one shared repo. Every session
-therefore commits into the same local history.
+`shipd workspace` reports the team's roster of projects and initiatives.
+`shipd board` reports delivery across every declared project's repos.
 
-## Pros and cons
+## What the shape costs
 
-| | Shape A — siblings | Shape B — base + nested jobs |
-|---|---|---|
-| **Pros** | strict isolation between jobs; the simplest mental model — every workspace reads like a standalone one that happens to share a repo | a base wiki every job inherits for free; nesting is an explicit `--nested` opt-in, never accidental |
-| **Cons** | no shared knowledge — conventions common to every job are duplicated per workspace | one more level of indirection to reason about; base writes need their own discipline, since every write defaults to the job's store |
+The base wiki accumulates knowledge only from writes made **at the base**. A
+teammate teaching a page from inside `myapp/` writes it into `myapp`'s own
+store, never the base's. Run `/s:teach` from the base workspace to grow the
+knowledge every team inherits.
 
-Pick **Shape A** when the jobs have nothing to say to each other. Pick
-**Shape B** when they share conventions worth writing down once.
+The oracle queue splits the same way. A question queued at the base is
+answerable only from the base workspace, never from a nested team's own
+session. Queue a question there when every team should see its answer.
 
-Neither shape is an access-control boundary. Git has no per-directory
-permissions, so anyone who can clone the repo reads every workspace in it.
-When a job's manifest or knowledge must stay invisible to some of the people
-cloning, give that job its own repo. **Separate repos, not directories, are
-the isolation boundary.**
+## Isolation
+
+Git has no per-directory permissions. Anyone who can clone the repo reads
+every team workspace in it — the base wiki and every nested team's own store
+alike. When a team's knowledge must stay invisible to some of the people who
+clone the repo, give that team a workspace repository of its own.
+**Separate repos, not directories, are the isolation boundary.**

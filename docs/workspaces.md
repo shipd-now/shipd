@@ -58,8 +58,10 @@ shipd workspace init ~/workspaces/acme-base/myapp --nested --git
 
 [Details →](workspaces/nesting-and-stores.md)
 
-**Sharing a workspace with a team** — several engineers on one workspace repo,
-what travels between them, the hooks consent gate, and conflict surfaces.
+**Sharing a workspace with a team** — several engineers on one workspace
+repo, what travels between them, the hooks consent gate, and conflict
+surfaces. The blessed enterprise layout nests one team workspace per team
+under one base.
 
 ```sh
 shipd doctor   # store-sync — how far your clone has drifted
@@ -76,13 +78,14 @@ python3 <plugin>/skills/build/scripts/spec_status.py --root /tmp/ws workspace-sh
 
 [Details →](workspaces/headless.md)
 
-**Practical examples: multi-workspace repos** — the two shapes for carrying
-several workspaces in one repo, with layout trees, storage tables, and
-trade-offs.
+**Practical examples: multi-workspace repos** — the blessed shape for
+carrying several team workspaces in one repo. A base workspace holds a
+`--nested` team workspace per team, shown with a layout tree and a storage
+table.
 
 ```sh
-git clone git@github.com:acme/company-workspaces.git ~/workspaces/company
-cd ~/workspaces/company/workspace-myapp && shipd workspace sync
+git clone git@github.com:acme/workspaces.git ~/workspaces/acme-base
+cd ~/workspaces/acme-base/myapp && shipd workspace sync
 ```
 
 [Details →](workspaces/multi-workspace-repos.md)

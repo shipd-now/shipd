@@ -155,6 +155,30 @@ Verbs (see the spec-status + statusline capabilities for the contract):
                      directory that does not exist warns on stderr but still
                      writes. `remove` deletes the entry matching verbatim or by
                      resolved directory, erroring when none matches
+  workspace-project [add <project> <path> [--url U] [--branch B] |
+                     remove <project> [--repo <path>]]
+                     the engine-owned writer for the workspace registry's
+                     `projects` map, so it is never hand-authored. Bare, list
+                     each declared project's repo entries as
+                     `<project>: <path> [<url>]`, printing `(no projects)`
+                     when none are declared. `add` appends a repo entry under
+                     <project> (creating the project when absent), storing
+                     --url/--branch verbatim when given, else a plain path
+                     string. `remove` deletes the whole project, or — with
+                     --repo <path> — only that repo entry, deleting the
+                     project when its last entry goes. Every write validates
+                     the resulting registry first, refusing (and writing
+                     nothing) on an ambiguous repo path or a malformed
+                     project name, and preserves every other config key. Never
+                     reaches the network or materializes a directory
+  workspace-team     interactively build a nested team workspace beneath the
+                     discoverable base: one or more team names, each team's
+                     repos declared through the project registry writer, and
+                     a member map entry for any repo whose existing local
+                     checkout is given — local operations only, never a clone.
+                     Refuses (writing nothing) when no base workspace is
+                     discoverable, naming `workspace-init` as the remedy, and
+                     when standard input is not a terminal
 
 The six read verbs — ``show``, ``status``, ``locate``, ``related``,
 ``epic-show``, and
@@ -3540,6 +3564,28 @@ def cmd_workspace_init(path, git=False, nested=False):
     return 0
 
 
+def cmd_workspace_team(root):
+    """Run the interactive ``workspace-team`` wizard against the
+    discoverable base workspace (shipd-workspace workspace-team-wizard) —
+    the engine's front door for ``workspace_tui.run``, building the nested
+    team layout beneath an existing base.
+
+    Unlike ``cmd_workspace_init``, this verb never creates the base itself:
+    when no workspace is discoverable from ``root``, it raises
+    :class:`StatusError` naming ``workspace-init`` (``shipd workspace init``)
+    as the remedy, writing nothing. ``workspace_tui`` is imported lazily —
+    it imports this module for the engine-owned writers its executors call,
+    so importing it at module scope here would be a cycle."""
+    ws_root = sc.find_workspace_root(root)
+    if ws_root is None:
+        raise StatusError(
+            "no workspace found from %s; run `workspace-init` (or `shipd "
+            "workspace init`) to create one before building a nested team "
+            "layout beneath it" % root)
+    import workspace_tui
+    return workspace_tui.run(ws_root)
+
+
 def cmd_project_show(root, slug):
     """Print one declared project's repos, context presence, and scoped
     initiatives (spec-status workspace-status-verbs). The registry resolves
@@ -3803,6 +3849,151 @@ def cmd_workspace_sources(root, directory=None, remove=False):
         sys.stderr.write("warning: directory does not exist: %s\n" % target)
     print(_source_entry_line(ws_root, directory))
     return 0
+
+
+def _load_workspace_config(ws_root):
+    """Load the raw top-level JSON object of ``<ws_root>/.shipd-config.json``,
+    verifying it declares a ``workspace`` object (spec-status
+    workspace-project-verbs). Returns ``(data, path)``. Unlike
+    :func:`spec_common.load_workspace`, this returns the *whole* file so a
+    writer can preserve every key beside ``workspace`` — including keys
+    inside ``workspace`` itself, such as ``focus``."""
+    path = os.path.join(ws_root, sc.CONFIG_FILENAME)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise StatusError("%s is not valid JSON: %s" % (path, exc))
+    if not isinstance(data, dict) or not isinstance(
+            data.get("workspace"), dict):
+        raise StatusError("%s must declare a `workspace` object" % path)
+    return data, path
+
+
+def _project_listing_line(slug, path, url):
+    """One ``workspace-project`` listing line: ``<project>: <path>``, with
+    the declared clone url appended when present (spec-status
+    workspace-project-verbs)."""
+    line = "%s: %s" % (slug, path)
+    return "%s %s" % (line, url) if url else line
+
+
+def cmd_workspace_project(root, action=None, project=None, path=None,
+                           url=None, branch=None, remove_repo=None):
+    """List, add to, or remove from the workspace registry's ``projects`` map
+    at the resolved workspace root's ``.shipd-config.json`` (shipd-workspace
+    workspace-project-verbs) — the engine-owned writer, so the registry is
+    never hand-authored.
+
+    With no ``action`` (or ``action="list"``), lists each declared project
+    followed by its repo entries as ``<project>: <path> [<url>]``, printing
+    ``(no projects)`` when the registry declares none. ``add`` appends a repo
+    entry under ``project`` (creating the project when absent): a plain path
+    string when neither ``url`` nor ``branch`` is given, else an object
+    carrying ``path`` plus whichever of ``url``/``branch`` was given, stored
+    verbatim. ``remove`` deletes the whole ``project``, or — with
+    ``remove_repo`` — only the repo entry at that path, deleting the project
+    when its last entry goes.
+
+    Every write validates the resulting registry with
+    :func:`spec_common.validate_workspace` first; when it reports errors, the
+    verb raises :class:`StatusError` with its findings and writes nothing.
+    Every write preserves every other top-level config key and every other
+    ``workspace`` key. The verb never reaches the network and never creates
+    or materializes a directory."""
+    ws_root = _resolve_workspace(root)
+    data, cfg_path = _load_workspace_config(ws_root)
+    registry = data["workspace"]
+    projects = registry.get("projects")
+    if not isinstance(projects, dict):
+        projects = {}
+
+    if action is None or action == "list":
+        if not projects:
+            print("(no projects)")
+        for slug in sorted(projects):
+            entry = projects[slug]
+            repos = entry.get("repos") if isinstance(entry, dict) else None
+            if not isinstance(repos, list):
+                continue
+            for repo in repos:
+                repo_path = sc.repo_entry_path(repo)
+                if repo_path is None:
+                    continue
+                repo_url = repo.get("url") if isinstance(repo, dict) else None
+                print(_project_listing_line(slug, repo_path, repo_url))
+        return 0
+
+    def _write(new_projects):
+        registry["projects"] = new_projects
+        errors = sc.validate_workspace(registry)
+        if errors:
+            raise StatusError(
+                "workspace registry is invalid:\n" + "\n".join(errors))
+        with open(cfg_path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+            fh.write("\n")
+
+    if action == "add":
+        entry = projects.get(project)
+        if not isinstance(entry, dict):
+            entry = {}
+        repos = entry.get("repos")
+        if not isinstance(repos, list):
+            repos = []
+        if url or branch:
+            repo_entry = {"path": path}
+            if url:
+                repo_entry["url"] = url
+            if branch:
+                repo_entry["branch"] = branch
+        else:
+            repo_entry = path
+        repos.append(repo_entry)
+        entry["repos"] = repos
+        projects[project] = entry
+        _write(projects)
+        print(_project_listing_line(project, path, url))
+        return 0
+
+    if action == "remove":
+        if project not in projects:
+            declared = ", ".join(sorted(projects)) or "(none)"
+            raise StatusError(
+                "unknown project '%s' (declared projects: %s)"
+                % (project, declared))
+        entry = projects[project]
+        if remove_repo is not None:
+            repos = entry.get("repos") if isinstance(entry, dict) else None
+            repos = repos if isinstance(repos, list) else []
+            match_idx = None
+            for i, repo in enumerate(repos):
+                if sc.repo_entry_path(repo) == remove_repo:
+                    match_idx = i
+                    break
+            if match_idx is None:
+                declared_paths = ", ".join(
+                    p for p in (sc.repo_entry_path(r) for r in repos)
+                    if p) or "(none)"
+                raise StatusError(
+                    "no repo '%s' under project '%s' (declared paths: %s)"
+                    % (remove_repo, project, declared_paths))
+            del repos[match_idx]
+            if repos:
+                entry["repos"] = repos
+                projects[project] = entry
+            else:
+                del projects[project]
+        else:
+            del projects[project]
+        _write(projects)
+        if remove_repo is not None:
+            print("removed %s from %s" % (remove_repo, project))
+        else:
+            print("removed %s" % project)
+        return 0
+
+    raise StatusError("unknown workspace-project action '%s'" % action)
 
 
 # ---------------------------------------------------------------------------
@@ -4634,6 +4825,32 @@ def main(argv=None):
         help="no arguments lists the stored directories; `add <dir>` stores "
              "one verbatim; `remove <dir>` deletes one")
 
+    p_ws_project = sub.add_parser(
+        "workspace-project",
+        help="list the workspace registry's `projects` map, or "
+             "`add <project> <path> [--url U] [--branch B]` / "
+             "`remove <project> [--repo <path>]` one")
+    p_ws_project.add_argument(
+        "args", nargs="*",
+        help="no arguments lists every project's repo entries; "
+             "`add <project> <path>` declares one; `remove <project>` drops "
+             "one")
+    p_ws_project.add_argument(
+        "--url", default=None,
+        help="with `add`, the repo's clone URL, stored verbatim")
+    p_ws_project.add_argument(
+        "--branch", default=None,
+        help="with `add`, the repo's branch, stored verbatim")
+    p_ws_project.add_argument(
+        "--repo", default=None,
+        help="with `remove`, drop only the repo entry at this path instead "
+             "of the whole project")
+
+    sub.add_parser(
+        "workspace-team",
+        help="interactively build a nested team workspace beneath the "
+             "discoverable base (a terminal is required; refuses headless)")
+
     p_wiki_init = sub.add_parser(
         "wiki-init",
         help="scaffold the workspace wiki store layout")
@@ -4793,6 +5010,24 @@ def main(argv=None):
                     root, directory=operands[0], remove=True)
             raise StatusError(
                 "usage: workspace-sources [add <dir> | remove <dir>]")
+        if args.verb == "workspace-project":
+            rest = list(args.args)
+            if not rest:
+                return cmd_workspace_project(root)
+            action, operands = rest[0], rest[1:]
+            if action == "add" and len(operands) == 2:
+                return cmd_workspace_project(
+                    root, action="add", project=operands[0],
+                    path=operands[1], url=args.url, branch=args.branch)
+            if action == "remove" and len(operands) == 1:
+                return cmd_workspace_project(
+                    root, action="remove", project=operands[0],
+                    remove_repo=args.repo)
+            raise StatusError(
+                "usage: workspace-project [add <project> <path> [--url U] "
+                "[--branch B] | remove <project> [--repo <path>]]")
+        if args.verb == "workspace-team":
+            return cmd_workspace_team(root)
         if args.verb == "wiki-init":
             return cmd_wiki_init(root, args.personal)
         if args.verb == "wiki-show":
