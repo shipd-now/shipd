@@ -33,12 +33,19 @@ blocks at ``### Requirement:`` headers (delta files partitioned by their ``##``
 operation header first), per design decision D4. No markdown library is used.
 """
 
+import contextlib
 import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - platform without fcntl (e.g. Windows)
+    fcntl = None
 
 # Length of the truncated hex content hash (design D3).
 HASH_LENGTH = 12
@@ -396,7 +403,9 @@ RECOGNIZED_CONFIG_KEYS = (
     "memory_dir",
     "post-worktree-scripts",
     "pr-mode",
+    "store_autocommit",
     "store_root",
+    "store_sync",
     "valid_themes",
     "voice",
     "wiki_base",
@@ -427,6 +436,14 @@ WORKTREE_IDLE_MINUTES_KEY = "worktree_idle_minutes"
 DEFAULT_WORKTREE_IDLE_MINUTES = 30
 WORKTREE_STALE_DAYS_KEY = "worktree_stale_days"
 DEFAULT_WORKTREE_STALE_DAYS = 7
+
+# The two store-git-behaviour keys (shipd-config store-sync-keys): whether an
+# engine write into a workspace or external store auto-commits, and whether
+# the plugin's session-boundary hook runs its networked git.
+STORE_AUTOCOMMIT_KEY = "store_autocommit"
+DEFAULT_STORE_AUTOCOMMIT = True
+STORE_SYNC_KEY = "store_sync"
+DEFAULT_STORE_SYNC = True
 
 
 def _load_config_file(path):
@@ -558,6 +575,34 @@ def worktree_sweep(config):
     value = config.get(WORKTREE_SWEEP_KEY, DEFAULT_WORKTREE_SWEEP)
     if not isinstance(value, bool):
         return DEFAULT_WORKTREE_SWEEP
+    return value
+
+
+def store_autocommit_enabled(config):
+    """Return whether an engine write into a workspace or external store
+    auto-commits, from a resolved config's ``store_autocommit`` key
+    (shipd-config store-sync-keys).
+
+    A boolean is used as declared; anything else — a string, a number, an
+    absent key — is treated as undeclared and yields the built-in default
+    rather than raising, mirroring ``worktree_sweep``'s tolerance."""
+    value = config.get(STORE_AUTOCOMMIT_KEY, DEFAULT_STORE_AUTOCOMMIT)
+    if not isinstance(value, bool):
+        return DEFAULT_STORE_AUTOCOMMIT
+    return value
+
+
+def store_sync_enabled(config):
+    """Return whether the session-boundary store sync hook runs its
+    networked git, from a resolved config's ``store_sync`` key (shipd-config
+    store-sync-keys).
+
+    A boolean is used as declared; anything else — a string, a number, an
+    absent key — is treated as undeclared and yields the built-in default
+    rather than raising, mirroring ``worktree_sweep``'s tolerance."""
+    value = config.get(STORE_SYNC_KEY, DEFAULT_STORE_SYNC)
+    if not isinstance(value, bool):
+        return DEFAULT_STORE_SYNC
     return value
 
 
@@ -1390,22 +1435,83 @@ def inside_git_work_tree(target):
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
-def wiki_autocommit(store_dir, paths, subject):
+@contextlib.contextmanager
+def _store_commit_lock(store_dir):
+    """Hold an exclusive lock scoped to ``store_dir`` across a stage-and-commit
+    pair, so two concurrent engine writes to one store serialize instead of
+    racing git's index lock (shipd-wiki wiki-autocommit).
+
+    The lock file lives in the system temp directory, never inside the store,
+    named ``shipd-store-<first 16 hex of sha256 of the store's absolute
+    path>.lock`` so every writer targeting the same store contends on the same
+    file. That name is predictable, so the file is opened ``O_NOFOLLOW`` and
+    without truncation: a symlink planted at it by another local user is
+    refused rather than followed. Yields a no-op lock — never raising — when ``fcntl`` is unavailable
+    (an unsupported platform) or the lock cannot be acquired, so locking is
+    strictly an improvement on the race, never a new failure mode."""
+    if fcntl is None:
+        yield
+        return
+    digest = hashlib.sha256(
+        os.path.abspath(store_dir).encode("utf-8")).hexdigest()[:16]
+    lock_path = os.path.join(
+        tempfile.gettempdir(), "shipd-store-%s.lock" % digest)
+    fh = None
+    try:
+        # O_NOFOLLOW refuses a symlink planted at this predictable name in a
+        # world-writable temp dir, and O_RDWR never truncates what it opens —
+        # a lock file's contents are irrelevant, only its existence.
+        fh = os.fdopen(
+            os.open(lock_path,
+                    os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600),
+            "r+")
+        fcntl.flock(fh, fcntl.LOCK_EX)
+    except OSError:
+        if fh is not None:
+            fh.close()
+        yield
+        return
+    try:
+        yield
+    finally:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        fh.close()
+
+
+def wiki_autocommit(store_dir, paths, subject, config_anchor=None):
     """Make a local git commit scoped to exactly ``paths`` after a successful
     wiki write, returning True only when a commit was made (shipd-wiki
     wiki-autocommit).
 
+    ``config_anchor`` is the directory the gating ``store_autocommit`` key is
+    resolved from, defaulting to ``store_dir`` itself. A workspace store sits
+    inside the tree that declares the key, so the default is right there; an
+    externally redirected store does not, so :func:`store_autocommit` passes
+    the consuming repo's root instead — otherwise the repo's own declaration
+    would be invisible to the upward search and silently ignored.
+
     A silent no-op returning False when ``store_dir`` is not inside a git work
-    tree — that is the epic's non-git store case. Otherwise probe
-    ``git status --porcelain -- <paths>``: empty output means the write changed
-    no bytes, so skip the commit quietly (returns False). Otherwise ``git add``
-    then ``git commit`` the paths, the pathspec scoping the commit to exactly
-    the written files so unrelated staged index state is never swept in. Any git
-    failure (missing identity, hook failure) prints one
+    tree — that is the epic's non-git store case — or when the resolved
+    ``store_autocommit`` key (shipd-config store-sync-keys) is false. Otherwise
+    probe ``git status --porcelain -- <paths>``: empty output means the write
+    changed no bytes, so skip the commit quietly (returns False). Otherwise
+    stage and commit the paths under an exclusive lock
+    (:func:`_store_commit_lock`) so two concurrent writes to one store
+    serialize instead of racing git's index lock — ``git add`` then
+    ``git commit``, the pathspec scoping the commit to exactly the written
+    files so unrelated staged index state is never swept in. Any git failure
+    (missing identity, hook failure) prints one
     ``warning: wiki auto-commit skipped: …`` line to stderr and returns False —
     the write already succeeded, so its exit code stays zero. Local git only
     (``status``, ``add``, ``commit``) — never the network."""
     if not inside_git_work_tree(store_dir):
+        return False
+    config, _prov = resolve_config(
+        store_dir if config_anchor is None else config_anchor)
+    if not store_autocommit_enabled(config):
         return False
     paths = list(paths)
     try:
@@ -1416,16 +1522,17 @@ def wiki_autocommit(store_dir, paths, subject):
             raise RuntimeError(status.stderr.strip() or "git status failed")
         if not status.stdout.strip():
             return False
-        add = subprocess.run(
-            ["git", "-C", store_dir, "add", "--", *paths],
-            capture_output=True, text=True)
-        if add.returncode != 0:
-            raise RuntimeError(add.stderr.strip() or "git add failed")
-        commit = subprocess.run(
-            ["git", "-C", store_dir, "commit", "-m", subject, "--", *paths],
-            capture_output=True, text=True)
-        if commit.returncode != 0:
-            raise RuntimeError(commit.stderr.strip() or "git commit failed")
+        with _store_commit_lock(store_dir):
+            add = subprocess.run(
+                ["git", "-C", store_dir, "add", "--", *paths],
+                capture_output=True, text=True)
+            if add.returncode != 0:
+                raise RuntimeError(add.stderr.strip() or "git add failed")
+            commit = subprocess.run(
+                ["git", "-C", store_dir, "commit", "-m", subject, "--", *paths],
+                capture_output=True, text=True)
+            if commit.returncode != 0:
+                raise RuntimeError(commit.stderr.strip() or "git commit failed")
     except (OSError, RuntimeError) as exc:
         sys.stderr.write("warning: wiki auto-commit skipped: %s\n" % exc)
         return False
@@ -1443,10 +1550,13 @@ def store_autocommit(root, paths, subject):
     :func:`wiki_autocommit` against the resolved store, inheriting its whole
     convention: a silent no-op when the store is not inside a git work tree, a
     commit scoped to exactly ``paths``, one warning line and an unchanged exit
-    code when git fails, and local git only — never the network."""
+    code when git fails, and local git only — never the network. The gating
+    ``store_autocommit`` key is resolved from ``root``, not from the store —
+    the store lives outside the repo's tree, so only the repo's own layers
+    carry the declaration."""
     if store_root_dir(root) is None:
         return False
-    return wiki_autocommit(specs_dir(root), paths, subject)
+    return wiki_autocommit(specs_dir(root), paths, subject, config_anchor=root)
 
 
 def _ensure_members_gitignore_block(target):

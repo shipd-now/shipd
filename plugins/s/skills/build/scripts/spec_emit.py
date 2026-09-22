@@ -412,7 +412,12 @@ def emit_wiki(root, src, personal=False):
     if is_fallback:
         sc.store_autocommit(ws_root, dest_paths, subject)
     else:
-        sc.wiki_autocommit(wiki, dest_paths, subject)
+        # A workspace store resolves the gate from the invoking repo, so a
+        # repo layer declaring `store_autocommit` governs writes into the
+        # shared store. The personal store keeps its own tree as the anchor —
+        # a repo must not silence a user's memory commits.
+        sc.wiki_autocommit(wiki, dest_paths, subject,
+                           config_anchor=None if personal else root)
 
     print("installed wiki content into %s (%d file(s))" % (wiki, len(ops)))
     return 0
