@@ -656,14 +656,15 @@ def check_gh(which=shutil.which, gh_status=_gh_auth_status):
 
 
 def check_difft(which=shutil.which):
-    """Difftastic, the semantic review's syntax-aware diff engine. Recommended,
-    never required: without it a review still completes, on the structural-text
-    engine, so its absence is a warning that names that degradation and the
+    """Difftastic, the semantic review's syntax-aware diff engine, required by
+    `semdiff diff`. Its absence is still only a warning here — this preflight
+    reports environment health, it does not gate on a downstream skill's own
+    dependency — naming that the semantic review cannot run at all and the
     tiered installer that repairs it."""
     found = which("difft")
     if not found:
         return ("warn", "difft",
-                "not found — semantic reviews degrade to the text engine; "
+                "not found — the semantic review cannot run at all; "
                 "run /s:doctor or `semdiff doctor --fix` to install it")
     return ("ok", "difft", "found at %s" % found)
 

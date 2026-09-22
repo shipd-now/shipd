@@ -256,6 +256,19 @@ class SkillMdStructureTest(unittest.TestCase):
     def test_difft_probe_stayed_inline(self):
         self.assertIn("command -v difft", self.text)
 
+    def test_degradation_section_stops_rather_than_completes(self):
+        """Difftastic is now required: a still-missing `difft` after the one
+        `doctor --fix` attempt must stop the review, not complete it on the
+        text engine."""
+        match = re.search(r"^## Degradation\n(.*?)(?=\n## |\Z)", self.text,
+                          re.DOTALL | re.MULTILINE)
+        self.assertIsNotNone(match, "no '## Degradation' section found")
+        section = match.group(1)
+        self.assertNotIn("Complete the review anyway", section)
+        self.assertNotIn("never blocks a review", section)
+        self.assertIn("stop", section.lower())
+        self.assertIn("no verdict", section.lower())
+
     def test_risk_lens_triggers_stated_inline(self):
         """All five triggers appear in the workflow, not only the table.
 

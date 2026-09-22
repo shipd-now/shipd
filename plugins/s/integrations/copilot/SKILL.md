@@ -210,11 +210,12 @@ directly below it, the matching machine-readable marker:
 ```
 
 Emit exactly one marker, matching the verdict line, as the last line of the
-body. It is read from the body's **last non-empty line**, by exact equality —
-never by a substring match elsewhere in the body, because a review that quotes
-a marker while describing a diff would otherwise be read as having voted it. So
-reproduce it character for character, on its own line, with nothing after it:
-no reflowing, no extra spaces inside the comment, no sign-off below it.
+body. It is read as the **last line equal to a marker**, found by scanning
+the body backwards — by exact equality against the whole line, and
+never by a substring match, because a review that quotes a marker while
+describing a diff would otherwise be read as having voted it. So reproduce it character for character,
+on its own line: no reflowing, no extra spaces inside the comment, and no
+second marker below it.
 
 ## The engine's guarantees and limits
 

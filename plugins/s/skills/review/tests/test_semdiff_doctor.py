@@ -48,14 +48,15 @@ class DoctorExitCodeTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_git_present_difft_missing_exits_zero(self):
-        # git available, difft absent (only git symlinked into the bindir).
+    def test_git_present_difft_missing_exits_nonzero(self):
+        # git available, difft absent (only git symlinked into the bindir):
+        # difft is a required tool, so its absence fails the preflight.
         bindir = _bindir(self.tmp, "gitonly", ["git"])
         r = run_doctor(bindir, self.tmp)
-        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotEqual(r.returncode, 0)
         out = (r.stdout + r.stderr).lower()
         self.assertIn("difft", out)
-        self.assertIn("recommend", out)
+        self.assertIn("required", out)
 
     def test_git_missing_exits_nonzero(self):
         # empty bindir: git cannot be found → required tool missing.
@@ -114,6 +115,36 @@ class InstallDirTest(unittest.TestCase):
             self.assertEqual(
                 semdiff._install_dir(),
                 os.path.join(self.tmp, ".local", "bin"))
+
+
+class ReleaseUrlTest(unittest.TestCase):
+    """The release-binary installer's download URL names a pinned version,
+    never the unversioned ``releases/latest/download/`` asset name difftastic
+    stopped publishing after 0.65.0."""
+
+    def test_url_names_a_pinned_version_not_latest(self):
+        captured = {}
+
+        def fake_urlretrieve(url, filename):
+            captured["url"] = url
+            raise OSError("network access is not permitted in this test")
+
+        with mock.patch.object(semdiff, "have", return_value=False), \
+             mock.patch.object(semdiff, "_difft_target",
+                               return_value="x86_64-unknown-linux-gnu"), \
+             mock.patch.object(semdiff.urllib.request, "urlretrieve",
+                               side_effect=fake_urlretrieve), \
+             contextlib.redirect_stderr(io.StringIO()):
+            try:
+                semdiff.install_difft()
+            except OSError:
+                pass
+
+        self.assertIn("url", captured, "install_difft never attempted a download")
+        self.assertNotIn("releases/latest/download/", captured["url"],
+                          "the download URL still names the unversioned asset")
+        self.assertIn(semdiff.DIFFT_VERSION, captured["url"],
+                      "the download URL does not name the pinned version")
 
 
 class ReleaseArchiveExtractionTest(unittest.TestCase):

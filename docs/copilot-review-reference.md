@@ -48,8 +48,8 @@ On every pull request opened, updated, or reopened, the gate's job:
    `git show origin/<base>:.github/skills/code-review/SKILL.md`.
 5. Runs the CLI under a 10-minute timeout, in a step holding the reviewer
    secret and no other credential.
-6. Classifies the output's last non-empty line in a separate step, and posts
-   the resulting status.
+6. Classifies the output in a separate step, scanning backwards for the last
+   marker line, then posts the status.
 7. Posts the review text as a pull-request comment, whatever the verdict.
 
 - **The version pin is deliberate.** An unpinned install would let the CLI
@@ -92,17 +92,17 @@ commit, then classifies what that review's body says.
 ### The verdict, in both modes
 
 The skill instructs the reviewer to write a machine-readable marker as its last
-line. The gate reads only that line: it takes the last non-empty line,
-tolerates surrounding whitespace, and compares it for equality.
+line. The gate scans the text backwards over at most 200 lines for the last
+line equal to a marker, tolerating surrounding whitespace.
 
-| The reviewed text's last non-empty line | Status posted |
+| The last line equal to a marker | Status posted |
 | --- | --- |
 | `<!-- shipd-verdict: fix-required -->` | `failure` — the merge is blocked. |
 | `<!-- shipd-verdict: ship-it -->` | `success`. |
 | *anything else* | `success`, described as *no verdict marker was parsed* — unless the repository turned [strictness](#strictness-shipd_gate_fail_open) on, which leaves the check `pending`. |
 
-**Only the last line decides.** A review that describes the markers mentions
-both mid-text, and the pull request installing this skill draws that review.
+**Only a whole line decides.** A quoted marker never equals a line. A bare
+marker alone on its own line in trailing narration still counts.
 
 In poll mode the gate acts only on a review by
 `copilot-pull-request-reviewer[bot]` whose `commit_id` is the current head.
@@ -243,8 +243,8 @@ shipd copilot remove --force     # delete it along with the managed files
 - **Skill pickup is relevance-driven.** GitHub loads skills under
   `.github/skills` when they are relevant to the review. The `code-review` name
   is GitHub's recommendation. Expect a good hit rate, not determinism.
-- **`difft` and `ripgrep` are optional.** Without `difft` the engine falls back
-  to its structural text engine and stamps `engine: "text"` on the affected
-  entries. Without `ripgrep`, symbol lookup falls back to `git grep`.
+- **The review requires `difft`; `ripgrep` stays optional.** Without `difft`
+  the review stops rather than running on a fallback engine. Without
+  `ripgrep`, symbol lookup falls back to `git grep`.
 - **The review never writes.** The engine is read-only by construction, and the
   skill instructs the reviewer not to edit the repository.

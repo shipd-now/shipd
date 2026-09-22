@@ -225,9 +225,10 @@ missing test are two findings, not one.
 
 ## Degradation
 
-`semdiff diff` works even without difftastic — it degrades to a structural-text
-engine and stamps `engine: "text"`. A degraded review is never a silent one, and
-a missing difftastic is repaired before it costs you accuracy.
+Difftastic is required. `semdiff diff` exits non-zero without it rather than
+completing on a text engine nobody can audit; only a single file whose own
+difft output fails to parse still falls back to the text engine for that file
+alone, stamping `engine: "text"` on its entry.
 
 **At review start, before any analysis**, check whether `difft` is on PATH:
 
@@ -247,21 +248,17 @@ command -v difft
   once per review** — never retry, never loop.
   - **Now present** → proceed syntax-aware with no degradation notice and no
     further ceremony; the repair is not a finding.
-  - **Still missing** → the install failed. Then, all three of:
-    1. **Tell the user prominently**, before the review body — that difftastic
-       could not be installed, that this review therefore runs on the
-       structural-text engine (`engine: "text"`) with reduced syntax-aware
-       accuracy, and how to install it by hand (e.g.
-       `brew install difftastic`).
-    2. **Record it as a could-not-verify entry** — in the human mode's
-       "what you could not verify" list *and* in `--json`'s `could_not_verify`
-       array — naming the text-engine degradation.
-    3. **Complete the review anyway** on the text engine. A missing difftastic
-       never blocks a review.
+  - **Still missing** → **stop.** Do not run `diff`, `files`, or any analysis.
+    Report prominently, before anything else, that difftastic is required and
+    could not be installed, the manual install hint (e.g.
+    `brew install difftastic`), and that no verdict was produced.
 
-Whenever you are on the text engine (or any tool is missing), say so, and do
-**not** fall back to dumping raw files. `doctor` (without `--fix`) reports what
-is available and touches nothing. git is the one hard requirement.
+Whenever a single file falls back to the text engine through its own difft
+parse failure, say so and record it as a could-not-verify entry — in the human
+mode's "what you could not verify" list *and* in `--json`'s `could_not_verify`
+array — naming that file's text-engine fallback. `doctor` (without `--fix`)
+reports what is available and touches nothing. git and difft are the two hard
+requirements.
 
 ## Documentation standard
 

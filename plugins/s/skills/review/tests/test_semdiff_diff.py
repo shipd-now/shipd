@@ -32,11 +32,12 @@ def git(repo, *args, env=None):
         capture_output=True, text=True, check=True, env=env)
 
 
-def _masked_bindir(base):
+def _difft_absent_bindir(base):
     """A bin directory holding only a ``git`` symlink, so a process run with
-    ``PATH`` set to it cannot find ``difft`` (or ``rg``). Used to force the
-    text engine deterministically regardless of what the host has installed."""
-    bindir = os.path.join(base, "maskbin")
+    ``PATH`` set to it cannot find ``difft`` (or ``rg``) at all. Used to
+    exercise the hard failure `semdiff diff` now raises when difftastic is
+    missing outright."""
+    bindir = os.path.join(base, "absentbin")
     os.makedirs(bindir, exist_ok=True)
     git_path = shutil.which("git")
     link = os.path.join(bindir, "git")
@@ -45,13 +46,40 @@ def _masked_bindir(base):
     return bindir
 
 
-def run_semdiff(repo, *args, mask_difft=False, home=None):
+def _difft_stub_bindir(base):
+    """A bin directory holding a real ``git`` and a ``difft`` stub that always
+    produces output `difft_json` cannot parse. `have("difft")` succeeds, so
+    `semdiff diff` does not hard-fail on a missing binary, but every per-file
+    difft invocation retries through the text engine exactly like a genuine
+    parse failure would — this is how the suite exercises the fallback
+    without difft ever being absent from PATH."""
+    bindir = os.path.join(base, "stubbin")
+    os.makedirs(bindir, exist_ok=True)
+    git_path = shutil.which("git")
+    git_link = os.path.join(bindir, "git")
+    if not os.path.exists(git_link):
+        os.symlink(git_path, git_link)
+    stub = os.path.join(bindir, "difft")
+    if not os.path.exists(stub):
+        with open(stub, "w") as fh:
+            fh.write("#!/bin/sh\necho 'not difft json'\nexit 1\n")
+        os.chmod(stub, 0o755)
+    return bindir
+
+
+def run_semdiff(repo, *args, stub_difft=False, remove_difft=False, home=None):
     """Invoke semdiff.py inside ``repo`` and return (returncode, parsed_json,
-    stderr). When ``mask_difft`` is set, PATH is constrained so difft is absent
-    — the text engine must handle it and still exit zero."""
+    stderr). When ``stub_difft`` is set, PATH carries a ``difft`` that always
+    fails to parse, forcing the per-file text-engine retry while difft stays
+    present and `semdiff diff` does not hard-fail. When ``remove_difft`` is
+    set, PATH carries no ``difft`` at all, exercising the hard failure."""
     env = dict(os.environ)
-    if mask_difft:
-        bindir = _masked_bindir(home or repo)
+    if remove_difft:
+        bindir = _difft_absent_bindir(home or repo)
+        env["PATH"] = bindir
+        env["HOME"] = home or repo
+    elif stub_difft:
+        bindir = _difft_stub_bindir(home or repo)
         env["PATH"] = bindir
         env["HOME"] = home or repo
     r = subprocess.run(
@@ -155,10 +183,23 @@ class DiffTestCase(unittest.TestCase):
         self.assertEqual(out["mode"], "linear")
         self.assertEqual(out["head"], "feature")
 
-    # -- text-engine degradation --------------------------------------------
+    # -- missing difft is a hard failure -------------------------------------
 
-    def test_missing_difft_degrades_to_text_engine(self):
-        rc, out, err = run_semdiff(self.repo, "diff", "main", mask_difft=True,
+    def test_missing_difft_fails_the_diff(self):
+        rc, out, err = run_semdiff(self.repo, "diff", "main",
+                                   remove_difft=True, home=self.tmp)
+        self.assertNotEqual(rc, 0, "a missing difft did not fail the diff")
+        self.assertIsNone(out, "a missing difft still emitted diff JSON")
+        self.assertIn("difft", err.lower())
+        self.assertIn("install", err.lower())
+
+    # -- per-file parse-failure retry -----------------------------------------
+
+    def test_per_file_parse_failure_falls_back_to_text_engine(self):
+        # difft stays present (`have("difft")` succeeds) but every per-file
+        # invocation fails to parse, so each file retries through the text
+        # engine rather than the whole diff hard-failing.
+        rc, out, err = run_semdiff(self.repo, "diff", "main", stub_difft=True,
                                    home=self.tmp)
         self.assertEqual(rc, 0, err)
         self.assertEqual(out["summary"]["engine"], "text")
@@ -214,7 +255,7 @@ class LineNumberParityTest(unittest.TestCase):
 
     def test_text_engine_reports_line_10(self):
         self.assertEqual(
-            self._after_side_line(mask_difft=True, home=self.tmp), 10)
+            self._after_side_line(stub_difft=True, home=self.tmp), 10)
 
     @unittest.skipUnless(HAVE_DIFFT, "difftastic not installed")
     def test_difft_engine_reports_line_10(self):
@@ -261,7 +302,7 @@ class AddedFileContentTest(unittest.TestCase):
         self.assertEqual(prefixes, ["1", "2", "3"])
 
     def test_text_engine_three_line_body(self):
-        self._assert_three_line_body(mask_difft=True, home=self.tmp)
+        self._assert_three_line_body(stub_difft=True, home=self.tmp)
 
     @unittest.skipUnless(HAVE_DIFFT, "difftastic not installed")
     def test_difft_engine_three_line_body(self):
@@ -275,7 +316,7 @@ class AddedFileContentTest(unittest.TestCase):
         self.assertEqual(len(entry["content"].splitlines()), 600)
 
     def test_text_engine_oversized_body_truncated(self):
-        self._assert_oversized_body_truncated(mask_difft=True, home=self.tmp)
+        self._assert_oversized_body_truncated(stub_difft=True, home=self.tmp)
 
     @unittest.skipUnless(HAVE_DIFFT, "difftastic not installed")
     def test_difft_engine_oversized_body_truncated(self):
@@ -283,13 +324,10 @@ class AddedFileContentTest(unittest.TestCase):
 
 
 class SummarizeChunksLineNumberTest(unittest.TestCase):
-    """CI-visible guard for the 0-based-to-1-based line number normalization
-    in `summarize_chunks`. The difft-engine tests above are gated behind
-    `@unittest.skipUnless(HAVE_DIFFT, ...)` and CI never installs difftastic,
-    so without this test the normalization has no regression guard in the
-    gating pipeline. This test calls `summarize_chunks` directly on a
-    synthetic difft-shaped `chunks` argument — no difft binary required — so
-    it always runs, including in CI."""
+    """A guard for the 0-based-to-1-based line number normalization in
+    `summarize_chunks` that never depends on a `difft` binary: it calls
+    `summarize_chunks` directly on a synthetic difft-shaped `chunks`
+    argument, so it always runs regardless of what else is installed."""
 
     def test_line_number_normalized_to_one_based(self):
         # Shaped like real difft JSON: a list of chunks, each a list of line
@@ -349,7 +387,7 @@ class EmptyEndpointTest(unittest.TestCase):
         return {f["path"]: f["kind"] for f in out["files"]}
 
     def test_text_engine_classifies_both_as_modified(self):
-        kinds = self._kinds(mask_difft=True, home=self.tmp)
+        kinds = self._kinds(stub_difft=True, home=self.tmp)
         self.assertEqual(kinds.get("emptied.py"), "modified",
                          "an emptied tracked file was reported as deleted")
         self.assertEqual(kinds.get("filled.py"), "modified",
