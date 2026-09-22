@@ -69,6 +69,18 @@ def _declares_workspace(directory):
     return isinstance(data, dict) and "workspace" in data
 
 
+def _is_git_checkout_root(directory):
+    """True when ``directory`` is a git checkout's own root — it holds a
+    ``.git`` entry of its own, a directory in an ordinary clone and a file in
+    a linked worktree.
+
+    Deliberately *not* :func:`spec_common.inside_git_work_tree`: a git-seeded
+    base workspace makes every directory beneath it "inside a work tree", so
+    that test would skip every team. Only a directory owning its own ``.git``
+    is somebody else's repository."""
+    return os.path.exists(os.path.join(directory, ".git"))
+
+
 def plan_teams(base, answers):
     """Turn a collected answer set into an ordered action plan (shipd-workspace
     workspace-team-wizard) — the wizard's pure layer: it reads disk only to
@@ -92,8 +104,12 @@ def plan_teams(base, answers):
     * ``("map", name, team_dir, path, local)`` — record a member map entry
       for a repo whose existing local checkout was given;
     * ``("skip", name, team_dir)`` — a team directory that already declares a
-      workspace: reported, never re-initialized, and no further action is
-      planned for it.
+      workspace, or that owns its own ``.git`` and is therefore somebody
+      else's checkout: reported, never initialized, and no further action is
+      planned for it. The second guard matters because
+      ``cmd_workspace_init(..., git=True)`` would otherwise write a
+      ``workspace`` declaration and a members ignore block *into* that
+      repository — a silent edit to a repo the engineer never named.
 
     A team name failing ``PROJECT_NAME_RE`` (project-registry-semantics — the
     same pattern the registry itself enforces, so every planned directory is
@@ -110,7 +126,7 @@ def plan_teams(base, answers):
             continue
         seen.add(name)
         team_dir = os.path.join(base, name)
-        if _declares_workspace(team_dir):
+        if _declares_workspace(team_dir) or _is_git_checkout_root(team_dir):
             plan.append(("skip", name, team_dir))
             continue
         plan.append(("mkdir", name, team_dir))
@@ -160,7 +176,7 @@ def _execute_map(team_dir, path, local):
     ss.cmd_workspace_map(team_dir, member=path, local=local)
 
 
-def execute_plan(plan):
+def execute_plan(plan, report=None):
     """Execute a planned action list in order (shipd-workspace
     workspace-team-wizard): local operations only, one ``_execute_*`` call
     per action — no network call, no clone, no member materialization.
@@ -172,8 +188,14 @@ def execute_plan(plan):
     ``("skip", name, team_dir)`` for a team directory left untouched because
     it already declared a workspace. A bare ``mkdir`` action contributes no
     record of its own — the ``init`` action that follows it reports the
-    team."""
-    report = []
+    team.
+
+    ``report`` optionally supplies the list to append into, so a caller still
+    holds every record already produced when an action raises part-way
+    through. There is no rollback — whatever landed stays on disk — so the
+    caller reports it rather than leaving the engineer with a half-built
+    layout it never mentioned."""
+    report = [] if report is None else report
     for action in plan:
         kind = action[0]
         if kind == "mkdir":
@@ -209,6 +231,12 @@ NON_INTERACTIVE_NOTE = (
     "workspace-team is interactive: it asks for team names and repos one at "
     "a time on a terminal. Run `shipd workspace team` from a terminal; "
     "nothing was written.\n")
+
+# Printed after the partial report when an action raises part-way through a
+# run, so the actions that already landed are never silent.
+PARTIAL_RUN_NOTE = (
+    "The run stopped early — the actions above already landed, and nothing "
+    "was rolled back.\n")
 
 TEAM_NAME_PROMPT = "Team name (blank to finish naming teams): "
 TEAM_NAME_INVALID = (
@@ -403,7 +431,18 @@ def run(base, tty=None, out=None):
             tty.flush()
             return 0
         plan = plan_teams(base, answers)
-        report = execute_plan(plan)
+        report = []
+        try:
+            execute_plan(plan, report)
+        except Exception:
+            # No rollback: whatever landed stays. Report it before the error
+            # surfaces, so the engineer is never left with a half-built
+            # layout the wizard never mentioned.
+            tty.write("\n")
+            _render_report(tty, report)
+            tty.write(PARTIAL_RUN_NOTE)
+            tty.flush()
+            raise
         tty.write("\n")
         _render_report(tty, report)
         tty.flush()

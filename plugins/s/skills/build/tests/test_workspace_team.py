@@ -303,6 +303,38 @@ class WorkspaceTeamPlannerTests(WorkspaceTeamTestBase):
         plan = wt.plan_teams(self.root, [{"name": "fortress", "repos": []}])
         self.assertEqual(plan, [("skip", "fortress", existing)])
 
+    def test_a_directory_owning_a_git_dir_is_skipped(self):
+        """A team named after a checkout already sitting under the base is
+        skipped, never initialized. Without this guard
+        ``cmd_workspace_init(..., git=True)`` writes a `workspace`
+        declaration and a members ignore block *into* that repository — a
+        silent edit to a repo the engineer never named."""
+        existing = self.team_dir("api")
+        os.makedirs(os.path.join(existing, ".git"))
+        plan = wt.plan_teams(self.root, [{"name": "api", "repos": []}])
+        self.assertEqual(plan, [("skip", "api", existing)])
+        self.assertFalse(os.path.exists(self.config_path(existing)))
+
+    def test_a_linked_worktree_git_file_is_skipped_too(self):
+        """A linked worktree carries `.git` as a *file*, not a directory, so
+        the guard tests for existence rather than for a directory."""
+        existing = self.team_dir("api")
+        os.makedirs(existing)
+        with open(os.path.join(existing, ".git"), "w", encoding="utf-8") as fh:
+            fh.write("gitdir: /elsewhere/.git/worktrees/api\n")
+        plan = wt.plan_teams(self.root, [{"name": "api", "repos": []}])
+        self.assertEqual(plan, [("skip", "api", existing)])
+
+    def test_a_plain_empty_directory_is_still_adopted(self):
+        """The guard must not over-reach: a folder the engineer pre-created
+        for the team carries no `.git` and is initialized as normal."""
+        existing = self.team_dir("fortress")
+        os.makedirs(existing)
+        plan = wt.plan_teams(self.root, [{"name": "fortress", "repos": []}])
+        self.assertEqual(
+            plan,
+            [("mkdir", "fortress", existing), ("init", "fortress", existing)])
+
 
 class WorkspaceTeamExecutorTests(WorkspaceTeamTestBase):
     """The wizard's executor layer, ``workspace_tui.execute_plan(plan)``
@@ -410,6 +442,49 @@ class WorkspaceTeamExecutorTests(WorkspaceTeamTestBase):
 
     def team_dir_for(self, name):
         return os.path.join(self.root, name)
+
+    def test_a_failing_action_keeps_the_records_already_produced(self):
+        """There is no rollback, so a caller must still be able to report
+        what landed. Passing the report list in means the records survive
+        the exception rather than dying with the discarded return value."""
+        team_dir = self.team_dir_for("alpha")
+        plan = wt.plan_teams(self.root, [{"name": "alpha", "repos": []}])
+        plan.append(("bogus", "beta", self.team_dir_for("beta")))
+
+        report = []
+        with self.assertRaises(ValueError):
+            wt.execute_plan(plan, report)
+
+        self.assertEqual(report, [("team", "alpha", team_dir)])
+        self.assertTrue(os.path.isdir(team_dir))
+
+    def test_run_reports_the_partial_layout_before_the_error_surfaces(self):
+        """`run` renders the partial report and says the run stopped early,
+        so a half-built layout is never silent."""
+        team_dir = self.team_dir_for("alpha")
+        handle = io.StringIO()
+        answers = [{"name": "alpha", "repos": [
+            {"path": "api", "url": None, "branch": None, "local": None}]}]
+
+        real_project = wt._execute_project
+        real_collect = wt.collect_answers
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("declaring the repo failed")
+
+        wt._execute_project = boom
+        wt.collect_answers = lambda handle: (answers, False)
+        try:
+            with self.assertRaises(RuntimeError):
+                wt.run(self.root, tty=handle)
+        finally:
+            wt._execute_project = real_project
+            wt.collect_answers = real_collect
+
+        text = handle.getvalue()
+        self.assertIn("created team alpha", text)
+        self.assertIn(team_dir, text)
+        self.assertIn("stopped early", text)
 
 
 class WorkspaceTeamVerbTests(WorkspaceTeamTestBase):
