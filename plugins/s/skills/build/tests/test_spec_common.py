@@ -2,6 +2,7 @@
 """Unit tests for spec_common: parser, content hashing, and serialization."""
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -2440,6 +2441,167 @@ class WorktreeSweepConfigKeysTest(unittest.TestCase):
         self.assertEqual(sc.worktree_stale_days(config, env), 21)
 
 
+class StoreSyncConfigKeysTest(unittest.TestCase):
+    """store_autocommit / store_sync: the two layered store-git-behaviour
+    keys and their accessors (shipd-config store-sync-keys)."""
+
+    def test_store_autocommit_enabled_defaults_true(self):
+        self.assertIs(sc.store_autocommit_enabled({}), True)
+
+    def test_store_autocommit_enabled_reads_declared_layer_value(self):
+        self.assertIs(
+            sc.store_autocommit_enabled({"store_autocommit": False}), False)
+
+    def test_store_autocommit_enabled_malformed_value_falls_back_to_default(
+        self,
+    ):
+        self.assertIs(
+            sc.store_autocommit_enabled({"store_autocommit": "yes"}), True)
+
+    def test_store_sync_enabled_defaults_true(self):
+        self.assertIs(sc.store_sync_enabled({}), True)
+
+    def test_store_sync_enabled_reads_declared_layer_value(self):
+        self.assertIs(sc.store_sync_enabled({"store_sync": False}), False)
+
+    def test_store_sync_enabled_malformed_value_falls_back_to_default(self):
+        self.assertIs(sc.store_sync_enabled({"store_sync": "yes"}), True)
+
+    def test_workspace_store_gate_resolves_from_the_repo(self):
+        """store-sync-keys: `A declared false disables the auto-commit`.
+
+        The mirror of the external-store case below, for a workspace store.
+        A member repo declaring `store_autocommit` governs writes into the
+        shared workspace store; without the anchor the key resolves from the
+        store's own tree and the repo's declaration is silently ignored.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = os.path.realpath(tmp)
+            ws = os.path.join(tmp, "ws")
+            repo = os.path.join(ws, "repo")
+            os.makedirs(repo)
+            subprocess.run(["git", "init", "-q", ws], check=True)
+            for key, value in (("user.email", "t@t"), ("user.name", "t")):
+                subprocess.run(["git", "-C", ws, "config", key, value],
+                               check=True)
+            with open(os.path.join(ws, ".shipd-config.json"), "w") as fh:
+                json.dump({"workspace": {"projects": {}}}, fh)
+            with open(os.path.join(repo, ".shipd-config.json"), "w") as fh:
+                json.dump({"store_autocommit": False}, fh)
+            wiki = sc.wiki_dir(ws)
+            os.makedirs(wiki, exist_ok=True)
+            page = os.path.join(wiki, "page.md")
+
+            def write(text):
+                with open(page, "w") as fh:
+                    fh.write(text)
+                return page
+
+            with home_set_to(os.path.join(tmp, "home")):
+                self.assertIs(
+                    sc.wiki_autocommit(wiki, [write("one\n")], "must not",
+                                       config_anchor=repo),
+                    False)
+                log = subprocess.run(["git", "-C", ws, "log", "--oneline"],
+                                     capture_output=True, text=True)
+                self.assertNotIn("must not", log.stdout)
+
+                self.assertIs(
+                    sc.wiki_autocommit(wiki, [write("two\n")], "must commit",
+                                       config_anchor=wiki),
+                    True)
+                log = subprocess.run(["git", "-C", ws, "log", "--oneline"],
+                                     capture_output=True, text=True, check=True)
+                self.assertIn("must commit", log.stdout)
+
+    def test_lock_file_refuses_a_planted_symlink(self):
+        """wiki-autocommit: the commit lock never follows a planted symlink.
+
+        The lock name is derived from the store path, so it is predictable.
+        Plant a symlink at it pointing to a victim file and confirm the lock
+        neither truncates nor writes through it — the open is refused and the
+        context manager degrades to its no-op lock.
+        """
+        if getattr(sc, "fcntl", None) is None:
+            self.skipTest("platform without fcntl")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = os.path.realpath(tmp)
+            store = os.path.join(tmp, "store")
+            os.makedirs(store)
+            victim = os.path.join(tmp, "victim")
+            with open(victim, "w") as fh:
+                fh.write("precious\n")
+            digest = hashlib.sha256(
+                os.path.abspath(store).encode("utf-8")).hexdigest()[:16]
+            lock_path = os.path.join(
+                tempfile.gettempdir(), "shipd-store-%s.lock" % digest)
+            if os.path.exists(lock_path) or os.path.islink(lock_path):
+                os.unlink(lock_path)
+            os.symlink(victim, lock_path)
+            try:
+                with sc._store_commit_lock(store):
+                    pass
+            finally:
+                os.unlink(lock_path)
+            with open(victim) as fh:
+                self.assertEqual(fh.read(), "precious\n")
+
+    def test_external_store_gate_resolves_from_the_repo_not_the_store(self):
+        """store-autocommit: `A false key silences the commit`.
+
+        An externally redirected store lives outside the repo's tree, so a
+        gate resolved from the store directory never sees the repo's own
+        `store_autocommit` declaration. Pin that `store_autocommit(root, …)`
+        resolves it from `root` instead, in both directions.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = os.path.realpath(tmp)
+            repo = os.path.join(tmp, "repo")
+            store = os.path.join(tmp, "store")
+            os.makedirs(repo)
+            os.makedirs(store)
+            for target in (repo, store):
+                subprocess.run(["git", "init", "-q", target], check=True)
+            for key, value in (("user.email", "t@t"), ("user.name", "t")):
+                subprocess.run(["git", "-C", store, "config", key, value],
+                               check=True)
+
+            def declare(**extra_keys):
+                config = {"store_root": store}
+                config.update(extra_keys)
+                with open(os.path.join(repo, ".shipd-config.json"), "w") as fh:
+                    json.dump(config, fh)
+
+            def write_artifact():
+                specs = sc.specs_dir(repo)
+                os.makedirs(specs, exist_ok=True)
+                path = os.path.join(specs, "artifact.md")
+                with open(path, "a") as fh:
+                    fh.write("content\n")
+                return path
+
+            getattr(sc, "_STORE_FOLDER_CACHE", {}).clear()
+            with home_set_to(os.path.join(tmp, "home")):
+                declare(store_autocommit=False)
+                path = write_artifact()
+                self.assertIs(
+                    sc.store_autocommit(repo, [path], "must not commit"),
+                    False)
+                log = subprocess.run(
+                    ["git", "-C", store, "log", "--oneline"],
+                    capture_output=True, text=True)
+                self.assertNotIn("must not commit", log.stdout)
+
+                declare()
+                path = write_artifact()
+                self.assertIs(
+                    sc.store_autocommit(repo, [path], "must commit"), True)
+                log = subprocess.run(
+                    ["git", "-C", store, "log", "--oneline"],
+                    capture_output=True, text=True, check=True)
+                self.assertIn("must commit", log.stdout)
+
+
 class ExternalStoreRootTest(unittest.TestCase):
     """store_root_dir / repo_store_folder / specs_dir's external branch: the
     optional `store_root` key relocating a repo's content directory into an
@@ -4266,6 +4428,45 @@ class WikiAutocommitTest(unittest.TestCase):
             # The written file is intact.
             with open(page, encoding="utf-8") as fh:
                 self.assertEqual(fh.read(), "content\n")
+
+    def test_store_autocommit_false_prevents_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            self._init_repo(ws)
+            with open(
+                os.path.join(ws, ".shipd-config.json"), "w", encoding="utf-8"
+            ) as fh:
+                fh.write('{"store_autocommit": false}\n')
+            store = os.path.join(ws, ".shipd", "wiki")
+            index = os.path.join(store, "index.md")
+            self._write(index, "v1\n")
+            self._commit_all(ws, "seed")
+            before = self._commit_count(ws)
+            self._write(index, "v2\n")
+            made = sc.wiki_autocommit(store, [index], "shipd-wiki: emit 1 file(s)")
+            self.assertFalse(made)
+            self.assertEqual(self._commit_count(ws), before)
+
+    def test_two_sequential_locked_calls_each_land_their_own_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.realpath(tmp)
+            self._init_repo(ws)
+            store = os.path.join(ws, ".shipd", "wiki")
+            index = os.path.join(store, "index.md")
+            self._write(index, "v1\n")
+            self._commit_all(ws, "seed")
+            before = self._commit_count(ws)
+
+            self._write(index, "v2\n")
+            made_first = sc.wiki_autocommit(
+                store, [index], "shipd-wiki: emit 1 file(s)")
+            self._write(index, "v3\n")
+            made_second = sc.wiki_autocommit(
+                store, [index], "shipd-wiki: emit 1 file(s)")
+
+            self.assertTrue(made_first)
+            self.assertTrue(made_second)
+            self.assertEqual(self._commit_count(ws), before + 2)
 
 
 if __name__ == "__main__":

@@ -641,6 +641,66 @@ def check_store(root):
         return ("ok", "store", "%s" % exc)
 
 
+def check_store_sync(root):
+    """The resolved store's drift from its upstream (shipd-cli
+    doctor-store-sync-check).
+
+    Report-only: never fails the preflight, and probes with local git only —
+    a ``git rev-list --count --left-right @{u}...HEAD`` — never a fetch,
+    push, or other network call, and mutates nothing. ``ok`` names why no
+    comparison applies where no store resolves, the store is the repo-local
+    fallback, the store is not inside a git work tree, or its branch has no
+    upstream configured. Otherwise ``warn`` names the unpushed and unpulled
+    commit counts and the store path when either is non-zero, and ``ok``
+    reports the store is in sync when both are zero. A malformed
+    configuration is reported as the detail rather than failing the
+    preflight: the `config` check owns config failures, and this line must
+    never double-fail them."""
+    _load_engine()
+    try:
+        resolved = sc.resolve_wiki_root(root)
+    except sc.ConfigError as exc:
+        return ("ok", "store-sync", "%s" % exc)
+    if resolved is None:
+        return ("ok", "store-sync", "no store resolvable — no comparison applies")
+    anchor, is_fallback = resolved
+    if is_fallback:
+        return ("ok", "store-sync",
+                "repo-local fallback store — no comparison applies")
+    store = sc.wiki_dir(anchor)
+    if not sc.inside_git_work_tree(store):
+        return ("ok", "store-sync",
+                "%s is not inside a git work tree — no comparison applies"
+                % store)
+    upstream = subprocess.run(
+        ["git", "-C", store, "rev-parse", "--abbrev-ref",
+         "--symbolic-full-name", "@{u}"],
+        capture_output=True, text=True)
+    if upstream.returncode != 0:
+        return ("ok", "store-sync",
+                "%s has no upstream configured — no comparison applies"
+                % store)
+    result = subprocess.run(
+        ["git", "-C", store, "rev-list", "--count", "--left-right",
+         "@{u}...HEAD"],
+        capture_output=True, text=True)
+    parts = result.stdout.split() if result.returncode == 0 else []
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        # The branch does have an upstream, so this is some other failure —
+        # a corrupt store, a wedged git. Name it rather than asserting a
+        # cause the check never established.
+        detail = (result.stderr or "").strip().splitlines()
+        return ("ok", "store-sync",
+                "%s: sync state unreadable (%s)"
+                % (store, detail[0] if detail else "git rev-list failed"))
+    behind, ahead = (int(part) for part in parts)
+    if ahead == 0 and behind == 0:
+        return ("ok", "store-sync", "%s is in sync with its upstream" % store)
+    return ("warn", "store-sync",
+            "%s is %d commit(s) ahead (unpushed) and %d commit(s) behind "
+            "(unpulled) its upstream" % (store, ahead, behind))
+
+
 def check_gh(which=shutil.which, gh_status=_gh_auth_status):
     """The GitHub CLI. A warning, never a failure: planning and building work
     without it, and shipping is its first touchpoint."""
@@ -1050,6 +1110,7 @@ def default_checks(root):
             check_schema(root),
             check_wiki(root),
             check_store(root),
+            check_store_sync(root),
             check_gh(),
             check_difft(),
             check_textual(root),

@@ -3026,13 +3026,20 @@ def _wiki_store(root, personal):
     return sc.wiki_dir(_resolve_wiki_anchor(root)[0])
 
 
-def _wiki_write_autocommit(anchor, is_fallback, wiki, paths, subject):
+def _wiki_write_autocommit(anchor, is_fallback, wiki, paths, subject,
+                           config_anchor=None):
     """Auto-commit a successful wiki write, returning True only when a commit
     was made (shipd-wiki wiki-autocommit).
 
     A workspace store (and the personal store, which passes ``is_fallback``
-    false) commits through :func:`spec_common.wiki_autocommit` against the
-    store directory itself. A repo-local fallback store routes through
+    false) commits through :func:`spec_common.wiki_autocommit`.
+    ``config_anchor`` is the directory the gating ``store_autocommit`` key
+    resolves from: callers pass the invoking repo's root for a workspace
+    store, so a repo layer governs writes into the shared store exactly as it
+    governs an externally redirected one. Left ``None`` — as the personal
+    store leaves it — the key resolves from the store directory itself, so a
+    repo can never silence a user's own memory commits. A repo-local fallback
+    store routes through
     :func:`spec_common.store_autocommit` instead: a no-op while the content
     directory resolves in-repo — committing in-repo artifacts stays the
     skill/PR workflow's job, never the engine's — and a commit exactly as a
@@ -3040,7 +3047,8 @@ def _wiki_write_autocommit(anchor, is_fallback, wiki, paths, subject):
     an external store."""
     if is_fallback:
         return sc.store_autocommit(anchor, paths, subject)
-    return sc.wiki_autocommit(wiki, paths, subject)
+    return sc.wiki_autocommit(wiki, paths, subject,
+                              config_anchor=config_anchor)
 
 
 def read_initiative_status(path):
@@ -4119,7 +4127,8 @@ def cmd_wiki_queue_add(root, slug, question, options, recommendation, origin):
     # work tree (shipd-wiki wiki-autocommit); a no-op outside git and for an
     # in-repo fallback store, and a commit failure never fails the write.
     _wiki_write_autocommit(ws_root, is_fallback, wiki, [queue_path],
-                           "shipd-wiki: queue-add %s" % qid)
+                           "shipd-wiki: queue-add %s" % qid,
+                           config_anchor=root)
     print(qid)
     return 0
 
@@ -4198,7 +4207,8 @@ def cmd_wiki_queue_answer(root, slug, answer, advisory=False):
     # work tree (shipd-wiki wiki-autocommit); a no-op outside git and for an
     # in-repo fallback store, and a commit failure never fails the write.
     _wiki_write_autocommit(ws_root, is_fallback, wiki, [queue_path],
-                           "shipd-wiki: queue-answer %s" % qid)
+                           "shipd-wiki: queue-answer %s" % qid,
+                           config_anchor=root)
     print(qid)
     return 0
 
@@ -4272,7 +4282,8 @@ def cmd_wiki_queue_discard(root, slug, reason):
     # git work tree (shipd-wiki wiki-autocommit); a no-op outside git and for an
     # in-repo fallback store, and a commit failure never fails the write.
     _wiki_write_autocommit(ws_root, is_fallback, wiki, [queue_path],
-                           "shipd-wiki: queue-discard %s" % qid)
+                           "shipd-wiki: queue-discard %s" % qid,
+                           config_anchor=root)
     print("discarded %s: %s" % (qid, reason), file=sys.stderr)
     print(qid)
     return 0
@@ -4373,7 +4384,8 @@ def cmd_wiki_remove(root, slug, personal=False):
     # removal.
     _wiki_write_autocommit(
         anchor, is_fallback, wiki, [page_path, index_path, log_path],
-        "shipd-wiki: remove %s" % slug)
+        "shipd-wiki: remove %s" % slug,
+        config_anchor=None if personal else root)
     print(slug)
     return 0
 

@@ -62,8 +62,7 @@ shipd workspace init ~/workspaces/acme-base/myapp --nested --git
 what travels between them, the hooks consent gate, and conflict surfaces.
 
 ```sh
-git pull   # at the start of a session
-git push   # at the end of it
+shipd doctor   # store-sync — how far your clone has drifted
 ```
 
 [Details →](workspaces/teams.md)

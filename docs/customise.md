@@ -29,7 +29,7 @@ leaves undeclared.
 
 One row per key the engine recognizes.
 `plugins/s/skills/build/references/shipd.config.example.json` is the
-governed, copyable reference — copy it to `.shipd-config.json` and edit; a
+canonical, copyable reference — copy it to `.shipd-config.json` and edit; a
 repo's own `.shipd/` copy may be behind it.
 
 | Key | Governs |
@@ -52,6 +52,8 @@ repo's own `.shipd/` copy may be behind it.
 | `worktree_sweep` | Gates whether worktree creation runs `worktree.sh sweep` afterward. Default `true`. |
 | `worktree_idle_minutes` | The idle window, in minutes, before the `remove` verb's activity guard stops treating a dirty worktree as fresh. Default 30. |
 | `worktree_stale_days` | The window, in days, beyond which a sweep reports an unmerged branch stale. Default 7. |
+| `store_autocommit` | Gates whether an engine write into a workspace or external store auto-commits locally. Default `true`. |
+| `store_sync` | Gates whether the session-boundary hook runs its networked git (fetch, fast-forward merge, push). Default `true`. |
 | `build` | Settings for a `/s:build` run: `logging_enabled`, `log_dir`, `number_format`, `parallelism`, and the design/video roots (`design_dir`, `video_dir`, `video_asr`, `video_vocabulary`, `video_max_frames`, `video_scene_floor`, `video_cursor`). |
 
 ## The delivery steps

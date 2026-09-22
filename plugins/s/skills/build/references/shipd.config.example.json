@@ -3,6 +3,8 @@
   "// dir": "Names the content directory holding the spec library (verified/, planned/, completed/, research/). Default `.shipd`; the config filename itself is never renamed.",
   "// completed_retention_days": "How many days a completed change stays visible to consumers. Default 30; `0` or `null` disables retention so nothing is hidden.",
   "// store_root": "Relocates the content directory into an external store, one folder per repo. No default (the content directory sits in the repo). `~` expands, and a relative value resolves against the directory of the config file that declared it.",
+  "// store_autocommit": "Gates whether an engine write into a workspace or external store auto-commits locally. A boolean; default `true`.",
+  "// store_sync": "Gates whether the plugin's session-boundary store sync hook runs its networked git (fetch, fast-forward merge, push). A boolean; default `true`.",
   "// wiki_base": "A durable base wiki store searched alongside the workspace's own wiki/. No default. Must expand (via `~`) to an absolute path.",
   "// memory_dir": "Root of the personal memory store, whose pages live in <memory_dir>/wiki. Default `~/.shipd-memory`.",
   "// valid_themes": "The vocabulary the linter accepts in an artifact's `Theme:` header. A list of strings; undeclared or empty means any theme passes. Documented in the content directory's README.md ('Theme vocabulary' section).",
