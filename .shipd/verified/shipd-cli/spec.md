@@ -322,9 +322,9 @@ directly after `config`. The warning checks SHALL be: `gh` (present on
 PATH and `gh auth status` exiting 0), `difft` (present on PATH, probed
 via `shutil.which` so the binary stays stdlib-only, reported directly
 after `gh`; the warning detail SHALL name the semantic review's
-text-engine degradation as the affected surface and the tiered
-`semdiff doctor --fix` installer as the remedy, and a present binary
-SHALL report `ok`), `textual` (importable, probed via
+the semantic review being unable to run at all as the affected surface and
+the tiered `semdiff doctor --fix` installer as the remedy, and a present
+binary SHALL report `ok`), `textual` (importable, probed via
 `importlib.util.find_spec` without importing it, so the binary itself
 stays stdlib-only), `snapshot` (when the binary
 runs from a plugin cache snapshot that is not the newest version
@@ -368,7 +368,7 @@ declared `autonomous-pipeline`. The verb SHALL mutate nothing.
 #### Scenario: Missing difft only warns
 - **WHEN** `shipd doctor` runs with no `difft` on PATH, all required checks
   passing
-- **THEN** a `warn difft — ` line names the review's text-engine degradation
+- **THEN** a `warn difft — ` line names that the semantic review cannot run
   and the `semdiff doctor --fix` remedy, and the exit code is `0`
 
 #### Scenario: Present difft reports ok

@@ -38,6 +38,25 @@ jobs:
       - name: Run textual-dependent test suite
         run: python3 -m unittest discover -s plugins/s/skills/build/tests_textual -v
 
+      - name: Install difftastic for the review engine
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          difft_version=0.71.0
+          curl -fsSL -o /tmp/difft.tar.gz \
+            "https://github.com/Wilfred/difftastic/releases/download/${difft_version}/difft-${difft_version}-x86_64-unknown-linux-gnu.tar.gz"
+          mkdir -p /tmp/difft-release
+          tar -xzf /tmp/difft.tar.gz -C /tmp/difft-release
+          # The archive layout has varied across releases, so the binary is
+          # located by name rather than assumed at the archive root.
+          binary="$(find /tmp/difft-release -type f -name difft | head -n 1)"
+          if [[ -z "$binary" ]]; then
+            echo "The difftastic release archive contains no difft binary." >&2
+            exit 1
+          fi
+          install -m 0755 "$binary" "$HOME/.local/bin/difft"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - name: Run review test suite
         run: python3 -m unittest discover -s plugins/s/skills/review/tests -v
 

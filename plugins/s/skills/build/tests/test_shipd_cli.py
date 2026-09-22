@@ -1752,10 +1752,11 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual((level, name), ("ok", "difft"))
         self.assertIn("/opt/bin/difft", detail)
 
-    def test_difft_missing_warns_naming_the_degradation_and_remedy(self):
+    def test_difft_missing_warns_naming_the_affected_surface_and_remedy(self):
         level, name, detail = shipd.check_difft(which=self.stub_which({}))
         self.assertEqual((level, name), ("warn", "difft"))
-        self.assertIn("text engine", detail)
+        self.assertIn("semantic review", detail)
+        self.assertNotIn("text engine", detail)
         self.assertIn("semdiff doctor --fix", detail)
 
     def test_default_checks_probe_difft_after_gh(self):

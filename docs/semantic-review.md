@@ -85,10 +85,10 @@ numbers excluded so a moved line still matches.
 
 ## When a tool is missing
 
-The review degrades rather than stops. Without `difft` it falls back to a
-structural-text engine and says so in the report. It records that loss of
-accuracy under what it could not verify. A linter that crashes or times out
-reports as failed, and the review still completes.
+Without `difft` the review stops before any analysis. Difftastic is a hard
+requirement, not a fallback engine, because a review whose engine varies
+silently produces a verdict nobody can reproduce. A linter that crashes or
+times out reports as failed, and the review still completes.
 
 ## See also
 

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """semdiff — a thin, mechanical structural-diff engine for the /s:review skill.
 
-It shells out to git (and, when available, difftastic and ripgrep) and shapes
+It shells out to git and difftastic (and, when available, ripgrep) and shapes
 compact JSON. It makes **no** findings and assigns **no** severities — the
 skill supplies the judgement. Stdlib only, no third-party imports; network
 access happens only under `doctor --fix`.
 
 Subcommands:
-  diff <base> [<head>]     structural diff (syntax-aware via difft, text
-                           fallback when difft is missing)
+  diff <base> [<head>]     structural diff, syntax-aware via difft; a single
+                           file whose difft output fails to parse falls back
+                           to a text engine for that file alone
   files <base> [<head>]    changed paths grouped into architectural cohorts
   lint <base> [<head>]     run detected linters (ruff, flake8, pylint,
                            eslint) over changed paths only
@@ -16,11 +17,11 @@ Subcommands:
   change <name>            aggregate a planned shipd change's review context
   doctor [--fix]           dependency check with a tiered difft installer
 
-Design: difftastic is *recommended*, never required — when `difft` is absent
-`diff` degrades to a structural-text engine parsing `git diff` unified output
-into the same JSON shape (`engine: "text"`), and never exits non-zero solely
-because difftastic is missing. This mirrors the automedifftool sample but drops
-its hard difft requirement and replaces its OpenSpec bridge with a shipd one.
+Design: difftastic is *required* — `diff` exits non-zero when `difft` is
+absent from PATH rather than degrading, because a review whose engine varies
+silently produces a verdict nobody can reproduce or audit. Only a single
+file's own difft parse failure still falls back to the text engine, stamping
+`engine: "text"` on that file entry.
 """
 
 import argparse
@@ -38,6 +39,7 @@ import tempfile
 import urllib.request
 
 PROG = "semdiff"
+DIFFT_VERSION = "0.71.0"
 
 
 # --- shared helpers ---------------------------------------------------------
@@ -69,15 +71,13 @@ def repo_root():
 # --- doctor (dependency provisioning) ---------------------------------------
 
 # (tool, tier, hint). Tiers: "required" gates (exit non-zero when missing);
-# "recommended" degrades but never blocks (difft → text engine); "optional"
-# has a built-in fallback or belongs to a downstream feature.
+# "optional" has a built-in fallback or belongs to a downstream feature.
 DEPS = [
     ("git", "required",
      "install git (xcode-select --install, or apt install git)."),
-    ("difft", "recommended",
-     "difftastic — recommended for syntax-aware diffs; its absence degrades "
-     "semdiff to the text engine, it never blocks a review. Run "
-     "`semdiff doctor --fix` (or: brew install difftastic)."),
+    ("difft", "required",
+     "difftastic — required for `semdiff diff`, which exits non-zero "
+     "without it. Run `semdiff doctor --fix` (or: brew install difftastic)."),
     ("rg", "optional",
      "ripgrep — optional; `semdiff context` falls back to `git grep`."),
     ("gh", "optional",
@@ -128,8 +128,8 @@ def install_difft():
         print(f"{PROG}: no prebuilt difft for this platform; install manually.",
               file=sys.stderr)
         return False
-    url = ("https://github.com/Wilfred/difftastic/releases/latest/download/"
-           f"difft-{target}.tar.gz")
+    url = (f"https://github.com/Wilfred/difftastic/releases/download/"
+           f"{DIFFT_VERSION}/difft-{DIFFT_VERSION}-{target}.tar.gz")
     dest = _install_dir()
     print(f"{PROG}: downloading difftastic ({target}) → {dest}…",
           file=sys.stderr)
@@ -180,9 +180,6 @@ def cmd_doctor(args):
         mark = "x" if tier == "required" else "-"
         if tier == "required":
             state = "MISSING (required)"
-        elif tier == "recommended":
-            state = ("recommended, not found — degrades to the text engine, "
-                     "never blocks")
         else:
             state = "optional, not found"
         print(f"  {mark} {tool} — {state}: {hint}")
@@ -511,6 +508,10 @@ def cmd_diff(args):
         die("required tool 'git' not found on PATH. install git.", code=127)
     if not in_git_repo():
         die("not inside a git repository.")
+    if not have("difft"):
+        die("required tool 'difft' not found on PATH. install difftastic "
+            "(run `semdiff doctor --fix`, or: brew install difftastic).",
+            code=127)
 
     old_ref, new_ref, diff_spec, meta = resolve_endpoints(
         args.base, args.head, args.linear)

@@ -10,7 +10,9 @@ assertions.
 
 import json
 import os
+import subprocess
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -18,6 +20,16 @@ SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
 sys.path.insert(0, SCRIPTS)
 
 import review_gate  # noqa: E402
+import semdiff  # noqa: E402
+
+PLUGIN_S_ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+COPILOT_GATE_YML = os.path.join(
+    PLUGIN_S_ROOT, "integrations", "copilot", "copilot-review-gate.yml")
+
+
+def _read_gate_yml():
+    with open(COPILOT_GATE_YML) as fh:
+        return fh.read()
 
 
 MARKER = "<!-- shipd-semantic-review -->"
@@ -1357,6 +1369,189 @@ class PriorTest(unittest.TestCase):
         self.assertEqual(gh.resolved_thread_ids, [])
         self.assertEqual(gh.reply_posts, [])
         self.assertFalse(threads_from(gh, "T6")["isResolved"])
+
+
+CLASSIFIER_START = "# The verdict is the LAST line, scanned backwards"
+CLASSIFIER_END = '\n          if [[ -n "$state" ]]; then'
+CLASSIFIER_INDENT = " " * 10
+
+
+def _extract_classifier_bash(yml_text):
+    """The verdict-classification bash from `copilot-review-gate.yml`: the
+    backwards scan and the marker comparisons, dedented to real shell
+    source. Stops short of the `gh`-calling `post_status` invocation, which
+    the test suite never calls."""
+    marker_pos = yml_text.index(CLASSIFIER_START)
+    start = yml_text.rfind("\n", 0, marker_pos) + 1
+    end = yml_text.index(CLASSIFIER_END, start)
+    block = yml_text[start:end]
+    lines = []
+    for line in block.split("\n"):
+        if line.startswith(CLASSIFIER_INDENT):
+            lines.append(line[len(CLASSIFIER_INDENT):])
+        elif not line.strip():
+            lines.append("")
+        else:
+            raise AssertionError(
+                "classifier line under-indented relative to its "
+                "10-space block: %r" % line)
+    return "\n".join(lines)
+
+
+def _classify(body, fail_open="false"):
+    """Run the extracted classifier bash on ``body`` in a real subprocess
+    shell, returning ``(state, description)``. ``body`` is written to a
+    workspace file and read back with ``$(<file)``, exactly as the workflow
+    itself does — never piped, never passed through the environment."""
+    script = _extract_classifier_bash(_read_gate_yml())
+    with tempfile.TemporaryDirectory() as d:
+        body_path = os.path.join(d, "body.md")
+        with open(body_path, "w") as fh:
+            fh.write(body)
+        wrapper = (
+            "set -euo pipefail\n"
+            'HEAD_SHA=deadbeef\n'
+            f'body="$(<"{body_path}")"\n'
+            + script +
+            '\nprintf "STATE=%s\\nDESC=%s\\n" "${state:-}" "${description:-}"\n'
+        )
+        env = dict(os.environ)
+        env["SHIPD_GATE_FAIL_OPEN"] = fail_open
+        r = subprocess.run(["bash", "-c", wrapper],
+                            capture_output=True, text=True, env=env)
+    if r.returncode != 0:
+        raise AssertionError(f"classifier script failed: {r.stderr}")
+    state = desc = None
+    for line in r.stdout.splitlines():
+        if line.startswith("STATE="):
+            state = line[len("STATE="):]
+        elif line.startswith("DESC="):
+            desc = line[len("DESC="):]
+    return state, desc
+
+
+class VerdictBackwardsScanTest(unittest.TestCase):
+    """The classifier scans backwards for the last line equal to a verdict
+    marker, rather than requiring the literal last non-empty line to be one.
+    ``SHIPD_GATE_FAIL_OPEN=false`` makes a parsed verdict's state non-empty
+    and an unparsed one empty, so each case's outcome is unambiguous."""
+
+    SHIP_IT = "<!-- shipd-verdict: ship-it -->"
+    FIX_REQUIRED = "<!-- shipd-verdict: fix-required -->"
+
+    def test_marker_then_narration_still_parses(self):
+        body = (
+            "## Findings\n\nNone.\n\n"
+            f"{self.SHIP_IT}\n"
+            "Writing the findings file to the workspace now...\n"
+        )
+        state, _ = _classify(body)
+        self.assertEqual(state, "success")
+
+    def test_marker_quoted_midsentence_no_verdict(self):
+        body = (
+            f"Per the skill, end with `{self.SHIP_IT}` verbatim.\n"
+            "No further verdict is given here.\n"
+        )
+        state, _ = _classify(body)
+        self.assertEqual(state, "")
+
+    def test_marker_inside_transcript_line_no_verdict(self):
+        body = (
+            f"│ echo '{self.SHIP_IT}'\n"
+            "That's the end of the transcript.\n"
+        )
+        state, _ = _classify(body)
+        self.assertEqual(state, "")
+
+    def test_marker_with_trailing_text_no_verdict(self):
+        body = f"{self.SHIP_IT} (all clear)\n"
+        state, _ = _classify(body)
+        self.assertEqual(state, "")
+
+    def test_no_marker_at_all_no_verdict(self):
+        body = "Everything checks out from what I can tell.\n"
+        state, _ = _classify(body)
+        self.assertEqual(state, "")
+
+    def test_fix_required_last_with_ship_it_earlier_is_fix_required(self):
+        body = (
+            f"{self.SHIP_IT}\n\nOn reflection:\n\n{self.FIX_REQUIRED}\n"
+        )
+        state, _ = _classify(body)
+        self.assertEqual(state, "failure")
+
+    def test_marker_with_trailing_spaces_parses(self):
+        body = f"{self.SHIP_IT}   \n"
+        state, _ = _classify(body)
+        self.assertEqual(state, "success")
+
+    def test_indented_marker_parses(self):
+        body = f"    {self.SHIP_IT}\n"
+        state, _ = _classify(body)
+        self.assertEqual(state, "success")
+
+
+class GateInstructionPinningTest(unittest.TestCase):
+    """The reviewer's instructions are pinned by overwriting the checkout's
+    own `$skill_path` with the base ref's copy — materializing it elsewhere
+    and asking the reviewer to prefer it leaves the pinning advisory, since
+    the CLI's own skill discovery would still find the live, reviewed copy."""
+
+    def test_base_ref_copy_overwrites_the_checkout_skill_path(self):
+        text = _read_gate_yml()
+        # Isolate the base-ref materialization block, between the
+        # `base_commit` resolution and the CLI invocation.
+        start = text.index('base_commit="$(git rev-parse')
+        end = text.index("copilot -p ", start)
+        block = text[start:end]
+        self.assertRegex(
+            block, r'>\s*"\$skill_path"',
+            "the base ref's skill content is never written over $skill_path "
+            "in the checkout")
+
+    def test_reviewer_invocation_carries_add_dir(self):
+        text = _read_gate_yml()
+        idx = text.index("copilot -p ")
+        # The invocation may wrap across lines; scan a bounded window after
+        # it for the flag.
+        window = text[idx:idx + 400]
+        self.assertIn("--add-dir", window)
+
+
+class GateTemplateDifftPinTest(unittest.TestCase):
+    """The gate template's difftastic download names a pinned release
+    version rather than the unversioned `releases/latest/download/` asset
+    name, which difftastic stopped publishing after 0.65.0."""
+
+    def test_names_a_pinned_version_not_latest(self):
+        text = _read_gate_yml()
+        self.assertNotIn(
+            "releases/latest/download/", text,
+            "the gate template still names the unversioned asset")
+        self.assertIn(
+            semdiff.DIFFT_VERSION, text,
+            "the gate template does not name the pinned difftastic version")
+
+    def test_the_ci_workflow_pins_the_same_version(self):
+        """The third pin. `DIFFT_VERSION` binds the engine's installer and,
+        above, the gate template — but CI carries its own literal. Without
+        this, bumping the constant leaves CI installing the previous release
+        with nothing to announce it, and the engine reads difftastic's JSON
+        under `DFT_UNSTABLE=yes`, whose shape that release is free to change.
+        """
+        repo_root = os.path.normpath(
+            os.path.join(PLUGIN_S_ROOT, "..", ".."))
+        path = os.path.join(repo_root, ".github", "workflows", "ci.yml")
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertNotIn(
+            "releases/latest/download/", text,
+            "the ci workflow names the unversioned asset")
+        self.assertIn(
+            semdiff.DIFFT_VERSION, text,
+            "the ci workflow does not pin the same difftastic version as "
+            "the engine's DIFFT_VERSION")
 
 
 if __name__ == "__main__":

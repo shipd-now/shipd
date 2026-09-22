@@ -208,11 +208,32 @@ def job_blocks(text):
     return {name: "\n".join(lines) for name, lines in jobs.items()}
 
 
+MARKER_VAR_ASSIGN = re.compile(r"^(\w+)='(<!-- shipd-verdict: [\w-]+ -->)'$")
+
+
+def _inline_marker_vars(text):
+    """``text`` with every ``"$name"`` reference to a variable assigned a
+    verdict marker literal (``name='<!-- shipd-verdict: ... -->'``) replaced
+    by that literal. The classifier names each marker through a variable
+    rather than writing it inline at the comparison site; this lets
+    line-based marker detection keep working against the variable's own
+    value instead of its name."""
+    var_to_marker = {}
+    for line in text.splitlines():
+        match = MARKER_VAR_ASSIGN.match(line.strip())
+        if match:
+            var_to_marker[match.group(1)] = match.group(2)
+    for name, marker in var_to_marker.items():
+        text = text.replace('"$%s"' % name, "'%s'" % marker)
+    return text
+
+
 def verdict_branches(text):
     """``{branch key: the branch's body}`` for the gate's shell conditional,
     keyed by the verdict each arm tests — ``"fix-required"``, ``"ship-it"``, or
     ``"none"`` for the marker-less fallback. A conditional arm testing anything
     else contributes nothing."""
+    text = _inline_marker_vars(text)
     branches = {}
     current = None
     for line in text.splitlines():
@@ -435,15 +456,15 @@ class SkillTemplateTest(unittest.TestCase):
         self.assertIn("own line", lowered)
 
     def test_the_marker_instruction_states_last_line_equality(self):
-        # The gate reads the marker off the body's last non-empty line and
-        # compares it for equality. An instruction promising an "exact
-        # substring match" describes a matcher that does not exist and that
-        # the gate deliberately does not use — a marker quoted mid-text is
-        # prose, and matching it anywhere would fail a passing pull request.
+        # The gate scans backwards for the last line equal to a marker. An
+        # instruction promising an "exact substring match" describes a matcher
+        # that does not exist and that the gate deliberately does not use — a
+        # marker quoted mid-text is prose, and matching it anywhere would fail
+        # a passing pull request.
         report = markdown_section(self.text, "### 6. Report")
         self.assertTrue(report.strip(), "no report section in the template")
         lowered = report.lower()
-        self.assertIn("last non-empty line", lowered)
+        self.assertIn("last line equal to a marker", lowered)
         self.assertIn("exact equality", lowered)
         self.assertIn("never by a substring match", lowered,
                       "the instruction does not rule the substring match out")
@@ -793,13 +814,17 @@ class GateWorkflowTemplateTest(unittest.TestCase):
 
     def test_the_cli_path_provisions_difftastic_and_ripgrep(self):
         tooling = [step for step in self.steps
-                   if "difft-x86_64-unknown-linux-gnu.tar.gz" in step]
+                   if "difft-${difft_version}-x86_64-unknown-linux-gnu.tar.gz"
+                   in step]
         self.assertEqual(len(tooling), 1,
                          "expected exactly one difftastic install step, found "
                          "%d" % len(tooling))
         self.assertIn(
-            "https://github.com/Wilfred/difftastic/releases/latest/download/"
-            "difft-x86_64-unknown-linux-gnu.tar.gz", tooling[0])
+            "https://github.com/Wilfred/difftastic/releases/download/"
+            "${difft_version}/difft-${difft_version}-"
+            "x86_64-unknown-linux-gnu.tar.gz", tooling[0])
+        self.assertNotIn("releases/latest/download/", tooling[0],
+                         "the gate's difftastic download is not pinned")
         self.assertIn("$GITHUB_PATH", tooling[0])
         self.assertIn("ripgrep", tooling[0])
         self.assertIn("apt-get install", tooling[0])
@@ -812,7 +837,8 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         # by the first step standing — the right outcome for a review that
         # never ran.
         tooling = [step for step in self.steps
-                   if "difft-x86_64-unknown-linux-gnu.tar.gz" in step]
+                   if "difft-${difft_version}-x86_64-unknown-linux-gnu.tar.gz"
+                   in step]
         run = run_block(tooling[0])
         self.assertIn('-z "$binary"', run,
                       "the located binary path is never tested for emptiness")
@@ -1177,16 +1203,21 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertIn('"${SHIPD_GATE_FAIL_OPEN:-true}" == "false"', self.script)
 
     def test_the_verdict_match_is_an_anchored_equality_test(self):
-        # Equality against the extracted last line, never containment: a
-        # review that quotes a marker while describing the diff must not be
-        # classified by the quote.
+        # Equality against one scanned line, never containment: a review that
+        # quotes a marker while describing the diff must not be classified by
+        # the quote. The classifier names each marker through its own
+        # variable and matches it in `marker_matches` by stripping the exact
+        # marker text off the front of the line with `#` (anchored prefix
+        # removal) and requiring whatever is left to be nothing but
+        # whitespace — never a substring test or a glob-wrapped match.
+        self.assertIn('local rest="${1#"$2"}"', self.script,
+                      "the marker is not stripped by anchored prefix removal")
+        self.assertIn('[[ "$rest" == "$1" ]]', self.script,
+                      "a line not starting with the marker is not rejected")
         for marker in (FIX_MARKER, SHIP_MARKER):
-            self.assertRegex(
-                self.text,
-                r"""\[\[ "\$\{?[A-Za-z_][A-Za-z0-9_]*\}?" == '%s' \]\]"""
-                % re.escape(marker),
-                "%r is not compared for equality against a single line"
-                % marker)
+            self.assertIn(
+                "='%s'" % marker, self.text,
+                "%r is not bound to its own marker variable" % marker)
             self.assertNotIn(
                 "*'%s'*" % marker, self.text,
                 "%r is still matched anywhere in the body" % marker)
