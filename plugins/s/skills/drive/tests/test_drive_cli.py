@@ -113,9 +113,50 @@ class DoctorRecordingOnlyToolsTest(DriveCliTestBase):
 
     def test_everything_present_exits_zero(self):
         bindir = _bindir(
-            self.tmp, "everything", ["uv", "ffmpeg", "ffprobe"])
+            self.tmp, "everything", ["uv", "ffmpeg", "ffprobe", "vhs"])
         r = self.run_cli(bindir, self.browsers_dir(True), "doctor")
         self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class DoctorVhsToolTest(DriveCliTestBase):
+    """`vhs` (drive-doctor) joins `ffmpeg`/`ffprobe` as a third,
+    terminal-recording-only tier: missing solely because a terminal
+    recording is not being requested right now never fails `doctor`, it
+    always names `brew install vhs` as its remedy, and `--fix` never
+    attempts to install it (the CLI's `--fix` stays scoped to the
+    Playwright browser binary — plan's Q2)."""
+
+    def test_missing_vhs_reports_remedy_and_exits_zero(self):
+        bindir = _bindir(
+            self.tmp, "uv-and-browser-no-vhs", ["uv", "ffmpeg", "ffprobe"])
+        r = self.run_cli(bindir, self.browsers_dir(True), "doctor")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = (r.stdout + r.stderr).lower()
+        self.assertIn("vhs", out)
+        self.assertIn("missing", out)
+        self.assertRegex(out, r"vhs.*brew install vhs")
+
+    def test_missing_vhs_with_uv_and_browser_present_exits_zero(self):
+        bindir = _bindir(
+            self.tmp, "uv-browser-only", ["uv", "ffmpeg", "ffprobe"])
+        r = self.run_cli(bindir, self.browsers_dir(True), "doctor")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_fix_attempts_no_vhs_install_and_names_manual_remedy(self):
+        # Browser already present so --fix takes its no-network-access
+        # branch and never shells out at all (drive-doctor's `--fix`
+        # installs only the browser binary) — `vhs` has no automated
+        # remedy to attempt in the first place.
+        bindir = _bindir(
+            self.tmp, "fix-uv-browser-no-vhs", ["uv", "ffmpeg", "ffprobe"])
+        r = self.run_cli(
+            bindir, self.browsers_dir(True), "doctor", "--fix")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = (r.stdout + r.stderr).lower()
+        self.assertIn("vhs", out)
+        self.assertRegex(out, r"vhs.*brew install vhs")
+        self.assertNotIn("installing vhs", out)
+        self.assertNotIn("download the vhs", out)
 
 
 if __name__ == "__main__":

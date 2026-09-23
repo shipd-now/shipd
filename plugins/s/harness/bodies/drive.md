@@ -1,5 +1,5 @@
-<!-- description: Drive a real browser with Playwright to operate an app, verify a change against it, and record a branded demo video. -->
-# /s:drive — drive a real browser, verify, and record
+<!-- description: Drive a real browser with Playwright to operate an app and verify a change against it, ending on a PASS/FAIL verdict. Records browser footage for /s:demo. -->
+# /s:drive — drive a real browser and verify
 
 Open a real browser against a resolved target, drive it through the requested
 instructions, and end on a `PASS`/`FAIL` verdict grounded in console and

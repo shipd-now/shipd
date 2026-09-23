@@ -284,6 +284,36 @@ class ShippedTemplateTest(unittest.TestCase):
                             "%s.md declares an empty description" % command)
 
 
+def _skill_text(name):
+    with open(os.path.join(SKILLS_DIR, name, "SKILL.md"), "r",
+             encoding="utf-8") as fh:
+        return fh.read()
+
+
+class TriggerPhraseTest(unittest.TestCase):
+    """A trigger phrase must resolve to exactly one skill
+    (demo-skill-registration): `record a demo` moved from `/s:drive` to
+    `/s:demo`, the successor `epic-autopilot`'s rule re-homes a surrendered
+    trigger onto rather than deleting it — so exactly one `SKILL.md` may
+    declare it, never zero and never more than one.
+
+    Whitespace is normalized before searching, since a frontmatter
+    `description: >-` block scalar is free to wrap a trigger phrase across
+    lines — YAML folds that wrapping back into a single space when the
+    field is actually parsed, so a raw-text scan has to do the same or it
+    would miss a phrase wrapped mid-quote."""
+
+    def test_record_a_demo_is_claimed_by_exactly_one_skill(self):
+        claiming = []
+        for name in sorted(
+                n for n in os.listdir(SKILLS_DIR)
+                if os.path.isfile(os.path.join(SKILLS_DIR, n, "SKILL.md"))):
+            normalized = " ".join(_skill_text(name).split())
+            if '"record a demo"' in normalized:
+                claiming.append(name)
+        self.assertEqual(claiming, ["demo"])
+
+
 class ShippedRenderTest(unittest.TestCase):
     """What the shipped templates render to, at both ends of the feature
     vocabulary."""
