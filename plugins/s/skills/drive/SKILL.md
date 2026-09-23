@@ -1,28 +1,31 @@
 ---
 name: drive
 description: >-
-  Drive a real browser with Playwright to operate an app, verify a change
-  against it, and optionally record a branded demo video: resolve the target
+  Drive a real browser with Playwright to operate an app and verify a change
+  against it: resolve the target
   and its credentials, run the `drive.py doctor` preflight, obtain or reuse a
   cached login, start the one-browser session daemon, probe the live DOM
   before authoring any selector, drive the requested instructions while
   waiting for a named completion signal, and end on a PASS/FAIL verdict
-  backed by console and network evidence. Use when asked to drive the app,
-  verify a change in a real browser, click through a flow, or record a demo
-  video of a change. Trigger phrases: "drive the app", "verify this in the
-  browser", "click through this flow", "record a demo", "/s:drive".
+  backed by console and network evidence. Its `record` and `post` verbs
+  capture and brand browser footage, driven by `/s:demo` rather than
+  invoked here. Use when asked to drive the app,
+  verify a change in a real browser, or click through a flow. Trigger
+  phrases: "drive the app", "verify this in the browser", "click through
+  this flow", "/s:drive".
 ---
 
-# /s:drive — drive a real browser, verify, and record
+# /s:drive — drive a real browser and verify
 
 You are the **browser-driving layer over a running app**. shipd plans,
 builds, reviews, and ships a change, but nothing else in the plugin opens the
 app and confirms the change works — the loop otherwise ends at tests and a
 pull request. Your job is to close that gap: open a real browser against a
 resolved target, drive it through the requested instructions, and end on a
-verdict grounded in console and network evidence a reviewer can trust. Where
-the request also asks for a demo, you additionally record and post-process a
-branded video of the same run.
+verdict grounded in console and network evidence a reviewer can trust. You
+also own the `record` and `post` verbs that capture and brand browser
+footage, but producing a demo is `/s:demo`'s flow — it drives those verbs,
+and routes a terminal subject to `tape` instead.
 
 **Announce the version first.** Read the running plugin version from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `s:drive
@@ -96,11 +99,12 @@ supplies evidence or state the next stage depends on.
    the run on a `PASS` or `FAIL` verdict (below). Report it plainly, with its
    evidence, as the closing line of the turn.
 
-Where the request also asks for a demo, run `drive.py record <target>
-<action-module>` after step 4 (recording runs its own authenticated session,
-independent of the interactive one from step 4) and `drive.py post
-<recording>` to assemble the branded, fast-forwarded output — see
-`references/recording.md` for the action-module contract before writing one.
+Where a demo is wanted, `/s:demo` is the flow that produces it; it runs
+`drive.py record <target> <action-module>` after step 4 (recording runs its
+own authenticated session, independent of the interactive one) and
+`drive.py post <recording>` to assemble the branded, fast-forwarded output.
+See `references/recording.md` for the action-module contract before writing
+one.
 
 ## The verdict contract
 

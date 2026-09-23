@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """drive.py — the stdlib-only control CLI for `/s:drive` (drive-doctor,
 drive-targets-config, drive-auth-cache, drive-session, drive-verdict,
-drive-recording, drive-postprocess, drive-brand-frames).
+drive-recording, drive-tape, drive-tape-timeline, drive-postprocess,
+drive-brand-frames).
 
 This script holds every decision the skill makes — config resolution, auth
 recipes, cache TTL, the doctor table, the verdict rules, the ffmpeg graphs —
@@ -22,6 +23,7 @@ convention though `drive.py` is not one of that requirement's named CLIs).
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -35,6 +37,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import postprocess as pp  # noqa: E402 - stdlib-only sibling, same split as drive.py
+import tape  # noqa: E402 - stdlib-only sibling, same split as drive.py
 
 
 class DriveError(Exception):
@@ -122,9 +125,10 @@ def default_run(args, input=None, env=None):
 
 # (name, always_required, check, remedy). `uv` and the Playwright browser
 # binary are required for every verb (drive-doctor); `ffmpeg`/`ffprobe` are
-# required for `record`/`post` only. Each `check` reports presence purely
-# via `PATH` (`have`) or `PLAYWRIGHT_BROWSERS_PATH` (`browser_installed`),
-# so the test suite controls presence entirely through the subprocess
+# required for `record`/`post` only, and `vhs` is required for `tape`
+# (terminal recording) only. Each `check` reports presence purely via
+# `PATH` (`have`) or `PLAYWRIGHT_BROWSERS_PATH` (`browser_installed`), so
+# the test suite controls presence entirely through the subprocess
 # environment it launches `drive.py` with — no other injection needed for
 # the report itself.
 DOCTOR_TOOLS = [
@@ -139,6 +143,8 @@ DOCTOR_TOOLS = [
     ("ffprobe", False, lambda: have("ffprobe"),
      "install ffmpeg, which provides ffprobe — required for recording and "
      "post-processing only"),
+    ("vhs", False, lambda: have("vhs"),
+     "brew install vhs — required for terminal recording only"),
 ]
 
 
@@ -993,6 +999,92 @@ def cmd_record(args, run=default_run):
     return 0
 
 
+# --- terminal recording (drive-tape, drive-tape-timeline) -----------------
+
+# vhs `Output <path>` directives declare where the terminal recording lands
+# — the CLI never assigns a filename of its own, since the verb "SHALL run
+# the tape unmodified except for resolving its output path" (drive-tape):
+# it only ever reads this directive back out of the tape the author wrote.
+_TAPE_OUTPUT_RE = re.compile(r'^Output\s+(\S+)', re.IGNORECASE)
+_TAPE_VIDEO_EXTS = (".mp4", ".webm", ".mov", ".avi", ".mkv")
+
+
+def _tape_output_path(tape_text, tape_path):
+    """The absolute path `vhs` will write the recording to: the first
+    `Output` directive in `tape_text` naming a video extension (a tape may
+    declare more than one `Output`, e.g. an additional `.gif`), falling
+    back to the first `Output` of any kind. Relative paths resolve against
+    the current working directory, exactly as `vhs` itself resolves them
+    when invoked from here. Raises `DriveError`, naming `tape_path`, when
+    the tape declares no `Output` at all."""
+    candidates = []
+    for raw_line in tape_text.splitlines():
+        match = _TAPE_OUTPUT_RE.match(raw_line.strip())
+        if match:
+            candidates.append(match.group(1).strip('"').strip("'"))
+    if not candidates:
+        raise DriveError(
+            "tape %s declares no `Output <path>` directive to record into"
+            % tape_path)
+    for candidate in candidates:
+        if os.path.splitext(candidate)[1].lower() in _TAPE_VIDEO_EXTS:
+            return os.path.abspath(candidate)
+    return os.path.abspath(candidates[0])
+
+
+def cmd_tape(args, run=default_run):
+    """`tape` (drive-tape): record a terminal session by running `vhs`
+    over an author-written tape file, unmodified, then write the same
+    recording-plus-timeline pair the browser `record` verb emits so a
+    terminal demo reaches `post` (drive-postprocess) unchanged. Resolves
+    `vhs` on `PATH`, refusing with the `brew install vhs` remedy when
+    absent, before touching anything else — no video is written and no
+    browser, target, or login is ever involved (drive-tape: "a terminal
+    recording has no target and no session").
+
+    Reads the tape's own `Output` directive to learn where the recording
+    will land (`_tape_output_path`), then invokes `vhs <tape-file>`
+    through the injectable `run` seam (`default_run`'s signature,
+    mirroring `cmd_doctor`'s `--fix` path) with the tape passed through
+    exactly as written. A non-zero `vhs` exit is reported and stops here —
+    no timeline is written for a partial recording (drive-tape: "fail
+    loudly ... rather than post-processing a partial recording"). On
+    success, the timeline is derived purely from the tape's own
+    `#hold`/`#endhold`/`#ready` comments (`tape.read_annotations`,
+    drive-tape-timeline), written beside the recording, and both paths are
+    printed as one JSON object matching `record`'s output shape.
+    """
+    tape_path = args.tape
+    if not os.path.isfile(tape_path):
+        raise DriveError("tape not found: %s" % tape_path)
+    with open(tape_path, "r", encoding="utf-8") as fh:
+        tape_text = fh.read()
+
+    if not have("vhs"):
+        raise DriveError(
+            "vhs is required for terminal recording — brew install vhs")
+
+    video_path = _tape_output_path(tape_text, tape_path)
+
+    try:
+        rc, out, err = run(["vhs", tape_path])
+    except OSError as exc:
+        raise DriveError("could not start vhs: %s" % exc)
+
+    if rc != 0:
+        detail = (err or out).strip() or "vhs exited %d" % rc
+        raise DriveError("tape recording failed: %s" % detail)
+
+    timeline = tape.read_annotations(tape_text)
+    timeline_path = os.path.splitext(video_path)[0] + ".timeline.json"
+    with open(timeline_path, "w", encoding="utf-8") as fh:
+        json.dump(timeline, fh, indent=2)
+        fh.write("\n")
+
+    print(json.dumps({"video": video_path, "timeline": timeline_path}))
+    return 0
+
+
 def _current_branch(run=default_run):
     """The working tree's current branch name, or `None` when it cannot be
     determined — a detached HEAD, no `git` on PATH, or not a repository at
@@ -1265,6 +1357,11 @@ def build_parser():
     p_record.add_argument("--target", default=None)
     p_record.add_argument("--out", default=None, help="output directory")
     p_record.set_defaults(func=cmd_record)
+
+    p_tape = sub.add_parser(
+        "tape", help="record a terminal session from a vhs tape file")
+    p_tape.add_argument("tape", help="path to the vhs tape file")
+    p_tape.set_defaults(func=cmd_tape)
 
     p_post = sub.add_parser(
         "post", help="post-process a recording into a branded, "

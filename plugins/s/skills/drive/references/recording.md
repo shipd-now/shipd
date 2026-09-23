@@ -1,10 +1,13 @@
-# Recording a demo — the action-module contract
+# Recording a demo — the action-module and tape contracts
 
-Loaded by `SKILL.md` when the request wants a recorded demo, not just a
-verified drive. This reference is the contract between an **action module** —
-a short Python file you write for one specific demo — and `record_worker.py`,
-the Playwright worker that runs it while recording video
-(drive-recording).
+Loaded by `SKILL.md` (both `/s:drive`'s and `/s:demo`'s) when the request
+wants a recorded demo, not just a verified drive. This reference holds both
+media's authoring rules in one place: the contract between an **action
+module** — a short Python file you write for one specific browser demo — and
+`record_worker.py`, the Playwright worker that runs it while recording video
+(drive-recording); and the contract between a **tape** — a `vhs` script — and
+`drive.py tape`, which runs it unmodified and derives its timeline from the
+tape's own comments (drive-tape, drive-tape-timeline).
 
 ## The action-module contract
 
@@ -98,3 +101,71 @@ loading bar — reads as dead air and gets fast-forwarded even with no
 timeline span marking it. A reveal is anything the viewer is meant to
 consciously register, not just anything on screen. Attach an `h.annotate(...)`
 naming it or a `h.hold(...)` framing it before the action module moves on.
+
+## Terminal recording — the tape contract
+
+A **tape** is a plain `vhs` script — the same file `vhs` itself runs, with no
+sidecar and no drive-specific syntax. `drive.py tape <tape-file>` runs it
+completely unmodified: the only thing the verb does beyond invoking `vhs` is
+read the tape's own `Output <path>` directive back out, to know where the
+recording landed, and read the tape's own comments back out, to build the
+timeline. Nothing about the tape's content is drive-specific except those
+comments — a tape without any of them is still a perfectly ordinary `vhs`
+file, runnable with `vhs` directly.
+
+The timeline `tape` emits carries `holds` and `leadingCut` only — never
+`spans` (drive-tape-timeline). A tape's `Sleep` directives describe the
+*intended* length of a pause, not the real recorded duration, so no span is
+ever derived from one; every dead-air stretch is left to `post`'s spinner
+backstop, exactly as an unannotated tape is (below).
+
+Three comments carry the annotations, each on its own line:
+
+- **`#hold`** — opens a protected window at this point in the tape;
+  everything from here forward plays at normal speed regardless of how
+  static it looks, until the matching `#endhold`. An unclosed `#hold` (no
+  `#endhold` before the tape ends) extends to the end of the recording.
+- **`#endhold`** — closes the most recently opened `#hold`.
+- **`#ready`** — marks the point the shell prompt has settled after the
+  terminal's own startup; that offset becomes the timeline's `leadingCut`, so
+  `post` cuts everything before it. Only the first `#ready` in a tape is
+  honored.
+
+Offsets accumulate purely from the tape's own `Sleep <duration>` directives,
+in the order they appear — every other line (`Type`, `Enter`, `Set`, and so
+on) contributes no duration to the running clock, since `vhs`'s own keystroke
+timing is not modeled here. This means a `#hold`/`#endhold` pair protects a
+real stretch of the recording only when it brackets the `Sleep` that holds
+the reveal visible; a pair with no `Sleep` between them protects nothing.
+
+### A worked tape
+
+```
+Output demo.mp4
+Set FontSize 20
+Set Width 1200
+Set Height 600
+
+Type "shipd status"
+Enter
+Sleep 1s
+#ready
+
+Type "shipd build my-change"
+Enter
+#hold
+Sleep 3s
+#endhold
+Sleep 500ms
+Type "echo done"
+Enter
+Sleep 1s
+```
+
+Here the shell prompt is considered settled one second in (`#ready`, so
+`leadingCut` is `1.0`), and the three-second stretch right after `shipd
+build` starts is protected (`#hold`/`#endhold`, so it plays at normal
+speed rather than being swept into the backstop's fast-forward). The
+half-second `Sleep` before the final `echo done` carries no annotation at
+all — like every other unannotated stretch, it is left entirely to `post`'s
+spinner backstop to classify.
