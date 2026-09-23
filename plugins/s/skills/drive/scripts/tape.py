@@ -38,18 +38,39 @@ OPEN_HOLD_END = 1_000_000.0
 # vhs `Sleep <duration>` accepts a bare number of seconds or a Go-style
 # duration suffix (`ms`, `s`, `m`) — see `plugins/s/skills/drive/references
 # /recording.md`'s tape section for the worked example this mirrors.
-_SLEEP_RE = re.compile(
-    r'^Sleep\s+([0-9]*\.?[0-9]+)\s*(ms|s|m)?\s*$', re.IGNORECASE)
+_DURATION = r'([0-9]*\.?[0-9]+)\s*(ms|s|m)?'
+
+_SLEEP_RE = re.compile(r'^Sleep\s+' + _DURATION + r'\s*$', re.IGNORECASE)
+
+# `Set TypingSpeed <duration>` overrides how long each keystroke takes.
+_TYPING_SPEED_RE = re.compile(
+    r'^Set\s+TypingSpeed\s+' + _DURATION + r'\s*$', re.IGNORECASE)
+
+# `Type "text"` and its per-line override `Type@<duration> "text"`. The
+# quoted payload is what gets typed, one keystroke per character.
+_TYPE_RE = re.compile(
+    r'^Type(?:@' + _DURATION + r')?\s+(["\'])(.*)\3\s*$', re.IGNORECASE)
+
+# A bare keypress line, optionally repeated: `Enter`, `Enter 3`, `Tab`.
+# Each press costs one keystroke, exactly as a typed character does.
+_KEYPRESS_RE = re.compile(
+    r'^(Enter|Tab|Space|Backspace|Delete|Escape|Up|Down|Left|Right)'
+    r'(?:\s+([0-9]+))?\s*$', re.IGNORECASE)
+
+# vhs's own default, in seconds per keystroke.
+DEFAULT_TYPING_SPEED = 0.05
 
 
-def _sleep_seconds(match):
-    value = float(match.group(1))
-    unit = (match.group(2) or "s").lower()
+def _duration_seconds(value, unit):
+    """One `<number><unit>` duration in seconds, defaulting to seconds when
+    the unit is omitted — vhs's own convention."""
+    seconds = float(value)
+    unit = (unit or "s").lower()
     if unit == "ms":
-        return value / 1000.0
+        return seconds / 1000.0
     if unit == "m":
-        return value * 60.0
-    return value
+        return seconds * 60.0
+    return seconds
 
 
 def read_annotations(tape_text):
@@ -67,6 +88,7 @@ def read_annotations(tape_text):
     leading_cut = None
     open_hold_start = None
     clock = 0.0
+    typing_speed = DEFAULT_TYPING_SPEED
 
     for raw_line in tape_text.splitlines():
         line = raw_line.strip()
@@ -89,7 +111,28 @@ def read_annotations(tape_text):
 
         match = _SLEEP_RE.match(line)
         if match:
-            clock += _sleep_seconds(match)
+            clock += _duration_seconds(match.group(1), match.group(2))
+            continue
+
+        match = _TYPING_SPEED_RE.match(line)
+        if match:
+            typing_speed = _duration_seconds(match.group(1), match.group(2))
+            continue
+
+        match = _TYPE_RE.match(line)
+        if match:
+            # A per-line `Type@<duration>` overrides the running speed for
+            # this line alone, exactly as vhs applies it.
+            speed = typing_speed
+            if match.group(1) is not None:
+                speed = _duration_seconds(match.group(1), match.group(2))
+            clock += len(match.group(4)) * speed
+            continue
+
+        match = _KEYPRESS_RE.match(line)
+        if match:
+            repeat = int(match.group(2) or 1)
+            clock += repeat * typing_speed
 
     if open_hold_start is not None:
         holds.append({"start": open_hold_start, "end": OPEN_HOLD_END})

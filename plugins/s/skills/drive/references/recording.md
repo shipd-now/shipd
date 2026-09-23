@@ -131,12 +131,24 @@ Three comments carry the annotations, each on its own line:
   `post` cuts everything before it. Only the first `#ready` in a tape is
   honored.
 
-Offsets accumulate purely from the tape's own `Sleep <duration>` directives,
-in the order they appear — every other line (`Type`, `Enter`, `Set`, and so
-on) contributes no duration to the running clock, since `vhs`'s own keystroke
-timing is not modeled here. This means a `#hold`/`#endhold` pair protects a
-real stretch of the recording only when it brackets the `Sleep` that holds
-the reveal visible; a pair with no `Sleep` between them protects nothing.
+Offsets accumulate from the tape's own timing directives in the order they
+appear: each `Sleep <duration>` adds its duration, and each keystroke adds
+one typing interval — `Type "text"` costs one interval per character, a bare
+keypress (`Enter`, `Tab`, `Enter 3`) costs one per press. The interval is
+`vhs`'s 50ms default, overridden for the rest of the tape by
+`Set TypingSpeed <duration>` or for one line by `Type@<duration>`.
+
+Keystrokes have to be counted because they are real recorded time: a tape
+that types three commands before its first reveal has already spent a second
+or more of video, and a hold computed without that would protect a stretch
+that has not happened yet. A command's own runtime needs no modeling — `vhs`
+launches it and moves straight to the next directive, so it runs *during* the
+`Sleep` that follows rather than adding to the clock. Give a command a `Sleep`
+long enough to finish in, and the clock stays aligned with the recording.
+
+A `#hold`/`#endhold` pair still protects nothing unless a `Sleep` sits
+between them: the window's whole purpose is to keep a static stretch at
+normal speed, and a pair enclosing no pause encloses no stretch.
 
 ### A worked tape
 
@@ -162,10 +174,12 @@ Enter
 Sleep 1s
 ```
 
-Here the shell prompt is considered settled one second in (`#ready`, so
-`leadingCut` is `1.0`), and the three-second stretch right after `shipd
-build` starts is protected (`#hold`/`#endhold`, so it plays at normal
-speed rather than being swept into the backstop's fast-forward). The
-half-second `Sleep` before the final `echo done` carries no annotation at
-all — like every other unannotated stretch, it is left entirely to `post`'s
-spinner backstop to classify.
+Here the shell prompt is considered settled once `shipd status` has been
+typed, entered, and given a second to print — 12 keystrokes plus `Enter` at
+50ms, then `Sleep 1s`, so `#ready` puts `leadingCut` at `1.65`. The
+three-second reveal after `shipd build` is protected by the
+`#hold`/`#endhold` pair: the 21 keystrokes and `Enter` before it cost a
+further `1.10`, so the window is `2.75` to `5.75` and plays at normal speed
+rather than being swept into the backstop's fast-forward. The half-second
+`Sleep` before the final `echo done` carries no annotation. The backstop
+classifies it, as it does every other unannotated stretch.

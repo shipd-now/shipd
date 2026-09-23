@@ -48,7 +48,9 @@ class TapeAnnotationTests(unittest.TestCase):
             'Type "echo done"',
         ])
         result = tape.read_annotations(text)
-        self.assertEqual(result["holds"], [{"start": 0.0, "end": 2.0}])
+        # "echo hi" is 7 keystrokes plus Enter, at vhs's 50ms default:
+        # 0.40s of real recording before the hold opens.
+        self.assertEqual(result["holds"], [{"start": 0.40, "end": 2.40}])
 
     def test_unclosed_hold_extends_to_recording_end(self):
         text = "\n".join([
@@ -84,6 +86,45 @@ class TapeAnnotationTests(unittest.TestCase):
         self.assertEqual(result["holds"], [])
         self.assertIsNone(result["leadingCut"])
 
+    def test_typing_advances_the_clock_at_the_default_speed(self):
+        """Keystrokes are real recorded time. vhs types at 50ms per
+        character by default, and a command launched by `Enter` runs
+        concurrently with the `Sleep` that follows it — so typing is the
+        term that would otherwise drift a hold away from its reveal."""
+        text = "\n".join([
+            'Type "abcde"',   # 5 keystrokes -> 0.25s
+            "Enter",          # 1 keystroke  -> 0.05s
+            "# ready",
+        ])
+        result = tape.read_annotations(text)
+        self.assertAlmostEqual(result["leadingCut"], 0.30)
+
+    def test_set_typing_speed_overrides_the_default(self):
+        text = "\n".join([
+            "Set TypingSpeed 100ms",
+            'Type "abcde"',   # 5 keystrokes at 100ms -> 0.50s
+            "# ready",
+        ])
+        result = tape.read_annotations(text)
+        self.assertAlmostEqual(result["leadingCut"], 0.50)
+
+    def test_per_line_type_speed_overrides_the_running_speed(self):
+        text = "\n".join([
+            'Type@200ms "ab"',   # 2 keystrokes at 200ms -> 0.40s
+            'Type "ab"',         # 2 keystrokes at the 50ms default -> 0.10s
+            "# ready",
+        ])
+        result = tape.read_annotations(text)
+        self.assertAlmostEqual(result["leadingCut"], 0.50)
+
+    def test_repeated_keypresses_cost_one_keystroke_each(self):
+        text = "\n".join([
+            "Enter 4",   # 4 keystrokes -> 0.20s
+            "# ready",
+        ])
+        result = tape.read_annotations(text)
+        self.assertAlmostEqual(result["leadingCut"], 0.20)
+
     def test_sleep_directives_contribute_no_spans(self):
         text = "\n".join([
             "Sleep 1s",
@@ -107,7 +148,8 @@ class TapeAnnotationTests(unittest.TestCase):
         result = tape.read_annotations(text)
         self.assertEqual(result["holds"], [
             {"start": 0.0, "end": 1.0},
-            {"start": 2.0, "end": 4.0},
+            # The typed "echo hi" between the windows costs 0.35s.
+            {"start": 2.35, "end": 4.35},
         ])
 
 
