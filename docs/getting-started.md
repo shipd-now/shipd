@@ -50,9 +50,9 @@ shipd doctor
 
 It reports one line per check, then a closing `doctor: ok` or `doctor: N
 problem(s)`. The checks are `python`, `git`, `config`, `pipeline`, `schema`,
-`wiki`, `gh`, `difft`, `textual`, `snapshot`, `statusline`, `protection`,
-`automerge`, and `copilot-secret`. Only a `fail` line blocks you; `warn`
-lines mark optional extras. This verb installs and edits nothing. `--fix`
+`wiki`, `local-state`, `gh`, `difft`, `textual`, `snapshot`, `statusline`,
+`protection`, `automerge`, and `copilot-secret`. Only a `fail` line blocks you;
+`warn` lines mark optional extras. This verb installs and edits nothing. `--fix`
 installs local tooling automatically. See the [cheatsheet](cheatsheet.md).
 
 Cheapening a delivery needs nothing installed: `{"autonomous-pipeline":

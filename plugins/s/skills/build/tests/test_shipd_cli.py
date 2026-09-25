@@ -1144,7 +1144,8 @@ class DoctorCheckTest(unittest.TestCase):
 
     # The full preflight roster, in the order ``default_checks`` reports it.
     ALL_CHECKS = ("python", "git", "config", "pipeline", "schema", "wiki",
-                  "store", "store-sync", "gh", "difft", "textual", "snapshot",
+                  "store", "store-sync", "local-state", "gh", "difft",
+                  "textual", "snapshot",
                   "statusline", "protection", "automerge", "copilot-secret")
 
     def probed_check_names(self, root):
@@ -1451,6 +1452,99 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertTrue(
             any(line.startswith("fail schema — ") for line in lines), lines)
+
+    # -- local-state (shipd-cli doctor-local-state-check) -------------------
+
+    RULES = (".shipd/state.json", ".shipd/autopilot/")
+
+    def _git(self, *args):
+        subprocess.run(["git", *args], capture_output=True, text=True,
+                       check=True)
+
+    def local_state_root(self, git=True, ignore=(), tracked=()):
+        """A throwaway root, optionally a git checkout, whose ``.gitignore``
+        carries ``ignore`` and whose committed tree tracks ``tracked`` (paths
+        relative to the root)."""
+        root = os.path.join(self.tmp, "ls-%d" % len(os.listdir(self.tmp)))
+        os.makedirs(root)
+        if git:
+            self._git("init", "-q", root)
+        if ignore:
+            with open(os.path.join(root, ".gitignore"), "w",
+                      encoding="utf-8") as fh:
+                fh.write("".join("%s\n" % rule for rule in ignore))
+        for rel in tracked:
+            path = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("{}\n")
+        if git and tracked:
+            self._git("-C", root, "add", "-f", "-A")
+            self._git("-C", root, "-c", "user.name=t", "-c",
+                      "user.email=t@x", "commit", "-q", "-m", "seed")
+        return root
+
+    def local_state_check(self, root):
+        """``check_local_state`` with ``HOME`` pointed at the throwaway home, so
+        no real config layer above the temp root can name another content
+        directory."""
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            return shipd.check_local_state(root)
+
+    def tree_snapshot(self, root):
+        """Every path under ``root`` with its bytes, so a read-only check can be
+        proven to have written nothing. ``.git`` is excluded: git's own read
+        commands refresh the index, and the check's contract is that it mutates
+        nothing of the repository's *content*."""
+        snapshot = {}
+        for base, dirs, files in os.walk(root):
+            dirs[:] = sorted(d for d in dirs if d != ".git")
+            for name in sorted(files):
+                path = os.path.join(base, name)
+                with open(path, "rb") as fh:
+                    snapshot[os.path.relpath(path, root)] = fh.read()
+        return snapshot
+
+    def test_default_checks_probe_local_state_after_store_sync(self):
+        names = self.probed_check_names(self.tmp)
+        self.assertEqual(
+            names.index("local-state"), names.index("store-sync") + 1)
+        self.assertEqual(names.index("gh"), names.index("local-state") + 1)
+
+    def test_tracked_state_file_warns_naming_init(self):
+        root = self.local_state_root(tracked=(".shipd/state.json",))
+        level, name, detail = self.local_state_check(root)
+        self.assertEqual((level, name), ("warn", "local-state"))
+        self.assertIn(".shipd/state.json", detail)
+        self.assertIn("shipd init", detail)
+
+    def test_missing_ignore_rule_warns(self):
+        root = self.local_state_root(ignore=(".shipd/state.json",))
+        level, name, detail = self.local_state_check(root)
+        self.assertEqual((level, name), ("warn", "local-state"))
+        self.assertIn(".shipd/autopilot/", detail)
+        self.assertIn("shipd init", detail)
+
+    def test_ignored_and_untracked_reports_ok(self):
+        root = self.local_state_root(ignore=self.RULES)
+        level, name, detail = self.local_state_check(root)
+        self.assertEqual((level, name), ("ok", "local-state"))
+        for rule in self.RULES:
+            self.assertIn(rule, detail)
+
+    def test_non_checkout_skips_ok(self):
+        root = self.local_state_root(git=False)
+        level, name, detail = self.local_state_check(root)
+        self.assertEqual((level, name), ("ok", "local-state"))
+        self.assertIn("skipped", detail)
+
+    def test_local_state_check_never_writes(self):
+        root = self.local_state_root(tracked=(".shipd/state.json",))
+        before = self.tree_snapshot(root)
+        self.local_state_check(root)
+        self.assertEqual(self.tree_snapshot(root), before)
 
     # -- wiki (shipd-cli doctor-wiki-check) ---------------------------------
 
@@ -1869,7 +1963,8 @@ class DoctorCheckTest(unittest.TestCase):
     def test_default_checks_run_in_the_documented_order(self):
         self.assertEqual(self.probed_check_names(self.tmp),
                          ["python", "git", "config", "pipeline", "schema",
-                          "wiki", "store", "store-sync", "gh", "difft",
+                          "wiki", "store", "store-sync", "local-state", "gh",
+                          "difft",
                           "textual", "snapshot", "statusline", "protection",
                           "automerge", "copilot-secret"])
 
@@ -2589,6 +2684,10 @@ class DoctorFixTest(unittest.TestCase):
         "warn", "automerge",
         "auto-merge is disabled on o/r — `gh pr merge --auto` cannot arm, "
         "so every change stops at an open PR")
+    LOCAL_STATE_WARNING = (
+        "warn", "local-state",
+        "tracked by git: .shipd/state.json — run `shipd init` to ignore and "
+        "untrack local state")
 
     def run_doctor(self, results, args=(), run=None, checks_after=None,
                    forbid_prompt=True):
@@ -2695,6 +2794,19 @@ class DoctorFixTest(unittest.TestCase):
         self.assertFalse(any("gh" in c or "api" in c for c in calls), calls)
         self.assertIn("protection", out)
         self.assertIn("/s:doctor", out)
+
+    def test_local_state_finding_stays_report_only_under_fix(self):
+        # `local-state` carries no automated remedy (doctor-local-state-check):
+        # the only call `--fix` makes is its unconditional drive-CLI delegation,
+        # never a git mutation, and the report names the manual remedy.
+        out, _err, _code, calls = self.run_doctor(
+            [self.LOCAL_STATE_WARNING], args=("--fix",))
+        non_delegation_calls = [
+            c for c in calls
+            if not any(str(part).endswith("drive.py") for part in c)]
+        self.assertEqual(non_delegation_calls, [])
+        self.assertIn("local-state", out)
+        self.assertIn("shipd init", out)
 
     def test_automerge_finding_performs_no_gh_mutation_under_fix(self):
         out, _err, _code, calls = self.run_doctor(

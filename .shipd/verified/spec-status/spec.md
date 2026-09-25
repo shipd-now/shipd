@@ -1513,6 +1513,20 @@ untouched and report `exists`. If the source reference file is missing, then
 the verb SHALL print one warning line to stderr naming the probed source path,
 SHALL skip the installation, and SHALL leave its exit code unchanged.
 
+The verb SHALL additionally seed the two local-state ignore rules —
+`<content-dir>/state.json` and `<content-dir>/autopilot/`, each relative to
+the root — into the root's `.gitignore`, appending only a rule that is absent
+and creating the file when it does not exist, and SHALL report each rule with
+one `ignored <rule>` line when appended or `exists <rule>` line when already
+present, printed after the config-sample line and before the summary line.
+While the root is a git checkout and either path is tracked by git, the verb
+SHALL untrack it from the index without deleting it from disk and SHALL print
+one `untracked <path>` line per path after the rule lines. If the content
+directory resolves outside the root, then the verb SHALL print no rule line
+and touch no `.gitignore`. If `git` is unavailable or the root is not a
+checkout, then the verb SHALL still seed the rules and skip the untrack step,
+leaving its exit code unchanged.
+
 #### Scenario: Fresh repository gets the full layout
 - **WHEN** `spec_status.py init --root <dir>` runs against a directory with
   no content directory
@@ -1563,6 +1577,31 @@ SHALL skip the installation, and SHALL leave its exit code unchanged.
 - **WHEN** `init` runs against a fresh root
 - **THEN** the four directories are still created, one stderr warning names
   the probed source path, no sample file is installed, and the run exits `0`
+
+#### Scenario: Fresh init seeds the ignore rules
+- **WHEN** `init` runs against a fresh root with no `.gitignore`
+- **THEN** `.gitignore` is created carrying `.shipd/state.json` and
+  `.shipd/autopilot/`, and the run prints `ignored .shipd/state.json` and
+  `ignored .shipd/autopilot/` after the config-sample line and before the
+  summary
+
+#### Scenario: Re-run reports present rules
+- **WHEN** `init` re-runs against a root whose `.gitignore` already carries
+  both rules
+- **THEN** `.gitignore` is byte-for-byte unchanged and each rule is reported
+  `exists`
+
+#### Scenario: A tracked state file is untracked by init
+- **GIVEN** a git checkout whose committed tree tracks `.shipd/state.json`
+  and `.shipd/autopilot/demo-build-heartbeat.json`
+- **WHEN** `init` runs
+- **THEN** `git ls-files .shipd` lists neither path afterwards, both files
+  still exist on disk, and the run prints one `untracked <path>` line per
+  path before the summary
+
+#### Scenario: Configured content directory names the rules
+- **WHEN** the root's configuration declares `"dir": "specs"` and `init` runs
+- **THEN** the seeded rules are `specs/state.json` and `specs/autopilot/`
 
 ### Requirement: Epic amend check verb
 id: epic-amend-check-verb
