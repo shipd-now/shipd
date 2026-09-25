@@ -14,7 +14,8 @@ Subcommands:
   lint <base> [<head>]     run detected linters (ruff, flake8, pylint,
                            eslint) over changed paths only
   context <symbol>         best-effort reference lookup (rg, else git grep)
-  change <name>            aggregate a planned shipd change's review context
+  change <name>            aggregate a shipd change's review context, from
+                           planned/ or the newest completed/ archive
   doctor [--fix]           dependency check with a tiered difft installer
 
 Design: difftastic is *required* — `diff` exits non-zero when `difft` is
@@ -1029,7 +1030,7 @@ def cmd_context(args):
     return 0
 
 
-# --- change (planned shipd change review bridge) -------------------------------
+# --- change (shipd change review bridge, planned or archived) -----------------
 
 
 def _import_engine():
@@ -1087,14 +1088,34 @@ def _req_delta(operation, capability, req):
     }
 
 
+def _resolve_change_dir(root, content_dir, change):
+    """Resolve a change directory for reading: ``planned/<change>/`` first and,
+    when absent, the archived ``completed/*-<change>/`` — the lexicographically
+    last (newest date prefix) when several match, mirroring the status CLI's
+    `cat change`. Returns ``(location, absolute_dir)``, or ``(None, None)``
+    when the change lives under neither directory."""
+    planned = os.path.join(root, content_dir, "planned", change)
+    if os.path.isdir(planned):
+        return "planned", planned
+    archives = sorted(
+        path for path in glob.glob(
+            os.path.join(root, content_dir, "completed", "*-" + change))
+        if os.path.isdir(path))
+    if archives:
+        return "completed", archives[-1]
+    return None, None
+
+
 def cmd_change(args):
     sc, sl = _import_engine()
     root = repo_root()
     content_dir = _content_dir(root)
-    change_dir = os.path.join(root, content_dir, "planned", args.change)
-    if not os.path.isdir(change_dir):
+    location, change_dir = _resolve_change_dir(root, content_dir, args.change)
+    if location is None:
         die(f"change '{args.change}' not found under "
-            f"{os.path.join(content_dir, 'planned')}/.")
+            f"{os.path.join(content_dir, 'planned')}/ or "
+            f"{os.path.join(content_dir, 'completed')}/.")
+    rel_dir = os.path.relpath(change_dir, root)
 
     plan_path = os.path.join(change_dir, "plan.md")
     plan_text = _read(plan_path) if os.path.isfile(plan_path) else ""
@@ -1133,12 +1154,21 @@ def cmd_change(args):
     done = sum(1 for it in items if it["checked"])
     tasks = {"total": len(items), "done": done, "items": items}
 
-    # Lint findings for this change, in-process.
-    errors = sl.lint_change(root, args.change)
-    lint = {"findings": [str(e) for e in errors]}
+    # Lint findings for this change, in-process. The linter runs over planned/
+    # only, so an archive reports why it was skipped instead.
+    if location == "planned":
+        errors = sl.lint_change(root, args.change)
+        lint = {"findings": [str(e) for e in errors]}
+    else:
+        lint = {"findings": [],
+                "skipped": "archived change: its deltas are already merged "
+                           "into verified/ and the linter runs over planned/ "
+                           "only"}
 
     json.dump({
         "change": args.change,
+        "location": location,
+        "dir": rel_dir,
         "status": status,
         "deltas": deltas,
         "tasks": tasks,
@@ -1195,8 +1225,13 @@ def main():
     c.set_defaults(func=cmd_context)
 
     ch = sub.add_parser(
-        "change", help="aggregate a planned shipd change's review context")
-    ch.add_argument("change", help="planned change name (under planned/)")
+        "change",
+        help="aggregate a shipd change's review context, resolved under "
+             "planned/ or completed/")
+    ch.add_argument(
+        "change",
+        help="change name; resolved under planned/, else the newest "
+             "completed/<date>-<name>/ archive")
     ch.set_defaults(func=cmd_change)
 
     doc = sub.add_parser(

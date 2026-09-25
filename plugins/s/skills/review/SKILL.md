@@ -41,7 +41,7 @@ Each file below is read only when its condition fires — not by default.
 
 | Reference | Load when |
 | --- | --- |
-| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/spec-aware.md` | the user named a planned change, or exactly one change exists under `planned/` |
+| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/spec-aware.md` | the user named a change, exactly one change exists under `planned/`, or the diff carries a change directory under `planned/` or `completed/` |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` | the user passed `--json`, or the poster's JSON is being produced |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/posting.md` | a pull request is in scope for the review — it also reads prior findings back before reporting |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/risk-lenses.md` | a risk lens trigger fires during review of the diff |
