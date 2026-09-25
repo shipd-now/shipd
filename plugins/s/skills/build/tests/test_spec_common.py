@@ -4469,5 +4469,124 @@ class WikiAutocommitTest(unittest.TestCase):
             self.assertEqual(self._commit_count(ws), before + 2)
 
 
+class LocalStateTest(unittest.TestCase):
+    """local_state_rules names the two local-state ignore rules and
+    ensure_local_state_untracked seeds them while untracking whatever git
+    already holds, keeping both paths on disk (statusline
+    current-spec-selection)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = os.path.realpath(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _write(self, rel, body):
+        path = os.path.join(self.root, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        return path
+
+    def _read(self, rel):
+        with open(os.path.join(self.root, rel), encoding="utf-8") as fh:
+            return fh.read()
+
+    def _init_repo(self):
+        _git("init", "-q", self.root)
+
+    def _commit_all(self, subject):
+        _git("-C", self.root, "add", "-A")
+        _git(
+            "-C", self.root, "-c", "user.name=t", "-c", "user.email=t@x",
+            "commit", "-q", "-m", subject)
+
+    def _ls_files(self, *paths):
+        result = subprocess.run(
+            ["git", "-C", self.root, "ls-files", "--", *paths],
+            capture_output=True, text=True, check=True)
+        return sorted(p for p in result.stdout.split("\n") if p.strip())
+
+    def test_local_state_rules_default_dir(self):
+        with home_set_to(self.root):
+            self.assertEqual(
+                sc.local_state_rules(self.root),
+                [".shipd/state.json", ".shipd/autopilot/"])
+
+    def test_local_state_rules_configured_dir(self):
+        self._write(".shipd-config.json", '{"dir": "specs"}\n')
+        with home_set_to(self.root):
+            rules = sc.local_state_rules(self.root)
+        self.assertEqual(len(rules), 2)
+        for rule in rules:
+            self.assertTrue(rule.startswith("specs/"), rule)
+        self.assertTrue(rules[0].endswith("state.json"), rules[0])
+        self.assertTrue(rules[1].endswith("autopilot/"), rules[1])
+
+    def test_local_state_rules_external_store_is_empty(self):
+        old = sc.specs_dir
+        sc.specs_dir = lambda root: os.path.join(
+            os.path.dirname(self.root), "elsewhere", ".shipd")
+        try:
+            self.assertEqual(sc.local_state_rules(self.root), [])
+        finally:
+            sc.specs_dir = old
+
+    def test_ensure_untracked_appends_rules_and_untracks(self):
+        self._init_repo()
+        state = self._write(".shipd/state.json", '{"current_spec": "old"}\n')
+        beat = self._write(
+            ".shipd/autopilot/demo-build-heartbeat.json", "{}\n")
+        self._commit_all("seed")
+        with home_set_to(self.root):
+            appended, untracked = sc.ensure_local_state_untracked(self.root)
+        self.assertEqual(
+            appended,
+            [(".shipd/state.json", True), (".shipd/autopilot/", True)])
+        # git ls-files prints repo-relative paths in sorted order, which is the
+        # order the helper reports (it reports exactly what git printed).
+        self.assertEqual(
+            untracked,
+            [".shipd/autopilot/demo-build-heartbeat.json", ".shipd/state.json"])
+        self.assertTrue(self._read(".gitignore").endswith(
+            ".shipd/state.json\n.shipd/autopilot/\n"))
+        self.assertEqual(self._ls_files(".shipd"), [])
+        self.assertTrue(os.path.isfile(state))
+        self.assertTrue(os.path.isfile(beat))
+
+    def test_ensure_untracked_is_idempotent(self):
+        self._init_repo()
+        self._write(".shipd/state.json", '{"current_spec": "old"}\n')
+        self._commit_all("seed")
+        with home_set_to(self.root):
+            sc.ensure_local_state_untracked(self.root)
+            first = self._read(".gitignore")
+            appended, untracked = sc.ensure_local_state_untracked(self.root)
+        self.assertEqual(
+            appended,
+            [(".shipd/state.json", False), (".shipd/autopilot/", False)])
+        self.assertEqual(untracked, [])
+        self.assertEqual(self._read(".gitignore"), first)
+
+    def test_ensure_untracked_without_git_dir_only_appends(self):
+        with home_set_to(self.root):
+            appended, untracked = sc.ensure_local_state_untracked(self.root)
+        self.assertEqual(
+            appended,
+            [(".shipd/state.json", True), (".shipd/autopilot/", True)])
+        self.assertEqual(untracked, [])
+        self.assertTrue(self._read(".gitignore").endswith(
+            ".shipd/state.json\n.shipd/autopilot/\n"))
+
+    def test_gitignore_carries(self):
+        self.assertFalse(sc.gitignore_carries(self.root, ".shipd/state.json"))
+        self.assertTrue(
+            sc.ensure_gitignore_line(self.root, ".shipd/state.json"))
+        self.assertTrue(sc.gitignore_carries(self.root, ".shipd/state.json"))
+        self._write(".gitignore", "%s\n%s\n%s\n" % (
+            sc.GITIGNORE_MEMBERS_BEGIN, ".shipd/state.json",
+            sc.GITIGNORE_MEMBERS_END))
+        self.assertFalse(sc.gitignore_carries(self.root, ".shipd/state.json"))
+
+
 if __name__ == "__main__":
     unittest.main()

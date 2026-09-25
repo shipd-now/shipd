@@ -549,6 +549,46 @@ def check_schema(root):
     return ("ok", "schema", "%s (assumed; no marker yet)" % repo_version)
 
 
+LOCAL_STATE_REMEDY = "run `shipd init` to ignore and untrack local state"
+
+
+def check_local_state(root):
+    """The git-ignore of the engine's two local-state paths — the content
+    directory's ``state.json`` and ``autopilot/`` (shipd-cli
+    doctor-local-state-check).
+
+    Reported directly after ``store-sync`` and before ``gh`` — the one roster
+    slot no other check's requirement claims with a "directly after" sentence —
+    so :func:`default_checks` names it there, not beside this definition.
+
+    Report-only and read-only: it never writes, and ``--fix`` leaves it alone,
+    because the remedy edits a tracked ``.gitignore`` and rewrites the index —
+    `shipd init` does that on request. ``warn`` when either path is tracked by
+    git or either rule is absent from the root's ``.gitignore``, naming what is
+    wrong and `shipd init`; ``ok`` naming both rules when neither holds; ``ok``
+    with a skip note where the question does not apply — an external content
+    store has no in-repo path to ignore, and a directory that is no checkout
+    tracks nothing."""
+    _load_engine()
+    rules = sc.local_state_rules(root)
+    if not rules:
+        return ("ok", "local-state",
+                "content directory lives outside the repository — skipped")
+    if not os.path.exists(os.path.join(root, ".git")):
+        return ("ok", "local-state", "not a git checkout — skipped")
+    tracked = sc.tracked_local_state(root)
+    if tracked:
+        return ("warn", "local-state",
+                "tracked by git: %s — %s"
+                % (", ".join(tracked), LOCAL_STATE_REMEDY))
+    missing = [rule for rule in rules if not sc.gitignore_carries(root, rule)]
+    if missing:
+        return ("warn", "local-state",
+                "not ignored: %s — %s"
+                % (", ".join(missing), LOCAL_STATE_REMEDY))
+    return ("ok", "local-state", "ignored: %s" % ", ".join(rules))
+
+
 def check_wiki(root):
     """The wiki store the working directory resolves (shipd-cli
     doctor-wiki-check).
@@ -1119,6 +1159,7 @@ def default_checks(root):
             check_wiki(root),
             check_store(root),
             check_store_sync(root),
+            check_local_state(root),
             check_gh(),
             check_difft(),
             check_textual(root),
@@ -1172,6 +1213,8 @@ REMEDY_SURFACES = {
     "pipeline": "the declared autonomous pipeline — fix the declaration by "
                "hand",
     "gh": "shipping via `gh` — run `gh auth login` by hand",
+    "local-state": "the git-ignore of the local selection state — run "
+                   "`shipd init` to ignore and untrack it",
     "copilot-secret": "the review gate's Copilot CLI reviewer mode — see "
                       "docs/copilot-review.md",
 }

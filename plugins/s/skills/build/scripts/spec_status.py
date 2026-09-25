@@ -17,8 +17,17 @@ Verbs (see the spec-status + statusline capabilities for the contract):
                      summary `all shipd directories are ready`. Never modifies
                      or removes anything that already exists, so it is safe to
                      re-run; refuses without creating anything when the content
-                     directory or a target exists as a non-directory
-  use <change>       record the spec being worked on in .shipd/state.json (the content dir)
+                     directory or a target exists as a non-directory. Also
+                     seeds the two local-state ignore rules (the content dir's
+                     state.json and autopilot/) into the root's .gitignore, one
+                     `ignored`/`exists` line per rule, and untracks either path
+                     git already holds — one `untracked` line per path, the
+                     file left on disk
+  use <change>       record the spec being worked on in .shipd/state.json (the
+                     content dir), first seeding the two local-state ignore
+                     rules into the root's .gitignore and untracking either
+                     path git already holds — reported on stderr as
+                     `untracked <path>`, the file left on disk
   current            print the selected change name (nothing if none)
   show [change]      print "<change>: <status> (<done>/<total> tasks)"; with no
                      change given and none selected, print the workspace board
@@ -558,7 +567,15 @@ def cmd_init(root):
 
     The plugin's copyable config reference is then installed into the content
     directory by :func:`_install_config_sample`, reported on its own line
-    between the directory lines and the ready summary."""
+    between the directory lines and the ready summary.
+
+    The two local-state ignore rules — the content directory's ``state.json``
+    and ``autopilot/`` — are then seeded into the root's ``.gitignore`` by
+    :func:`spec_common.ensure_local_state_untracked`, one ``ignored``/``exists``
+    line per rule, and either path git already tracks is untracked from the
+    index (the file kept on disk), one ``untracked`` line per path. So a fresh
+    repo never begins tracking the engine's local scratch, and an older one
+    that already does stops on the next ``init``."""
     specs = sc.specs_dir(root)
     targets = [os.path.join(specs, name) for name in LAYOUT_DIRS]
     for path in [specs] + targets:
@@ -572,6 +589,14 @@ def cmd_init(root):
         print("%s %s%s" % ("exists" if existed else "created",
                            os.path.relpath(path, root), os.sep))
     _install_config_sample(root, specs)
+    # The engine's local scratch is never committed (statusline
+    # current-spec-selection): seed the ignore rules and untrack whatever git
+    # already holds, reporting every step.
+    appended, untracked = sc.ensure_local_state_untracked(root)
+    for rule, added in appended:
+        print("%s %s" % ("ignored" if added else "exists", rule))
+    for path in untracked:
+        print("untracked %s" % path)
     # Declare the grammar the scaffolded layout is written under
     # (schema-versioning schema-marker-stamping). A repo already marked at a
     # different major keeps its marker — `init` is the one verb exempt from the
@@ -585,6 +610,14 @@ def cmd_use(root, change):
     if not _is_change(root, change):
         raise StatusError("unknown change '%s' (no directory under %s)"
                           % (change, _changes_dir(root)))
+    # Enforce the git-ignore the selection state has always required
+    # (statusline current-spec-selection), so a repo that never added the rule
+    # by hand self-heals on the next selection rather than committing — and
+    # conflicting on — the one line every sibling build rewrites. Reported on
+    # stderr so stdout stays the change name alone.
+    _appended, untracked = sc.ensure_local_state_untracked(root)
+    for path in untracked:
+        sys.stderr.write("untracked %s\n" % path)
     write_current(root, change)
     print(change)
     return 0

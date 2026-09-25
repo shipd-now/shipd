@@ -180,6 +180,74 @@ class UseCurrentTest(SpecStatusTestBase):
         self.assertEqual(bad.returncode, 1)
         self.assertIn("Error:", bad.stderr)
 
+    # -- local-state ignore enforcement (statusline current-spec-selection) --
+
+    def _git(self, *args):
+        subprocess.run(["git", *args], capture_output=True, text=True,
+                       check=True)
+
+    def _init_repo(self):
+        self._git("init", "-q", self.root)
+
+    def _commit_all(self, subject):
+        self._git("-C", self.root, "add", "-A")
+        self._git("-C", self.root, "-c", "user.name=t", "-c",
+                  "user.email=t@x", "commit", "-q", "-m", subject)
+
+    def _ls_files(self, *paths):
+        result = subprocess.run(
+            ["git", "-C", self.root, "ls-files", "--", *paths],
+            capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+
+    def _write_state(self, body):
+        os.makedirs(os.path.join(self.root, ".shipd"), exist_ok=True)
+        with open(os.path.join(self.root, ".shipd", "state.json"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(body)
+
+    def _gitignore(self):
+        path = os.path.join(self.root, ".gitignore")
+        if not os.path.exists(path):
+            return None
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_use_seeds_ignore_rules_and_untracks_a_tracked_state_file(self):
+        self._init_repo()
+        self._write_state('{"current_spec": "old"}\n')
+        self._commit_all("seed")
+        self.make_change("dark-mode", status="ready")
+        r = self.cli("use", "dark-mode")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout.strip(), "dark-mode")
+        self.assertIn("untracked .shipd/state.json", r.stderr)
+        body = self._gitignore()
+        self.assertIn(".shipd/state.json", body)
+        self.assertIn(".shipd/autopilot/", body)
+        self.assertEqual(self._ls_files(".shipd/state.json"), "")
+        self.assertEqual(self.state(), {"current_spec": "dark-mode"})
+
+    def test_use_leaves_present_rules_alone(self):
+        self._init_repo()
+        with open(os.path.join(self.root, ".gitignore"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(".shipd/state.json\n.shipd/autopilot/\n")
+        before = self._gitignore()
+        self.make_change("dark-mode", status="ready")
+        r = self.cli("use", "dark-mode")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self._gitignore(), before)
+        self.assertEqual(r.stderr, "")
+
+    def test_use_outside_a_checkout_still_records(self):
+        self.assertFalse(os.path.exists(os.path.join(self.root, ".git")))
+        self.make_change("dark-mode", status="ready")
+        r = self.cli("use", "dark-mode")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout.strip(), "dark-mode")
+        self.assertEqual(self.state(), {"current_spec": "dark-mode"})
+
 
 class ShowTest(SpecStatusTestBase):
     def test_show_status_and_progress(self):
@@ -2754,6 +2822,86 @@ class TestInitVerb(SpecStatusTestBase):
         self.assertIn(probed, warnings[0])
         lines = r.stdout.splitlines()
         self.assertEqual(lines[-1], self.SUMMARY)
+
+    # -- the local-state ignore rules --------------------------------------
+
+    RULES = (".shipd/state.json", ".shipd/autopilot/")
+
+    def gitignore(self):
+        path = os.path.join(self.root, ".gitignore")
+        if not os.path.exists(path):
+            return None
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+
+    def _git(self, *args):
+        subprocess.run(["git", *args], capture_output=True, text=True,
+                       check=True)
+
+    def test_fresh_init_seeds_the_ignore_rules(self):
+        r = self.init()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        body = self.gitignore()
+        self.assertIsNotNone(body)
+        for rule in self.RULES:
+            self.assertIn(rule, body)
+        lines = r.stdout.splitlines()
+        # Directly after the config-sample line and before the summary.
+        self.assertEqual(
+            lines[len(self.NAMES) + 1:-1],
+            ["ignored %s" % rule for rule in self.RULES])
+
+    def test_rerun_reports_rules_exist(self):
+        self.assertEqual(self.init().returncode, 0)
+        before = self.gitignore()
+        r = self.init()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        for rule in self.RULES:
+            self.assertIn("exists %s" % rule, lines)
+        self.assertEqual(self.gitignore(), before)
+
+    def test_init_untracks_tracked_local_state(self):
+        self._git("init", "-q", self.root)
+        state = os.path.join(self.root, ".shipd", "state.json")
+        beat = os.path.join(
+            self.root, ".shipd", "autopilot", "demo-build-heartbeat.json")
+        os.makedirs(os.path.dirname(beat))
+        with open(state, "w", encoding="utf-8") as fh:
+            fh.write('{"current_spec": "old"}\n')
+        with open(beat, "w", encoding="utf-8") as fh:
+            fh.write("{}\n")
+        self._git("-C", self.root, "add", "-A")
+        self._git("-C", self.root, "-c", "user.name=t", "-c",
+                  "user.email=t@x", "commit", "-q", "-m", "seed")
+        r = self.init()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        for path in (".shipd/state.json",
+                     ".shipd/autopilot/demo-build-heartbeat.json"):
+            line = "untracked %s" % path
+            self.assertIn(line, lines)
+            self.assertLess(lines.index(line), lines.index(self.SUMMARY))
+        tracked = subprocess.run(
+            ["git", "-C", self.root, "ls-files", "--", ".shipd"],
+            capture_output=True, text=True, check=True)
+        self.assertEqual(tracked.stdout.strip(), "")
+        self.assertTrue(os.path.isfile(state))
+        self.assertTrue(os.path.isfile(beat))
+
+    def test_configured_dir_names_the_rules(self):
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"dir": "specs"}, fh)
+        r = self.init()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rules = [line for line in self.gitignore().splitlines() if line.strip()]
+        self.assertEqual(len(rules), 2)
+        for rule in rules:
+            self.assertTrue(rule.startswith("specs/"), rule)
+            self.assertFalse(rule.startswith(".shipd"), rule)
+        self.assertTrue(rules[0].endswith("state.json"), rules[0])
+        self.assertTrue(rules[1].endswith("autopilot/"), rules[1])
 
 
 class WorkspaceInitTest(SpecStatusTestBase):

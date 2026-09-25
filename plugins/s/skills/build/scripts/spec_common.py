@@ -1591,11 +1591,34 @@ def ensure_gitignore_line(target, line):
     (:func:`write_members_gitignore_block`), so a line parked inside it would
     be dropped on the next sync. A line that exists only inside the block is
     therefore treated as absent."""
+    if gitignore_carries(target, line):
+        return False
     gi_path = os.path.join(target, ".gitignore")
     body = ""
     if os.path.isfile(gi_path):
         with open(gi_path, encoding="utf-8") as fh:
             body = fh.read()
+    prefix = body if body.endswith("\n") or body == "" else body + "\n"
+    with open(gi_path, "w", encoding="utf-8") as fh:
+        fh.write("%s%s\n" % (prefix, line))
+    return True
+
+
+def gitignore_carries(target, line):
+    """True when ``<target>/.gitignore`` already carries ``line`` *outside* the
+    marked member-repos block — the presence test :func:`ensure_gitignore_line`
+    appends against, exposed so a read-only probe (the `local-state` doctor
+    check) can ask the same question without writing anything.
+
+    A line that exists only inside the markers counts as absent, for the reason
+    :func:`ensure_gitignore_line` documents: the sync reconciler rewrites that
+    block to exactly the manifest's member paths, so a rule parked inside it
+    would be dropped on the next sync."""
+    gi_path = os.path.join(target, ".gitignore")
+    if not os.path.isfile(gi_path):
+        return False
+    with open(gi_path, encoding="utf-8") as fh:
+        body = fh.read()
     lines = body.split("\n")
     inside = set()
     try:
@@ -1606,11 +1629,83 @@ def ensure_gitignore_line(target, line):
         pass
     for i, existing in enumerate(lines):
         if i not in inside and existing.strip() == line:
-            return False
-    prefix = body if body.endswith("\n") or body == "" else body + "\n"
-    with open(gi_path, "w", encoding="utf-8") as fh:
-        fh.write("%s%s\n" % (prefix, line))
-    return True
+            return True
+    return False
+
+
+def local_state_rules(root):
+    """Return the two local-state ignore rules for ``root`` — its content
+    directory's ``state.json`` and ``autopilot/``, each relative to the root and
+    always ``/``-separated (statusline current-spec-selection).
+
+    Both paths are engine-local scratch the engine writes but never commits: the
+    current-spec selection and the autopilot heartbeats. Returns ``[]`` when the
+    content directory resolves outside ``root`` (an external store), because
+    there is no in-repo path for the root's ``.gitignore`` to name."""
+    rel = os.path.relpath(specs_dir(root), root)
+    if os.path.isabs(rel) or rel == ".." or rel.startswith(".." + os.sep):
+        return []
+    rel = rel.replace(os.sep, "/")
+    return [rel + "/state.json", rel + "/autopilot/"]
+
+
+def tracked_local_state(root):
+    """Return the local-state paths git tracks at ``root``, repo-relative
+    (statusline current-spec-selection).
+
+    Returns ``[]`` when the content directory resolves outside ``root``, when
+    ``root`` carries no ``.git`` entry (neither a directory nor a
+    linked-worktree file), when ``git`` is missing, or when the probe fails —
+    the caller treats an unanswerable question as nothing tracked rather than an
+    error, since this is advisory hygiene, never a gate."""
+    rules = local_state_rules(root)
+    if not rules:
+        return []
+    if not os.path.exists(os.path.join(root, ".git")):
+        return []
+    rel = rules[0][:-len("/state.json")]
+    try:
+        result = subprocess.run(
+            ["git", "-C", root, "ls-files", "-z", "--",
+             rel + "/state.json", rel + "/autopilot"],
+            capture_output=True, text=True)
+    except OSError:
+        return []
+    if result.returncode != 0:
+        return []
+    return [p for p in result.stdout.split("\0") if p]
+
+
+def ensure_local_state_untracked(root):
+    """Seed the local-state ignore rules into ``root``'s ``.gitignore`` and
+    untrack whatever git already holds, returning ``(appended, untracked)``
+    (statusline current-spec-selection).
+
+    ``appended`` is one ``(rule, was_appended)`` pair per rule in
+    :func:`local_state_rules` order; ``untracked`` is the repo-relative paths
+    removed from the index. Removal is ``git rm --cached``, so every file stays
+    on disk — the selection the status line reads and the heartbeats a live
+    build writes survive untouched. Never raises on git's behalf: a missing
+    ``git`` or a non-zero exit is reported as nothing untracked. Returns
+    ``([], [])`` when the content directory resolves outside ``root``, touching
+    no ``.gitignore`` at all."""
+    rules = local_state_rules(root)
+    if not rules:
+        return ([], [])
+    appended = [(rule, ensure_gitignore_line(root, rule)) for rule in rules]
+    tracked = tracked_local_state(root)
+    if not tracked:
+        return (appended, [])
+    try:
+        result = subprocess.run(
+            ["git", "-C", root, "rm", "--cached", "-r", "-q",
+             "--ignore-unmatch", "--", *tracked],
+            capture_output=True, text=True)
+    except OSError:
+        return (appended, [])
+    if result.returncode != 0:
+        return (appended, [])
+    return (appended, tracked)
 
 
 def _is_bare_name(path):
