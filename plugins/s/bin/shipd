@@ -1191,9 +1191,18 @@ def _textual_remedy_argv(detail):
     detail exactly as that capability requires: everything after the
     detail's last ``; `` separator is the ``pip install`` command
     :func:`_install_hint` composed, carried through unchanged — so any
-    ``--user --break-system-packages`` override travels with it verbatim."""
+    ``--user --break-system-packages`` override travels with it verbatim.
+
+    The ``python3 -m`` form the capability names is satisfied by
+    :data:`sys.executable` — the running interpreter — rather than the bare
+    string ``"python3"``, which PATH could resolve to a different
+    interpreter entirely. ``check_textual`` probes the running process's own
+    ``importlib`` state and ``_install_hint`` composed any
+    ``--break-system-packages`` override from the running process's own
+    ``sysconfig``, so the install has to land in that same interpreter for
+    the post-repair re-run to see it."""
     _, _, hint = detail.rpartition("; ")
-    return ["python3", "-m"] + shlex.split(hint)
+    return [sys.executable, "-m"] + shlex.split(hint)
 
 
 def _difft_remedy_argv():

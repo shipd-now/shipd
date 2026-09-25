@@ -2646,6 +2646,18 @@ class DoctorFixTest(unittest.TestCase):
         pip_calls = [c for c in calls if "pip" in c and "install" in c]
         self.assertEqual(len(pip_calls), 1)
 
+    def test_textual_remedy_runs_under_the_running_interpreter(self):
+        # The composed argv must name `sys.executable` — the interpreter
+        # `check_textual` and `_install_hint` both probed — never the bare
+        # string "python3", which PATH could resolve to a different
+        # interpreter entirely (a semantic-review finding on this change).
+        _out, _err, _code, calls = self.run_doctor(
+            [self.TEXTUAL_WARNING], args=("--fix",))
+        pip_calls = [c for c in calls if "pip" in c and "install" in c]
+        self.assertEqual(len(pip_calls), 1)
+        self.assertEqual(pip_calls[0][0], sys.executable)
+        self.assertNotEqual(pip_calls[0][0], "python3")
+
     # -- a GitHub mutation stays report-only ------------------------------
 
     def test_protection_finding_performs_no_gh_mutation_under_fix(self):
