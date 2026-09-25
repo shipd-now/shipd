@@ -1,0 +1,11 @@
+## 1. Skill and harness prose
+
+- [x] 1.1 [req: standalone-invocation] In `plugins/s/skills/plan/SKILL.md`, in the "Ending — hand off, don't build" section, insert a new step 3 after step 2 titled **Close with a Summary heading.** It reads: print a level-2 heading `## Summary`, then exactly one plain-language sentence stating what the change does and why, in the shape "We're <doing X>, so <Y is unblocked>", naming no file, path, or artifact. Renumber the former step 3 to 4 and the former step 4 to 5, and extend step 4's fenced example so it shows `## Summary`, a blank line, one example sentence, a blank line, then the existing colon sentence and `/s:build` lines.
+- [x] 1.2 [req: standalone-invocation] In the same file, in the "Exit enrichment through the re-gate" section's Exit 0 bullet, after "hand off with the **motivation-led summary**" and its parenthetical, add the words "closing with the `## Summary` heading and its one sentence, then" before the colon-terminated sentence rule, so the enrichment hand-off names the same closing.
+- [x] 1.3 [req: standalone-invocation] In `plugins/s/harness/bodies/plan.md`, rewrite step 9 to: **Hand off, do not build.** Summarize why the change is being made and the shape of the approach — not the inventory of files you wrote — name where the change lives, then print a `## Summary` heading with one plain sentence saying what the change does and why, and end with `/s:build` alone on its own line.
+- [x] 1.4 [req: standalone-invocation] Run `python3 -m unittest discover -s plugins/s/skills/build/tests -p test_harness_generate.py` and confirm it reports OK, then run `grep -n "## Summary" plugins/s/skills/plan/SKILL.md plugins/s/harness/bodies/plan.md` and confirm the skill matches three times (the enrichment pointer, step 3, and the example) and the body once.
+
+## 2. Version and full suite
+
+- [x] 2.1 [req: *] Bump `version` in `plugins/s/.claude-plugin/plugin.json` by one patch level over the value `main` carries at that moment (from `0.6.234` to `0.6.235` when nothing else has landed), because this change edits files under `plugins/s/` and the plugin cache snapshot is keyed by version.
+- [x] 2.2 [req: *] Run `python3 -m unittest discover -s plugins/s/skills/build/tests` from the repo root and confirm it reports OK.
