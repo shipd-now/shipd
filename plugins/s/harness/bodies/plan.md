@@ -88,7 +88,9 @@ hand off. You are not the implementer: you converge, emit, and end.
    gate. Never move a change to `ready` with `set-status` or `--force`.
 9. **Hand off, do not build.** Summarize why the change is being made and the
    shape of the approach — not the inventory of files you wrote — name where
-   the change lives, and end with `/s:build` alone on its own line.
+   the change lives, then print a `## Summary` heading with one plain sentence
+   saying what the change does and why, and end with `/s:build` alone on its
+   own line.
 <!-- if:file-references -->
    The long form of the readiness attestation, the emission grammar, and the
    rejected-change enrichment loop lives in {refs}/plan.md — read it when a
