@@ -119,10 +119,13 @@ it never checks their order or length). Additional sections MAY follow.
   1. **One-sentence summary.** Open with a single sentence naming what the
      change does — the whole Idea in one line, before the subsections.
   2. **`### Motivation`.** A required level-3 subsection of **at most two
-     sentences** stating **why** the change is being made — what is wrong or
-     missing. It MUST be grounded in the request and repository context, never
-     a guess: if you cannot state it precisely from what you have, ask the user
-     rather than invent one.
+     sentences** stating **why** the change is being made — naming who is
+     blocked and what they cannot do. It MUST be grounded in the request and
+     repository context, never a guess: if you cannot state it precisely from
+     what you have, ask the user rather than invent one. Repository state may
+     be cited as evidence for that claim, but is never the claim itself — a
+     file being a placeholder, absent, or holding particular content is not
+     on its own a reason.
   3. **`### Details`.** A required level-3 subsection stating the concrete
      **what** — the changes (typically a short list) plus the affected
      capabilities and the impact (files/areas touched, dependencies, anything
@@ -194,6 +197,11 @@ Affected capabilities: `ui-theming` (modified). Impact: `src/ui/settings.py`,
 Risk: a stale persisted value from a future theme name; guard by falling back
 to `light` on an unknown value.
 ```
+
+That worked example's `### Motivation` is the shape the rule above asks for: it
+names who is blocked (users on OLED displays) and what they cannot do (switch
+to a dark theme), citing the light-only render as evidence rather than as the
+claim itself.
 
 ### `## Questions and answers` — the oracle ledger
 
