@@ -310,7 +310,7 @@ SHALL print `Error: ` and a reason on stderr and exit `1`.
 ### Requirement: Doctor preflight verb
 id: doctor-verb
 
-The `shipd` binary SHALL provide a read-only `doctor` verb that runs
+The `shipd` binary SHALL provide a `doctor` verb that runs
 environment preflight checks and prints one `ok <check> — <detail>`,
 `warn <check> — <detail>`, or `fail <check> — <detail>` line per check
 followed by a closing `doctor: ok` or `doctor: <n> problem(s)` line, and
@@ -353,6 +353,34 @@ interpreter both hint forms SHALL remain unchanged. The verb SHALL report
 no check for a package the engine does not depend on, so it SHALL report
 no `pydantic` check and SHALL never escalate a dependency finding from a
 declared `autonomous-pipeline`. The verb SHALL mutate nothing.
+
+Bare `doctor` SHALL remain read-only: it SHALL install nothing, edit
+nothing, and reach no network. Where `doctor` is invoked with `--fix`, it
+SHALL additionally provision the environment autonomously, and SHALL state
+the network access it performs before performing it. All mutation and all
+network access SHALL occur only under `--fix`.
+
+Under `--fix` the verb SHALL attempt every check that carries an automated
+local remedy, in check order, and SHALL run each remedy without asking.
+The automated remedies SHALL be the local-tooling ones only: the `textual`
+package install the finding's own detail names, the review engine's tiered
+`semdiff doctor --fix` installer for `difft`, and `shipd statusline
+install` for an unregistered statusline. A check whose remedy mutates a
+GitHub repository — `protection` and `automerge` — SHALL stay report-only
+under `--fix`, naming the surface its absence affects and the
+consent-gated skill that performs it, so an unattended run never alters a
+shared repository's settings. A check with no automated remedy — `python`,
+`config`, `pipeline`, an unauthenticated `gh`, and `copilot-secret` —
+SHALL likewise report the surface its absence affects.
+
+A remedy that fails SHALL NOT stop the run: the verb SHALL report the
+failure with the surface it affects and continue to the remaining
+remedies, so one unavailable installer never strands the rest of the
+environment. After its own remedies, `--fix` SHALL delegate to the drive
+CLI's `doctor --fix` as the final step, relaying its report, and SHALL
+treat a missing drive CLI as one more reported finding rather than an
+error. The verb SHALL then re-run every check and print the resulting
+report, exiting on the re-run's own outcome rather than the first pass's.
 
 #### Scenario: Healthy environment reports ok
 - **WHEN** `shipd doctor` runs with python >= 3.9, git present, a resolvable
@@ -453,6 +481,38 @@ declared `autonomous-pipeline`. The verb SHALL mutate nothing.
   snapshot
 - **THEN** the snapshot check reports `ok` and its detail names dev mode rather
   than comparing versions
+
+#### Scenario: Bare doctor still installs nothing
+- **WHEN** `shipd doctor` runs with a missing local tool
+- **THEN** the tool is reported missing, no installation is attempted, and
+  no network access occurs
+
+#### Scenario: Fix installs a local tool without asking
+- **WHEN** `shipd doctor --fix` runs with `difft` absent
+- **THEN** the tiered `semdiff doctor --fix` installer runs with no consent
+  prompt and the re-run reports `difft` present
+
+#### Scenario: A GitHub mutation stays report-only under fix
+- **WHEN** `shipd doctor --fix` runs in a repository whose default branch
+  lacks the `semantic-review` context
+- **THEN** no `gh api` call mutating the repository is made, and the
+  `protection` finding names the surface it affects and the consent-gated
+  skill that repairs it
+
+#### Scenario: A failing remedy never strands the rest
+- **WHEN** `shipd doctor --fix` runs with two automated remedies pending
+  and the first one's installer exits non-zero
+- **THEN** the failure is reported with the surface it affects, the second
+  remedy still runs, and the verb completes
+
+#### Scenario: Fix ends by delegating to the drive preflight
+- **WHEN** `shipd doctor --fix` completes its own remedies
+- **THEN** it invokes the drive CLI's `doctor --fix` as the final step and
+  relays that report
+
+#### Scenario: Fix exits on the state after repair
+- **WHEN** `shipd doctor --fix` repairs every failing check
+- **THEN** the printed report is the re-run's and the exit code is `0`
 
 ### Requirement: List JSON output
 id: list-json
