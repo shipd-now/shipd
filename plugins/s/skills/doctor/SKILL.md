@@ -22,6 +22,15 @@ approved, and show them the environment before and after.
 update, no file edit runs before the consent dialog returns an approval that
 names it.
 
+**The CLI also has its own autonomous mode — it never touches GitHub.**
+`<shipd> doctor --fix` (the binary, not this skill) provisions local tooling
+on its own: the same `textual`, `difft`, and statusline installs this skill's
+remedy table runs on consent, minus the asking. You remain the **only** path
+to the two GitHub-side mutations — the branch-protection writes and the
+`automerge` PATCH — which stay consent-gated here regardless of what `--fix`
+does; it treats both as report-only findings and never runs a `gh api`
+mutation itself.
+
 **Announce the version first.** Read the running plugin version from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `shipd:doctor
 v<version>` in your first user-visible status sentence (e.g. "shipd:doctor

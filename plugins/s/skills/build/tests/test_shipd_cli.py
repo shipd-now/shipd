@@ -2559,6 +2559,209 @@ class DoctorFinishTest(unittest.TestCase):
         self.assertIsNone(outcome)
 
 
+class DoctorFixTest(unittest.TestCase):
+    """``cmd_doctor --fix`` (doctor-verb, doctor-autofix): the autonomous
+    local-tooling remedy loop. ``default_checks`` and the remedy loop's own
+    injectable subprocess seam (``run``, mirroring ``drive.py``'s and
+    ``video_ingest.py``'s ``default_run``) are both faked, so this never
+    shells out and never depends on the machine running it — the same
+    in-process style ``DoctorCommandTest`` already uses for the checks
+    themselves."""
+
+    TEXTUAL_WARNING = (
+        "warn", "textual",
+        "not importable — only the board (`shipd board`) needs it; "
+        "pip install 'textual>=8.2.8,<9'")
+    DIFFT_WARNING = (
+        "warn", "difft",
+        "not found — the semantic review cannot run at all; run /s:doctor "
+        "or `semdiff doctor --fix` to install it")
+    STATUSLINE_WARNING = (
+        "warn", "statusline",
+        "not registered in ~/.claude/settings.json — run `shipd statusline "
+        "install` to add the shipd statusline")
+    PROTECTION_WARNING = (
+        "warn", "protection",
+        "the default branch `main` of o/r is not protected — nothing "
+        "requires the `semantic-review` status, so PRs merge with the "
+        "gate's verdict ignored")
+    AUTOMERGE_WARNING = (
+        "warn", "automerge",
+        "auto-merge is disabled on o/r — `gh pr merge --auto` cannot arm, "
+        "so every change stops at an open PR")
+
+    def run_doctor(self, results, args=(), run=None, checks_after=None,
+                   forbid_prompt=True):
+        """Drive ``cmd_doctor`` with ``default_checks`` faked to ``results``
+        (or, once the checks are re-run under ``--fix``, to ``checks_after``
+        when given) and its remedy loop's ``run`` faked to ``run`` (a
+        ``callable(argv) -> (rc, out, err)``, defaulting to always-succeeds).
+        Returns ``(stdout, stderr, code, calls)`` — ``calls`` is every argv
+        the fake ``run`` was invoked with, in order. ``forbid_prompt`` makes
+        an interactive ``input()`` call fail the test outright: an
+        autonomous ``--fix`` must never ask."""
+        calls = []
+
+        def spy_run(argv):
+            calls.append(list(argv))
+            if run is not None:
+                return run(argv)
+            return (0, "", "")
+
+        state = {"n": 0}
+
+        def fake_default_checks(root):
+            state["n"] += 1
+            if checks_after is not None and state["n"] > 1:
+                return list(checks_after)
+            return list(results)
+
+        buf_out, buf_err = io.StringIO(), io.StringIO()
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(unittest.mock.patch.object(
+                shipd, "default_checks", fake_default_checks))
+            if forbid_prompt:
+                stack.enter_context(unittest.mock.patch(
+                    "builtins.input",
+                    side_effect=AssertionError(
+                        "doctor --fix must never prompt")))
+            stack.enter_context(redirect_stdout(buf_out))
+            stack.enter_context(redirect_stderr(buf_err))
+            code = shipd.cmd_doctor(list(args), run=spy_run)
+        return buf_out.getvalue(), buf_err.getvalue(), code, calls
+
+    # -- bare doctor is unaffected -------------------------------------
+
+    def test_bare_doctor_attempts_no_install_and_reaches_no_network(self):
+        out, _err, code, calls = self.run_doctor(
+            [self.TEXTUAL_WARNING, self.PROTECTION_WARNING])
+        self.assertEqual(calls, [])
+        self.assertEqual(code, 0)
+        self.assertIn("warn textual —", out)
+
+    # -- an automated remedy runs without asking -------------------------
+
+    def test_fix_runs_a_local_remedy_with_no_prompt(self):
+        # `--fix` unconditionally delegates to the drive CLI as its final
+        # step (doctor-verb), so `calls` also carries that delegation —
+        # this asserts the textual remedy is *among* them, not alone.
+        _out, _err, _code, calls = self.run_doctor(
+            [self.TEXTUAL_WARNING], args=("--fix",))
+        pip_calls = [c for c in calls if "pip" in c and "install" in c]
+        self.assertEqual(len(pip_calls), 1)
+
+    def test_textual_remedy_runs_under_the_running_interpreter(self):
+        # The composed argv must name `sys.executable` — the interpreter
+        # `check_textual` and `_install_hint` both probed — never the bare
+        # string "python3", which PATH could resolve to a different
+        # interpreter entirely (a semantic-review finding on this change).
+        _out, _err, _code, calls = self.run_doctor(
+            [self.TEXTUAL_WARNING], args=("--fix",))
+        pip_calls = [c for c in calls if "pip" in c and "install" in c]
+        self.assertEqual(len(pip_calls), 1)
+        self.assertEqual(pip_calls[0][0], sys.executable)
+        self.assertNotEqual(pip_calls[0][0], "python3")
+
+    def test_statusline_remedy_invokes_statusline_install(self):
+        # Nothing previously asserted what the statusline remedy actually
+        # invokes, so a regression there could ship silently (a
+        # test-coverage finding on this change).
+        _out, _err, _code, calls = self.run_doctor(
+            [self.STATUSLINE_WARNING], args=("--fix",))
+        statusline_calls = [c for c in calls
+                            if "statusline" in c and "install" in c]
+        self.assertEqual(len(statusline_calls), 1)
+
+    def test_unrecognized_check_name_gets_a_report_only_fallback_surface(self):
+        # `_remedy_surface`'s fallback is the guarantee that `--fix` never
+        # silently drops a finding whose check name default_checks grows
+        # into later, naming neither an automated remedy nor a hand-written
+        # surface (a test-coverage finding on this change).
+        finding = ("warn", "some-future-check", "something is not quite right")
+        out, _err, _code, calls = self.run_doctor([finding], args=("--fix",))
+        self.assertIn("some-future-check", out)
+        non_delegation_calls = [
+            c for c in calls
+            if not any(str(part).endswith("drive.py") for part in c)]
+        self.assertEqual(non_delegation_calls, [])
+
+    # -- a GitHub mutation stays report-only ------------------------------
+
+    def test_protection_finding_performs_no_gh_mutation_under_fix(self):
+        # The only call `--fix` makes here is its unconditional delegation
+        # to the drive CLI (doctor-verb) — never a `gh api` mutation.
+        out, _err, _code, calls = self.run_doctor(
+            [self.PROTECTION_WARNING], args=("--fix",))
+        self.assertFalse(any("gh" in c or "api" in c for c in calls), calls)
+        self.assertIn("protection", out)
+        self.assertIn("/s:doctor", out)
+
+    def test_automerge_finding_performs_no_gh_mutation_under_fix(self):
+        out, _err, _code, calls = self.run_doctor(
+            [self.AUTOMERGE_WARNING], args=("--fix",))
+        self.assertFalse(any("gh" in c or "api" in c for c in calls), calls)
+        self.assertIn("automerge", out)
+        self.assertIn("/s:doctor", out)
+
+    # -- a failing remedy never strands the rest --------------------------
+
+    def test_a_failing_remedy_is_reported_and_the_next_still_runs(self):
+        def run(argv):
+            if "pip" in argv:
+                return (1, "", "no matching distribution")
+            return (0, "", "")
+
+        out, err, _code, calls = self.run_doctor(
+            [self.TEXTUAL_WARNING, self.DIFFT_WARNING], args=("--fix",),
+            run=run)
+        difft_calls = [c for c in calls
+                      if any(str(p).endswith("semdiff.py") for p in c)]
+        pip_calls = [c for c in calls if "pip" in c]
+        self.assertEqual(len(pip_calls), 1)
+        self.assertEqual(len(difft_calls), 1)
+        self.assertIn("failed", (out + err).lower())
+
+    # -- delegation to the drive preflight --------------------------------
+
+    def test_fix_delegates_to_the_drive_cli_as_its_final_step(self):
+        def run(argv):
+            if any(str(part).endswith("drive.py") for part in argv):
+                return (0, "drive: doctor --fix performs no network "
+                            "access — the Playwright browser binary is "
+                            "already installed.\n  + uv (required)\n", "")
+            return (0, "", "")
+
+        out, _err, _code, calls = self.run_doctor(
+            [("ok", "python", "3.13.0")], args=("--fix",), run=run)
+        drive_calls = [c for c in calls
+                      if any(str(part).endswith("drive.py") for part in c)]
+        self.assertEqual(len(drive_calls), 1)
+        self.assertIn("doctor", drive_calls[0])
+        self.assertIn("--fix", drive_calls[0])
+        self.assertIn("+ uv (required)", out)
+
+    def test_missing_drive_cli_is_a_reported_finding_not_an_error(self):
+        def run(argv):
+            if any(str(part).endswith("drive.py") for part in argv):
+                raise OSError("no such file or directory")
+            return (0, "", "")
+
+        out, err, code, _calls = self.run_doctor(
+            [("ok", "python", "3.13.0")], args=("--fix",), run=run)
+        self.assertEqual(code, 0)
+        self.assertIn("drive", (out + err).lower())
+
+    # -- exit reflects the post-repair re-run -----------------------------
+
+    def test_exit_code_reflects_the_post_repair_rerun(self):
+        before = [("fail", "git", "not on PATH")]
+        after = [("ok", "git", "found at /usr/bin/git")]
+        out, _err, code, _calls = self.run_doctor(
+            before, args=("--fix",), checks_after=after)
+        self.assertEqual(code, 0)
+        self.assertIn("ok git —", out)
+
+
 class VendorVerbTestBase(unittest.TestCase):
     """``shipd vendor`` (shipd-cli vendor-verb), driven as a black box through
     the binary itself against throwaway target roots.

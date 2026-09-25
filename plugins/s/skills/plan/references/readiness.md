@@ -14,11 +14,16 @@ A plan is ready to emit only when **all four** of these hold:
    or two sentences, what problem this change solves. Crucially, you can also
    state its **motivation** — *why* the change is being made — in at most two
    precise sentences grounded in the request and repository context, not in
-   guesswork. This is the `### Motivation` the plan will carry, so the bar is
-   exacting: if you cannot ground the motivation precisely in what the request
-   said and what you found in the repo, treat it as **un-inferrable** and put
-   it to the user (fast-path question round or depth-path grill) before
-   emission — never invent or hand-wave a reason.
+   guesswork, naming who is blocked and what they cannot do. This is the
+   `### Motivation` the plan will carry, so the bar is exacting: if you cannot
+   ground the motivation precisely in what the request said and what you found
+   in the repo, treat it as **un-inferrable** and put it to the user (fast-path
+   question round or depth-path grill) before emission — never invent or
+   hand-wave a reason. A motivation that only reports a file's current
+   state — that it is a placeholder, is absent, or holds particular content —
+   does not discharge this item even when the report is accurate: repository
+   state may be cited as evidence for who is blocked and why, but is never the
+   claim itself.
 2. **Scope and non-goals are bounded.** You know what is in scope and, just as
    important, what is explicitly out of scope. The edges are drawn; the change
    won't sprawl.

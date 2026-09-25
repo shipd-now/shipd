@@ -63,7 +63,11 @@ Epic: <slug>            (only when the change belongs to an epic)
 ## Idea
 
 ### Motivation
-Why this is being done, in the repository's terms.
+At most two sentences naming who is blocked and what they cannot do.
+Repository state may be cited as evidence for that claim but is never the
+claim itself — a file being a placeholder or holding particular content is
+not on its own a reason. A motivation you cannot ground goes to the user
+rather than being invented.
 
 ### Details
 What changes, and which capabilities and files it touches.

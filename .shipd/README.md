@@ -117,7 +117,9 @@ document then holds two required level-2 sections:
 
 - **`## Idea`** — opens with a **one-sentence summary** of the change, then a
   required `### Motivation` subsection (at most two sentences on **why** the
-  change is being made, grounded in the planning context — never a guess), then
+  change is being made, naming who is blocked and what they cannot do,
+  grounded in the planning context and never a guess — repository state is
+  admissible as evidence for that claim but never as the claim itself), then
   a required `### Details` subsection (the concrete **what** — the changes plus
   the affected capabilities and impact), then a required `### Non-goals`
   subsection last, listing the scope exclusions. There is no "Goals" section:
