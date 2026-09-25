@@ -147,6 +147,11 @@ DOCTOR_TOOLS = [
      "brew install vhs — required for terminal recording only"),
 ]
 
+# Homebrew formula that provides each optional tool's binary — `ffprobe`
+# ships inside the `ffmpeg` formula, so its automated remedy installs
+# `ffmpeg` rather than a nonexistent `ffprobe` formula.
+BREW_PACKAGE = {"ffmpeg": "ffmpeg", "ffprobe": "ffmpeg", "vhs": "vhs"}
+
 
 def doctor_report():
     """Evaluate `DOCTOR_TOOLS` and return `(rows, ok)`: `rows` is
@@ -172,16 +177,41 @@ def print_doctor_report(rows):
         print("  x %s — MISSING (%s): %s" % (name, scope, remedy))
 
 
+def install_optional_tool(tool, run):
+    """Install `tool` (`ffmpeg`, `ffprobe`, or `vhs`) via Homebrew through
+    the injectable runner. Network access happens here and only here,
+    reached solely via `doctor --fix` (drive-doctor's widened scope,
+    doctor-autofix). Returns whether the install command exited zero — the
+    caller re-checks PATH before trusting it."""
+    package = BREW_PACKAGE.get(tool, tool)
+    print("drive: installing %s via Homebrew…" % tool, file=sys.stderr)
+    try:
+        rc, out, err = run(["brew", "install", package])
+    except OSError as exc:
+        rc, out, err = 1, "", str(exc)
+    if rc != 0:
+        print("drive: brew install %s failed: %s"
+              % (package, (err or out).strip() or "unknown error"),
+              file=sys.stderr)
+    return rc == 0
+
+
 def cmd_doctor(args, run=default_run):
     """`doctor` (drive-doctor): report every prerequisite's state and exit
     non-zero only when an always-required tool (`uv`, the Playwright
     browser) is missing. `--fix` additionally installs the missing browser
-    binary through the Playwright worker and re-reports.
+    binary through the Playwright worker, then installs any missing
+    `ffmpeg`, `ffprobe`, or `vhs` via Homebrew, and re-reports. A failed
+    optional-tool install is recorded and never stops the remaining
+    installs (doctor-autofix's widened scope) — only a failed browser
+    install (an always-required tool) still returns early, unchanged from
+    before this widening.
 
     `run` is the injectable subprocess seam (`default_run`'s signature) the
-    `--fix` path uses to invoke `uv run browser_worker.py install-browser`,
-    so a test can substitute a fake without touching the host toolchain —
-    presence *reporting* itself never needs this seam, since it reads
+    `--fix` path uses to invoke `uv run browser_worker.py install-browser`
+    and each `brew install` (`install_optional_tool`), so a test can
+    substitute a fake without touching the host toolchain — presence
+    *reporting* itself never needs this seam, since it reads
     `PATH`/`PLAYWRIGHT_BROWSERS_PATH` directly.
     """
     rows, ok = doctor_report()
@@ -193,17 +223,27 @@ def cmd_doctor(args, run=default_run):
                   "install what can be automated.", file=sys.stderr)
         return 0 if ok else 1
 
-    # --fix installs only the Playwright browser binary — the one
-    # always-required tool this CLI can automate; `uv` itself has no
-    # automated remedy (drive-doctor names a manual install for it).
-    already_present = browser_installed()
-    if already_present:
+    # --fix installs the Playwright browser binary (the one always-required
+    # tool this CLI can automate; `uv` has no automated remedy) plus any
+    # missing optional tool (`ffmpeg`, `ffprobe`, `vhs`). The whole install
+    # set is decided *before* the network-access statement prints, so the
+    # statement is accurate — claiming "no network access" and then
+    # brew-installing a missing `vhs` on the very next line would
+    # contradict itself (doctor-autofix).
+    browser_missing = not browser_installed()
+    missing_optional = [name for name, always_required, check, _remedy
+                        in DOCTOR_TOOLS if not always_required and not check()]
+
+    if not browser_missing and not missing_optional:
         print("drive: doctor --fix performs no network access — the "
               "Playwright browser binary is already installed.")
     else:
-        print("drive: doctor --fix will download the Playwright chromium "
-              "browser binary over the network, via "
-              "`uv run browser_worker.py install-browser`.")
+        to_fetch = (["the Playwright browser binary"] if browser_missing
+                   else []) + missing_optional
+        print("drive: doctor --fix will install %s over the network."
+              % ", ".join(to_fetch))
+
+    if browser_missing:
         worker = os.path.join(HERE, "browser_worker.py")
         try:
             rc, out, err = run(["uv", "run", worker, "install-browser"])
@@ -215,6 +255,21 @@ def cmd_doctor(args, run=default_run):
                   "%s" % (err.strip() or out.strip() or "unknown error"),
                   file=sys.stderr)
             return 1
+
+    # Install every optional tool named above via Homebrew. A failed
+    # install is recorded (`install_optional_tool` prints its own failure
+    # line) and never stops the loop, so one unavailable installer never
+    # strands the rest (drive-doctor's widened scope, doctor-autofix).
+    # `missing_optional` stays the statement's source untouched; the loop
+    # re-checks each tool's own presence first, since installing `ffmpeg`
+    # also provides `ffprobe` — without this guard, `ffprobe` would still
+    # run its own redundant `brew install ffmpeg` right after.
+    checks_by_name = {name: check for name, _always_required, check, _remedy
+                      in DOCTOR_TOOLS}
+    for name in missing_optional:
+        if checks_by_name[name]():
+            continue
+        install_optional_tool(name, run)
 
     rows, ok = doctor_report()
     print_doctor_report(rows)

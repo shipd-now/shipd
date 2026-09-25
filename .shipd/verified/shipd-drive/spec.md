@@ -176,8 +176,12 @@ that tier, so driving and browser recording stay unaffected by an absent
 The verb SHALL exit non-zero when a required tool is missing and zero
 otherwise, and SHALL name a remedy for each missing tool. Where `doctor` is
 invoked with `--fix`, it SHALL install the missing browser binary through the
-Playwright worker and re-report, SHALL NOT install any other tool, and
-SHALL name `brew install vhs` as the manual remedy for a missing `vhs`, and SHALL state the network access it
+Playwright worker, SHALL install a missing `ffmpeg`, `ffprobe`, or `vhs`
+through the platform package manager, and SHALL re-report. An install
+that fails SHALL NOT stop the verb: it SHALL report the failure and the
+surface that tool's absence affects — recording and post-processing for
+`ffmpeg`/`ffprobe`, terminal recording for `vhs` — name the manual
+command as the remedy, and continue with the remaining tools, and SHALL state the network access it
 performs before performing it.
 
 #### Scenario: A missing required tool fails the preflight
@@ -195,7 +199,14 @@ performs before performing it.
 - **THEN** the report marks `vhs` as required for terminal recording only,
   names `brew install vhs` as its remedy, and the exit code is zero
 
-#### Scenario: The fix flag never installs the terminal recorder
+#### Scenario: The fix flag installs the terminal recorder
 - **WHEN** `doctor --fix` runs with `vhs` absent
-- **THEN** no installation of `vhs` is attempted and the report still names
-  its manual remedy
+- **THEN** the verb installs it through the platform package manager and
+  re-reports its state
+
+#### Scenario: A failed tool install names its affected surface
+- **WHEN** `doctor --fix` runs with `vhs` absent and its install exits
+  non-zero
+- **THEN** the report names terminal recording as the affected surface and
+  `brew install vhs` as the manual remedy, and the verb still reports every
+  other tool

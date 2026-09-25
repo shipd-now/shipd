@@ -1,38 +1,8 @@
-# shipd-doctor
-
-### Requirement: Doctor skill flow
-id: doctor-skill-flow
-
-A `/s:doctor` skill SHALL run the read-only `shipd doctor` preflight —
-resolving the binary as `shipd` on PATH first, else
-`${CLAUDE_PLUGIN_ROOT}/bin/shipd` — and parse its spec'd
-`ok|warn|fail <check> — <detail>` lines. When every check is `ok`, the
-skill SHALL report the healthy result and stop. Otherwise it SHALL present
-the findings and propose one remedy per remediable finding, obtain explicit
-consent through a single batched selection honoring the dialog-prose
-separation rule, run only the consented remedies, re-run `shipd doctor`,
-and report the before/after states. Where the doctor output is absent or
-unparseable, the skill SHALL report that as its own failure rather than
-proceeding. The skill SHALL run at most one remedy round per invocation.
-
-#### Scenario: Healthy environment stops after diagnosis
-- **WHEN** `/s:doctor` runs and every check reports `ok`
-- **THEN** the skill reports the healthy result and runs no remedy and no
-  consent dialog
-
-#### Scenario: Consent precedes every remedy
-- **WHEN** findings exist and the user consents to a subset of the proposed
-  remedies
-- **THEN** only the consented remedies run, and the preflight is re-run and
-  reported afterwards
-
-#### Scenario: Declining runs nothing
-- **WHEN** the user declines all remedies
-- **THEN** the skill runs nothing and ends with the findings and their
-  manual hints
+## MODIFIED Requirements
 
 ### Requirement: Remedy safety boundaries
 id: doctor-remedy-boundaries
+base: a1e298d543d4
 
 The skill's remedy table SHALL be: a `textual` warning → `python3 -m `
 followed by the `pip install` command the finding's own detail names (the
@@ -158,70 +128,3 @@ performed by the CLI's autonomous mode.
   default branch lacks the `semantic-review` context
 - **THEN** the protection write specified in this table is not performed,
   and it remains available only through this skill's consent round
-
-### Requirement: Doctor skill registration
-id: doctor-skill-registration
-
-The skill SHALL live at `plugins/s/skills/doctor/SKILL.md` with `name` and
-`description` frontmatter whose description carries the `/s:doctor` trigger,
-SHALL carry the question-rejection recovery rule, and SHALL be listed in the
-repository `README.md` skills table and in `AGENTS.md`'s skill enumeration.
-
-#### Scenario: Skill is discoverable and documented
-- **WHEN** the plugin's skills and the README table are compared
-- **THEN** `doctor` appears in both, with `/s:doctor` as its invocation
-
-#### Scenario: Recovery rule is carried
-- **WHEN** `plugins/s/skills/doctor/SKILL.md` is inspected
-- **THEN** it contains the question-rejection recovery rule
-
-### Requirement: Wiki check line is report-only
-id: doctor-wiki-line
-
-The `/s:doctor` skill SHALL recognize `wiki` among the parsed check names
-and SHALL treat it as report-only: no remedy row SHALL exist for it, the
-skill SHALL never scaffold a wiki store on its behalf, and the line SHALL be
-relayed in the diagnosis exactly as the other informational checks are.
-
-#### Scenario: Wiki line is parsed and never remediated
-- **WHEN** the doctor output carries an `ok wiki — …` line
-- **THEN** the skill parses it like any other check line, proposes no remedy
-  for it, and creates no store
-
-### Requirement: Store check line is report-only
-id: doctor-store-line
-
-The `/s:doctor` skill SHALL recognize `store` among the parsed check names and
-SHALL treat it as report-only: no remedy row SHALL exist for it, the skill SHALL
-never move, create, or delete a store directory on its behalf, and the line
-SHALL be relayed in the diagnosis exactly as the other informational checks are.
-
-#### Scenario: Store line is parsed and never remediated
-- **WHEN** the doctor output carries an `ok store — …` line
-- **THEN** the skill parses it like any other check line, proposes no remedy for
-  it, and moves nothing
-
-#### Scenario: A stranded-store warning is relayed, not acted on
-- **WHEN** the doctor output carries a `warn store — …` line naming a stranded
-  basename path and a `git mv` remedy
-- **THEN** the skill relays the line and its remedy text to the user and
-  proposes no remedy of its own
-
-### Requirement: Store-sync check line is report-only
-id: doctor-store-sync-line
-
-The `/s:doctor` skill SHALL recognize `store-sync` among the parsed check
-names and SHALL treat it as report-only: no remedy row SHALL exist for it,
-the skill SHALL never push, pull, or fetch on its behalf, and the line SHALL
-be relayed in the diagnosis exactly as the other informational checks are.
-
-#### Scenario: Store-sync line is parsed and never remediated
-- **WHEN** the doctor output carries an `ok store-sync — …` line
-- **THEN** the skill parses it like any other check line and proposes no
-  remedy for it
-
-#### Scenario: An unpushed-commits warning is relayed, not acted on
-- **WHEN** the doctor output carries a `warn store-sync — …` line naming
-  unpushed commits
-- **THEN** the skill relays the line to the user, proposes no remedy of its
-  own, and runs no git

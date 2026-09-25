@@ -8,7 +8,7 @@ a versioned plugin cache snapshot alike. Delegation is process replacement
 (:func:`os.execv`), so the delegate's stdout, stderr, interactivity, and exit
 code are this binary's own — nothing is reimplemented or reformatted here.
 
-Only read/inspect verbs are exposed, with ten deliberate exceptions, each
+Only read/inspect verbs are exposed, with eleven deliberate exceptions, each
 writing user-domain files and never a spec artifact, and each only under an
 explicit word: ``statusline install`` writes the statusline registration into
 the user's own Claude Code settings file, ``copilot add`` / ``copilot remove``
@@ -24,8 +24,11 @@ writes the workspace marker (and, under ``--git``, the marked member-repos
 workspace beneath a discoverable base — team directories, each team's own
 workspace marker and project registry, and member map entries, all local,
 ``workspace sync --write-gitignore`` rewrites that same
-marked block, and ``wiki init`` scaffolds the wiki store — never a spec
-artifact, and never modifying anything already there. The mutating
+marked block, ``wiki init`` scaffolds the wiki store, and ``doctor --fix``
+autonomously provisions local tooling — the same `textual`/`difft`/statusline
+installs the interactive doctor skill otherwise guards behind consent, never
+a GitHub-side mutation — never a spec artifact, and never modifying anything
+already there. The mutating
 verbs over the spec library (``set-status``,
 ``merge``, ``emit``, ``autopilot``, ``worktree remove``) stay behind their
 guarded scripts and skills.
@@ -1138,14 +1141,217 @@ def doctor_report(results):
     return lines, 1 if failed else 0
 
 
-def cmd_doctor(args):
-    """Preflight the environment. Read-only: nothing here installs or edits."""
+# --- --fix: the autonomous local-tooling remedy loop (shipd-cli doctor-verb,
+# doctor-autofix) ------------------------------------------------------------
+#
+# Exactly three checks carry an automated remedy `--fix` may run without
+# asking — the local-tooling ones, mirroring the doctor skill's own remedy
+# table (doctor-remedy-boundaries) minus its two GitHub-mutating rows, which
+# stay report-only here no matter what. Every other check name is
+# report-only too — including one `default_checks` grows that this file
+# does not enumerate by hand (`schema`, `wiki`, `store`, `store-sync`,
+# `snapshot`, ...): :func:`_remedy_surface` falls back to a generic surface
+# rather than silently dropping the finding.
+AUTOMATED_REMEDIES = {"textual", "difft", "statusline"}
+
+# check name -> the surface its absence affects, printed on a report-only
+# finding under `--fix`. The two GitHub-mutating checks additionally name
+# the consent-gated skill that may apply them — `protection` and
+# `automerge` never get an automated remedy here no matter what a future
+# `default_checks` reports, since a repository-wide mutation is never this
+# binary's to make unattended.
+REMEDY_SURFACES = {
+    "protection": "the merge gate's branch-protection requirement — a "
+                  "repository-wide GitHub mutation; run the consent-gated "
+                  "/s:doctor (or /s:gate) to apply it",
+    "automerge": "auto-merge on the repository — a repository-wide GitHub "
+                "mutation; run the consent-gated /s:doctor to apply it",
+    "python": "the interpreter shipd itself runs on — install a newer "
+              "Python 3 by hand",
+    "config": "the layered configuration — fix the file by hand",
+    "pipeline": "the declared autonomous pipeline — fix the declaration by "
+               "hand",
+    "gh": "shipping via `gh` — run `gh auth login` by hand",
+    "copilot-secret": "the review gate's Copilot CLI reviewer mode — see "
+                      "docs/copilot-review.md",
+}
+
+
+def _remedy_surface(name):
+    """The surface a report-only check's absence affects, falling back to a
+    generic name for a check this table does not enumerate by hand — an
+    unrecognized finding is still reported, never silently dropped
+    (doctor-autofix)."""
+    return REMEDY_SURFACES.get(name, "the `%s` check" % name)
+
+
+def _textual_remedy_argv(detail):
+    """The ``python3 -m`` + ``pip install`` argv doctor-remedy-boundaries
+    specifies for a ``textual`` finding, composed from the finding's own
+    detail exactly as that capability requires: everything after the
+    detail's last ``; `` separator is the ``pip install`` command
+    :func:`_install_hint` composed, carried through unchanged — so any
+    ``--user --break-system-packages`` override travels with it verbatim."""
+    _, _, hint = detail.rpartition("; ")
+    return ["python3", "-m"] + shlex.split(hint)
+
+
+def _difft_remedy_argv():
+    """The review engine's tiered installer, exactly as
+    doctor-remedy-boundaries names it: ``semdiff.py doctor --fix``, resolved
+    relative to this binary's own ``PLUGIN_ROOT`` so a checkout and a cache
+    snapshot delegate alike."""
+    return [sys.executable,
+            str(PLUGIN_ROOT / "skills" / "review" / "scripts" / "semdiff.py"),
+            "doctor", "--fix"]
+
+
+def _statusline_remedy_argv():
+    """``shipd statusline install``, run against the exact binary path this
+    invocation resolved (``sys.argv[0]``) — the same binary the preflight
+    itself is running from, per doctor-remedy-boundaries."""
+    return [sys.argv[0], "statusline", "install"]
+
+
+def _remedy_argv(name, detail):
+    """The argv an automated remedy for check ``name`` runs, or ``None`` for
+    a check with no automated remedy (:data:`AUTOMATED_REMEDIES` names the
+    three that have one)."""
+    if name == "textual":
+        return _textual_remedy_argv(detail)
+    if name == "difft":
+        return _difft_remedy_argv()
+    if name == "statusline":
+        return _statusline_remedy_argv()
+    return None
+
+
+def default_run(argv):
+    """Real subprocess runner for ``--fix``'s remedy loop and its
+    drive-CLI delegation: ``argv`` is a full command, returns ``(rc,
+    stdout, stderr)``. Mirrors ``drive.py``'s and ``video_ingest.py``'s
+    injectable ``default_run`` seam, so a test can substitute a fake with
+    the same signature."""
+    proc = subprocess.run(argv, capture_output=True, text=True)
+    return proc.returncode, proc.stdout or "", proc.stderr or ""
+
+
+# The drive CLI's own preflight, delegated to as `--fix`'s final step
+# (doctor-verb) — resolved relative to `PLUGIN_ROOT` so a checkout and a
+# cache snapshot delegate alike.
+DRIVE_DOCTOR_SCRIPT = PLUGIN_ROOT / "skills" / "drive" / "scripts" / "drive.py"
+
+
+def _run_remedies(results, run):
+    """Run every automated remedy ``results`` calls for, in check order,
+    through the injectable ``run`` seam, without asking. Never raises: a
+    remedy that fails — whether the command exits non-zero or cannot even
+    start — is reported to stderr and the loop continues, so one
+    unavailable installer never strands the rest (doctor-autofix)."""
+    for level, name, detail in results:
+        if level == "ok" or name not in AUTOMATED_REMEDIES:
+            continue
+        argv = _remedy_argv(name, detail)
+        if argv is None:
+            continue
+        try:
+            rc, out, err = run(argv)
+        except OSError as exc:
+            rc, out, err = 1, "", str(exc)
+        if rc != 0:
+            print("shipd: the `%s` remedy failed: %s"
+                  % (name, (err or out).strip() or "unknown error"),
+                  file=sys.stderr)
+
+
+def _print_report_only_findings(results):
+    """Print one line per non-``ok`` finding whose check has no automated
+    remedy, naming the surface its absence affects. The two GitHub-mutating
+    checks (``protection``, ``automerge``) always land here, alongside
+    every other report-only check ``default_checks`` returns — a name this
+    file does not enumerate by hand still gets a generic surface rather
+    than being silently dropped (doctor-autofix)."""
+    for level, name, _detail in results:
+        if level == "ok" or name in AUTOMATED_REMEDIES:
+            continue
+        print("shipd: `%s` stays report-only under --fix — affects %s"
+              % (name, _remedy_surface(name)))
+
+
+def _delegate_to_drive_doctor(run):
+    """Invoke the drive CLI's own ``doctor --fix`` as ``--fix``'s final
+    step and relay its report verbatim. A missing drive CLI is one more
+    reported finding, never an error (doctor-verb)."""
+    print("shipd: delegating to the drive preflight (%s doctor --fix) — it "
+          "may reach the network for its own remedies." % DRIVE_DOCTOR_SCRIPT)
+    argv = [sys.executable, str(DRIVE_DOCTOR_SCRIPT), "doctor", "--fix"]
+    try:
+        rc, out, err = run(argv)
+    except OSError as exc:
+        print("shipd: drive preflight not found at %s: %s"
+              % (DRIVE_DOCTOR_SCRIPT, exc))
+        return
+    for stream in (out, err):
+        if stream:
+            sys.stdout.write(stream if stream.endswith("\n")
+                             else stream + "\n")
+    if rc != 0:
+        print("shipd: the drive preflight reported problems (exit %d)" % rc)
+
+
+def cmd_doctor(args, run=default_run):
+    """Preflight the environment shipd runs in (shipd-cli doctor-verb).
+
+    Bare, it is read-only: nothing here installs, edits, or reaches the
+    network. Under ``--fix`` it additionally provisions the environment
+    autonomously: it states the network access it may perform, runs every
+    check's automated local remedy without asking (:data:`AUTOMATED_REMEDIES`
+    — a ``protection`` or ``automerge`` finding always stays report-only,
+    naming the consent-gated skill that applies it), continues past a
+    failed remedy rather than aborting, delegates to the drive CLI's own
+    ``doctor --fix`` as its final step, then re-runs every check and
+    reports and exits on that repaired state rather than the first pass's.
+
+    ``run`` is the injectable subprocess seam (:func:`default_run`'s
+    signature) both the remedy loop and the drive-CLI delegation use, so a
+    test can substitute a fake without touching the host toolchain.
+    """
     parser = argparse.ArgumentParser(
         prog="shipd doctor",
-        description="Preflight the environment shipd runs in. Reports only.")
-    parser.parse_args(args)
-    lines, code = doctor_report(default_checks(os.getcwd()))
-    for line in lines:
+        description="Preflight the environment shipd runs in. Reports only, "
+                    "unless --fix.")
+    parser.add_argument(
+        "--fix", action="store_true",
+        help="autonomously provision local tooling (installs nothing "
+             "GitHub-side) and re-report")
+    opts = parser.parse_args(args)
+
+    root = os.getcwd()
+    before = default_checks(root)
+
+    if not opts.fix:
+        lines, code = doctor_report(before)
+        for line in lines:
+            print(line)
+        return code
+
+    print("shipd doctor --fix: before")
+    before_lines, _before_code = doctor_report(before)
+    for line in before_lines:
+        print(line)
+    print()
+    print("shipd: --fix installs missing local tooling without asking "
+          "(textual, difft, the statusline) — this may reach the network. "
+          "Every GitHub-side finding stays report-only.")
+    _run_remedies(before, run)
+    _print_report_only_findings(before)
+    _delegate_to_drive_doctor(run)
+
+    after = default_checks(root)
+    print()
+    print("shipd doctor --fix: after")
+    after_lines, code = doctor_report(after)
+    for line in after_lines:
         print(line)
     return code
 

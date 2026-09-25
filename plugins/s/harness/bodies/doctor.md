@@ -5,6 +5,10 @@ Turn each preflight finding into a concrete remedy, take explicit consent, run
 only what was approved, and show the environment before and after. One remedy
 round per invocation.
 
+`shipd doctor --fix` (the CLI's own autonomous mode, not you) already
+provisions the same local tooling without asking and never touches GitHub —
+you remain the only path to the two GitHub-side mutations.
+
 <!-- include:preamble -->
 
 ## 1. Run the preflight
