@@ -2576,6 +2576,10 @@ class DoctorFixTest(unittest.TestCase):
         "warn", "difft",
         "not found — the semantic review cannot run at all; run /s:doctor "
         "or `semdiff doctor --fix` to install it")
+    STATUSLINE_WARNING = (
+        "warn", "statusline",
+        "not registered in ~/.claude/settings.json — run `shipd statusline "
+        "install` to add the shipd statusline")
     PROTECTION_WARNING = (
         "warn", "protection",
         "the default branch `main` of o/r is not protected — nothing "
@@ -2657,6 +2661,29 @@ class DoctorFixTest(unittest.TestCase):
         self.assertEqual(len(pip_calls), 1)
         self.assertEqual(pip_calls[0][0], sys.executable)
         self.assertNotEqual(pip_calls[0][0], "python3")
+
+    def test_statusline_remedy_invokes_statusline_install(self):
+        # Nothing previously asserted what the statusline remedy actually
+        # invokes, so a regression there could ship silently (a
+        # test-coverage finding on this change).
+        _out, _err, _code, calls = self.run_doctor(
+            [self.STATUSLINE_WARNING], args=("--fix",))
+        statusline_calls = [c for c in calls
+                            if "statusline" in c and "install" in c]
+        self.assertEqual(len(statusline_calls), 1)
+
+    def test_unrecognized_check_name_gets_a_report_only_fallback_surface(self):
+        # `_remedy_surface`'s fallback is the guarantee that `--fix` never
+        # silently drops a finding whose check name default_checks grows
+        # into later, naming neither an automated remedy nor a hand-written
+        # surface (a test-coverage finding on this change).
+        finding = ("warn", "some-future-check", "something is not quite right")
+        out, _err, _code, calls = self.run_doctor([finding], args=("--fix",))
+        self.assertIn("some-future-check", out)
+        non_delegation_calls = [
+            c for c in calls
+            if not any(str(part).endswith("drive.py") for part in c)]
+        self.assertEqual(non_delegation_calls, [])
 
     # -- a GitHub mutation stays report-only ------------------------------
 
