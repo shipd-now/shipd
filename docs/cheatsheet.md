@@ -99,10 +99,23 @@ venn-beta
 | `metrics [summary\|record-flow\|forecast\|rollup]` | Delivery metrics (default: summary). | `shipd metrics` |
 | `lint [change] [--epic EPIC] [--initiative INITIATIVE] [--workspace] [--wiki]` | Structurally validate specs and change deltas. | `shipd lint` |
 | `worktree <change> [--fresh]` | Create the change's worktree, then run the configured post-worktree-scripts. | `shipd worktree add-login-flow` |
-| `doctor` | Preflight this environment for shipd. | `shipd doctor` |
+| `doctor [--fix]` | Preflight this environment for shipd; `--fix` provisions local tooling automatically. | `shipd doctor --fix` |
 | `statusline [install] [--settings FILE] [--force]` | Report or register the shipd statusline. | `shipd statusline` |
 | `copilot [add\|remove] [--force]` | Maintain the Copilot code-review skill — the `/s:gate` merge gate — in a repo. | `shipd copilot` |
 | `vendor [add\|remove] [--force]` | Maintain a vendored per-repo shipd install. | `shipd vendor` |
 | `harness [list\|show\|add\|remove\|status] [ids...] [--all] [--user] [--force]` | The harness registry, and the generated `/s:` command files in a repo or in your home; `--all` acts on every harness in it. | `shipd harness list` |
 | `install` | Pick your harnesses and install their commands. | `shipd install` |
 | `update [--check]` | Report or install a newer published plugin version. | `shipd update --check` |
+
+## `doctor --fix`
+
+`--fix` installs `textual`, `difft`, and the statusline without asking — the
+same local-tooling remedies `/s:doctor` otherwise runs on consent. It never
+touches GitHub. A `protection` or `automerge` finding stays report-only,
+since each mutates a shared repository rather than the local machine, and
+stays behind `/s:doctor`'s consent. Every other check with no automated
+remedy — `python`, `config`, `pipeline`, an unauthenticated `gh`, and
+`copilot-secret` — is report-only too, naming the surface it affects. `--fix`
+finishes by delegating to the drive CLI's own `doctor --fix`, which installs
+`ffmpeg`, `ffprobe`, and `vhs` — provisioning a full shipd machine in one
+command.
