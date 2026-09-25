@@ -51,14 +51,19 @@ edits the repository.
    not released on every exit path, including the error path. Migration reversibility:
    a schema migration or destructive data operation with no down-path,
    backfill, or backup.
-8. **Verify the spec when a planned change is in scope** — the user named one,
-   or exactly one change sits under `.shipd/planned/`. Read it with
-   `python3 "$S/spec_status.py" cat change <change>`, then classify every
+8. **Verify the spec when a change is in scope** — the user named one, exactly
+   one change sits under `.shipd/planned/`, or the diff adds or edits a change
+   directory under `.shipd/planned/` or `.shipd/completed/`, whose slug is that
+   directory's name with any leading `YYYY-MM-DD-` date prefix stripped. Read
+   it with `python3 "$S/spec_status.py" cat change <change>`, then classify every
    `#### Scenario:` against the diff as **met** (citing the file and hunk),
    **unmet**, or **can't-tell** — the last is a real outcome, not a failure to
    force. Every unmet scenario is a high-severity finding. Cross-check the
    `- [x]` tasks against the diff and flag any marked done with no change
-   behind it, and surface `shipd lint <change>` findings verbatim.
+   behind it, and — while the change sits under `.shipd/planned/` — surface
+   `shipd lint <change>` findings verbatim; an archived change under
+   `.shipd/completed/` has no lint to surface, since its deltas are already
+   merged.
 9. **Report by cohort, most severe first.** Give each finding a location, what
    is wrong, why it matters, a concrete fix, and an explicit severity:
    - **high** — a correctness bug, a contract break with an un-updated

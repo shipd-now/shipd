@@ -56,6 +56,7 @@ class ChangeBridgeTest(unittest.TestCase):
         rc, out, err = run_semdiff(self.repo, "change", "sample-change")
         self.assertEqual(rc, 0, err)
         self.assertEqual(out["change"], "sample-change")
+        self.assertEqual(out["location"], "planned")
         self.assertEqual(out["status"], "ready")
 
         # Deltas: the ADDED requirement carries its scenario text.
@@ -77,18 +78,65 @@ class ChangeBridgeTest(unittest.TestCase):
         self.assertEqual(out["tasks"]["total"], 4)
         self.assertEqual(out["tasks"]["done"], 0)
 
-        # A lint-clean change reports no findings.
+        # A lint-clean planned change reports no findings, and the linter ran.
         self.assertEqual(out["lint"]["findings"], [])
+        self.assertNotIn("skipped", out["lint"])
 
         # Impact files: the path-like token, not the bare-word backticks.
         self.assertIn("plugins/s/skills/review/scripts/semdiff.py",
                       out["impact_files"])
         self.assertNotIn("auth", out["impact_files"])
 
+    def test_archived_change_resolves(self):
+        planned = os.path.join(self.repo, ".shipd", "planned", "sample-change")
+        completed = os.path.join(self.repo, ".shipd", "completed")
+        os.makedirs(completed, exist_ok=True)
+        archive = os.path.join(completed, "2026-01-01-sample-change")
+        shutil.move(planned, archive)
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "archive")
+
+        rc, out, err = run_semdiff(self.repo, "change", "sample-change")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(out["location"], "completed")
+        self.assertTrue(
+            out["dir"].endswith(os.path.join(
+                "completed", "2026-01-01-sample-change")),
+            out["dir"])
+
+        # The archive's deltas still parse.
+        by_id = {d.get("requirement_id"): d for d in out["deltas"]
+                 if d.get("requirement_id")}
+        self.assertTrue(any("sixth failed login" in s
+                            for s in by_id["rate-limit-login"]["scenarios"]))
+        self.assertEqual(out["tasks"]["total"], 4)
+
+        # The linter runs over planned/ only, so an archive reports why not.
+        self.assertEqual(out["lint"]["findings"], [])
+        self.assertIn("skipped", out["lint"])
+
+    def test_newest_archive_wins(self):
+        planned = os.path.join(self.repo, ".shipd", "planned", "sample-change")
+        completed = os.path.join(self.repo, ".shipd", "completed")
+        os.makedirs(completed, exist_ok=True)
+        for name in ("2026-01-01-sample-change", "2026-02-01-sample-change"):
+            shutil.copytree(planned, os.path.join(completed, name))
+        shutil.rmtree(planned)
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "archive twice")
+
+        rc, out, err = run_semdiff(self.repo, "change", "sample-change")
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(
+            out["dir"].endswith(os.path.join(
+                "completed", "2026-02-01-sample-change")),
+            out["dir"])
+
     def test_unknown_change_fails_clearly(self):
         rc, out, err = run_semdiff(self.repo, "change", "nope")
         self.assertNotEqual(rc, 0)
         self.assertIn("nope", err)
+        self.assertIn("completed/", err)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,19 @@
 # Spec-aware review
 
-The skill reads this file when the user names a planned change, or exactly one
-change exists under `planned/`.
+The skill reads this file when the user names a change, when exactly one change
+exists under `planned/`, or when the diff adds or edits a change directory under
+`planned/` or `completed/`.
 
-Trigger when the user names a change **or** exactly one change exists under
-`planned/`. Run `change <name>` — it returns the change's status, deltas
+Trigger when the user named a change, **or** exactly one change exists under
+`planned/`, **or** the diff adds or edits a change directory under `planned/` or
+`completed/`. In that last case the slug is that directory's name from the
+`files` output with any leading `YYYY-MM-DD-` date prefix stripped, so
+`completed/2026-09-25-my-change/` names the change `my-change`. Run
+`change <name>` — it resolves `planned/<name>/` first and otherwise the newest
+`completed/<date>-<name>/` archive, reporting the pick as `location`
+(`planned` or `completed`) and `dir` (the change directory relative to the repo
+root), so a change the build flow already archived in the pull request under
+review still loads. It returns the change's status, deltas
 (requirements + WHEN/THEN scenario texts), tasks (checkbox states + progress),
 lint findings, and best-effort impact files. Then, against the structural diff:
 
