@@ -7,6 +7,7 @@ runner/gate/command seams. No test spawns a ``claude`` process — every session
 gate, and command boundary is injected.
 """
 
+import io
 import json
 import os
 import shutil
@@ -141,6 +142,113 @@ class ParseMembersTest(AutopilotTestBase):
         self.assertEqual(by["m-un"].state, "unplanned")
         self.assertEqual(by["m-rej"].state, "rejected")
         self.assertEqual(by["m-arch"].state, "archived")
+
+
+# ---------------------------------------------------------------------------
+# Wave computation: plan waves, capability-disjoint build waves, the CLI
+# ---------------------------------------------------------------------------
+
+class WaveTest(AutopilotTestBase):
+    def plant_ready(self, slug, caps, under=None):
+        """Plant a ``ready`` planned member change carrying ``caps`` as its
+        delta capability directories — under the temp root's content directory,
+        or, when ``under`` names a ``.worktrees`` entry, under that worktree's,
+        so the hosting-root resolution is exercised for real."""
+        host = self.root if under is None else os.path.join(
+            self.root, ".worktrees", under)
+        base = os.path.join(host, ".shipd", "planned", slug)
+        _write(os.path.join(base, "plan.md"),
+               "# %s\nStatus: ready\n\n## Idea\n\nx\n" % slug)
+        _write(os.path.join(base, "tasks.md"),
+               "## 1. Work\n\n- [ ] 1.1 do the work\n")
+        for cap in caps:
+            _write(os.path.join(base, "specs", cap, "spec.md"),
+                   "## ADDED Requirements\n\n### Requirement: %s\nid: %s\n"
+                   % (cap, cap))
+
+    def _slugs(self, result):
+        return [[m["slug"] for m in w["members"]] for w in result["waves"]]
+
+    def test_plan_waves_chunk_risk_ascending(self):
+        _make_epic(self.root, "ep", [("hi", "high"), ("lo1", "low"),
+                                     ("lo2", "low"), ("mid", "medium")])
+        result = autopilot.compute_waves(self.root, "ep", 2)
+        self.assertEqual(self._slugs(result), [["lo1", "lo2"], ["mid", "hi"]])
+        self.assertEqual([w["stage"] for w in result["waves"]],
+                         ["plan", "plan"])
+        self.assertEqual([w["index"] for w in result["waves"]], [1, 2])
+        self.assertEqual(result["parallel"], 2)
+        self.assertEqual(result["epic"], "ep")
+        # An unplanned member has no capabilities to read yet.
+        self.assertEqual(result["waves"][0]["members"][0]["capabilities"], [])
+        self.assertEqual(result["waves"][0]["members"][0]["risk"], "low")
+
+    def test_disjoint_capabilities_share_a_build_wave(self):
+        _make_epic(self.root, "ep",
+                   [("a", "low"), ("b", "low"), ("c", "low")])
+        self.plant_ready("a", ["x"])
+        self.plant_ready("b", ["y"])
+        self.plant_ready("c", ["x", "z"])
+        result = autopilot.compute_waves(self.root, "ep", 3)
+        self.assertEqual([w["stage"] for w in result["waves"]],
+                         ["build", "build"])
+        self.assertEqual(self._slugs(result), [["a", "b"], ["c"]])
+        by = {m["slug"]: m for w in result["waves"] for m in w["members"]}
+        self.assertEqual(by["c"]["capabilities"], ["x", "z"])
+        self.assertEqual(result["skipped"], [])
+
+    def test_cap_splits_a_wave(self):
+        rows = [("m1", "low"), ("m2", "low"), ("m3", "low"), ("m4", "low")]
+        _make_epic(self.root, "ep", rows)
+        for i, (slug, _risk) in enumerate(rows, start=1):
+            self.plant_ready(slug, ["cap%d" % i])
+        result = autopilot.compute_waves(self.root, "ep", 3)
+        self.assertEqual([len(w["members"]) for w in result["waves"]], [3, 1])
+        self.assertEqual(self._slugs(result), [["m1", "m2", "m3"], ["m4"]])
+
+    def test_capabilities_read_from_hosting_worktree(self):
+        _make_epic(self.root, "ep", [("wt-mem", "low")])
+        self.plant_ready("wt-mem", ["alpha", "beta"], under="wt-mem")
+        result = autopilot.compute_waves(self.root, "ep", 3)
+        self.assertEqual(self._slugs(result), [["wt-mem"]])
+        self.assertEqual(result["waves"][0]["stage"], "build")
+        self.assertEqual(result["waves"][0]["members"][0]["capabilities"],
+                         ["alpha", "beta"])
+
+    def test_parallel_one_is_serial(self):
+        _make_epic(self.root, "ep", [("u-hi", "high"), ("u-lo", "low"),
+                                     ("r-hi", "high"), ("r-lo", "low")])
+        self.plant_ready("r-hi", ["p"])
+        self.plant_ready("r-lo", ["q"])
+        result = autopilot.compute_waves(self.root, "ep", 1)
+        self.assertEqual(self._slugs(result),
+                         [["u-lo"], ["u-hi"], ["r-lo"], ["r-hi"]])
+        self.assertEqual([w["stage"] for w in result["waves"]],
+                         ["plan", "plan", "build", "build"])
+        self.assertEqual([w["index"] for w in result["waves"]], [1, 2, 3, 4])
+
+    def test_waves_cli_drives_nothing(self):
+        _make_epic(self.root, "ep", [("a", "low"), ("b", "high")])
+        self.plant_ready("b", ["x"])
+        buf = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = buf
+        try:
+            rc = autopilot.main(
+                ["ep", "--root", self.root, "--waves", "--json"])
+        finally:
+            sys.stdout = old_stdout
+        self.assertEqual(rc, 0)
+        payload = json.loads(buf.getvalue().strip())
+        self.assertEqual(payload["epic"], "ep")
+        self.assertEqual(payload["parallel"], 3)
+        self.assertEqual([[m["slug"] for m in w["members"]]
+                          for w in payload["waves"]], [["a"], ["b"]])
+        self.assertEqual(payload["skipped"], [])
+        # Nothing was driven: no heartbeat directory, no worktree, no report.
+        self.assertFalse(
+            os.path.isdir(os.path.join(self.root, ".shipd", "autopilot")))
+        self.assertFalse(os.path.isdir(os.path.join(self.root, ".worktrees")))
 
 
 # ---------------------------------------------------------------------------

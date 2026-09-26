@@ -37,6 +37,10 @@ scope against the dry run's member list before launching:
 | `--max-members N` | how many members this run drives | unlimited |
 | `--timeout S` | per-session wall-clock budget, in seconds | 1800 |
 | `--max-resumes R` | resumed turns a driven session may spend | 4 |
+| `--parallel N` | how many members the in-session drive runs concurrently | 3 |
+
+The in-session drive runs members in waves the driver's `--waves` mode computes
+from their planned capabilities, capped at `--parallel N`.
 
 Offer three choices — deliver every member (the recommended default), deliver
 one member first as a cautious trial (`--max-members 1`), or cancel and drive
