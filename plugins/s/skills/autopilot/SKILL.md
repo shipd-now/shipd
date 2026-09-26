@@ -90,6 +90,20 @@ member list so the choice is informed), **naming which mode the run will use**
 - **`--timeout` seconds** — per-session wall-clock budget (default: 1800).
 - **`--max-resumes`** — resumed turns a driven session may spend before its
   grade decides the stage (default: 4).
+- **`--parallel N`** — how many members the in-session drive runs concurrently
+  (default: 3; `1` is a serial, one-member-at-a-time run). The detached driver
+  ignores this control and stays serial.
+
+For an **in-session** run, show the waves that cap implies, so the user confirms
+which members will run together:
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> --waves --parallel N
+```
+Each `wave <index> [<stage>]:` line names the members that wave runs together
+and, for a build wave, each member's planned capabilities; the mode drives
+nothing. Surface those wave lines in the confirmation alongside the dry run's
+member list, and re-run the command with the chosen `N` whenever the user
+overrides the control, so the confirmed waves are the ones the run will use.
 
 Offer at least: **"Deliver all members"** (the recommended default, unlimited),
 **"Deliver one member first"** (`--max-members 1`, a cautious single-member
@@ -113,26 +127,34 @@ In the detached mode, skip this phase and go to Phase 3 (detached run) instead.
 
 ### Member order and pipeline
 
-Obtain the member order and the resolved pipeline by running the driver's dry
-run — the order is **never re-derived in the skill**, it is taken exactly as
-the dry run prints it, and the dry run itself performs no session, gate, or
-worktree action:
+Obtain the member **grouping and order** from the driver's `--waves` mode — it
+is **never re-derived in the skill**, it is taken exactly as the mode computes
+it, and the mode itself performs no session, gate, or worktree action:
 ```
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> --dry-run
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> --waves --parallel N --json
 ```
-The dry run's **`Member order (risk ascending):`** block lists only
-`unplanned` members — it does not include `ready` members. Every other
-member, `ready` included, instead appears among the `skipped:` lines the
-run's summary prints, one per member, as:
+with `N` the `--parallel` value confirmed in Phase 2. It prints one object:
 ```
-skipped:    <member>  (<state>)
+{"epic": "<epic>", "parallel": N,
+ "waves": [{"index": 1, "stage": "plan",
+            "members": [{"slug": "<member>", "risk": "<risk>",
+                         "capabilities": ["<cap>", ...]}]}],
+ "skipped": [{"member": "<member>", "state": "<state>"}]}
 ```
-Parse **both** sections and select members from them: first the members in
-the printed `Member order` block, in that order; then, appended after them,
-the `skipped:` entries whose `(<state>)` is `ready`, in the order they are
-printed. This selection is the full drive order over the resolved pipeline —
-never re-derive it, and never skip a `ready` member for being absent from the
-`Member order` block, since that block never carries `ready` members at all.
+The `waves` array, in order, is the drive's script over members. Each wave
+carries its 1-based `index`, its `stage` — `plan` for a wave of `unplanned`
+members, `build` for a wave of `ready` ones — and the `members` that wave runs
+**together**. Plan waves come first; a build wave groups only members whose
+planned delta `capabilities` are pairwise disjoint, so no two members running
+side by side write the same verified capability. The `skipped` array is every
+member whose state is neither `unplanned` nor `ready`: left undriven and
+reported with its state.
+
+Never parse the dry run's `Member order (risk ascending):` block or its
+`skipped:` lines for this — the dry run is the **detached** mode's preview
+only. The resolved **entry list** still comes from `pipeline-show --json` (The
+entry walk below), unchanged: the waves mode supplies grouping and order, never
+entries.
 
 ### Entry stage per member
 
@@ -147,13 +169,12 @@ mirrors `_ENTRY_STAGE` in
 | anything else | skipped — name the member and its state in the run summary |
 
 A member reaches this table only once **Member order and pipeline** (above)
-has selected it. `unplanned` members arrive via the printed `Member order`
-block; `ready` members arrive via the `skipped:` lines, filtered to `(ready)`
-— never via the `Member order` block, which never lists them. So the
-`ready` → `build` row is reached in practice through that skipped-list
-selection, not by a `ready` member ever appearing in the dry run's ordered
-list. Only member states other than `unplanned` and `ready` are left
-undriven; every `unplanned` and every `ready` member is selected and driven.
+has selected it. `unplanned` members arrive in the waves mode's `plan` waves
+and `ready` members in its `build` waves, so a wave's `stage` already agrees
+with this table for every member it carries. Only member states other than
+`unplanned` and `ready` are left undriven — those arrive in the mode's
+`skipped` array; every `unplanned` and every `ready` member is selected and
+driven.
 
 ### The entry walk
 
@@ -176,9 +197,9 @@ mirrors `_pipeline_from_stage` in
 point — custom entries included — is already satisfied and is **not** run. If
 no entry carries the member's entry stage, walk the whole list unchanged.
 
-The dry run remains the source of the **member order** only (see Member order
-and pipeline above); its rendered entry labels are human-facing and carry no
-contract status. Each entry is then handled by its form (see Entry forms
+The waves mode remains the source of the **member grouping and order** only
+(see Member order and pipeline above); the dry run's rendered entry labels are
+human-facing and carry no contract status. Each entry is then handled by its form (see Entry forms
 below), and a sub-agent is spawned only for a built-in stage entry the forms
 leave to its built-in behavior.
 
@@ -195,6 +216,32 @@ unconditionally:
 ```
 Run every stage for that member with that worktree (`.worktrees/<member>`) as
 the working directory.
+
+### Running a wave
+
+The drive runs **one wave at a time**, and always the **first** wave the
+`--waves` mode returned:
+
+1. Run **per-member setup** (above) for every member of that wave.
+2. Spawn the **current entry's** sub-agent for each member of the wave
+   **together, in the background**, so the whole wave's entry is in flight
+   before any of it is graded. An entry the forms hand to a command instead —
+   a custom step, a `replace` declaring a `command`, or the `gate` entry — runs
+   via Bash in that member's worktree, never as a sub-agent.
+3. **Wait for all of them** to end their turns.
+4. **Grade each member** from the repository, with the grading table below.
+5. **Advance each passing member** to its next entry in its walked slice, and
+   repeat from step 2 for the members still walking.
+6. Once every member of the wave has finished its walk, **re-run the `--waves`
+   mode** with the same `--parallel N` and continue with the first wave it now
+   returns — members that have just reached `ready` reappear there in a build
+   wave. Stop when the mode returns no wave.
+
+Members of one wave advance entry by entry together: each round spawns the
+current entry for every member still walking, and a passing member's next entry
+starts in the next round, after the whole round is graded. With `--parallel 1`
+every wave holds exactly one member, so this loop reproduces a
+one-member-at-a-time walk.
 
 ### Entry forms
 
@@ -348,9 +395,10 @@ A `gate` entry in the resolved pipeline is run directly (`spec_gate.py
 <member>` in the member's worktree), not via a sub-agent; see the failure
 contract below for what happens on a rejection.
 
-Members are driven **one at a time**, in the dry run's order — no member's
-entries start before the previous member finishes or stops. No headless
-`claude -p` process is started anywhere in this mode: every built-in stage the
+Members are driven in **waves** (see Running a wave above): the members of one
+wave run their current entry concurrently, and the waves themselves run in the
+order the `--waves` mode returned. No headless `claude -p` process is started
+anywhere in this mode: every built-in stage the
 entry forms leave to its built-in behavior runs as an Agent-tool sub-agent
 inside this session, and the `gate` and command entries run directly from this
 session via Bash.
@@ -406,8 +454,12 @@ The in-session drive has a human present, so it never parks a member as
   retried on an attempt budget (the detached driver's `attempts` are ignored
   in-session) and the member is never parked.
 
-In every case, **no further member is started** while the stop is unanswered;
-the drive resumes with the same member and stage once the user responds.
+Inside a wave, a stop is observed without cutting the wave short: the wave's
+other **in-flight sub-agents run to their end and are graded**, but **no further
+entry is started for any member and no further wave is begun**. The drive then
+puts **every** stopped member and its stage to the user in **one** report, and
+resumes with those members and stages once the user answers — it never continues
+while such a stop is unanswered.
 
 ### Resuming an interrupted run
 
@@ -445,7 +497,8 @@ sooner.
 
 When the drive ends (all members done, or stopped for the user), report:
 
-- **Shipped** members with their full PR URLs (never just a number).
+- **Shipped** members with their full PR URLs (never just a number), grouped by
+  the wave that ran them.
 - **Stopped for the user**: the member and the stage that stopped the drive
   (a failed grade or a gate rejection).
 - **Skipped** members with their state (the non-`unplanned`/`ready` states
