@@ -11,6 +11,11 @@ stage failures get re-driven up to the entry's fresh-attempt budget (its
 ``needs-human`` with a resumable session id. Every run ends with a report —
 machine-readable JSON plus a human summary.
 
+A ``--waves`` mode computes, from on-disk state alone, the waves of members the
+in-session drive may run concurrently — plan waves over the unplanned members,
+then build waves over the ready ones whose planned delta capabilities are
+pairwise disjoint, each capped at ``--parallel N`` — and drives nothing.
+
 Standard library only. Live sessions, the gate, and external commands are all
 reached through injectable seams so the orchestration is unit-testable without
 spending model time.
@@ -148,6 +153,79 @@ def select_and_order(members):
         key=lambda m: (RISK_RANK.get(m.risk, len(RISK_RANK)), m.order))
     skipped = [m for m in members if m.state != "unplanned"]
     return to_drive, skipped
+
+
+def member_capabilities(root, slug):
+    """The delta capability directory names of ``slug``'s planned change, read
+    from the root that hosts it — a ``.worktrees/<name>`` checkout as readily as
+    ``root`` itself (``spec_status._member_state_with_root``). Only a ``ready``
+    member has a planned delta to read; every other state yields no
+    capabilities, so nothing about it constrains a wave."""
+    state, hosting = ss._member_state_with_root(root, slug)
+    if state != "ready":
+        return []
+    specs = os.path.join(sc.specs_dir(hosting), "planned", slug, "specs")
+    if not os.path.isdir(specs):
+        return []
+    return sorted(name for name in os.listdir(specs)
+                  if os.path.isfile(os.path.join(specs, name, "spec.md")))
+
+
+def compute_waves(root, epic, parallel):
+    """The waves of members the in-session drive may run concurrently, computed
+    from on-disk state alone (epic-autopilot member-wave-scheduling).
+
+    Plan waves come first: every ``unplanned`` member in
+    :func:`select_and_order`'s risk-ascending order, chunked into slices of at
+    most ``parallel``. Build waves follow over the ``ready`` members, walked
+    risk-ascending: each joins the earliest wave whose members' capabilities are
+    all disjoint from its own and whose size is below ``parallel``, else it opens
+    a new one — the shared verified library being the one write that makes two
+    members unsafe to build side by side. Members in any other state are
+    reported as skipped under their state. Wave indexes run from 1 across both
+    kinds, and the result is deterministic for a given tree.
+    """
+    if not os.path.isfile(_epic_file(root, epic)):
+        raise AutopilotError("epic not found: %s" % epic)
+    members = parse_members(root, epic)
+    to_drive, skipped = select_and_order(members)
+
+    def _entry(member, capabilities):
+        return {"slug": member.slug, "risk": member.risk,
+                "capabilities": capabilities}
+
+    waves = []
+    for start in range(0, len(to_drive), parallel):
+        chunk = to_drive[start:start + parallel]
+        waves.append({"index": len(waves) + 1, "stage": "plan",
+                      "members": [_entry(m, []) for m in chunk]})
+
+    ready = sorted(
+        (m for m in skipped if m.state == "ready"),
+        key=lambda m: (RISK_RANK.get(m.risk, len(RISK_RANK)), m.order))
+    # Each open build wave as ``(member entries, the union of their
+    # capabilities)`` — the union is what the next member must be disjoint from.
+    build_waves = []
+    for member in ready:
+        caps = member_capabilities(root, member.slug)
+        for entries, union in build_waves:
+            if len(entries) < parallel and union.isdisjoint(caps):
+                entries.append(_entry(member, caps))
+                union.update(caps)
+                break
+        else:
+            build_waves.append(([_entry(member, caps)], set(caps)))
+    for entries, _union in build_waves:
+        waves.append({"index": len(waves) + 1, "stage": "build",
+                      "members": entries})
+
+    return {
+        "epic": epic,
+        "parallel": parallel,
+        "waves": waves,
+        "skipped": [{"member": m.slug, "state": m.state}
+                    for m in skipped if m.state != "ready"],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1225,6 +1303,29 @@ def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
     return result
 
 
+def _print_waves(result, as_json=False, out=print):
+    """Render :func:`compute_waves`'s result — one JSON object for a machine
+    reader, else one ``wave <index> [<stage>]:`` line per wave naming its members
+    (a build wave's members carry their capabilities) and one ``skipped:`` line
+    per undrivable member."""
+    if as_json:
+        out(json.dumps(result))
+        return
+    out("Waves for epic '%s' (cap %d):" % (result["epic"], result["parallel"]))
+    for wave in result["waves"]:
+        parts = []
+        for member in wave["members"]:
+            if wave["stage"] == "build":
+                detail = " ".join(member["capabilities"])
+            else:
+                detail = "risk %s" % member["risk"]
+            parts.append("%s (%s)" % (member["slug"], detail))
+        out("  wave %d [%s]: %s"
+            % (wave["index"], wave["stage"], ", ".join(parts)))
+    for entry in result["skipped"]:
+        out("  skipped: %s (%s)" % (entry["member"], entry["state"]))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Drive an approved epic's unplanned members to shipped PRs.")
@@ -1238,6 +1339,14 @@ def main(argv=None):
                         help="drive at most N members (default: unlimited)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print member order + resolved pipeline; drive nothing")
+    parser.add_argument("--waves", action="store_true",
+                        help="print the waves the in-session drive may run "
+                             "concurrently; drive nothing")
+    parser.add_argument("--parallel", type=int, default=3,
+                        help="how many members one wave may hold "
+                             "(default: 3; 1 is a serial walk)")
+    parser.add_argument("--json", action="store_true",
+                        help="with --waves, print the waves as one JSON object")
     parser.add_argument("--timeout", type=int, default=TIMEOUT_DEFAULT,
                         help="per-session wall-clock budget in seconds")
     parser.add_argument("--max-resumes", type=int, default=MAX_RESUMES_DEFAULT,
@@ -1250,8 +1359,19 @@ def main(argv=None):
                              % sc.MODEL_LADDER[0])
     args = parser.parse_args(argv)
 
+    if args.parallel < 1:
+        parser.error("--parallel must be at least 1")
+    if args.waves and (args.dry_run or args.member):
+        parser.error("--waves drives nothing; it cannot be combined with "
+                     "--dry-run or --member")
+
     try:
-        if args.member:
+        if args.waves:
+            _print_waves(
+                compute_waves(os.path.abspath(args.root), args.epic,
+                              args.parallel),
+                as_json=args.json)
+        elif args.member:
             run_member(os.path.abspath(args.root), args.epic, args.member,
                        timeout=args.timeout, max_resumes=args.max_resumes,
                        claude_bin=args.claude_bin,
