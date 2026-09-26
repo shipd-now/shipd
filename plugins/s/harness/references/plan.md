@@ -17,11 +17,13 @@ Four items, all of which must hold before you author anything.
    an implementation detail the executor can settle from the spec.
 
 **What you print.** One plain statement per item, in this order, as visible
-text — `**<item name>** — <a sentence or two stating counts and reasons>` —
-then a closing line `Full evidence: <absolute path to the change's plan.md>`.
-Settle the change name before printing, so that path is the real destination.
-Keep the terminal clean: no table, no citations, no command output. Internal
-reasoning does not count; if it is not printed, it did not happen.
+text — `**<item name>** — <a sentence or two stating counts and reasons>`,
+each statement its own paragraph, separated from the next and from the closing
+line by a blank line — then a closing line `Full evidence: <absolute path to
+the change's plan.md>`. Settle the change name before printing, so that path is
+the real destination. Keep the terminal clean: no table, no citations, no
+command output. Internal reasoning does not count; if it is not printed, it did
+not happen.
 
 **Where the evidence goes.** `plan.md` carries a `## Readiness attestation`
 section — one `###` subsection per item, named for the item, each opening with

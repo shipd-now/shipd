@@ -54,10 +54,11 @@ hand off. You are not the implementer: you converge, emit, and end.
    clear, scope and non-goals are bounded, the affected capabilities and files
    are named, and no open decision would change the task list. Print one plain
    statement per item as visible text — `**<item name>** — <a sentence or two
-   stating counts and reasons>` — then a closing line
-   `Full evidence: <absolute path to the change's plan.md>`, the path under the
-   worktree from step 1. No table, no citations, no command output in the
-   terminal; the evidence goes into `plan.md` at step 6. An item you cannot
+   stating counts and reasons>`, each statement its own paragraph, separated
+   from the next and from the closing line by a blank line — then a closing
+   line `Full evidence: <absolute path to the change's plan.md>`, the path
+   under the worktree from step 1. No table, no citations, no command output in
+   the terminal; the evidence goes into `plan.md` at step 6. An item you cannot
    evidence there is unmet — go back to step 2 or step 4.
 6. **Author the artifacts into a staging directory**, never into the spec tree
    directly:

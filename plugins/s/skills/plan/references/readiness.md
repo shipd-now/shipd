@@ -70,14 +70,19 @@ it does not count.
 
 Four plain-language statements, one per checklist item, in checklist order —
 each the item's name in bold, an em dash, then one or two sentences saying how
-the item is met. State counts and reasons (how many files are affected and
-why, which capabilities and what they cover), not citations. Close with one
-line naming the absolute path of the change's `plan.md`:
+the item is met. Print each statement as its own paragraph, separated from the
+next and from the closing line by a blank line, so a markdown terminal never
+folds the four together. State counts and reasons (how many files are affected
+and why, which capabilities and what they cover), not citations. Close with
+one line naming the absolute path of the change's `plan.md`:
 
 ```
 **Problem and motivation** — <one or two sentences>
+
 **Scope and non-goals** — <one or two sentences>
+
 **Affected capabilities and files** — <one or two sentences>
+
 **No open task-shaping decision** — <one or two sentences>
 
 Full evidence: <absolute path to the change's plan.md>
