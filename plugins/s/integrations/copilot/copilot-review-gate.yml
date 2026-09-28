@@ -798,6 +798,31 @@ jobs:
               return block
 
 
+          def footer(files):
+              """The stat line that closes the posted body — how much of the pull
+              request the review covered, counted from the diff this step read
+              itself (GitHub's per-file ``additions``/``deletions``), never from
+              the reviewer's account of itself. Mirrors ``review_footer`` in
+              `review_gate.py` line for line, so a review reads the same
+              whichever surface posted it. Empty when the diff could not be read,
+              so nothing is printed as zeros."""
+              entries = [f for f in (files if isinstance(files, list) else [])
+                         if isinstance(f, dict)]
+              if not entries:
+                  return []
+              count = len(entries)
+              line = "Reviewed %d file%s" % (count, "" if count == 1 else "s")
+              counted = [f for f in entries
+                         if is_line(f.get("additions")) or is_line(f.get("deletions"))]
+              if counted:
+                  added = sum(f["additions"] for f in counted
+                              if is_line(f.get("additions")))
+                  removed = sum(f["deletions"] for f in counted
+                                if is_line(f.get("deletions")))
+                  line += ", +%d -%d lines" % (added, removed)
+              return ["", line + "."]
+
+
           def fold(body, block):
               """``body`` with ``block`` inserted above its verdict marker, so
               the marker stays the last line equal to a marker, which is what
@@ -855,7 +880,7 @@ jobs:
 
           payload = {"commit_id": os.environ["HEAD_SHA"],
                      "event": "COMMENT",
-                     "body": fold(body, prose(unverified)),
+                     "body": fold(body, prose(unverified) + footer(files)),
                      "comments": comments}
           with open(payload_path, "w", encoding="utf-8") as handle:
               json.dump(payload, handle)

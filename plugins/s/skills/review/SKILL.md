@@ -213,7 +213,10 @@ missing test are two findings, not one.
 3. **Summary table** — one row per finding, most-severe first, columns
    `# | rating | details`; rating is 🔴 high / 🟠 med / 🟡 low (display label
    `med`; the severity value stays `medium`). No findings → print
-   `## Findings: ✅ Ship it` and "No findings." and omit the empty table.
+   `## Findings: ✅ Ship it` and "No problems found." and omit the empty
+   table. `review_gate.py post` closes the summary comment with one stat
+   line, `Reviewed N files, +A -D lines.`, counted from the PR's own file
+   list — the review body you write carries no such line.
 4. **Collapsible walkthrough** in `<details><summary>Walkthrough</summary>`.
 5. **Diagrams — only when structurally warranted.** Mermaid: sequence for
    API/flow changes, ER for schema/data-model, state for lifecycle logic.

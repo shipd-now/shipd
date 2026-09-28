@@ -232,12 +232,45 @@ def _detail_cell(f):
     return ("%s — %s" % (loc, what)).strip(" —")
 
 
-def render_summary(review, unanchored, disposition="all", model=None):
+# What the summary says in place of the findings table when the review found
+# nothing to report. The copilot skill body tells its reviewer to write the
+# same sentence, so a clean review reads identically from either surface.
+NO_PROBLEMS = "No problems found."
+
+
+def review_footer(files):
+    """The stat line that closes the summary comment: how much of the pull
+    request the review covered, read from the PR's own file list (GitHub's
+    per-file ``additions``/``deletions``), never from the reviewer's account
+    of itself. Files that carry no line counts still count as files, and a
+    list with none at all drops the line counts rather than printing zeros.
+    ``None`` when ``files`` holds no usable entry, so the line is omitted
+    rather than rendered empty."""
+    entries = [f for f in (files or []) if isinstance(f, dict)]
+    if not entries:
+        return None
+    count = len(entries)
+    line = "Reviewed %d file%s" % (count, "" if count == 1 else "s")
+    counted = [f for f in entries
+               if _line_number(f.get("additions"))
+               or _line_number(f.get("deletions"))]
+    if counted:
+        added = sum(f["additions"] for f in counted
+                    if _line_number(f.get("additions")))
+        removed = sum(f["deletions"] for f in counted
+                      if _line_number(f.get("deletions")))
+        line += ", +%d -%d lines" % (added, removed)
+    return line + "."
+
+
+def render_summary(review, unanchored, disposition="all", model=None,
+                   files=None):
     """Render the marker-tagged summary comment body: the ☕ brand line, the
     verdict header, effort, the policy provenance lines, the
-    ``# | rating | details`` findings table, and an "Additional findings"
-    section carrying the ``unanchored`` findings in full (they get no inline
-    comment).
+    ``# | rating | details`` findings table (or ``NO_PROBLEMS`` in its
+    place), an "Additional findings" section carrying the ``unanchored``
+    findings in full (they get no inline comment), and — given the PR's
+    ``files`` list — the ``review_footer`` stat line as the last line.
 
     The brand line opens the visible body — the hidden ``MARKER`` stays line 1
     and byte-identical, so upsert matching is unmoved.
@@ -263,7 +296,7 @@ def render_summary(review, unanchored, disposition="all", model=None):
             rating = "%s %s" % (_SEV_DOT.get(sev, ""), _SEV_LABEL.get(sev, sev))
             out.append("| %d | %s | %s |" % (i, rating.strip(), _detail_cell(f)))
     else:
-        out.append("No findings.")
+        out.append(NO_PROBLEMS)
     if unanchored:
         out += ["", "### Additional findings",
                 "", "_Findings not anchored to a line in the PR diff:_", ""]
@@ -279,6 +312,9 @@ def render_summary(review, unanchored, disposition="all", model=None):
                 out.append("  - Why: %s" % why)
             if fix:
                 out.append("  - Fix: %s" % fix)
+    footer = review_footer(files)
+    if footer:
+        out += ["", footer]
     return "\n".join(out) + "\n"
 
 
@@ -584,7 +620,7 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None):
 
     comment_url = _upsert_summary(
         gh, repo, number,
-        render_summary(review, unanchored, disposition, model))
+        render_summary(review, unanchored, disposition, model, files))
     state = status_state(review.get("verdict"), findings, disposition)
     _set_status(gh, repo, sha, state,
                 _status_description(review, disposition), comment_url)
@@ -602,7 +638,7 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None):
             out("inline review rejected; folding findings into the summary")
             _upsert_summary(
                 gh, repo, number,
-                render_summary(review, findings, disposition, model))
+                render_summary(review, findings, disposition, model, files))
             _post_review(gh, repo, number, sha, [])
 
     out("semantic-review status: %s" % state)

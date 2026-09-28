@@ -327,6 +327,83 @@ class CommentableLinesTest(unittest.TestCase):
         self.assertEqual(review_gate.commentable_lines(patch), {1, 20, 21})
 
 
+class SummaryFooterTest(unittest.TestCase):
+    """A clean review says "No problems found." in place of the table, and
+    every summary closes with one stat line counted from the PR's own file
+    list — GitHub's per-file additions and deletions — never from the
+    reviewer's account of itself."""
+
+    FILES = [{"filename": "a.py", "patch": PATCH_A,
+              "additions": 12, "deletions": 3},
+             {"filename": "b.py", "patch": "", "additions": 100,
+              "deletions": 0}]
+
+    def _last_line(self, body):
+        return [ln for ln in body.split("\n") if ln.strip()][-1]
+
+    def test_clean_review_says_no_problems_found(self):
+        body = review_gate.render_summary(_review(verdict="pass"), [])
+        self.assertIn(review_gate.NO_PROBLEMS, body)
+        self.assertIn("No problems found.", body)
+        self.assertNotIn("No findings", body)
+        self.assertNotIn("| # |", body)
+
+    def test_footer_closes_the_body_with_files_and_lines(self):
+        body = review_gate.render_summary(_review(verdict="pass"), [],
+                                          files=self.FILES)
+        self.assertEqual(self._last_line(body),
+                         "Reviewed 2 files, +112 -3 lines.")
+
+    def test_footer_follows_the_additional_findings_section(self):
+        finding = {"id": "f1", "severity": "medium", "location": "z.py:1",
+                   "what": "boom", "why": "w", "fix": "x"}
+        body = review_gate.render_summary(
+            _review(verdict="changes-requested", findings=[finding]),
+            [finding], files=self.FILES)
+        self.assertLess(body.index("Additional findings"),
+                        body.index("Reviewed 2 files"))
+        self.assertEqual(self._last_line(body),
+                         "Reviewed 2 files, +112 -3 lines.")
+
+    def test_single_file_is_singular(self):
+        self.assertEqual(review_gate.review_footer(self.FILES[:1]),
+                         "Reviewed 1 file, +12 -3 lines.")
+
+    def test_files_without_counts_drop_the_line_counts(self):
+        files = [{"filename": "a.py", "patch": PATCH_A}]
+        self.assertEqual(review_gate.review_footer(files),
+                         "Reviewed 1 file.")
+
+    def test_bool_counts_are_not_line_counts(self):
+        files = [{"filename": "a.py", "additions": True, "deletions": 3}]
+        self.assertEqual(review_gate.review_footer(files),
+                         "Reviewed 1 file, +0 -3 lines.")
+
+    def test_no_files_means_no_footer(self):
+        self.assertIsNone(review_gate.review_footer(None))
+        self.assertIsNone(review_gate.review_footer([]))
+        self.assertIsNone(review_gate.review_footer(["junk"]))
+        body = review_gate.render_summary(_review(verdict="pass"), [])
+        self.assertNotIn("Reviewed", body)
+
+    def test_post_carries_the_footer_from_the_pr_file_list(self):
+        gh = FakeGh(files=self.FILES)
+        review_gate.post("7", _review(verdict="pass"), gh)
+        body = gh.summary_body()
+        self.assertIn("No problems found.", body)
+        self.assertEqual(self._last_line(body),
+                         "Reviewed 2 files, +112 -3 lines.")
+
+    def test_folded_repost_keeps_the_footer(self):
+        gh = FakeGh(files=self.FILES, review_fail_times=1)
+        findings = [{"id": "f1", "severity": "high", "location": "a.py:5",
+                     "what": "boom", "why": "w", "fix": "x"}]
+        review_gate.post(
+            "7", _review(verdict="changes-requested", findings=findings), gh)
+        self.assertEqual(self._last_line(gh.summary_body()),
+                         "Reviewed 2 files, +112 -3 lines.")
+
+
 class SummaryBrandTest(unittest.TestCase):
     """The summary body opens its visible content with the ☕ brand line, while
     the hidden marker line stays byte-identical so upsert matching is unmoved."""
