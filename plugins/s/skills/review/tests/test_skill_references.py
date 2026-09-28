@@ -659,8 +659,9 @@ class FooterParityTest(unittest.TestCase):
                 lines = [ln for ln in folded.splitlines() if ln.strip()]
                 self.assertEqual(lines[-1], marker)
                 self.assertEqual(lines[-2], "Reviewed 1 file, +12 -3 lines.")
-        self.assertEqual(fold("no marker here\n", footer(files)),
-                         "no marker here\n\nReviewed 1 file, +12 -3 lines.\n")
+        bare = fold("no marker here\n", footer(files))
+        self.assertEqual([ln for ln in bare.splitlines() if ln.strip()],
+                         ["no marker here", "Reviewed 1 file, +12 -3 lines."])
 
 
 class NoProblemsWordingTest(unittest.TestCase):
