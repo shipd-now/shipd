@@ -610,6 +610,84 @@ def _workflow_namespace():
     return namespace
 
 
+class FooterParityTest(unittest.TestCase):
+    """Both posting surfaces close the posted body with the same stat line,
+    counted from the pull request's own file list. The workflow's `footer`
+    carries its own copy of the format, so it is pinned here against the real
+    `review_gate.review_footer` rather than a restatement of it."""
+
+    CASES = (
+        [],
+        ["junk"],
+        [{"filename": "a.py"}],
+        [{"filename": "a.py", "additions": 12, "deletions": 3}],
+        [{"filename": "a.py", "additions": 12, "deletions": 3},
+         {"filename": "b.py", "additions": 100, "deletions": 0},
+         {"filename": "c.py", "patch": ""}],
+        [{"filename": "a.py", "additions": True, "deletions": 3}],
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = _workflow_namespace()
+
+    def test_workflow_footer_matches_review_gate(self):
+        footer = self.workflow["footer"]
+        for files in self.CASES:
+            with self.subTest(files=files):
+                expected = review_gate.review_footer(files)
+                block = footer(files)
+                if expected is None:
+                    self.assertEqual(block, [])
+                else:
+                    self.assertEqual(block, ["", expected])
+
+    def test_workflow_footer_ignores_a_non_list_diff(self):
+        self.assertEqual(self.workflow["footer"](None), [])
+        self.assertEqual(self.workflow["footer"]({"filename": "a.py"}), [])
+
+    def test_folded_footer_keeps_the_verdict_marker_last(self):
+        """The footer is folded above the verdict marker, so the gate's
+        backwards marker scan still reads the marker from the body's last
+        non-blank line, with the footer directly above it."""
+        fold, footer = self.workflow["fold"], self.workflow["footer"]
+        files = [{"filename": "a.py", "additions": 12, "deletions": 3}]
+        for marker in self.workflow["MARKERS"]:
+            with self.subTest(marker=marker):
+                body = "## Findings: x\n\nsome text\n\n%s\n" % marker
+                folded = fold(body, footer(files))
+                lines = [ln for ln in folded.splitlines() if ln.strip()]
+                self.assertEqual(lines[-1], marker)
+                self.assertEqual(lines[-2], "Reviewed 1 file, +12 -3 lines.")
+        bare = fold("no marker here\n", footer(files))
+        self.assertEqual([ln for ln in bare.splitlines() if ln.strip()],
+                         ["no marker here", "Reviewed 1 file, +12 -3 lines."])
+
+
+class NoProblemsWordingTest(unittest.TestCase):
+    """A clean review says "No problems found." on every surface that renders
+    one — `review_gate.py`, the copilot reviewer's body instructions, and the
+    review skill's own report rules — and the retired "No findings." wording
+    appears on none of them."""
+
+    SURFACES = (SKILL_MD, COPILOT_SKILL_MD)
+
+    def test_review_gate_constant(self):
+        self.assertEqual(review_gate.NO_PROBLEMS, "No problems found.")
+
+    def test_prose_surfaces_carry_the_wording(self):
+        for path in self.SURFACES:
+            with self.subTest(path=os.path.basename(path)):
+                text = _read(path)
+                self.assertIn("No problems found.", text)
+                self.assertNotIn("No findings.", text)
+
+    def test_prose_surfaces_name_the_footer(self):
+        for path in self.SURFACES:
+            with self.subTest(path=os.path.basename(path)):
+                self.assertIn("Reviewed N files, +A -D lines.", _read(path))
+
+
 class SeverityDotParityTest(unittest.TestCase):
     """The `review-skill` requirement binds both posting surfaces —
     `review_gate.py` and the vendored `copilot-review-gate.yml` workflow —

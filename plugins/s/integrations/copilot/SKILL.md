@@ -113,7 +113,7 @@ The body's shape, in this order:
    | 1 | 🔴 high | `src/api/handler.py:88` — the retry loop never resets the backoff |
    ```
 
-   No findings: say `No findings.` in place of the table.
+   No findings: say `No problems found.` in place of the table.
 
 3. **The per-finding detail**, grouped by cohort, most severe first, each
    numbered to match its table row. For each finding give the **location**,
@@ -131,6 +131,9 @@ other tables. The gate workflow's own posting step prefixes that same dot
 onto a severity wherever a posted finding names it — an anchored inline
 comment's leading marker, and each folded-findings bullet — which is
 sanctioned too, even though it never appears in the report body you write.
+That posting step also closes the posted body with one stat line,
+`Reviewed N files, +A -D lines.`, counted from the pull request's own file
+list. Do not write that line yourself.
 
 **Also write the findings as data.** Beside the report body, write a
 machine-readable findings file at
