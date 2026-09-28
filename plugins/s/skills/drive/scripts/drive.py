@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """drive.py — the stdlib-only control CLI for `/s:drive` (drive-doctor,
-drive-targets-config, drive-auth-cache, drive-session, drive-verdict,
-drive-recording, drive-tape, drive-tape-timeline, drive-postprocess,
-drive-brand-frames).
+drive-targets-config, drive-auth-cache, drive-session, drive-handoff,
+drive-verdict, drive-recording, drive-tape, drive-tape-timeline,
+drive-postprocess, drive-brand-frames).
+
+Verbs: `doctor`, `targets`, `login`, `session` (`start`/`status`/`stop`),
+the driving verbs `open`, `snapshot`, `click`, `type`, `press`, `wait`,
+`eval`, `shot`, `handoff`, `resume`, the evidence readers `console` and
+`network`, the read-only `probe` sampler, and the capture chain `record`,
+`tape`, `post`.
 
 This script holds every decision the skill makes — config resolution, auth
 recipes, cache TTL, the doctor table, the verdict rules, the ffmpeg graphs —
@@ -412,6 +418,11 @@ def resolve_auth(entry, run=default_run):
       `DriveError`.
     - `command` — `auth["username"]`/`auth["password"]` are each a full
       argv array whose stdout (via `resolve_secret_command`) is the secret.
+    - `manual` — `(None, None)`, the same as `none`: a human types the
+      credential into a visible browser window, so there is nothing here
+      to resolve and no environment variable to read. The recipe's other
+      keys (`done`, `timeoutSeconds`) are the *worker's* contract, read by
+      `cmd_login` when it builds the worker argv, never by this function.
 
     Never writes a resolved secret anywhere but this function's return
     value — the caller (`worker_env_with_secrets`) is what keeps it out of
@@ -419,7 +430,7 @@ def resolve_auth(entry, run=default_run):
     auth = entry.get("auth") or {"kind": "none"}
     kind = auth.get("kind", "none")
 
-    if kind == "none":
+    if kind in ("none", "manual"):
         return None, None
 
     if kind == "env":
@@ -522,6 +533,19 @@ def cmd_login(args, run=default_run):
     environment only (`worker_env_with_secrets`), overwriting the cache on
     success.
 
+    Where the recipe kind is `manual`, or `--manual` is given for any
+    recipe, this takes the *manual* path instead: it resolves no credential
+    at all (neither `resolve_auth` nor `worker_env_with_secrets` runs, so
+    nothing is read from the environment and nothing is placed into the
+    worker's) and invokes the worker with `--manual`, forwarding the
+    recipe's `done` and `timeoutSeconds` when it declares them. `--manual`
+    also overrides the TTL reuse above: the flag exists to replace a cached
+    state the user already knows is bad, so a fresh cache is no reason to
+    skip the login it asked for. A `manual` *recipe* without the flag
+    honours the TTL like every other kind. `--manual` likewise overrides
+    the `none` short-circuit — a target that normally needs no login is
+    still worth logging into by hand when the caller asks.
+
     On a worker failure, the requested cache path is left exactly as it
     was — the worker itself never touches `--out` until it has fully
     succeeded (`browser_worker.py cmd_login`'s own contract) — and this
@@ -541,7 +565,15 @@ def cmd_login(args, run=default_run):
     ttl_hours = meta.get(AUTH_CACHE_TTL_HOURS_KEY, DEFAULT_AUTH_CACHE_TTL_HOURS)
     cache_path = auth_cache_path(name)
 
-    if _auth_cache_is_fresh(cache_path, ttl_hours):
+    auth = entry.get("auth") or {"kind": "none"}
+    kind = auth.get("kind", "none")
+    forced_manual = bool(getattr(args, "manual", False))
+    manual = forced_manual or kind == "manual"
+
+    # `--manual` deliberately ignores a fresh cache: the flag is how a user
+    # replaces a cached storage state they already know is bad. A `manual`
+    # *recipe* without the flag honours the TTL like every other kind.
+    if not forced_manual and _auth_cache_is_fresh(cache_path, ttl_hours):
         print("drive: reusing cached login for %r (%s)" % (name, cache_path))
         return 0
 
@@ -551,9 +583,10 @@ def cmd_login(args, run=default_run):
     # DRIVE_LOGIN_PASSWORD, so short-circuit before any credential is
     # resolved. No cache file is written either — an empty storage state
     # would fake a cache whose mtime drives TTL logic that means nothing for
-    # a target that never logs in.
-    auth = entry.get("auth") or {"kind": "none"}
-    if auth.get("kind", "none") == "none":
+    # a target that never logs in. `--manual` overrides this: the caller has
+    # asked to log in by hand, which is a real login even for a target whose
+    # recipe declares none.
+    if kind == "none" and not manual:
         print("drive: target %r declares no login (auth kind 'none') — "
               "nothing to do" % name)
         return 0
@@ -562,13 +595,30 @@ def cmd_login(args, run=default_run):
     if not url:
         raise DriveError("target %r declares no url" % name)
 
-    username, password = resolve_auth(entry, run=run)
-    worker_env = worker_env_with_secrets(username, password)
-
     _ensure_private_dir(os.path.dirname(cache_path))
     worker = os.path.join(HERE, "browser_worker.py")
-    worker_argv = ["uv", "run", worker, "login",
-                  "--url", url, "--out", cache_path]
+
+    if manual:
+        # No credential is resolved on this path at all — `resolve_auth` and
+        # `worker_env_with_secrets` are both skipped, so nothing is read out
+        # of the environment and nothing is placed into the worker's. The
+        # human at the keyboard is the credential.
+        worker_argv = ["uv", "run", worker, "login", "--manual",
+                      "--url", url, "--out", cache_path]
+        done = auth.get("done")
+        if done:
+            worker_argv += ["--done", str(done)]
+        timeout_seconds = auth.get("timeoutSeconds")
+        if timeout_seconds is not None:
+            worker_argv += ["--timeout", str(timeout_seconds)]
+        worker_env = None
+        print("drive: a browser window is open for %s — log in there"
+              % name)
+    else:
+        username, password = resolve_auth(entry, run=run)
+        worker_env = worker_env_with_secrets(username, password)
+        worker_argv = ["uv", "run", worker, "login",
+                      "--url", url, "--out", cache_path]
 
     try:
         rc, out, err = run(worker_argv, env=worker_env)
@@ -595,7 +645,8 @@ SESSION_SOCKET_PATH = os.path.join(SESSION_DIR, "session.sock")
 
 
 def _read_session_state():
-    """The current session state dict (`{"target", "pid", "socket"}`), or
+    """The current session state dict (`{"target", "pid", "socket",
+    "headed"}`), or
     `None` when no session has ever started or the state file is missing or
     unreadable — never a fatal error, since a missing/corrupt state file
     just means "nothing to report/stop"."""
@@ -608,10 +659,16 @@ def _read_session_state():
         return None
 
 
-def _write_session_state(target, pid, socket_path):
+def _write_session_state(target, pid, socket_path, headed=False):
+    """Record the running session. `headed` is the window mode the worker
+    was launched in (drive-session): always written, so `session status`
+    reports a mode rather than a silence, and a state file from an older
+    version that lacks the key reads back as headless — which is what it
+    was, since headless was the only mode then."""
     _ensure_private_dir(SESSION_DIR)
     with open(SESSION_STATE_PATH, "w", encoding="utf-8") as fh:
-        json.dump({"target": target, "pid": pid, "socket": socket_path}, fh)
+        json.dump({"target": target, "pid": pid, "socket": socket_path,
+                   "headed": bool(headed)}, fh)
 
 
 def _remove_session_state():
@@ -722,6 +779,12 @@ def _session_start(args):
     the running one (drive-session's "switching target replaces the
     session" scenario); this treats *any* running session the same way,
     since restarting for the same target is just as much a fresh worker.
+
+    The browser launches headless unless `--headed` is given
+    (drive-session): the flag is forwarded to the worker and the mode is
+    recorded in the session state file, so `session status` can report it
+    and a caller can tell whether a takeover still needs a `handoff`
+    relaunch.
     """
     targets, meta = resolve_targets()
     name = _resolve_session_target(args, targets, meta)
@@ -745,10 +808,13 @@ def _session_start(args):
     url = _resolve_session_url(name, targets)
     storage_state = auth_cache_path(name)
     worker = os.path.join(HERE, "browser_worker.py")
+    headed = bool(getattr(args, "headed", False))
     worker_argv = ["uv", "run", worker, "session",
                   "--target", name, "--url", url,
                   "--storage-state", storage_state,
                   "--socket", SESSION_SOCKET_PATH]
+    if headed:
+        worker_argv.append("--headed")
 
     try:
         proc = subprocess.Popen(
@@ -757,25 +823,33 @@ def _session_start(args):
     except OSError as exc:
         raise DriveError("could not start the session worker: %s" % exc)
 
-    _write_session_state(name, proc.pid, SESSION_SOCKET_PATH)
-    print("drive: session started for %r (pid=%s, socket=%s)"
-         % (name, proc.pid, SESSION_SOCKET_PATH))
+    _write_session_state(name, proc.pid, SESSION_SOCKET_PATH, headed=headed)
+    print("drive: session started for %r (%s, pid=%s, socket=%s)"
+         % (name, _session_mode(headed), proc.pid, SESSION_SOCKET_PATH))
     return 0
+
+
+def _session_mode(headed):
+    """The word `session start`/`session status` name the window mode by
+    (drive-session) — one spelling, so a reader never has to map two."""
+    return "headed" if headed else "headless"
 
 
 def _session_status(args):
     """`session status` (drive-session): report whether the recorded
     session (if any) is actually alive — both its pid and its socket must
     check out, or the report calls it stale rather than pretending a dead
-    session is still running."""
+    session is still running — and name the window mode it was launched
+    in, so a caller knows whether a takeover needs a `handoff` relaunch."""
     state = _read_session_state()
     if not state:
         print("drive: no session is running")
         return 0
 
     if _pid_alive(state.get("pid")) and _socket_alive(state.get("socket")):
-        print("drive: session running for %r (pid=%s, socket=%s)"
-             % (state.get("target"), state.get("pid"), state.get("socket")))
+        print("drive: session running for %r (%s, pid=%s, socket=%s)"
+             % (state.get("target"), _session_mode(state.get("headed")),
+                state.get("pid"), state.get("socket")))
         return 0
 
     print("drive: session state is stale (target=%r, pid=%s, socket=%s) — "
@@ -910,6 +984,27 @@ def cmd_eval(args):
 
 def cmd_shot(args):
     return _print_reply(_session_request("shot", out=args.out))
+
+
+def cmd_handoff(args):
+    """`handoff [signal]` (drive-handoff): hand the live session over to the
+    human at the keyboard. The daemon relaunches its browser visible when it
+    is headless — carrying over the storage state, the current URL, and every
+    accumulated console and network event — and opens a handoff window. With
+    a `signal` the daemon blocks on it (the `wait` verb's grammar) and closes
+    the window when it appears; without one it returns at once and `resume`
+    closes the window. Forwarded exactly like `cmd_wait`: one request, the
+    reply printed verbatim, a falsey `ok` exiting non-zero."""
+    return _print_reply(
+        _session_request("handoff", signal=args.signal,
+                         timeout=args.timeout))
+
+
+def cmd_resume(args):
+    """`resume` (drive-handoff): take the session back from the human —
+    drain the events their clicks queued and close the open handoff window.
+    A `resume` with no window open is a falsey `ok` and a non-zero exit."""
+    return _print_reply(_session_request("resume"))
 
 
 def cmd_console(args):
@@ -1251,8 +1346,32 @@ def _console_error_signature(event):
     return (event.get("type"), event.get("text"))
 
 
+def _inside_handoff(event_time, windows):
+    """Whether `event_time` falls inside any of `windows` — the
+    `{"start", "end"}` dicts the daemon's `console`/`network` replies carry
+    (drive-handoff). An `end` of `None` is a window still open, so it
+    extends forward without bound: everything from its `start` onward is the
+    human's until `resume` closes it. An event with no `time` at all is
+    never inside a window — it cannot be placed, so it is judged by the
+    ordinary rules rather than excused by a window it might not belong to.
+
+    Pure, and total on its inputs: no windows (the default for every caller
+    that never hands a handoff a page) is always `False`."""
+    if event_time is None or not windows:
+        return False
+    for window in windows:
+        start = window.get("start")
+        if start is None or event_time < start:
+            continue
+        end = window.get("end")
+        if end is None or event_time <= end:
+            return True
+    return False
+
+
 def compute_verdict(baseline_console, final_console, network_events,
-                    target_origin, signal_observed, signal_name):
+                    target_origin, signal_observed, signal_name,
+                    handoff_windows=None):
     """The run's verdict (drive-verdict): `("PASS" | "FAIL", evidence)`,
     `evidence` a list of human-readable lines.
 
@@ -1269,10 +1388,18 @@ def compute_verdict(baseline_console, final_console, network_events,
       shares `target_origin` fails the run; a response to a different
       origin (a third-party asset, a CDN) is not evidence against this
       run.
+    - `handoff_windows` (the daemon's `handoffs` list, absent by default so
+      every existing caller is unchanged) excuses the human's own doing: an
+      event whose `time` falls inside a window is listed as `during
+      handoff: <line>` and never fails the run, because a person clicking
+      around a live page produces console errors and 4xx responses the
+      change under test is not answerable for. The same event outside every
+      window is judged exactly as it always was.
 
     Pure — no I/O; every input is evidence already collected by the
     session daemon's `console`/`network` verbs."""
     evidence = []
+    handoff_evidence = []
     ok = True
 
     if not signal_observed:
@@ -1289,7 +1416,11 @@ def compute_verdict(baseline_console, final_console, network_events,
             continue
         if _console_error_signature(event) in baseline_errors:
             continue
-        evidence.append("new console error: %s" % event.get("text"))
+        line = "new console error: %s" % event.get("text")
+        if _inside_handoff(event.get("time"), handoff_windows):
+            handoff_evidence.append("during handoff: %s" % line)
+            continue
+        evidence.append(line)
         ok = False
 
     for event in network_events:
@@ -1299,11 +1430,18 @@ def compute_verdict(baseline_console, final_console, network_events,
         url = event.get("url") or ""
         if _response_origin(url) != target_origin:
             continue
-        evidence.append("%s %s -> %s response from the target's own origin"
-                        % (event.get("method") or "?", url, status))
+        line = ("%s %s -> %s response from the target's own origin"
+                % (event.get("method") or "?", url, status))
+        if _inside_handoff(event.get("time"), handoff_windows):
+            handoff_evidence.append("during handoff: %s" % line)
+            continue
+        evidence.append(line)
         ok = False
 
-    return ("PASS" if ok else "FAIL"), evidence
+    # The human's own events come last, after everything the run is actually
+    # answerable for, so a reader sees the verdict's grounds first and the
+    # aside second.
+    return ("PASS" if ok else "FAIL"), evidence + handoff_evidence
 
 
 # --- argument parsing -----------------------------------------------------
@@ -1335,6 +1473,10 @@ def build_parser():
         "login", help="obtain or reuse a cached login for a target")
     p_login.add_argument("target", nargs="?", default=None,
                          help="target name (default: the config default)")
+    p_login.add_argument("--manual", action="store_true",
+                         help="log in by hand in a visible browser window, "
+                              "whatever the target's auth recipe says, even "
+                              "while a cached login is still fresh")
     p_login.set_defaults(func=cmd_login)
 
     p_session = sub.add_parser(
@@ -1343,6 +1485,11 @@ def build_parser():
     p_session.add_argument("target", nargs="?", default=None,
                            help="target name (default: the config "
                                 "default; only meaningful for `start`)")
+    p_session.add_argument("--headed", action="store_true",
+                           help="launch the browser visible instead of "
+                                "headless (only meaningful for `start`); "
+                                "a running headless session can still be "
+                                "taken over later with `handoff`")
     p_session.set_defaults(func=cmd_session)
 
     p_open = sub.add_parser("open", help="navigate the session's page")
@@ -1385,6 +1532,22 @@ def build_parser():
     p_shot = sub.add_parser("shot", help="take a screenshot")
     p_shot.add_argument("--out", default=None, help="output path")
     p_shot.set_defaults(func=cmd_shot)
+
+    p_handoff = sub.add_parser(
+        "handoff", help="hand the live session over to the human: relaunch "
+                        "the browser visible and open a handoff window")
+    p_handoff.add_argument("signal", nargs="?", default=None,
+                           help="completion signal to block on (the `wait` "
+                                "verb's grammar); omit it to return at once "
+                                "and close the window with `resume`")
+    p_handoff.add_argument("--timeout", type=float, default=None,
+                           help="seconds to wait for that signal")
+    p_handoff.set_defaults(func=cmd_handoff)
+
+    p_resume = sub.add_parser(
+        "resume", help="take the session back and close the open handoff "
+                       "window")
+    p_resume.set_defaults(func=cmd_resume)
 
     p_console = sub.add_parser(
         "console", help="print console events accumulated since the "

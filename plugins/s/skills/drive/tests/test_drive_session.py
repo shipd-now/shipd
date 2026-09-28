@@ -4,7 +4,9 @@ the driving verbs as thin socket clients, `console` relaying whatever the
 daemon returns (the daemon's own job is buffering events across navigation
 — covered separately in `browser_worker.py`, which these tests never
 import), `session start` replacing a running session for a different
-target, and `session status` reporting a stale socket.
+target, `session start --headed` forwarding the flag and recording the mode,
+`session status` reporting that mode and a stale socket, and the `handoff`/
+`resume` verbs as socket clients like every other driving verb.
 
 None of this touches Playwright. Two fake-server strategies stand in for
 the real `browser_worker.py session` daemon:
@@ -25,10 +27,12 @@ the real `browser_worker.py session` daemon:
 
 Session state contract this suite pins (`drive-session`, no prior task
 having fixed it yet): a session state file at
-``~/.shipd/drive/session.json`` holding ``{"target", "pid", "socket"}``,
-and a **fixed** socket path ``~/.shipd/drive/session.sock`` (drive-skill's
-plan.md: "a Unix socket at ``~/.shipd/drive/session.sock``") — one session
-at a time, never one per target.
+``~/.shipd/drive/session.json`` holding
+``{"target", "pid", "socket", "headed"}``, and a **fixed** socket path
+``~/.shipd/drive/session.sock`` (drive-skill's plan.md: "a Unix socket at
+``~/.shipd/drive/session.sock``") — one session at a time, never one per
+target. ``headed`` records which window mode `session start` launched, so
+`session status` can report it.
 """
 
 import json
@@ -136,9 +140,15 @@ target = _arg("--target")
 sock_path = _arg("--socket")
 marker_dir = os.environ["DRIVE_TEST_MARKER_DIR"]
 marker_path = os.path.join(marker_dir, "running-%s.pid" % target)
+argv_path = os.path.join(marker_dir, "argv-%s.json" % target)
 
 with open(marker_path, "w", encoding="utf-8") as fh:
     fh.write(str(os.getpid()))
+
+# The worker's own argv, so a test can assert on what `session start`
+# forwarded (e.g. `--headed`) without the daemon's own behavior changing.
+with open(argv_path, "w", encoding="utf-8") as fh:
+    json.dump(argv, fh)
 
 
 def _cleanup(*_a):
@@ -208,10 +218,17 @@ class DriveSessionTestBase(unittest.TestCase):
     def socket_path(self):
         return os.path.join(self.home, SESSION_SUBDIR, SESSION_SOCKET_NAME)
 
-    def write_state(self, target, pid, sock_path=None):
+    def write_state(self, target, pid, sock_path=None, headed=None):
+        state = {"target": target, "pid": pid,
+                 "socket": sock_path or self.socket_path()}
+        if headed is not None:
+            state["headed"] = headed
         with open(self.state_path(), "w", encoding="utf-8") as fh:
-            json.dump({"target": target, "pid": pid,
-                      "socket": sock_path or self.socket_path()}, fh)
+            json.dump(state, fh)
+
+    def read_state(self):
+        with open(self.state_path(), encoding="utf-8") as fh:
+            return json.load(fh)
 
     def start_fake_server(self, console_events=None, reply_overrides=None):
         server = _FakeSessionServer(self.socket_path(),
@@ -255,7 +272,13 @@ class ConsoleReturnsPriorEventsTest(DriveSessionTestBase):
         self.assertIn("boom", r.stdout)
 
 
-class SessionStartReplacesDifferentTargetTest(DriveSessionTestBase):
+class SessionSpyTestBase(DriveSessionTestBase):
+    """Base for the tests that really run `session start`, spawning the
+    `_UV_SESSION_SPY` daemon through the restricted-PATH `uv`. Everything a
+    spawning test needs lives here — the spy `PATH` directory, the marker
+    and argv paths the spy writes, a poll helper, and the tearDown that
+    stops the daemon before the tree it lives under is removed."""
+
     def tearDown(self):
         """Stop whatever daemon this test left running, before the base
         class removes the tree that daemon lives under. The replacement
@@ -305,6 +328,13 @@ class SessionStartReplacesDifferentTargetTest(DriveSessionTestBase):
     def marker_path(self, target):
         return os.path.join(self.tmp, "running-%s.pid" % target)
 
+    def argv_path(self, target):
+        return os.path.join(self.tmp, "argv-%s.json" % target)
+
+    def read_spy_argv(self, target):
+        with open(self.argv_path(target), encoding="utf-8") as fh:
+            return json.load(fh)
+
     def wait_for(self, predicate, timeout=5.0):
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -313,6 +343,8 @@ class SessionStartReplacesDifferentTargetTest(DriveSessionTestBase):
             time.sleep(0.05)
         return predicate()
 
+
+class SessionStartReplacesDifferentTargetTest(SessionSpyTestBase):
     def test_starting_a_different_target_stops_the_running_daemon_first(
             self):
         bindir = self.spy_bindir()
@@ -341,6 +373,60 @@ class SessionStartReplacesDifferentTargetTest(DriveSessionTestBase):
         with open(self.state_path(), encoding="utf-8") as fh:
             state = json.load(fh)
         self.assertEqual(state.get("target"), "new-target")
+
+
+class HeadedSessionTest(SessionSpyTestBase):
+    """drive-session's headed mode: headless stays the default and
+    `--headed` opts in, the flag reaches the worker's argv, and the session
+    state file records the mode so `session status` can report it."""
+
+    def test_headed_flag_reaches_the_worker_and_the_state_file(self):
+        bindir = self.spy_bindir()
+        r = self.run_cli("session", "start", "app", "--headed",
+                         path_dir=bindir,
+                         extra_env={"DRIVE_TEST_MARKER_DIR": self.tmp})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(
+            self.wait_for(lambda: os.path.isfile(self.argv_path("app"))),
+            "the session daemon never started")
+
+        self.assertIn("--headed", self.read_spy_argv("app"))
+        self.assertIs(self.read_state().get("headed"), True)
+
+    def test_plain_session_start_stays_headless(self):
+        bindir = self.spy_bindir()
+        r = self.run_cli("session", "start", "app",
+                         path_dir=bindir,
+                         extra_env={"DRIVE_TEST_MARKER_DIR": self.tmp})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(
+            self.wait_for(lambda: os.path.isfile(self.argv_path("app"))),
+            "the session daemon never started")
+
+        self.assertNotIn("--headed", self.read_spy_argv("app"))
+        self.assertIs(self.read_state().get("headed"), False)
+
+
+class SessionStatusReportsTheModeTest(DriveSessionTestBase):
+    """`session status` names the window mode the state file recorded, so a
+    caller can tell whether a takeover still needs a relaunch."""
+
+    def test_status_reports_a_headed_session(self):
+        self.start_fake_server()
+        self.write_state("app", os.getpid(), headed=True)
+
+        r = self.run_cli("session", "status")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("headed", r.stdout)
+        self.assertNotIn("headless", r.stdout)
+
+    def test_status_reports_a_headless_session(self):
+        self.start_fake_server()
+        self.write_state("app", os.getpid(), headed=False)
+
+        r = self.run_cli("session", "status")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("headless", r.stdout)
 
 
 class FailedVerbExitsNonZeroTest(DriveSessionTestBase):
@@ -382,6 +468,51 @@ class FailedVerbExitsNonZeroTest(DriveSessionTestBase):
 
         r = self.run_cli("open", "https://app.example/dashboard")
         self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class HandoffAndResumeVerbsTest(DriveSessionTestBase):
+    """drive-handoff's client side: `handoff` and `resume` are thin socket
+    clients like every other driving verb — one JSON request out, the reply
+    printed verbatim, a falsey `ok` exiting non-zero."""
+
+    def test_handoff_with_no_signal_sends_a_bare_request(self):
+        server = self.start_fake_server()
+        self.write_state("app", os.getpid())
+
+        r = self.run_cli("handoff")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(server.received), 1)
+        # No signal and no timeout were given, so neither reaches the
+        # daemon — never as an explicit null.
+        self.assertEqual(server.received[0], {"op": "handoff"})
+        self.assertIn("echo", r.stdout)
+
+    def test_handoff_forwards_its_signal_and_timeout(self):
+        server = self.start_fake_server()
+        self.write_state("app", os.getpid())
+
+        r = self.run_cli("handoff", "url:**/home", "--timeout", "30")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(server.received[0].get("op"), "handoff")
+        self.assertEqual(server.received[0].get("signal"), "url:**/home")
+        self.assertEqual(server.received[0].get("timeout"), 30.0)
+
+    def test_resume_sends_a_bare_request(self):
+        server = self.start_fake_server()
+        self.write_state("app", os.getpid())
+
+        r = self.run_cli("resume")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(server.received[0], {"op": "resume"})
+
+    def test_a_failed_resume_is_printed_and_exits_non_zero(self):
+        failed_reply = {"ok": False, "error": "no handoff window is open"}
+        self.start_fake_server(reply_overrides={"resume": failed_reply})
+        self.write_state("app", os.getpid())
+
+        r = self.run_cli("resume")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(json.loads(r.stdout), failed_reply)
 
 
 class SessionStatusReportsStaleSocketTest(DriveSessionTestBase):
