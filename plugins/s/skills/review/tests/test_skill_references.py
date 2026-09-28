@@ -646,6 +646,22 @@ class FooterParityTest(unittest.TestCase):
         self.assertEqual(self.workflow["footer"](None), [])
         self.assertEqual(self.workflow["footer"]({"filename": "a.py"}), [])
 
+    def test_folded_footer_keeps_the_verdict_marker_last(self):
+        """The footer is folded above the verdict marker, so the gate's
+        backwards marker scan still reads the marker from the body's last
+        non-blank line, with the footer directly above it."""
+        fold, footer = self.workflow["fold"], self.workflow["footer"]
+        files = [{"filename": "a.py", "additions": 12, "deletions": 3}]
+        for marker in self.workflow["MARKERS"]:
+            with self.subTest(marker=marker):
+                body = "## Findings: x\n\nsome text\n\n%s\n" % marker
+                folded = fold(body, footer(files))
+                lines = [ln for ln in folded.splitlines() if ln.strip()]
+                self.assertEqual(lines[-1], marker)
+                self.assertEqual(lines[-2], "Reviewed 1 file, +12 -3 lines.")
+        self.assertEqual(fold("no marker here\n", footer(files)),
+                         "no marker here\n\nReviewed 1 file, +12 -3 lines.\n")
+
 
 class NoProblemsWordingTest(unittest.TestCase):
     """A clean review says "No problems found." on every surface that renders
