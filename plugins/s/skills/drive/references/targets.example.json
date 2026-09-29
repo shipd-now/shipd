@@ -10,18 +10,18 @@
       "url": "https://staging.example.com",
       "auth": {
         "kind": "env",
-        "// kind=env": "Reads two environment variables already set in the caller's shell. The CLI never writes them to disk or to a worker's argv — only to the worker's environment.",
-        "usernameEnv": "DRIVE_STAGING_USERNAME",
-        "passwordEnv": "DRIVE_STAGING_PASSWORD"
+        "// kind=env": "Reads two environment variables already set in the caller's shell, named by the `username` and `password` keys. The CLI never writes them to disk or to a worker's argv — only to the worker's environment.",
+        "username": "DRIVE_STAGING_USERNAME",
+        "password": "DRIVE_STAGING_PASSWORD"
       }
     },
     "prod-readonly": {
       "url": "https://app.example.com",
       "auth": {
         "kind": "command",
-        "// kind=command": "Runs two argv arrays and takes each secret from that command's stdout, trailing newline stripped. The `op item get` example below is one documented recipe built on the 1Password CLI — never a requirement; any command that prints a secret to stdout works.",
-        "usernameCmd": ["op", "item", "get", "shipd-drive-prod-readonly", "--fields", "label=username", "--reveal"],
-        "passwordCmd": ["op", "item", "get", "shipd-drive-prod-readonly", "--fields", "label=password", "--reveal"]
+        "// kind=command": "Runs the two argv arrays under the `username` and `password` keys and takes each secret from that command's stdout, trailing newline stripped. The `op item get` example below is one documented recipe built on the 1Password CLI — never a requirement; any command that prints a secret to stdout works.",
+        "username": ["op", "item", "get", "shipd-drive-prod-readonly", "--fields", "label=username", "--reveal"],
+        "password": ["op", "item", "get", "shipd-drive-prod-readonly", "--fields", "label=password", "--reveal"]
       }
     },
     "sso-manual": {
