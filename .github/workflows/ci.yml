@@ -32,6 +32,9 @@ jobs:
       - name: Run eval harness test suite
         run: python3 -m unittest discover -s evals/tests -v
 
+      - name: Run tools test suite
+        run: python3 -m unittest discover -s tools/tests -v
+
       - name: Install third-party deps (board tui)
         run: python3 -m pip install -r requirements.txt
 
