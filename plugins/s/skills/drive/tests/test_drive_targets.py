@@ -2,10 +2,11 @@
 """Unit tests for `drive.py`'s target/credential resolution
 (drive-targets-config): a repository-level `<content-dir>/drive/targets.json`
 overrides the same-named entry in the user-level `~/.shipd/drive/targets.json`;
-the `env` and `command` auth recipes each resolve both secrets; the login
-worker's argv never carries a resolved secret while its environment does; and
-naming a target declared in neither file is a single `Error:` line with a
-non-zero exit.
+the `env` and `command` auth recipes each resolve both secrets; the `manual`
+recipe resolves no credential at all while `targets` still reports its kind;
+the login worker's argv never carries a resolved secret while its environment
+does; and naming a target declared in neither file is a single `Error:` line
+with a non-zero exit.
 
 `drive.py` never imports `playwright` and shells to the login worker only
 through `uv run`, so these tests never touch a real browser: the `uv` binary
@@ -30,6 +31,10 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
 SCRIPT = os.path.join(SCRIPTS, "drive.py")
+if SCRIPTS not in sys.path:
+    sys.path.insert(0, SCRIPTS)
+
+import drive  # noqa: E402 - stdlib-only, imports no playwright
 
 _UV_SPY_TEMPLATE = """#!{python}
 import json
@@ -193,6 +198,37 @@ class AuthRecipeResolutionTest(DriveTargetsTestBase):
         # ...while its environment is exactly how drive.py is required to
         # pass it (drive-targets-config: "through its environment only").
         self.assertEqual(spied["env"].get("DRIVE_LOGIN_PASSWORD"), secret)
+
+
+class ManualAuthRecipeTest(DriveTargetsTestBase):
+    """drive-targets-config's `manual` kind: the recipe a human logs in
+    under. It names no credential at all, so `resolve_auth` resolves
+    nothing — and `targets` still reports the kind, the same way it does
+    for `env`/`command`/`none`."""
+
+    def test_manual_auth_recipe_resolves_no_credential(self):
+        entry = {"url": "https://sso.example",
+                 "auth": {"kind": "manual", "done": "url:**/home",
+                          "timeoutSeconds": 300}}
+
+        def _never_run(argv, input=None, env=None):
+            raise AssertionError(
+                "a manual auth recipe ran a credential command: %r" % (argv,))
+
+        self.assertEqual(drive.resolve_auth(entry, run=_never_run),
+                         (None, None))
+
+    def test_targets_prints_the_manual_kind(self):
+        self.write_json(self.user_targets_path(), {
+            "targets": {
+                "sso": {"url": "https://sso.example",
+                        "auth": {"kind": "manual"}},
+            },
+        })
+
+        r = self.run_cli("targets")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("sso: https://sso.example (auth: manual)", r.stdout)
 
 
 class UnknownTargetTest(DriveTargetsTestBase):

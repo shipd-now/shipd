@@ -1,59 +1,59 @@
-# shipd-drive
+## ADDED Requirements
 
-### Requirement: Drive skill flow
-id: drive-skill-flow
+### Requirement: Human handoff of the live session
+id: drive-handoff
 
-The plugin SHALL ship a `/s:drive` skill at `plugins/s/skills/drive/SKILL.md`
-whose first user-visible status sentence names the running plugin version read
-from the plugin manifest, and whose flow runs in order: resolve the target,
-run the preflight, obtain or reuse a login, start the session, drive the
-requested instructions, and print a verdict. The skill SHALL issue no
-`AskUserQuestion`; where the request names no target, it SHALL print the
-resolved targets as a numbered plain-text list and read a typed reply. When a
-login fails, the skill SHALL end its turn with a numbered plain-text list
-offering a manual login in a visible window, a retry, or a stop. When a
-driving verb fails or a wait times out, the skill SHALL end its turn with a
-numbered plain-text list offering a handoff on the failed signal, a retry, or
-a stop, stating that a relaunch loses unsaved in-page state. Before authoring
-any precise selector the skill SHALL sample the live DOM with the read-only
-`probe` verb rather than guessing, and SHALL wait for a named completion
-signal — never a fixed sleep — before reporting an outcome. The plugin SHALL
-ship a matching harness body at `plugins/s/harness/bodies/drive.md`.
+The CLI SHALL expose `handoff [signal] [--timeout <seconds>]` and `resume`
+as driving verbs that each send one JSON request to the session socket. When
+the daemon receives `handoff` while its browser is headless, it SHALL relaunch
+the browser visible inside the same process, carrying over the context's
+storage state, the page's current URL, and every accumulated console and
+network event, and SHALL reply with a truthy `relaunched` field; while the
+browser is already visible it SHALL relaunch nothing and reply with a falsey
+`relaunched` field. On every `handoff` the daemon SHALL open a handoff window
+stamped with the current time. Where `handoff` carries a `signal`, the daemon
+SHALL wait for it with the `wait` verb's grammar and a default timeout of 300
+seconds, closing the window when the signal appears; if the signal never
+appears within the timeout, then the daemon SHALL close the window and reply
+with a falsey `ok`. Where `handoff` carries no signal, the daemon SHALL reply
+at once with an `open` field of true, and `resume` SHALL drain pending events
+and close the open window. If `resume` arrives with no open window, then the
+daemon SHALL reply with a falsey `ok`. If `handoff` arrives while a window is
+already open, then the daemon SHALL open no second window, relaunch nothing,
+and reply with a falsey `ok`. The `console` and `network` replies SHALL carry
+a `handoffs` list of `{"start", "end"}` windows.
 
-#### Scenario: The skill names its version first
-- **WHEN** a `/s:drive` session begins
-- **THEN** its first user-visible status sentence carries `s:drive v<version>`
-  read from the plugin manifest
+#### Scenario: A headless session relaunches visible on handoff
+- **WHEN** `handoff` reaches a daemon launched without `--headed`
+- **THEN** the browser reopens visible at the same URL with the same storage
+  state, the events recorded before the handoff remain readable, and the reply
+  carries `relaunched` true
 
-#### Scenario: A missing target is asked for as plain text
-- **WHEN** the request names no target and more than one is resolved
-- **THEN** the skill ends its turn with the targets as a numbered plain-text
-  list and issues no `AskUserQuestion`
+#### Scenario: A handoff with a signal hands back on that signal
+- **WHEN** `handoff url:**/dashboard` runs and the page later reaches that URL
+- **THEN** the verb exits zero and the `console` reply carries one window with
+  both `start` and `end` set
 
-#### Scenario: The probe verb samples the live DOM
-- **WHEN** the control CLI's `probe` verb runs against a reachable page
-- **THEN** it drives the browser worker's read-only sampler and reports the
-  accessibility tree, testid inventory, scoped HTML, and screenshot it wrote,
-  exiting zero without submitting, saving, or creating anything
+#### Scenario: A handoff without a signal waits for resume
+- **WHEN** `handoff` runs with no signal, then `resume` runs
+- **THEN** the first reply carries `open` true and the `network` reply after
+  `resume` carries one closed window
 
-#### Scenario: Harness body parity holds
-- **WHEN** the harness body template ids are compared against the
-  `SKILL.md`-bearing directories under `plugins/s/skills/`
-- **THEN** `drive` appears in both sets
+#### Scenario: A resume with no open window fails
+- **WHEN** `resume` runs while no handoff window is open
+- **THEN** the reply carries `ok` false and the verb exits non-zero
 
-#### Scenario: A failed login offers a manual one
-- **WHEN** the `login` verb exits non-zero during the login stage
-- **THEN** the skill ends its turn with a numbered plain-text list whose first
-  option is `login <target> --manual`, and issues no `AskUserQuestion`
+#### Scenario: A second handoff while one is open fails
+- **WHEN** `handoff` runs with no signal, then `handoff` runs again before
+  `resume`
+- **THEN** the second reply carries `ok` false, the verb exits non-zero, and
+  the `console` reply still carries exactly one window
 
-#### Scenario: A failed verb offers a handoff
-- **WHEN** a driving verb exits non-zero or `wait` times out during the drive
-  stage
-- **THEN** the skill ends its turn with a numbered plain-text list whose first
-  option is `handoff <signal>`, naming the relaunch cost
+## MODIFIED Requirements
 
 ### Requirement: Target and credential resolution
 id: drive-targets-config
+base: f8043dbd753a
 
 The control CLI SHALL resolve targets from `~/.shipd/drive/targets.json`,
 overridden entry-by-entry by `<content-dir>/drive/targets.json` when the
@@ -91,6 +91,7 @@ one `Error:` line naming the target and exit non-zero.
 
 ### Requirement: Cached login reuse
 id: drive-auth-cache
+base: 518731a83d60
 
 The `login` verb SHALL write the browser's storage state to
 `~/.shipd/drive/auth/<target>.json`. While that file exists and its
@@ -145,6 +146,7 @@ of a debug screenshot and exit non-zero, leaving any previous cache untouched.
 
 ### Requirement: Session daemon and driving verbs
 id: drive-session
+base: fc0ff58915a5
 
 The CLI SHALL expose `session start [--headed]`, `session status`, and
 `session stop`, where `session start` launches a background worker owning one
@@ -195,6 +197,7 @@ or missing verb SHALL print usage on stderr and exit 2.
 
 ### Requirement: Verification verdict
 id: drive-verdict
+base: 7f429daddf2c
 
 Unless the request asks for a recording with no checking, a drive run SHALL
 end on a `PASS` or `FAIL` verdict carrying its evidence. The CLI SHALL treat
@@ -226,99 +229,55 @@ signal was never observed, never `PASS`.
 - **THEN** the verdict is `PASS` and the evidence lists that request under
   `during handoff`
 
-### Requirement: Drive preflight
-id: drive-doctor
+### Requirement: Drive skill flow
+id: drive-skill-flow
+base: 45b50844ae51
 
-The CLI SHALL expose a `doctor` verb reporting each prerequisite's state:
-`uv` and a Playwright browser binary are required for every verb, and
-`ffmpeg` and `ffprobe` are required only for recording and post-processing,
-and `vhs` is required only for terminal recording. The verb SHALL fail on a
-missing recording-only tool solely when the invocation declares it needs
-that tier, so driving and browser recording stay unaffected by an absent
-`vhs`.
-The verb SHALL exit non-zero when a required tool is missing and zero
-otherwise, and SHALL name a remedy for each missing tool. Where `doctor` is
-invoked with `--fix`, it SHALL install the missing browser binary through the
-Playwright worker, SHALL install a missing `ffmpeg`, `ffprobe`, or `vhs`
-through the platform package manager, and SHALL re-report. An install
-that fails SHALL NOT stop the verb: it SHALL report the failure and the
-surface that tool's absence affects — recording and post-processing for
-`ffmpeg`/`ffprobe`, terminal recording for `vhs` — name the manual
-command as the remedy, and continue with the remaining tools, and SHALL state the network access it
-performs before performing it.
+The plugin SHALL ship a `/s:drive` skill at `plugins/s/skills/drive/SKILL.md`
+whose first user-visible status sentence names the running plugin version read
+from the plugin manifest, and whose flow runs in order: resolve the target,
+run the preflight, obtain or reuse a login, start the session, drive the
+requested instructions, and print a verdict. The skill SHALL issue no
+`AskUserQuestion`; where the request names no target, it SHALL print the
+resolved targets as a numbered plain-text list and read a typed reply. When a
+login fails, the skill SHALL end its turn with a numbered plain-text list
+offering a manual login in a visible window, a retry, or a stop. When a
+driving verb fails or a wait times out, the skill SHALL end its turn with a
+numbered plain-text list offering a handoff on the failed signal, a retry, or
+a stop, stating that a relaunch loses unsaved in-page state. Before authoring
+any precise selector the skill SHALL sample the live DOM with the read-only
+`probe` verb rather than guessing, and SHALL wait for a named completion
+signal — never a fixed sleep — before reporting an outcome. The plugin SHALL
+ship a matching harness body at `plugins/s/harness/bodies/drive.md`.
 
-#### Scenario: A missing required tool fails the preflight
-- **WHEN** `doctor` runs with `uv` absent from PATH
-- **THEN** the report marks `uv` missing with a remedy and the exit code is
-  non-zero
+#### Scenario: The skill names its version first
+- **WHEN** a `/s:drive` session begins
+- **THEN** its first user-visible status sentence carries `s:drive v<version>`
+  read from the plugin manifest
 
-#### Scenario: Video tools are optional for driving
-- **WHEN** `doctor` runs with `ffmpeg` absent but `uv` and the browser present
-- **THEN** the report marks `ffmpeg` as required for recording only and the
-  exit code is zero
+#### Scenario: A missing target is asked for as plain text
+- **WHEN** the request names no target and more than one is resolved
+- **THEN** the skill ends its turn with the targets as a numbered plain-text
+  list and issues no `AskUserQuestion`
 
-#### Scenario: An absent terminal recorder never blocks driving
-- **WHEN** `doctor` runs with `vhs` absent but `uv` and the browser present
-- **THEN** the report marks `vhs` as required for terminal recording only,
-  names `brew install vhs` as its remedy, and the exit code is zero
+#### Scenario: The probe verb samples the live DOM
+- **WHEN** the control CLI's `probe` verb runs against a reachable page
+- **THEN** it drives the browser worker's read-only sampler and reports the
+  accessibility tree, testid inventory, scoped HTML, and screenshot it wrote,
+  exiting zero without submitting, saving, or creating anything
 
-#### Scenario: The fix flag installs the terminal recorder
-- **WHEN** `doctor --fix` runs with `vhs` absent
-- **THEN** the verb installs it through the platform package manager and
-  re-reports its state
+#### Scenario: Harness body parity holds
+- **WHEN** the harness body template ids are compared against the
+  `SKILL.md`-bearing directories under `plugins/s/skills/`
+- **THEN** `drive` appears in both sets
 
-#### Scenario: A failed tool install names its affected surface
-- **WHEN** `doctor --fix` runs with `vhs` absent and its install exits
-  non-zero
-- **THEN** the report names terminal recording as the affected surface and
-  `brew install vhs` as the manual remedy, and the verb still reports every
-  other tool
+#### Scenario: A failed login offers a manual one
+- **WHEN** the `login` verb exits non-zero during the login stage
+- **THEN** the skill ends its turn with a numbered plain-text list whose first
+  option is `login <target> --manual`, and issues no `AskUserQuestion`
 
-### Requirement: Human handoff of the live session
-id: drive-handoff
-
-The CLI SHALL expose `handoff [signal] [--timeout <seconds>]` and `resume`
-as driving verbs that each send one JSON request to the session socket. When
-the daemon receives `handoff` while its browser is headless, it SHALL relaunch
-the browser visible inside the same process, carrying over the context's
-storage state, the page's current URL, and every accumulated console and
-network event, and SHALL reply with a truthy `relaunched` field; while the
-browser is already visible it SHALL relaunch nothing and reply with a falsey
-`relaunched` field. On every `handoff` the daemon SHALL open a handoff window
-stamped with the current time. Where `handoff` carries a `signal`, the daemon
-SHALL wait for it with the `wait` verb's grammar and a default timeout of 300
-seconds, closing the window when the signal appears; if the signal never
-appears within the timeout, then the daemon SHALL close the window and reply
-with a falsey `ok`. Where `handoff` carries no signal, the daemon SHALL reply
-at once with an `open` field of true, and `resume` SHALL drain pending events
-and close the open window. If `resume` arrives with no open window, then the
-daemon SHALL reply with a falsey `ok`. If `handoff` arrives while a window is
-already open, then the daemon SHALL open no second window, relaunch nothing,
-and reply with a falsey `ok`. The `console` and `network` replies SHALL carry
-a `handoffs` list of `{"start", "end"}` windows.
-
-#### Scenario: A headless session relaunches visible on handoff
-- **WHEN** `handoff` reaches a daemon launched without `--headed`
-- **THEN** the browser reopens visible at the same URL with the same storage
-  state, the events recorded before the handoff remain readable, and the reply
-  carries `relaunched` true
-
-#### Scenario: A handoff with a signal hands back on that signal
-- **WHEN** `handoff url:**/dashboard` runs and the page later reaches that URL
-- **THEN** the verb exits zero and the `console` reply carries one window with
-  both `start` and `end` set
-
-#### Scenario: A handoff without a signal waits for resume
-- **WHEN** `handoff` runs with no signal, then `resume` runs
-- **THEN** the first reply carries `open` true and the `network` reply after
-  `resume` carries one closed window
-
-#### Scenario: A resume with no open window fails
-- **WHEN** `resume` runs while no handoff window is open
-- **THEN** the reply carries `ok` false and the verb exits non-zero
-
-#### Scenario: A second handoff while one is open fails
-- **WHEN** `handoff` runs with no signal, then `handoff` runs again before
-  `resume`
-- **THEN** the second reply carries `ok` false, the verb exits non-zero, and
-  the `console` reply still carries exactly one window
+#### Scenario: A failed verb offers a handoff
+- **WHEN** a driving verb exits non-zero or `wait` times out during the drive
+  stage
+- **THEN** the skill ends its turn with a numbered plain-text list whose first
+  option is `handoff <signal>`, naming the relaunch cost

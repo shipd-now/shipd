@@ -3,9 +3,8 @@
 
 Open a real browser against a resolved target, drive it through the requested
 instructions, and end on a `PASS`/`FAIL` verdict grounded in console and
-network evidence. Optionally record and post-process a branded demo of the
-same run. Nothing here touches the spec engine — this command drives an app,
-not `.shipd/`.
+network evidence; optionally record a branded demo of the same run. Nothing
+here touches the spec engine — this drives an app, not `.shipd/`.
 
 **Announce the version first.** Read the plugin version from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and open with `s:drive
@@ -36,28 +35,51 @@ offer `doctor --fix` rather than pushing on against a flagged toolchain.
 ## 3. Login
 
 Run `login <target>`. A cached storage-state file inside its TTL is reused
-with no network call; an expired or missing one triggers a real login. A
-failure names a debug screenshot path — read it before retrying.
+with no network call; an expired or missing one triggers a real login.
+
+**`login` exited non-zero** → end the turn as plain text with the debug
+screenshot path it names (read it first) and three numbered options, then read
+the typed reply: (1) `login <target> --manual` — a **visible** window the
+person logs in by hand, the only way through MFA, SSO, passkeys, or OAuth
+consent; it resolves no credential, writes the same cache, and runs even while
+the cache is fresh, so it also replaces a stale one. Tell them to look for the
+window, which may open behind the terminal, and run it with a Bash `timeout`
+of `600000` ms (the recipe's `timeoutSeconds`, default 300). (2) Retry `login
+<target>`, only when the screenshot shows something transient. (3) Stop here.
 
 ## 4. Start the session
 
 Run `session start <target>`. One browser, one page, for the life of the run
-— console and network evidence accumulates across every navigation this
-session makes. Starting a session for a different target replaces the
-running one.
+— console and network evidence accumulates across every navigation. Starting
+a session for a different target replaces the running one.
+
+**Headless by default.** `session start <target> --headed` launches it
+visible, worth it only when a person is already expected to watch or act. A
+headless session is no dead end: `handoff` relaunches it visible in place.
+`session status` names the mode.
 
 ## 5. Drive the instructions
 
 Send the requested steps through the driving verbs: `open`, `snapshot`,
-`click`, `type`, `press`, `wait`, `eval`, `shot`.
+`click`, `type`, `press`, `wait`, `eval`, `shot`, `handoff`, `resume`.
 
 - **Probe before you select.** Run the read-only `probe` verb against the
-  live page before authoring any precise selector — its accessibility tree,
-  `data-testid`/`data-anchor` inventory, scoped HTML, and screenshot are
-  ground truth; a selector guessed from memory or source is not.
+  live page before authoring any precise selector — its dump is ground
+  truth; a selector guessed from memory or source is not.
 - **Wait for a named completion signal, never a fixed sleep.** `wait` blocks
   on the signal itself — a URL change, an element becoming visible, a
-  network response landing — before any step counts as finished.
+  response landing — before any step counts as finished.
+
+**A verb exited non-zero, or a `wait` timed out** → end the turn as plain
+text with what failed and three numbered options, then read the reply: (1)
+`handoff <signal>`, the signal that just failed to appear — the daemon
+relaunches the browser **visible** in place and waits while the person acts,
+keeping the login, the URL, and all accumulated evidence, but it opens a new
+page, so **anything unsaved in the page is lost**: say so, and tell them to
+look for the Chromium window. With no signal it returns at once and the window
+stays open until `resume` closes it. Run it with a Bash `timeout` of `600000`
+ms (`--timeout`, default 300 s). (2) Retry the verb, only after a fresh
+`probe` shows the page has moved on. (3) Stop and report the failure.
 
 ## 6. Verdict
 
@@ -65,13 +87,15 @@ Unless the request wants a recording with no checking, close on `PASS` or
 `FAIL`, computed — never impression-based:
 
 - The console errors present right after the first navigation are the
-  **baseline**; an error already there and still there afterward does not
-  fail the run.
+  **baseline**; one already there and still there afterward does not fail.
 - Warnings never fail a run.
 - Any 4xx/5xx response to the target's own origin fails the run, naming the
   request.
 - A completion signal that never appears within its timeout is `FAIL`,
   stating plainly it was never observed — never `PASS` on a timeout.
+- Events whose time falls inside a `handoff` window are listed under
+  `during handoff` and never fail the run — a person clicking a live page
+  produces noise the change is not answerable for.
 
 Report the verdict with the evidence lines it rests on, not a summary.
 
@@ -86,4 +110,4 @@ action-module contract and helper API before writing one — then `post
 
 The session daemon outlives the turn that started it by design. Stop it when
 the run is done: `session stop`. A later `session start` reclaims a stale
-socket automatically, but do not rely on that instead of stopping your own.
+socket, but do not rely on that instead of stopping your own.

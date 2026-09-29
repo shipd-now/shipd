@@ -5,7 +5,7 @@
   "default": "staging",
   "// default": "The target name /s:drive assumes when the request names none and more than one target is configured; otherwise the skill lists targets as plain text and asks (drive-skill-flow).",
   "targets": {
-    "// targets": "Each entry declares a url and an auth recipe of kind none, env, or command.",
+    "// targets": "Each entry declares a url and an auth recipe of kind none, env, command, or manual.",
     "staging": {
       "url": "https://staging.example.com",
       "auth": {
@@ -22,6 +22,18 @@
         "// kind=command": "Runs two argv arrays and takes each secret from that command's stdout, trailing newline stripped. The `op item get` example below is one documented recipe built on the 1Password CLI — never a requirement; any command that prints a secret to stdout works.",
         "usernameCmd": ["op", "item", "get", "shipd-drive-prod-readonly", "--fields", "label=username", "--reveal"],
         "passwordCmd": ["op", "item", "get", "shipd-drive-prod-readonly", "--fields", "label=password", "--reveal"]
+      }
+    },
+    "sso-manual": {
+      "url": "https://sso.example.com/login",
+      "auth": {
+        "kind": "manual",
+        "// kind=manual": "No credential at all — a visible Chromium window opens at the url above and a person logs in by hand, which is the only way through MFA, SSO, a passkey, or an OAuth consent screen. drive.py resolves nothing and sets no login variable in the worker's environment. The storage state it captures is written to the same ~/.shipd/drive/auth/<target>.json cache every other kind writes, and reused under the same authCacheTtlHours TTL.",
+        "done": "url:**/home",
+        "// done": "The completion signal that ends the wait, in the `wait` verb's grammar: a load state (load/domcontentloaded/networkidle), url:<pattern>, or a selector to wait for visible. Name a signal that only appears AFTER the login — one already true on the login page returns immediately. Omit it and the default rule applies instead: the wait ends once the URL has left the login page while the host still matches it, so a bounce through an identity provider's own domain does not end it early.",
+        "timeoutSeconds": 300,
+        "// timeoutSeconds": "How long to wait for that signal before giving up (default 300). On expiry the worker writes a debug screenshot beside the cache path, reports one Error: line, and leaves any previous cache untouched.",
+        "// --manual": "Any target, whatever its kind, can be logged into by hand with `drive.py login <target> --manual`. That flag also overrides a still-fresh cache, which is how you replace a cached login you know has gone bad."
       }
     },
     "public-demo": {
