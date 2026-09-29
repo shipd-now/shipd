@@ -25,10 +25,22 @@ window, and relaunches nothing (drive-handoff's "a second handoff while one
 is open fails"); `resume` closes the open window; `resume` with none open
 refuses; and a `handoff`/`resume`/`handoff` cycle opens a second window
 normally, so the guard rejects only the overlapping case.
+
+The same fake-page approach reaches two more browser-free seams in the same
+module, so they live here rather than in a third file that would duplicate
+the stub: `_wait_for_manual_login`'s default completion rule (which URL it
+compares against — the bug where a configured url lacking the trailing slash
+Chromium adds ends the wait on first paint) and `_teardown`'s tolerance of a
+browser the human already closed.
 """
 
+import contextlib
+import io
+import json
 import os
+import shutil
 import sys
+import tempfile
 import types
 import unittest
 
@@ -166,6 +178,287 @@ class HandoffOnAVisibleBrowserTest(unittest.TestCase):
         reply = bw._handle_handoff(_ctx(headed=True))
 
         self.assertFalse(reply["relaunched"])
+
+
+class _RecordingPage:
+    """A page that records the `wait_for_function` call
+    `_wait_for_manual_login` makes, and reports whatever `url` the test
+    gives it — which is the whole point: `page.url` is the browser's
+    normalized URL, and the default completion rule has to compare against
+    *that*, not the configured string."""
+
+    def __init__(self, url):
+        self.url = url
+        self.calls = []
+
+    def wait_for_function(self, expression, arg=None, timeout=None):
+        self.calls.append({"expression": expression, "arg": arg,
+                           "timeout": timeout})
+
+
+class ManualLoginDefaultRuleTest(unittest.TestCase):
+    """The default manual-login completion rule compares `location.href`
+    against the URL the browser landed on. Comparing against the raw
+    configured url instead is a silent, high-cost regression: Chromium
+    normalizes `https://h` to `https://h/`, so the inequality holds from the
+    first paint, the wait returns before anyone has logged in, and an
+    unauthenticated storage state is cached for the whole TTL. These tests
+    assert the argument is what `page.url` reports."""
+
+    def test_the_rule_compares_against_the_landed_url(self):
+        page = _RecordingPage("http://h/")
+
+        bw._wait_for_manual_login(page, "http://h/", None, 20)
+
+        self.assertEqual(len(page.calls), 1)
+        call = page.calls[0]
+        self.assertEqual(call["arg"], ["http://h/", "h"])
+        self.assertEqual(call["expression"], bw._MANUAL_DONE_JS)
+        self.assertEqual(call["timeout"], 20 * 1000)
+
+    def test_the_landed_url_wins_over_a_slashless_configured_url(self):
+        # The regression case. The configured target url is `http://h` and
+        # the browser lands on `http://h/`; `cmd_login` is what passes
+        # `page.url` through, so the rule must see the trailing slash. An
+        # implementation that forwarded the configured string would put
+        # "http://h" here and `location.href !== u` would be true at once.
+        page = _RecordingPage("http://h/")
+
+        bw._wait_for_manual_login(page, page.url, None, 20)
+
+        self.assertEqual(page.calls[0]["arg"], ["http://h/", "h"])
+        self.assertNotEqual(page.calls[0]["arg"][0], "http://h")
+
+    def test_the_notice_names_the_same_url_the_rule_compares(self):
+        # The stderr notice and the wait must describe one URL, or the
+        # person is told to wait for something other than what is checked.
+        description = bw._manual_wait_description("http://h/", None)
+
+        self.assertIn("http://h/", description)
+        self.assertIn("h", description)
+
+    def test_a_done_signal_bypasses_the_default_rule(self):
+        page = _RecordingPage("http://h/")
+        waited = []
+
+        original = bw._wait_for_signal
+        bw._wait_for_signal = lambda p, sig, t=None: waited.append((sig, t))
+        try:
+            bw._wait_for_manual_login(page, page.url, "url:**/home", 20)
+        finally:
+            bw._wait_for_signal = original
+
+        self.assertEqual(waited, [("url:**/home", 20)])
+        self.assertEqual(page.calls, [],
+                         "the default rule ran despite an explicit signal")
+
+
+class _FakeLoginPage:
+    """A page for the `cmd_login` seam: `goto` records the requested url and
+    then reports a *normalized* `url` the way Chromium would, so a test can
+    tell which of the two `cmd_login` forwards to the completion rule."""
+
+    def __init__(self, landed_url):
+        self._landed_url = landed_url
+        self.url = "about:blank"
+        self.goto_urls = []
+        self.waits = []
+        self.context = self
+
+    def goto(self, url, wait_until=None):
+        self.goto_urls.append(url)
+        self.url = self._landed_url
+
+    def wait_for_function(self, expression, arg=None, timeout=None):
+        self.waits.append({"expression": expression, "arg": arg,
+                           "timeout": timeout})
+
+    def screenshot(self, path=None):
+        pass
+
+    # `page.context` is this same object: `_write_storage_state_privately`
+    # only needs a `storage_state(path=...)` that writes the file.
+    def storage_state(self, path=None):
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"cookies": []}, fh)
+
+
+class _FakeBrowser:
+    def __init__(self, page):
+        self._page = page
+        self.launched_headless = None
+        self.closed = False
+
+    def new_page(self):
+        return self._page
+
+    def close(self):
+        self.closed = True
+
+
+class _FakePlaywright:
+    def __init__(self, browser):
+        self.chromium = self
+        self._browser = browser
+
+    def launch(self, headless=True):
+        self._browser.launched_headless = headless
+        return self._browser
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+class _Args:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+class ManualLoginSeamTest(unittest.TestCase):
+    """The `cmd_login` seam — the actual site of the normalization bug. The
+    helper tests above pin what `_wait_for_manual_login` does with the url it
+    is handed; this pins which url `cmd_login` hands it, which is the half
+    that was wrong. Playwright is faked through the same `sys.modules` stub
+    this file already installs, so no browser is involved."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="drive-manual-seam-")
+        self.page = _FakeLoginPage("https://app.example/")
+        self.browser = _FakeBrowser(self.page)
+        self.fake_pw = _FakePlaywright(self.browser)
+        self._sync_api = sys.modules["playwright.sync_api"]
+        self._original = getattr(self._sync_api, "sync_playwright", None)
+        self._sync_api.sync_playwright = lambda: self.fake_pw
+
+    def tearDown(self):
+        self._sync_api.sync_playwright = self._original
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _args(self, **over):
+        base = dict(url="https://app.example",
+                    out=os.path.join(self.tmp, "app.json"),
+                    debug_screenshot=None, manual=True, done=None,
+                    timeout=20.0)
+        base.update(over)
+        return _Args(**base)
+
+    def _run(self, args):
+        """Run `cmd_login` with its streams captured — it prints the result
+        JSON to stdout and the waiting notice to stderr, neither of which
+        belongs in the test runner's output. Returns
+        `(rc, stdout, stderr)`."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err):
+            rc = bw.cmd_login(args)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_cmd_login_waits_on_the_landed_url_not_the_configured_one(self):
+        # The configured url has no trailing slash; the browser lands on one.
+        args = self._args()
+
+        rc, _out, err = self._run(args)
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.page.goto_urls, ["https://app.example"])
+        self.assertEqual(len(self.page.waits), 1)
+        # The rule must compare against what the browser reports. Forwarding
+        # the configured "https://app.example" here would make
+        # `location.href !== u` true on first paint, completing the manual
+        # login before anyone logged in.
+        self.assertEqual(self.page.waits[0]["arg"],
+                         ["https://app.example/", "app.example"])
+        self.assertNotEqual(self.page.waits[0]["arg"][0],
+                            "https://app.example")
+        # The notice names that same landed url, so the person is never told
+        # to wait for something other than what is checked.
+        self.assertIn("https://app.example/", err)
+
+    def test_a_manual_login_launches_visible_and_writes_the_cache(self):
+        args = self._args()
+
+        rc, out, _err = self._run(args)
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["storageState"], args.out)
+        self.assertIs(self.browser.launched_headless, False,
+                      "a manual login launched headless")
+        self.assertTrue(os.path.isfile(args.out))
+        self.assertTrue(self.browser.closed)
+
+    def test_a_manual_login_reads_no_credential_from_the_environment(self):
+        # The environment carries both login variables; the manual path must
+        # ignore them rather than treat them as a reason to drive the form.
+        os.environ["DRIVE_LOGIN_USERNAME"] = "should-not-be-used"
+        os.environ["DRIVE_LOGIN_PASSWORD"] = "should-not-be-used"
+        try:
+            rc, _out, _err = self._run(self._args())
+        finally:
+            del os.environ["DRIVE_LOGIN_USERNAME"]
+            del os.environ["DRIVE_LOGIN_PASSWORD"]
+
+        self.assertEqual(rc, 0)
+        # One wait on the completion rule, and no form driving at all.
+        self.assertEqual(len(self.page.waits), 1)
+
+
+class _ClosingStub:
+    """A context/browser stand-in whose `close()` either records or raises."""
+
+    def __init__(self, raises=False):
+        self.raises = raises
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+        if self.raises:
+            raise RuntimeError("Target page, context or browser has been "
+                               "closed")
+
+
+class TeardownToleratesAClosedBrowserTest(unittest.TestCase):
+    """A handoff puts a visible window on the desktop, so a human can close
+    it by hand. `_teardown` must not turn that into a traceback out of
+    `cmd_session`'s `finally` during an ordinary `session stop`."""
+
+    def test_a_raising_context_close_is_swallowed_and_the_browser_still_closes(
+            self):
+        context = _ClosingStub(raises=True)
+        browser = _ClosingStub()
+        ctx = {"context": context, "browser": browser}
+
+        bw._teardown(ctx)  # must not raise
+
+        self.assertTrue(context.closed)
+        # The browser is the real OS process — skipping it would leak
+        # Chromium past the end of the session.
+        self.assertTrue(browser.closed,
+                        "a failing context close skipped the browser close")
+
+    def test_a_raising_browser_close_is_swallowed(self):
+        ctx = {"context": _ClosingStub(), "browser": _ClosingStub(raises=True)}
+
+        bw._teardown(ctx)  # must not raise
+
+        self.assertTrue(ctx["browser"].closed)
+
+    def test_both_closes_raising_is_still_survivable(self):
+        ctx = {"context": _ClosingStub(raises=True),
+               "browser": _ClosingStub(raises=True)}
+
+        bw._teardown(ctx)  # must not raise
+
+        self.assertTrue(ctx["context"].closed)
+        self.assertTrue(ctx["browser"].closed)
+
+    def test_a_context_that_was_never_opened_is_skipped(self):
+        # A session that failed before `new_context` leaves these unset;
+        # teardown is still expected to run without raising.
+        bw._teardown({})
+        bw._teardown({"context": None, "browser": None})
 
 
 if __name__ == "__main__":

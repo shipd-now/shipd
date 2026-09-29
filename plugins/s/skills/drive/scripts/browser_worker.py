@@ -219,6 +219,15 @@ def _wait_for_signal(page, signal, timeout_seconds=None):
 # must have left the login page *and* still be on the target's host, so an
 # SSO bounce through an identity provider's own domain never ends the wait
 # early (the human is mid-flow there, not logged in).
+#
+# `u` is the URL **the browser actually landed on** (`page.url` after the
+# navigation), never the configured target url. Chromium normalizes what it
+# is given — a configured `https://app.example` becomes `https://app.example/`
+# in `location.href` — so comparing against the raw configured string makes
+# `location.href !== u` true on first paint, ending the wait before anyone
+# has logged in and caching an unauthenticated storage state for the whole
+# TTL. Comparing like against like is what makes this rule mean "the page
+# moved".
 _MANUAL_DONE_JS = "([u, h]) => location.href !== u && location.host === h"
 
 DEFAULT_MANUAL_TIMEOUT_SECONDS = 300.0
@@ -227,7 +236,9 @@ DEFAULT_MANUAL_TIMEOUT_SECONDS = 300.0
 def _manual_wait_description(url, done):
     """What the stderr notice names as the thing the manual login waits
     for — the caller's own `done` signal, or the default rule spelled out,
-    so the human can see what will end the wait."""
+    so the human can see what will end the wait. `url` is the landed URL
+    the rule really compares against, so the notice and the wait can never
+    describe two different things."""
     if done:
         return "the completion signal %s" % done
     host = urllib.parse.urlsplit(url).netloc
@@ -239,7 +250,16 @@ def _wait_for_manual_login(page, url, done, timeout_seconds):
     `_wait_for_signal` grammar when the recipe declares one, otherwise the
     default `_MANUAL_DONE_JS` rule. Raises on expiry, which `cmd_login`
     turns into the same debug-screenshot failure any other login failure
-    reports."""
+    reports.
+
+    `url` must be the URL the browser landed on (`page.url` after the
+    navigation), not the configured target url: the default rule compares
+    it against `location.href` by inequality, so a configured string
+    Chromium would normalize differently — `https://app.example` against a
+    landed `https://app.example/` — satisfies the rule immediately and the
+    "login" completes before anyone has typed anything. `host` is derived
+    from that same landed URL, so both halves of the rule agree on which
+    URL they are talking about."""
     if done:
         _wait_for_signal(page, done, timeout_seconds)
         return
@@ -266,7 +286,8 @@ def cmd_login(args):
     *visible*, navigates to the url, prints a stderr notice naming the
     window and what it is waiting for, and then waits for ``--done`` (the
     shared `_wait_for_signal` grammar) or, without one, the default
-    `_MANUAL_DONE_JS` rule, for up to ``--timeout`` seconds.
+    `_MANUAL_DONE_JS` rule against the URL the browser landed on, for up to
+    ``--timeout`` seconds.
 
     On any failure — a form that would not fill, a manual login whose signal
     never arrived — writes a debug screenshot beside the requested output
@@ -299,15 +320,23 @@ def cmd_login(args):
             page.goto(args.url, wait_until="domcontentloaded")
 
             if manual:
+                # The URL the browser actually landed on, which is what the
+                # default completion rule must compare against — see
+                # `_MANUAL_DONE_JS`. `args.url` is the *configured* string
+                # and Chromium may have normalized it (a missing trailing
+                # slash, a punycoded host), in which case the raw string
+                # would differ from `location.href` from the very first
+                # paint and end the wait instantly.
+                landed_url = page.url or args.url
                 # The notice goes to stderr, never stdout: stdout carries
                 # this worker's one line of result JSON and nothing else.
                 print("drive: waiting for %s (up to %g s) in the open "
                       "Chromium window"
-                      % (_manual_wait_description(args.url, done),
+                      % (_manual_wait_description(landed_url, done),
                          timeout_seconds),
                       file=sys.stderr)
                 _wait_for_manual_login(
-                    page, args.url, done, timeout_seconds)
+                    page, landed_url, done, timeout_seconds)
             else:
                 _fill_first(page, _IDENTIFIER_SELECTORS, username)
                 # Some flows insert a "Next"/"Continue" step between the
@@ -677,6 +706,32 @@ def _attach_listeners(ctx, page):
     page.on("response", _on_response)
 
 
+def _teardown(ctx):
+    """Close the session's context and browser on the way out, tolerating a
+    browser that is already gone.
+
+    Each close is guarded on its own, for two reasons. A handoff puts a
+    *visible* window on the user's desktop, and a human who closes that
+    window by hand has torn the browser down already — an unguarded close
+    would then raise out of `cmd_session`'s `finally` and the daemon would
+    exit on a traceback during an ordinary `session stop`, which looks like
+    a crash for what is really a no-op. And a failing context close must
+    not skip the browser close: the browser is the actual OS process, so
+    leaking it would leave Chromium running after the session is gone.
+
+    Reads `ctx` rather than taking the pair as arguments because `handoff`
+    replaces both in place (`_relaunch_headed`), so only `ctx` knows which
+    pair is current."""
+    for key in ("context", "browser"):
+        target = ctx.get(key)
+        if target is None:
+            continue
+        try:
+            target.close()
+        except Exception:  # noqa: BLE001 - already gone is a fine outcome
+            pass
+
+
 def cmd_session(args):
     """Own one browser and one page for the life of the session and serve
     the driving verbs over a Unix socket, per drive-session.
@@ -694,9 +749,9 @@ def cmd_session(args):
     The `Playwright` handle, the browser, the window mode, and the handoff
     windows all live in `ctx` because the `handoff` op replaces the first
     two in place (`_relaunch_headed`) rather than restarting this process
-    (drive-handoff) — so the teardown below closes whatever context and
-    browser `ctx` holds *now*, never the pair this function happened to
-    open.
+    (drive-handoff) — so `_teardown` closes whatever context and browser
+    `ctx` holds *now*, never the pair this function happened to open, and
+    tolerates a visible window the human already closed by hand.
     """
     from playwright.sync_api import sync_playwright
 
@@ -770,10 +825,10 @@ def cmd_session(args):
             server.close()
             if os.path.exists(socket_path):
                 os.remove(socket_path)
-            # `ctx`, not the locals above: a `handoff` may have replaced
-            # both with the visible pair it relaunched.
-            ctx["context"].close()
-            ctx["browser"].close()
+            # Reads `ctx`, not the locals above: a `handoff` may have
+            # replaced both with the visible pair it relaunched. Guarded,
+            # because a human may have closed a handed-off window by hand.
+            _teardown(ctx)
 
     return 0
 
