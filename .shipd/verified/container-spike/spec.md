@@ -70,15 +70,23 @@ The launcher SHALL create the run directory
 `container run --rm --name shipd-spike-<stamp> --cpus <n> --memory <size>`
 with `--mount type=bind,source=<workspace>,target=/mnt/workspace,readonly`,
 `--mount type=bind,source=<repo>,target=/mnt/repo,readonly`,
+`--mount type=bind,source=<main checkout>,target=/mnt/main,readonly`,
 `--mount type=bind,source=<run-dir>,target=/out`, `-e NAME` for each set token
 variable, `-e GIT_AUTHOR_NAME=…`, `-e GIT_AUTHOR_EMAIL=…`,
 `-e GIT_COMMITTER_NAME=…`, `-e GIT_COMMITTER_EMAIL=…`, `-w /workspace`, the
 image tag, then `python3 /mnt/repo/tools/container/entry.py --workspace
-/mnt/workspace --repo /mnt/repo --repo-path <relative path> --out /out
---feedback <text>`. The `<relative path>` SHALL be the repo's main checkout
-(the parent of `git rev-parse --git-common-dir`) relative to the workspace
-root, so a linked worktree is cloned under the registered member path while
-its own branch is what gets cloned. When the container exits, the launcher SHALL read
+/mnt/workspace --repo /mnt/repo --repo-path <relative path> --clone-from
+/mnt/main --ref <branch or sha> --out /out --feedback <text>`. The
+`<relative path>` SHALL be the repo's main checkout (the parent of `git
+rev-parse --git-common-dir`) relative to the workspace root, so a linked
+worktree is cloned under the registered member path while its own branch is
+what gets cloned. That main checkout SHALL also be mounted at `/mnt/main` and
+named by `--clone-from`, because a linked worktree's `.git` is a file whose
+`gitdir:` names a host path and so cannot be cloned inside the VM; `<branch or
+sha>` SHALL be `git rev-parse --abbrev-ref HEAD` in the repo, or its `git
+rev-parse HEAD` sha when that prints `HEAD` for a detached checkout. For a
+plain checkout the main checkout is the repo itself and the mount is still
+passed. When the container exits, the launcher SHALL read
 `<run-dir>/result.json`; if it carries a non-empty `pr_url`, then the launcher
 SHALL print that URL on its last line and exit 0, otherwise print
 `failure` and exit 1.
@@ -87,16 +95,17 @@ SHALL print that URL on its last line and exit 0, otherwise print
 - **GIVEN** a stub `container`, `GH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` set,
   and a workspace with the repo at `shipd/shipd` beneath it
 - **WHEN** the launcher runs
-- **THEN** the logged `run` argv holds the three mounts, `-e GH_TOKEN`,
-  `-e CLAUDE_CODE_OAUTH_TOKEN`, no `-e ANTHROPIC_API_KEY`, and
-  `--repo-path shipd/shipd`
+- **THEN** the logged `run` argv holds the four mounts, `-e GH_TOKEN`,
+  `-e CLAUDE_CODE_OAUTH_TOKEN`, no `-e ANTHROPIC_API_KEY`,
+  `--repo-path shipd/shipd`, `--clone-from /mnt/main`, and `--ref <branch>`
 
 #### Scenario: Worktree repo resolves to the member path
 - **GIVEN** `--repo` naming a linked worktree `.worktrees/x` of the checkout
   at `shipd/shipd` beneath the workspace root
 - **WHEN** the launcher runs with `--dry-run`
-- **THEN** the printed argv carries `--repo-path shipd/shipd` and mounts the
-  worktree itself at `/mnt/repo`
+- **THEN** the printed argv carries `--repo-path shipd/shipd`, mounts the
+  worktree itself at `/mnt/repo`, mounts the checkout at `shipd/shipd` at
+  `/mnt/main`, and carries `--clone-from /mnt/main` and `--ref change/x`
 
 #### Scenario: Result with a PR URL exits 0
 - **GIVEN** a stub `container run` that writes `result.json` with `pr_url`
@@ -114,9 +123,11 @@ id: entry-clone-layout
 
 `tools/container/entry.py` SHALL `git clone <workspace mount>
 /workspace/ws`, set its `origin` to the mount's `origin` URL, `git clone
-<repo mount> /workspace/ws/<repo-path>`, set that clone's `origin` to the
-repo mount's `origin` URL, load `/workspace/ws/.shipd-config.json`, set
-`pr-mode` to `draft`, write it back as 2-space indented JSON, and run
+<clone-from> /workspace/ws/<repo-path>` — where `--clone-from` defaults to the
+repo mount — run `git checkout --quiet <ref>` in that clone when `--ref` names
+a branch its `origin` carries or a sha, set that clone's `origin` to the
+`origin` URL read from `--clone-from`, load `/workspace/ws/.shipd-config.json`,
+set `pr-mode` to `draft`, write it back as 2-space indented JSON, and run
 `gh auth setup-git`. The clone root MUST be configurable through `--root`
 (default `/workspace`) so tests run it against temporary directories.
 
@@ -126,6 +137,13 @@ repo mount's `origin` URL, load `/workspace/ws/.shipd-config.json`, set
 - **WHEN** the entry script clones them with `--repo-path shipd/shipd`
 - **THEN** `<root>/ws/shipd/shipd` is a git checkout whose `origin` is the
   repo's URL and `<root>/ws`'s `origin` is the workspace's URL
+
+#### Scenario: Worktree branch is cloned from the main checkout
+- **GIVEN** a repo carrying a branch `change/x` and a linked worktree on it
+- **WHEN** the entry script clones with `clone_from` naming the main checkout
+  and `ref` naming `change/x`
+- **THEN** the nested clone's `HEAD` is `change/x` and its `origin` is the
+  repo's URL
 
 #### Scenario: Draft mode is injected into the cloned layer
 - **WHEN** the clones exist

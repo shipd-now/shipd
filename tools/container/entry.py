@@ -2,11 +2,13 @@
 """entry.py — the runtime-neutral spike entry point, run inside the VM.
 
 The host launcher (`tools/container/spike.py`) mounts the workspace root at
-`/mnt/workspace` and the repo at `/mnt/repo`, both read-only, and the run
-directory at `/out`. This script owns everything after that: it clones both
-mounts into a writable tree, injects `pr-mode: draft` into the cloned workspace
-layer, then drives a headless `/s:plan` session and a headless `/s:build`
-session over one piece of user feedback and writes `/out/result.json`.
+`/mnt/workspace`, the repo at `/mnt/repo`, and the repo's main checkout at
+`/mnt/main`, all read-only, and the run directory at `/out`. This script owns
+everything after that: it clones the workspace and the repo (from
+`--clone-from`, checked out at `--ref`) into a writable tree, injects
+`pr-mode: draft` into the cloned workspace layer, then drives a headless
+`/s:plan` session and a headless `/s:build` session over one piece of user
+feedback and writes `/out/result.json`.
 
 Nothing here is Apple-`container`-specific: the mounts, the output directory,
 and the clone root are all arguments, so the same script becomes an ax Task
@@ -81,15 +83,22 @@ def default_gh(args, cwd=None):
 # Clone layout
 # ---------------------------------------------------------------------------
 
-def clone_layout(workspace, repo, repo_path, root=DEFAULT_ROOT, gh_fn=None):
-    """Build the writable working tree from the two read-only mounts.
+def clone_layout(workspace, repo, repo_path, root=DEFAULT_ROOT, gh_fn=None,
+                 clone_from=None, ref=None):
+    """Build the writable working tree from the read-only mounts.
 
-    Clones the workspace mount to `<root>/ws` and the repo mount to
+    Clones the workspace mount to `<root>/ws` and the repo to
     `<root>/ws/<repo_path>`, points each clone's `origin` at the URL its mount
     carries (the mount path itself is useless to anyone downstream), injects
     `pr-mode: draft` into the cloned workspace's `.shipd-config.json` — the
     layer that governs every repo beneath it — and runs `gh auth setup-git` so
     the clones can push.
+
+    The repo clone is taken from `clone_from` (default `repo`): a linked
+    worktree's `.git` is a file whose `gitdir:` names a host path, so the
+    worktree mount itself is not clonable inside the VM — the main checkout is.
+    When `ref` is given the clone is checked out at it, either a branch its
+    `origin` carries or a sha, so the run still builds on the worktree's branch.
 
     Returns `(workspace_clone, repo_clone)`.
     """
@@ -97,13 +106,16 @@ def clone_layout(workspace, repo, repo_path, root=DEFAULT_ROOT, gh_fn=None):
     root = os.path.abspath(root)
     ws_dir = os.path.join(root, "ws")
     clone = os.path.join(ws_dir, repo_path)
+    source = clone_from or repo
 
     os.makedirs(root, exist_ok=True)
     _git(["clone", "--quiet", workspace, ws_dir])
     _git(["remote", "set-url", "origin", _origin_of(workspace)], cwd=ws_dir)
 
-    _git(["clone", "--quiet", repo, clone])
-    _git(["remote", "set-url", "origin", _origin_of(repo)], cwd=clone)
+    _git(["clone", "--quiet", source, clone])
+    if ref:
+        _git(["checkout", "--quiet", ref], cwd=clone)
+    _git(["remote", "set-url", "origin", _origin_of(source)], cwd=clone)
 
     inject_draft_mode(ws_dir)
 
@@ -153,6 +165,12 @@ def build_parser():
                         help="the read-only repo mount")
     parser.add_argument("--repo-path", required=True,
                         help="the repo's path relative to the workspace root")
+    parser.add_argument("--clone-from", default=None,
+                        help="the mount the repo clone is taken from "
+                             "(default: --repo)")
+    parser.add_argument("--ref", default=None,
+                        help="the branch or sha the repo clone checks out "
+                             "(default: whatever the clone's HEAD names)")
     parser.add_argument("--out", required=True,
                         help="the writable run directory (result.json, "
                              "turn transcripts)")
@@ -403,7 +421,7 @@ def main(argv=None, runner_factory=None, gh_fn=None):
     try:
         _ws_dir, clone = clone_layout(
             args.workspace, args.repo, args.repo_path, root=args.root,
-            gh_fn=gh_fn)
+            gh_fn=gh_fn, clone_from=args.clone_from, ref=args.ref)
         result = drive_stages(clone, args.out, args.feedback,
                               runner_factory=runner_factory, gh_fn=gh_fn)
     except EntryError as exc:

@@ -5,10 +5,11 @@ Loads the shipd workspace and this repo into a Linux VM run by Apple's
 `container` CLI, and drives one piece of user feedback through headless
 `/s:plan` and `/s:build` sessions to a draft pull request.
 
-The launcher never writes into the checkouts it carries: the workspace root and
-the repo are mounted **read-only**, and the in-VM entry script
-(`tools/container/entry.py`) clones them. Only the run directory is writable,
-and it is where the VM leaves `result.json` and the turn transcripts.
+The launcher never writes into the checkouts it carries: the workspace root,
+the repo, and the repo's main checkout are mounted **read-only**, and the in-VM
+entry script (`tools/container/entry.py`) clones them. Only the run directory
+is writable, and it is where the VM leaves `result.json` and the turn
+transcripts.
 
 Usage:
 
@@ -46,6 +47,11 @@ CONFIG_FILENAME = ".shipd-config.json"
 # In-VM paths. The mounts are read-only; /out is the run directory.
 WORKSPACE_MOUNT = "/mnt/workspace"
 REPO_MOUNT = "/mnt/repo"
+# The repo's *main* checkout, mounted alongside the repo: a linked worktree's
+# `.git` is a file naming a host path, so it is useless as a clone source
+# inside the VM. The clone is taken from this mount and checked out at the
+# worktree's own ref.
+MAIN_MOUNT = "/mnt/main"
 OUT_MOUNT = "/out"
 ENTRY_IN_VM = REPO_MOUNT + "/tools/container/entry.py"
 
@@ -147,7 +153,11 @@ def default_workspace(repo_root):
 
 def preflight(workspace, repo, env):
     """Run every check, in order, and return the preflight facts the run needs:
-    `(workspace, repo, repo_path, token_vars, git_identity)`.
+    `(workspace, repo, repo_path, token_vars, git_identity, ref)`.
+
+    `ref` is the repo's current branch name, or its `HEAD` sha when the
+    checkout is detached — what the in-VM clone must check out, since the clone
+    is taken from the main checkout rather than from the repo itself.
 
     Raises :class:`PreflightError` on the first failure, before anything is
     built or run."""
@@ -177,12 +187,6 @@ def preflight(workspace, repo, env):
             "run `claude setup-token` and export the result as "
             "CLAUDE_CODE_OAUTH_TOKEN")
 
-    if workspace is None:
-        raise PreflightError(
-            "no workspace root was found above the repo",
-            "pass `--workspace <path>` naming the directory that holds %s"
-            % CONFIG_FILENAME)
-    workspace = os.path.realpath(workspace)
     repo = os.path.realpath(repo)
 
     name = _git_config(repo, "user.name")
@@ -192,6 +196,13 @@ def preflight(workspace, repo, env):
             "git has no commit identity (user.name / user.email)",
             "set one with `git config --global user.name <name>` and "
             "`git config --global user.email <email>`")
+
+    if workspace is None:
+        raise PreflightError(
+            "no workspace root was found above the repo",
+            "pass `--workspace <path>` naming the directory that holds %s"
+            % CONFIG_FILENAME)
+    workspace = os.path.realpath(workspace)
 
     if not os.path.isfile(os.path.join(workspace, CONFIG_FILENAME)):
         raise PreflightError(
@@ -229,7 +240,16 @@ def preflight(workspace, repo, env):
             % (main, workspace),
             "pass `--workspace <path>` naming the root that checkout sits under")
 
-    return workspace, repo, repo_path, tokens, (name, email)
+    # The ref the clone must land on: the repo's branch, or — when the checkout
+    # is detached — the sha its HEAD names.
+    _rc, ref, _err = _run(["git", "-C", repo, "rev-parse", "--abbrev-ref",
+                           "HEAD"])
+    ref = ref.strip()
+    if ref == "HEAD" or not ref:
+        _rc, ref, _err = _run(["git", "-C", repo, "rev-parse", "HEAD"])
+        ref = ref.strip()
+
+    return workspace, repo, repo_path, tokens, (name, email), ref
 
 
 # ---------------------------------------------------------------------------
@@ -258,9 +278,15 @@ def build_image(tag):
 
 
 def run_argv(tag, stamp, workspace, repo, repo_path, run_dir, tokens,
-             identity, feedback, cpus, memory):
-    """The full `container run` argv the launcher invokes."""
+             identity, feedback, cpus, memory, ref=None):
+    """The full `container run` argv the launcher invokes.
+
+    Both the repo and its main checkout are mounted: the repo carries the entry
+    script and, for a plain checkout, is the main checkout itself, while the
+    clone is always taken from `/mnt/main` and checked out at `ref` — a linked
+    worktree's `.git` file names a host path no VM can resolve."""
     name, email = identity
+    main = main_checkout(repo)
     argv = [
         "container", "run", "--rm",
         "--name", "shipd-spike-%s" % stamp,
@@ -269,6 +295,7 @@ def run_argv(tag, stamp, workspace, repo, repo_path, run_dir, tokens,
         "--mount", "type=bind,source=%s,target=%s,readonly"
                    % (workspace, WORKSPACE_MOUNT),
         "--mount", "type=bind,source=%s,target=%s,readonly" % (repo, REPO_MOUNT),
+        "--mount", "type=bind,source=%s,target=%s,readonly" % (main, MAIN_MOUNT),
         "--mount", "type=bind,source=%s,target=%s" % (run_dir, OUT_MOUNT),
     ]
     for var in tokens:
@@ -284,6 +311,11 @@ def run_argv(tag, stamp, workspace, repo, repo_path, run_dir, tokens,
         "--workspace", WORKSPACE_MOUNT,
         "--repo", REPO_MOUNT,
         "--repo-path", repo_path,
+        "--clone-from", MAIN_MOUNT,
+    ]
+    if ref:
+        argv += ["--ref", ref]
+    argv += [
         "--out", OUT_MOUNT,
         "--feedback", feedback,
     ]
@@ -335,7 +367,7 @@ def main(argv=None):
 
     workspace = args.workspace or default_workspace(args.repo)
     try:
-        workspace, repo, repo_path, tokens, identity = preflight(
+        workspace, repo, repo_path, tokens, identity, ref = preflight(
             workspace, args.repo, env)
     except PreflightError as exc:
         sys.stderr.write("Error: %s\n" % exc)
@@ -353,7 +385,7 @@ def main(argv=None):
     if args.dry_run:
         argv_preview = run_argv(
             tag, stamp, workspace, repo, repo_path, run_dir, tokens, identity,
-            args.feedback, args.cpus, args.memory)
+            args.feedback, args.cpus, args.memory, ref)
         print("tag: %s" % tag)
         print("build-needed: %s" % ("yes" if needs_build else "no"))
         print("run-dir: %s" % run_dir)
@@ -372,7 +404,7 @@ def main(argv=None):
 
     print("Running %s in %s ..." % (tag, run_dir))
     cmd = run_argv(tag, stamp, workspace, repo, repo_path, run_dir, tokens,
-                   identity, args.feedback, args.cpus, args.memory)
+                   identity, args.feedback, args.cpus, args.memory, ref)
     rc = subprocess.call(cmd)
 
     result = read_result(run_dir)

@@ -68,6 +68,13 @@ exit 0
 """
 
 
+def _branch_of(path):
+    """The branch `path`'s checkout is on — the `--ref` the launcher passes."""
+    return subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True, check=True).stdout.strip()
+
+
 def _git(cwd, *args, env=None):
     subprocess.run(["git", "-C", str(cwd), *args], check=True,
                    capture_output=True, text=True, env=env)
@@ -246,10 +253,14 @@ class LauncherPreflightTests(ContainerSpikeTestCase):
     def test_worktree_repo_resolves_to_the_member_path(self):
         """A launcher run from a change worktree must nest the clone at the
         checkout's registered member path, not at the worktree's own path —
-        while still mounting (and therefore cloning) the worktree itself."""
+        while still mounting (and therefore cloning) the worktree itself.
+
+        The clone itself is taken from the main checkout mounted at
+        `/mnt/main`, since a linked worktree's `.git` file names a host path
+        the VM cannot resolve, and lands on the worktree's own branch."""
         ws, repo = self.make_layout()
         worktree = str(Path(repo) / ".worktrees" / "x")
-        _git(repo, "worktree", "add", "-q", worktree, "-b", "x",
+        _git(repo, "worktree", "add", "-q", worktree, "-b", "change/x",
              env=self.git_env)
 
         result = self.run_spike(
@@ -259,6 +270,11 @@ class LauncherPreflightTests(ContainerSpikeTestCase):
         self.assertIn(
             "type=bind,source=%s,target=/mnt/repo,readonly" % worktree,
             result.stdout)
+        self.assertIn(
+            "type=bind,source=%s,target=/mnt/main,readonly" % repo,
+            result.stdout)
+        self.assertIn("--clone-from /mnt/main", result.stdout)
+        self.assertIn("--ref change/x", result.stdout)
 
 
 class LauncherImageTests(ContainerSpikeTestCase):
@@ -318,13 +334,20 @@ class LauncherRunTests(ContainerSpikeTestCase):
         self.assertIn(
             "type=bind,source=%s,target=/mnt/repo,readonly" % repo, argv)
         self.assertIn(
+            "type=bind,source=%s,target=/mnt/main,readonly" % repo, argv)
+        self.assertIn(
             "type=bind,source=%s,target=/out" % run_dir, argv)
-        self.assertEqual(argv.count("--mount"), 3)
+        self.assertEqual(argv.count("--mount"), 4)
         self.assertIn("GH_TOKEN", argv)
         self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", argv)
         self.assertNotIn("ANTHROPIC_API_KEY", argv)
         self.assertIn("--repo-path", argv)
         self.assertEqual(argv[argv.index("--repo-path") + 1], REPO_PATH)
+        self.assertIn("--clone-from", argv)
+        self.assertEqual(argv[argv.index("--clone-from") + 1], "/mnt/main")
+        self.assertIn("--ref", argv)
+        self.assertEqual(argv[argv.index("--ref") + 1],
+                         _branch_of(repo))
         self.assertIn("-w", argv)
         self.assertIn(expected_tag(), argv)
         self.assertIn("python3", argv)
@@ -505,6 +528,30 @@ class EntryCloneLayoutTests(EntryTestCase):
         self.assertEqual(origin(root / "ws" / REPO_PATH),
                          "https://example.com/repo.git")
         self.assertIn(["auth", "setup-git"], [c[0] for c in self.gh_calls])
+
+    def test_worktree_branch_is_cloned_from_the_main_checkout(self):
+        """A worktree mount is not clonable inside the VM, so the clone comes
+        from the main checkout and is checked out at the worktree's branch."""
+        ws, repo = self.make_mounts()
+        _git(repo, "branch", "change/x", env=self.git_env)
+        worktree = Path(repo) / ".worktrees" / "x"
+        _git(repo, "worktree", "add", "-q", str(worktree), "change/x",
+             env=self.git_env)
+
+        root = self.tmp / "root"
+        _ws_dir, clone = self.entry.clone_layout(
+            ws, str(worktree), REPO_PATH, root=str(root), gh_fn=self.gh_fn(),
+            clone_from=repo, ref="change/x")
+
+        def git_out(*args):
+            return subprocess.run(["git", "-C", str(clone), *args],
+                                  capture_output=True, text=True,
+                                  check=True).stdout.strip()
+
+        self.assertEqual(git_out("rev-parse", "--abbrev-ref", "HEAD"),
+                         "change/x")
+        self.assertEqual(git_out("remote", "get-url", "origin"),
+                         "https://example.com/repo.git")
 
     def test_draft_mode_injected_preserving_other_keys(self):
         ws, repo = self.make_mounts()
