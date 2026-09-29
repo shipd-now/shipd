@@ -231,6 +231,53 @@ class ManualAuthRecipeTest(DriveTargetsTestBase):
         self.assertIn("sso: https://sso.example (auth: manual)", r.stdout)
 
 
+class ExampleTargetsResolveTest(DriveTargetsTestBase):
+    """The shipped `references/targets.example.json` is what a user copies
+    to `~/.shipd/drive/targets.json`, so every entry in it must resolve
+    through `resolve_auth` exactly as written (drive-targets-config). A key
+    the example spells one way and the code reads another fails every
+    copied config at first login."""
+
+    EXAMPLE = os.path.normpath(os.path.join(
+        HERE, "..", "references", "targets.example.json"))
+
+    def test_every_example_entry_resolves_through_resolve_auth(self):
+        with open(self.EXAMPLE, encoding="utf-8") as fh:
+            example = json.load(fh)
+        targets = {name: entry for name, entry in example["targets"].items()
+                   if not name.startswith("//")}
+        self.assertGreaterEqual(len(targets), 4)
+
+        def _fake_run(argv, input=None, env=None):
+            return 0, "secret-from-%s\n" % argv[0], ""
+
+        env_names = set()
+        for entry in targets.values():
+            auth = entry.get("auth") or {}
+            if auth.get("kind") == "env":
+                env_names.update(str(auth.get(k, "")) for k in ("username",
+                                                                  "password"))
+        saved = {n: os.environ.get(n) for n in env_names}
+        try:
+            for n in env_names:
+                if n:
+                    os.environ[n] = "value-of-" + n
+            for name, entry in sorted(targets.items()):
+                kind = (entry.get("auth") or {}).get("kind", "none")
+                username, password = drive.resolve_auth(entry, run=_fake_run)
+                if kind in ("none", "manual"):
+                    self.assertEqual((username, password), (None, None), name)
+                else:
+                    self.assertTrue(username and password,
+                                    "%s (%s) resolved no secret" % (name, kind))
+        finally:
+            for n, v in saved.items():
+                if v is None:
+                    os.environ.pop(n, None)
+                else:
+                    os.environ[n] = v
+
+
 class UnknownTargetTest(DriveTargetsTestBase):
     def test_unknown_target_is_a_single_error_line(self):
         self.write_json(self.user_targets_path(), {
