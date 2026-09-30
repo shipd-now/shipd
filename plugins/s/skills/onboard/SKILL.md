@@ -6,10 +6,14 @@ description: >-
   Spec-Driven Development and the artifacts over a pre-baked example in a
   throwaway sandbox, step 8 builds it for real on the engine, and step 9 hands
   over the exact command to plan a first enhancement. Progress persists to disk
-  so the tour resumes across sessions. Use when a user wants to learn shipd
-  from scratch or asks how the workflow fits together. Trigger phrases:
+  so the tour resumes across sessions. `/s:onboard workspaces` runs an
+  optional five-part side-track on workspace configuration — a base workspace,
+  nested team workspaces, and shared repos — in its own sandbox. Use when a
+  user wants to learn shipd from scratch, asks how the workflow fits together,
+  or asks how workspaces and team workspaces fit together. Trigger phrases:
   "onboarding", "onboard", "tour", "how does shipd work", "teach me
-  shipd", "/s:onboard", "/s:onboard next", "/s:onboard back".
+  shipd", "teach me workspaces", "/s:onboard", "/s:onboard next",
+  "/s:onboard back", "/s:onboard workspaces".
 ---
 
 # /s:onboard — Guided shipd walkthrough
@@ -77,6 +81,9 @@ the argument:
 - **`back`.** Read the state file, decrement `step` by one clamped at 1 (never
   below 1), write it back, and render that step again. `back` is offered on the
   explainer steps (1–7).
+- **`workspaces`** (alone or followed by `next`, `back`, or `reset`). Route to
+  the *Workspaces side-track* below. It never reads or writes `state.json`, so
+  the tour's recorded step is exactly where it was afterward.
 
 Every step ends by naming the exact command to continue — steps never
 auto-advance. Read the persisted `step`, render exactly that step's content
@@ -249,6 +256,10 @@ then, inside that session, plan the enhancement:
 /s:plan Add a move command to kanban.py: "move <id> <lane>" moves a card to another lane
 ```
 
+Then name the optional side-track in a sentence: `/s:onboard workspaces`
+teaches workspace configuration — a base workspace, nested team workspaces,
+and shared repos — in its own sandbox, and `docs/workspaces.md` is its guide.
+
 After the handoff, offer cleanup (see *Cleanup* below): delete or keep
 `~/.shipd/onboarding/`. This is the final step — there is no `next`; `/s:onboard
 back` still returns to step 8.
@@ -259,7 +270,164 @@ When the walkthrough ends, offer to **delete** the sandbox (`rm -rf
 "$SANDBOX"`) or **keep** it for further exploration (report its path). This
 prompt carries no narration or teaching content, so it MAY use an
 **AskUserQuestion** — it is the one prompt in the walkthrough that may. Do not
-delete without the user choosing to.
+delete without the user choosing to. Whatever the user chooses, close by
+naming `/s:onboard workspaces` as the optional next lesson; deleting the tour's
+sandbox never touches the side-track's.
+
+## Workspaces side-track
+
+An optional five-part lesson on workspace configuration — a base workspace,
+nested team workspaces, and repos those teams share. It sits beside the tour,
+never inside it: it has its own sandbox and its own state file, and it never
+reads or writes the tour's `~/.shipd/onboarding/state.json`. Its reference
+guide is the workspaces index, `docs/workspaces.md`, in the shipd repository.
+The *Pacing* rules bind every part exactly as they bind every tour step.
+
+- **State file:** `~/.shipd/onboarding/workspaces.json`, schema
+  `{"part": <int 1-5>}`.
+- **Sandbox:** the stable path `~/.shipd/onboarding/workspaces-sandbox/`.
+  Resolve `$WS_SANDBOX` to it and `$BASE` to `$WS_SANDBOX/acme-base`. The
+  lesson's base workspace is `acme-base`; its three nested team workspaces are
+  `$BASE/myapp`, `$BASE/billing`, and `$BASE/infra`.
+
+Act on the argument:
+
+- **`workspaces`.** If `$BASE` does **not** exist, build the sandbox (*Build
+  the workspaces sandbox* below), write the state file at `{"part": 1}`, and
+  render part 1. If `$BASE` **does** exist, **reuse it**: never re-run
+  `workspace-init` or any other build verb. Read the state file's `part`
+  (writing `{"part": 1}` if the file is missing) and render that part.
+- **`workspaces next`.** Read the state file, increment `part` by one (never
+  past 5), write it back, and render the new part.
+- **`workspaces back`.** Read the state file, decrement `part` by one clamped
+  at 1 (never below 1), write it back, and render that part again.
+- **`workspaces reset`.** Ask the user first — the same plain-text or
+  AskUserQuestion rules as the tour's *Cleanup* offer apply. Only on an explicit
+  yes, delete the sandbox and its state (`rm -rf "$WS_SANDBOX"` and
+  `rm -f ~/.shipd/onboarding/workspaces.json`), then say `/s:onboard
+  workspaces` starts it again. A reset never touches the tour's sandbox or
+  `state.json`.
+
+Every write the side-track makes lands under `~/.shipd/onboarding/`: `HOME`
+stays unchanged, and every engine verb runs with a sandbox directory as its cwd
+or target. Nothing is written to the user's real repository or anywhere else.
+
+### Build the workspaces sandbox (first entry only)
+
+Run this once, when `$BASE` does not exist, explaining in a sentence before
+each verb and showing its real output. `$S` is the status CLI,
+`${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py`. `workspace-init`
+refuses a target directory that does not exist yet, so create each one first:
+
+1. **The base workspace**, a git repository of its own:
+   ```
+   mkdir -p "$BASE" && python3 "$S" workspace-init "$BASE" --git
+   ```
+2. **Three nested team workspaces** inside it. `--nested` permits a workspace
+   beneath an enclosing one, and the verb prints the enclosing base as its
+   second line:
+   ```
+   for team in myapp billing infra; do
+     mkdir -p "$BASE/$team" && python3 "$S" workspace-init "$BASE/$team" --nested --git
+   done
+   ```
+3. **A base project and the base's wiki store**, run from `$BASE`:
+   ```
+   cd "$BASE" && python3 "$S" workspace-project add shared shared/lib --url git@github.com:acme/shared-lib.git
+   cd "$BASE" && python3 "$S" wiki-init
+   ```
+
+The URLs are illustrative: the lesson never clones a member, so no network
+access happens.
+
+### Part directives
+
+Each part is one rendered turn: a short explanation, the real verb output it
+calls for, then the navigation line. Render **only** the recorded part. Every
+verb runs with the named sandbox directory as its cwd.
+
+**Part 1 — the manifest and the chain.** A workspace is a directory whose
+`.shipd-config.json` carries a `workspace` block — the manifest. The base and
+each team hold one; show a few lines of `$BASE/.shipd-config.json` and
+`$BASE/myapp/.shipd-config.json`. On first entry, point at the build output
+above: each nested `workspace-init` named `$BASE` as its enclosing workspace.
+That enclosing relation is the **chain** — a team reads through to its base.
+Show it from inside a team:
+```
+cd "$BASE/infra" && python3 "$S" wiki-show
+```
+Its `wiki:` line names the team's own store (still absent) and its `chain:`
+line names the base's store. End with the navigation line: `/s:onboard
+workspaces next` to continue.
+
+**Part 2 — reads: nearest wins, never merged.** Reads resolve nearest-first
+and fall through the chain. `infra` declares no `projects`, so it inherits the
+base's registry whole:
+```
+cd "$BASE/infra" && python3 "$S" workspace-show
+```
+Point at `registry: <$BASE>` — the registry's source is the base — and the
+base's `shared` project listed beneath it. Then state the other half: a
+project registry is per manifest and **never merged**. A team that declares
+any `projects` of its own shadows the base's registry outright, and part 4
+shows exactly that. End with the navigation line: `/s:onboard workspaces
+next` to continue, `/s:onboard workspaces back` to go back.
+
+**Part 3 — writes land nearest.** Every write lands in the nearest store: a
+team's own when run inside the team, the base's only when run at the base.
+Show the base's store first (`cd "$BASE" && python3 "$S" wiki-show`). Then,
+only when `$BASE/myapp/.shipd/wiki` does not exist yet, create `myapp`'s own
+store — on re-entry skip the verb and show the store that exists:
+```
+cd "$BASE/myapp" && python3 "$S" wiki-init
+cd "$BASE/myapp" && python3 "$S" wiki-show
+```
+`wiki-init` created only `$BASE/myapp/.shipd/wiki`; `myapp`'s `wiki:` line now
+names its own store, and the base's store is still in its `chain:`. Re-run
+`wiki-show` at `$BASE` to show the base's store unchanged. The same rule
+governs the queue: a question queued at the base is answerable only there.
+End with the navigation line (`next` / `back`).
+
+**Part 4 — overlapping teams on one shared repo.** Projects are systems, not
+teams. A shared repo belongs to no team, and two teams may each declare the
+same repo path: uniqueness holds per manifest, and each declaration is that
+team's own view. Declare the one shared `api/core` repo in both `myapp` and
+`billing` — only when that team's `workspace-show` does not already list
+project `api`, so re-entry never re-runs the verb:
+```
+cd "$BASE/myapp" && python3 "$S" workspace-project add api api/core --url git@github.com:acme/api-core.git
+cd "$BASE/billing" && python3 "$S" workspace-project add api api/core --url git@github.com:acme/api-core.git
+```
+Then show the real `workspace-show` output for each team:
+```
+cd "$BASE/myapp" && python3 "$S" workspace-show
+cd "$BASE/billing" && python3 "$S" workspace-show
+```
+Both list `api/core`, and neither lists the base's `shared` project and
+neither prints a `registry:` line: declaring `projects` shadowed the base's
+registry outright, as part 2 promised. A team is instead who works an
+initiative. End with the navigation line (`next` / `back`).
+
+**Part 5 — isolation is a repository, not a directory.** Git has no
+per-directory permissions. The three teams are directories of one repository:
+```
+cd "$BASE/myapp" && git rev-parse --show-toplevel
+```
+It prints `$BASE`, so everyone who clones that repository reads every team's
+folder and store. A group whose knowledge must stay isolated gets a workspace
+repository of its own — separate repos, not directories, are the isolation
+boundary. Then point at the guides for what the lesson leaves out, all under
+the workspaces index `docs/workspaces.md`:
+- `docs/workspaces/nesting-and-stores.md` — nesting, and relocating artifacts
+  into an external store with `store_root`.
+- `docs/workspaces/teams.md` — sharing a workspace, what `git pull` and
+  `git push` sync, and the conflict surfaces.
+- `docs/workspaces/multi-workspace-repos.md` — the base-plus-teams layout in
+  full.
+
+This is the final part — there is no `next`; `/s:onboard workspaces back`
+returns to part 4, and `/s:onboard workspaces reset` deletes the lesson's
+sandbox after asking.
 
 ## Guardrails
 
