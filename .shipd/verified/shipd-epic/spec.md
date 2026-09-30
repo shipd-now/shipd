@@ -168,13 +168,13 @@ routing information that arrives during planning, building, or epic
 authoring: **binding** (changes what executors do — the change's own
 artifacts at change scope; at epic scope the epic's `## Decisions`, changed
 only through the sanctioned amendment discipline of a fresh
-`epic-amend-<slug>` worktree, a dated provenance line on the amended
-Decision, and a lint-gated pull request, never a free edit), **reference**
-(supports the feature without binding executors — installed through the
-emit engine's document kinds and linked from the epic's `## References`
-shelf, or cited in `plan.md` prose when no epic resolves), **durable**
-(outlives the feature — routed to the workspace wiki via `/s:teach` or the
-oracle queue, where the capture durability rubric at
+`epic-amend-<slug>` worktree, the amended Decision rewritten to state the
+current fact, and a lint-gated pull request, never a free edit and never a
+dated note), **reference** (supports the feature without binding executors —
+installed through the emit engine's document kinds and linked from the
+epic's `## References` shelf, or cited in `plan.md` prose when no epic
+resolves), **durable** (outlives the feature — routed to the workspace wiki
+via `/s:teach` or the oracle queue, where the capture durability rubric at
 `plugins/s/skills/ask/references/capture-rubric.md` governs the queue
 write), and **noise** (recorded nowhere, deliberately). The rubric SHALL
 name itself the "knowledge capture rubric", SHALL explicitly distinguish
@@ -185,13 +185,14 @@ carry tie-breakers covering at least: binding versus reference decided by
 obeyed-versus-consulted, reference versus durable decided by the feature's
 lifetime, borderline cases leaning toward the less-capturing tier, and the
 binding tier's home decided by scope. The rubric SHALL NOT reference any
-unshipped verb, flag, or skill argument.
+unshipped verb, flag, or skill argument, and SHALL NOT describe a dated
+provenance stamp on an amended Decision.
 
 #### Scenario: Rubric reference exists with four tiers
 - **WHEN** `plugins/s/skills/epic/references/capture-rubric.md` is inspected
 - **THEN** it defines the binding, reference, durable, and noise tiers, each
   with its destination, and names the epic-scope amendment discipline for
-  the binding tier
+  the binding tier as rewriting the Decision to state the current fact
 
 #### Scenario: Durable tier hands off to the durability rubric
 - **WHEN** the rubric's durable tier is inspected
@@ -241,13 +242,14 @@ amendment flow instead of authoring: it SHALL create a fresh worktree via
 `shipd worktree epic-amend-<slug> --fresh` and edit the epic there, SHALL
 change only the `## Decisions` section and the shelf sections
 (`## References`, and a pre-existing `## Research` or `## Video` extended in
-place), and SHALL stamp every new or extended Decision bullet with a dated
-provenance marker of the form `*(amended YYYY-MM-DD: <one-line note>)*`,
-never rewriting or deleting existing Decision text — a superseded Decision
-is recorded as a stamped addition. Reference-tier material SHALL be
-installed through the emit engine's `docs` kind and linked from
-`## References`, never pasted into `## Decisions`. Before shipping, the flow
-SHALL pass both gates — the linter's single-epic mode and
+place), and SHALL write every touched Decision as the current fact: a new
+Decision states its rule, a superseded Decision is rewritten in place, and a
+Decision no longer true is deleted. The flow SHALL NOT append a dated
+marker, an "amended" note, or a before-and-after narrative to any Decision,
+because the epic's git history is its amendment record. Reference-tier
+material SHALL be installed through the emit engine's `docs` kind and
+linked from `## References`, never pasted into `## Decisions`. Before
+shipping, the flow SHALL pass both gates — the linter's single-epic mode and
 `spec_status.py epic-amend-check <slug>` — and SHALL ship the amendment as
 an auto-merging pull request on `change/epic-amend-<slug>`, reported with
 its full URL. If the epic's status is `draft`, then the skill SHALL refuse
@@ -272,9 +274,17 @@ then the flow SHALL report the failure and stop without committing.
   the epic by the capture rubric
 - **WHEN** `/s:epic <slug> amend` runs
 - **THEN** the amendment is made in a fresh `epic-amend-<slug>` worktree,
-  the new Decision bullet carries a dated `*(amended …)*` stamp, the epic
-  lint and `epic-amend-check` both pass, and the edit ships as an
-  auto-merging PR reported with its full URL
+  the touched Decision bullet reads as the current fact with no dated
+  marker, the epic lint and `epic-amend-check` both pass, and the edit
+  ships as an auto-merging PR reported with its full URL
+
+#### Scenario: A superseded decision is rewritten, not annotated
+- **GIVEN** a live epic whose Decision states a count that delivery proved
+  wrong
+- **WHEN** `/s:epic <slug> amend` runs with the corrected count
+- **THEN** the Decision bullet states the corrected count in place, the
+  earlier text is gone from the file, and no `*(amended …)*` note or
+  "previously" sentence is added
 
 #### Scenario: A protected-section edit is blocked before shipping
 - **GIVEN** an amendment worktree whose epic edit strayed into

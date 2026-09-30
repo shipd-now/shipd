@@ -79,7 +79,7 @@ decomposition follows.
 
 ## The amend contract — what `<slug> amend` may change
 
-A live epic (anything past `draft`) accretes only through the amendment
+A live epic (anything past `draft`) changes only through the amendment
 discipline: a fresh `epic-amend-<slug>` worktree, gated edits, a pull request.
 A `draft` epic is not amended at all — it is edited in its authoring worktree.
 
@@ -93,11 +93,10 @@ A `draft` epic is not amended at all — it is edited in its authoring worktree.
   `## Design`, the `## Changes` stub table, the machine-owned
   `## Token usage breakdown`, and any unrecognized level-2 section. An
   amendment that needs one of these is a re-decomposition, not an amendment.
-- **Stamp grammar.** Every new or extended Decision bullet carries
-  `*(amended YYYY-MM-DD: <one-line note>)*` with the real current date.
-  Existing Decision text is never rewritten or deleted; a superseded decision
-  is recorded as a stamped addition beneath the original. The grammar is the
-  flow's discipline — no verb enforces it.
+- **Fact grammar.** Every touched Decision bullet reads as the current fact: a
+  superseded decision is rewritten in place or deleted outright, and no dated
+  marker or "amended" note is ever added. The epic's git history carries the
+  provenance. The grammar is the flow's discipline — no verb enforces it.
 - **The two gates**, both from the amendment worktree, both before pushing:
   `spec_lint.py --epic <slug>` (exit `0`, prints `OK`), then
   `spec_status.py epic-amend-check <slug> [--base <ref>]`, which compares the

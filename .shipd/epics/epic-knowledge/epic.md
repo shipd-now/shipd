@@ -63,10 +63,11 @@ from an epic-close derivation.
   pattern mirrors epic-close: a fresh `epic-amend-<slug>` worktree, edits
   to Decisions/References only (Introduction and the stub table stay the
   decomposition's record; member rows change only through the existing
-  status machinery), each amended Decision stamped with a dated provenance
-  line, lint-gated, shipped as an auto-merging PR. The engine gains an
-  `epic-amend-check` verb the flow runs before shipping: it diffs the epic
-  against `main` and refuses when protected sections changed.
+  status machinery), each touched Decision rewritten to state the current
+  fact, git history carrying the provenance, lint-gated, shipped as an
+  auto-merging PR. The engine gains an `epic-amend-check` verb the flow
+  runs before shipping: it diffs the epic against `main` and refuses when
+  protected sections changed.
 - **The wiki falls back to a repo-local store.** When the workspace chain
   is empty, wiki resolution lands at `<content-dir>/wiki/` in the repo
   itself — same layout, same queue, same lint — so `/s:teach`, `/s:ask`

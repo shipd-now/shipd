@@ -7076,14 +7076,17 @@ class EpicAmendCheckTest(SpecStatusTestBase):
         with open(os.path.join(ddir, "note.md"), "w", encoding="utf-8") as fh:
             fh.write("# Note\n\nA consulted document.\n")
 
-    def seed_base(self, commit_epic=True):
+    def seed_base(self, commit_epic=True, decisions=None):
         """Commit the baseline epic (and its docs file) on ``main``, then cut
         the amendment branch. With ``commit_epic=False`` only the docs file is
-        committed, so the epic exists on the branch alone."""
+        committed, so the epic exists on the branch alone; ``decisions``
+        overrides the baseline's Decisions body so a test can start from more
+        than one bullet."""
         self._init_repo(self.root)
         self.write_docs()
         if commit_epic:
-            self.write_epic(self.epic_text())
+            self.write_epic(self.epic_text() if decisions is None
+                            else self.epic_text(decisions=decisions))
         self._commit_all("baseline")
         self._git("-C", self.root, "checkout", "-q", "-b", "amend")
 
@@ -7144,14 +7147,29 @@ class EpicAmendCheckTest(SpecStatusTestBase):
     # -- amendable regions -------------------------------------------------
 
     def test_amendable_edit_passes(self):
-        """A stamped Decisions bullet plus a References entry is clean."""
+        """An added Decisions bullet plus a References entry is clean."""
         self.seed_base()
         self.write_epic(self.epic_text(
             decisions=("- Ship the exporter behind the report seam.\n"
-                       "- Stream rows rather than buffering "
-                       "*(amended 2026-09-06: memory ceiling)*"),
+                       "- Stream rows rather than buffering; the ceiling is "
+                       "256 MiB."),
             references=("- [Note](../../docs/note.md)\n"
                         "- [Second](../../docs/second.md)")))
+        r = self.cli("epic-amend-check", self.SLUG)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.findings(r.stdout), [])
+        self.assertIn("clean", r.stdout)
+
+    def test_rewritten_and_deleted_decisions_pass(self):
+        """An amendable body may be rewritten freely: one baseline bullet
+        restated in place and another deleted outright, with no marker of any
+        kind, is clean — the premise the facts-only amendment rule rests on."""
+        self.seed_base(decisions=(
+            "- Ship the exporter behind the report seam.\n"
+            "- Stream rows rather than buffering; the ceiling is 256 MiB."))
+        self.write_epic(self.epic_text(
+            decisions=("- Ship the exporter behind the metrics seam, never "
+                       "the report seam.")))
         r = self.cli("epic-amend-check", self.SLUG)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(self.findings(r.stdout), [])
@@ -7228,8 +7246,8 @@ class EpicAmendCheckTest(SpecStatusTestBase):
         self.seed_store_base()
         self.write_store_epic(self.epic_text(
             decisions=("- Ship the exporter behind the report seam.\n"
-                       "- Stream rows rather than buffering "
-                       "*(amended 2026-09-06: memory ceiling)*")))
+                       "- Stream rows rather than buffering; the ceiling is "
+                       "256 MiB.")))
         r = self.cli("epic-amend-check", self.SLUG)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(self.findings(r.stdout), [])
@@ -7262,7 +7280,7 @@ class EpicAmendCheckTest(SpecStatusTestBase):
         self.seed_base()
         self.write_epic(self.epic_text(
             status="complete", intro="Restated.", drop_design=True,
-            decisions="- Amended *(amended 2026-09-06: note)*"))
+            decisions="- Stream rows rather than buffering."))
         before = self.snapshot_tree()
         r = self.cli("epic-amend-check", self.SLUG)
         self.assertEqual(r.returncode, 4, r.stdout + r.stderr)

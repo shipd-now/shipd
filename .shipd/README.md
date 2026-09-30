@@ -846,20 +846,20 @@ prints the epic's status, metadata, and one line per member with its state.
 
 ### Amending a live epic
 
-An epic that has left `draft` still accretes: a binding decision surfaced
+An epic that has left `draft` still changes: a binding decision surfaced
 mid-delivery belongs in the epic, and consulted material belongs on its shelf.
-That accretion runs through the **amendment discipline**, never a free edit of
-the epic file.
+Every such change runs through the **amendment discipline**, never a free edit
+of the epic file.
 
 Only the **amendable** regions may change: the `## Decisions` section and the
 shelf sections `## References`, `## Research`, and `## Video`. Everything else
 is **protected** — the pre-section header block (title, `Status:`, `Theme:`,
 `Initiative:`), `## Introduction` (its subsections included), `## Design`, the
 `## Changes` stub table, the machine-owned `## Token usage breakdown`, and any
-unrecognized level-2 section. Existing Decision text is never rewritten or
-deleted; a superseded decision is recorded as an addition beneath the original,
-and every new or extended Decision bullet carries a dated provenance stamp,
-`*(amended YYYY-MM-DD: <one-line note>)*`.
+unrecognized level-2 section. Every touched Decision bullet reads as the
+current fact: a superseded decision is rewritten in place or deleted outright,
+and no dated marker or "amended" note is ever added, because the epic's git
+history is the amendment record.
 
 The amendment is made in a **fresh `epic-amend-<slug>` worktree** (created with
 `shipd worktree epic-amend-<slug> --fresh`) and ships as a pull request, exactly
@@ -877,7 +877,7 @@ pre-section block) plus a summary. It exits 0 when only amendable regions
 changed, 4 when it has findings, and non-zero-but-not-4 when the comparison
 cannot be made at all (no epic in the work tree, no epic at the merge-base, an
 unresolvable base ref, a root outside any git work tree). The verb is read-only
-and never enforces the stamp grammar — that is the flow's discipline, not the
+and never enforces the fact grammar — that is the flow's discipline, not the
 verb's. `/s:epic <slug> amend` runs the whole flow.
 
 ### Membership and slug uniqueness

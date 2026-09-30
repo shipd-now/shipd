@@ -6,14 +6,14 @@ description: >-
   and Design, and emit the stub table of member changes with complexity ratings
   — then stop. Member changes are planned later, one at a time, via /s:plan.
   Invoked as `/s:epic <slug> amend`, runs the amendment flow on a live epic
-  instead: stamped Decisions and shelf edits only, gated by the linter and
-  `epic-amend-check`, then shipped as a PR from a fresh `epic-amend-<slug>`
-  worktree — or, where the epic resolves into an external store, as one scoped
-  local commit in the store's repository. Use
-  when asked to "create an epic", "decompose a feature", "group changes", "amend
-  an epic", or plan a multi-change initiative before spec'ing the individual
-  changes. Trigger phrases: "epic", "create an epic", "decompose", "amend the
-  epic", "/s:epic".
+  instead: Decisions and shelf edits only, each stating the current fact, gated
+  by the linter and `epic-amend-check`, then shipped as a PR from a fresh
+  `epic-amend-<slug>` worktree — or, where the epic resolves into an external
+  store, as one scoped local commit in the store's repository. Use when asked to
+  "create an epic", "decompose a feature", "group changes", "amend an epic", or
+  plan a multi-change initiative before spec'ing the individual changes.
+  Trigger phrases: "epic", "create an epic", "decompose", "amend the epic",
+  "/s:epic".
 ---
 
 # /s:epic — Convergent epic authoring → stub-table emission
@@ -61,12 +61,12 @@ flow — before investigating, before any question round, before anything.** The
 epic already exists; nothing below the Codebase-first rule runs, and no epic is
 emitted through staging.
 
-A live epic accretes but does not drift. Only the **amendable** regions may
-change: the `## Decisions` section and the shelf sections `## References`, plus
-a pre-existing `## Research` or `## Video` extended in place. `## Introduction`,
-`## Design`, the `## Changes` stub table, and the header metadata are
-**protected** — an amendment that needs one of those is a re-decomposition, not
-an amendment; say so and stop.
+A live epic's Decisions and shelf may change; its settled substance does not
+drift. Only the **amendable** regions may change: the `## Decisions` section and
+the shelf sections `## References`, plus a pre-existing `## Research` or
+`## Video` extended in place. `## Introduction`, `## Design`, the `## Changes`
+stub table, and the header metadata are **protected** — an amendment that needs
+one of those is a re-decomposition, not an amendment; say so and stop.
 
 1. **Resolve the epic and refuse a draft.** Read it through the engine:
 
@@ -126,16 +126,12 @@ an amendment; say so and stop.
    An item that is not epic-scope binding does not belong in this epic's
    Decisions, however true it is.
 
-4. **Stamp every Decision you touch.** Each new or extended Decision bullet
-   carries a dated provenance marker:
-
-   ```
-   *(amended YYYY-MM-DD: <one-line note>)*
-   ```
-
-   using today's real date. **Existing Decision text is never rewritten or
-   deleted** — a superseded decision is recorded as a stamped addition beneath
-   the original, so the epic keeps its own history.
+4. **Write every Decision you touch as the current fact.** A new Decision
+   states its rule. A superseded Decision is **rewritten in place**, its old
+   wording gone. A Decision that is no longer true is **deleted**. Never append
+   a dated marker, an "amended" note, or a before-and-after narrative —
+   `git log -p` on the epic file is the amendment history, so a reader of the
+   epic reads only what is true now.
 
 5. **Pass both gates before shipping.** The linter, then the amendment gate:
 
@@ -158,7 +154,7 @@ an amendment; say so and stop.
    lookups on the directory holding the epic, so the base is read from the
    store's own history. Because the store edit is still uncommitted, the gates
    compare it against the store's last committed state, which is exactly the
-   accretion check. Run them **before** the step 6 commit: a store that is not
+   amendment check. Run them **before** the step 6 commit: a store that is not
    inside any git work tree has no base to read, so `epic-amend-check` errors
    naming the epic's directory — a non-zero exit that is not `4`, which stops
    the flow under the rule above with nothing committed.
