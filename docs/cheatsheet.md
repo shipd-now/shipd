@@ -67,7 +67,7 @@ venn-beta
 | `/s:gate` | Install the semantic review gate in a repository end to end. | `/s:gate` |
 | `/s:initiative <new\|list\|review\|set> [args]` | Author, list, review, or attach workspace initiatives. | `/s:initiative list` |
 | `/s:memory` | List the preferences captured in the personal memory store. | `/s:memory` |
-| `/s:onboard [next\|back]` | Run the guided nine-step shipd tour. | `/s:onboard next` |
+| `/s:onboard [workspaces] [next\|back]` | Run the guided nine-step shipd tour, or its workspaces side-track. | `/s:onboard workspaces` |
 | `/s:plan` | Converge context into an execution-ready spec, then stop. | `/s:plan Add a --json flag to the export command` |
 | `/s:prd [slug]` | Interview for a workspace PRD — the outcomes an idea should deliver — before an epic decomposes it. | `/s:prd Add self-serve billing` |
 | `/s:remember` | Capture a durable user preference into the personal memory store. | `/s:remember I prefer terse commit messages` |
