@@ -617,9 +617,9 @@ enrichment's true-gap round — consult the oracle on each remaining decision
     contract. Where the binding information is **epic-scope** — it binds every
     member, not just this change — say so in visible text and flag it for the
     epic's amendment discipline, whose entry point is `/s:epic <slug> amend`
-    (a fresh `epic-amend-<slug>` worktree, a dated provenance line on the
-    amended Decision, guarded by `spec_status.py epic-amend-check <slug>` and
-    the linter, shipped as a PR); never edit the epic file in passing.
+    (a fresh `epic-amend-<slug>` worktree, the amended Decision rewritten to
+    state the current fact, guarded by `spec_status.py epic-amend-check <slug>`
+    and the linter, shipped as a PR); never edit the epic file in passing.
   - **Reference** → install it through the emit engine's `docs` kind and link
     it from the epic's `## References` shelf, exactly as the supplied-documents
     rule in step 1 does, citing it in `plan.md` prose when no epic resolves.

@@ -16,8 +16,8 @@ epic — a draft is edited in its authoring worktree. Otherwise work in
 shelf (`## References`, or a pre-existing `## Research`/`## Video`). Classify
 against the capture rubric first — epic-binding → a Decisions bullet; reference
 → the docs kind, linked never pasted; durable → the wiki; noise → dropped — then
-stamp each new or extended Decision `*(amended YYYY-MM-DD: <note>)*`, never
-rewriting or deleting existing Decision text.
+write each touched Decision as the current fact — rewrite or delete superseded
+text, never add a dated note; git history is the record.
 
 Gate on `spec_lint.py --epic <slug>`, then `spec_status.py epic-amend-check
 <slug>`, which exits `4` printing a `protected-section <name>` line per

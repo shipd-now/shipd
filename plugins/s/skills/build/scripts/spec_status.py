@@ -2460,13 +2460,14 @@ def cmd_epic_set_initiative(root, slug, initiative):
 # The epic amendment gate (spec-status epic-amend-check-verb)
 # ---------------------------------------------------------------------------
 #
-# A live epic accretes: a mid-delivery Decision and the shelf of consulted
-# material may be amended in, while the epic's *settled* substance — what it is
-# for, how it is built, and which members deliver it — may not drift under an
-# in-flight change. This verb draws exactly that line, comparing the working
-# tree's epic against its content at the merge-base of ``HEAD`` and the base
-# ref, so unrelated motion on the base branch after the amendment worktree was
-# cut never yields a false finding.
+# A live epic changes: its Decisions and the shelf of consulted material may be
+# rewritten to state the current facts — a bullet restated in place or deleted
+# outright, with the epic's git history carrying the provenance — while the
+# epic's *settled* substance — what it is for, how it is built, and which
+# members deliver it — may not drift under an in-flight change. This verb draws
+# exactly that line, comparing the working tree's epic against its content at
+# the merge-base of ``HEAD`` and the base ref, so unrelated motion on the base
+# branch after the amendment worktree was cut never yields a false finding.
 
 # The shelf family an amendment may rewrite freely.
 AMENDABLE_SECTIONS = (

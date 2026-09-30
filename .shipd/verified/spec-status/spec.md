@@ -1618,9 +1618,11 @@ verb SHALL treat the bodies of `## Decisions`, `## References`,
 `## Research`, and `## Video` as amendable, and everything else as
 protected: the pre-section header block (title and metadata lines),
 `## Introduction` (subsections included), `## Design`, `## Changes`,
-`## Token usage breakdown`, and any unrecognized level-2 section. When a
-protected region's content differs between the two versions — including a
-protected section added or removed — the verb SHALL print one
+`## Token usage breakdown`, and any unrecognized level-2 section. An
+amendable body MAY be rewritten freely, including a Decision bullet edited
+in place or deleted, and the verb SHALL NOT inspect Decision text for any
+marker. When a protected region's content differs between the two versions
+— including a protected section added or removed — the verb SHALL print one
 `protected-section <name>` finding line per changed region (`header` for the
 pre-section block) followed by a summary line, and SHALL exit 4; when only
 amendable bodies changed, or nothing changed, it SHALL report clean and exit
@@ -1630,8 +1632,15 @@ inside a git work tree, then the verb SHALL exit non-zero with an error
 naming the cause, distinct from the findings exit.
 
 #### Scenario: Decisions-only amendment passes
-- **GIVEN** a branch whose only epic edit adds a stamped bullet to
-  `## Decisions` and a link entry to `## References`
+- **GIVEN** a branch whose only epic edit adds a bullet to `## Decisions`
+  and a link entry to `## References`
+- **WHEN** `epic-amend-check <slug>` runs
+- **THEN** no finding line prints, the summary reports clean, and the exit
+  code is 0
+
+#### Scenario: Rewritten and deleted Decisions pass
+- **GIVEN** a branch whose only epic edit rewrites one `## Decisions` bullet
+  in place and deletes another, with no marker of any kind
 - **WHEN** `epic-amend-check <slug>` runs
 - **THEN** no finding line prints, the summary reports clean, and the exit
   code is 0

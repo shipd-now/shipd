@@ -472,8 +472,8 @@ A sub-agent that hits missing context returns a message starting with `QUESTION:
    - **Binding, epic scope** — it binds every member change, so its home is the
      epic's `## Decisions`. Surface it to the user for the epic's amendment
      discipline, whose entry point is `/s:epic <slug> amend` (a fresh
-     `epic-amend-<slug>` worktree, the amended Decision stamped with a dated
-     provenance line, guarded by `spec_status.py epic-amend-check <slug>` and
+     `epic-amend-<slug>` worktree, the amended Decision rewritten to state the
+     current fact, guarded by `spec_status.py epic-amend-check <slug>` and
      the linter, shipped as a pull request). Never edit a live epic file in
      passing, and never stall the build waiting on that amendment.
    - **Reference** — consulted rather than obeyed: a pasted memo, meeting

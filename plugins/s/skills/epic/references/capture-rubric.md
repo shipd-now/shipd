@@ -33,11 +33,11 @@ stay rejected. Its home is decided by **scope**.
   `## Decisions`. A live epic's Decisions change **only** through the
   sanctioned amendment discipline, whose entry point is `/s:epic <slug> amend`,
   never a free edit of the epic file: a fresh worktree
-  (`shipd worktree epic-amend-<slug> --fresh`), the amended Decision stamped
-  with a dated provenance line, the epic re-linted and guarded by
-  `spec_status.py epic-amend-check <slug>`, and the edit shipped as an
-  auto-merging pull request — the same discipline an epic status derivation
-  ships under. A skill that meets epic-scope binding
+  (`shipd worktree epic-amend-<slug> --fresh`), the amended Decision rewritten
+  to state the current fact, never annotated with a dated note, the epic
+  re-linted and guarded by `spec_status.py epic-amend-check <slug>`, and the
+  edit shipped as an auto-merging pull request — the same discipline an epic
+  status derivation ships under. A skill that meets epic-scope binding
   information mid-flow surfaces it to the user for that amendment; it does
   not edit the epic in passing.
 - **During epic authoring** the epic does not exist yet, so there is nothing

@@ -45,41 +45,22 @@ below 300 lines with no rubric substance lost.
 
 ## Decisions
 
-- **Two rubric surfaces, one substance.** The rubric lives in two files: the
-  plugin skill at `plugins/s/skills/review/SKILL.md`, and the vendored template
-  at `plugins/s/integrations/copilot/SKILL.md`. `shipd copilot add` installs the
+- **Four rubric surfaces, one substance.** The rubric lives in four files: the
+  plugin skill at `plugins/s/skills/review/SKILL.md`, the vendored template at
+  `plugins/s/integrations/copilot/SKILL.md`, the harness command body at
+  `plugins/s/harness/bodies/review.md`, and that body's file-reference at
+  `plugins/s/harness/references/review.md`. `shipd copilot add` installs the
   template plus `semdiff.py` into a user repo, where a GitHub Actions runner
-  executes it. That runner has no `${CLAUDE_PLUGIN_ROOT}` and no reference
-  files. Every member that changes rubric substance updates both surfaces, and
-  the template keeps its substance inline.
-
-  Three surfaces, not two. `plugins/s/harness/bodies/review.md` is the third — a
-  distilled command body that the `review-skill` requirement in
-  `.shipd/verified/semantic-review/spec.md` binds to the same judgement passes
-  as the skill, so the two cannot drift. Which surfaces a member touches now
-  follows from what it changes: a member that changes a judgement pass updates
-  all three, and a member that changes only the `--json` finding shape updates
-  the plugin alone, because neither the harness body nor the copilot template
-  carries that shape. The copilot template's JSON array holds `severity`,
-  `path`, `start_line`, `end_line`, `detail` and `replacement`, and no taxonomy
-  field at all.
-  *(amended 2026-09-14: corrected the surface count from two to three, after the
-  harness body surfaced while building `review-skill-references`.)*
-
-  Four surfaces, and the `--json` payload lives on two of them. The fourth is
-  `plugins/s/harness/references/review.md`, the command body's file-reference,
-  which carries the machine payload in full and ships to every harness
-  declaring the `file-references` feature — thirteen of them. So the rule that
-  a `--json` shape change "updates the plugin alone" is wrong: it updates the
-  plugin's `references/json-output.md` **and** the harness reference. The
-  harness *body* and the copilot template still carry no payload shape, which
-  is what the superseded sentence was reaching for. The parity requirement
-  `review-taxonomy-parity` in `.shipd/verified/semantic-review/spec.md` now
-  pins the two payload surfaces against each other, so this is enforced rather
-  than remembered.
-  *(amended 2026-09-14: corrected again — four surfaces, two of them carrying
-  the payload. Found while building `review-finding-category`, which discovered
-  the harness reference five taxonomy values behind since its creation commit.)*
+  executes it; that runner has no `${CLAUDE_PLUGIN_ROOT}` and no reference
+  files, so the template keeps its substance inline. The `review-skill`
+  requirement in `.shipd/verified/semantic-review/spec.md` binds the harness
+  body to the same judgement passes as the skill, so a member that changes a
+  judgement pass updates the skill, the template, and the body. The `--json`
+  finding shape lives on two surfaces, the plugin's `references/json-output.md`
+  and the harness reference, pinned against each other by
+  `review-taxonomy-parity` in the same spec; the body and the template carry no
+  payload shape, and the template's JSON array holds `severity`, `path`,
+  `start_line`, `end_line`, `detail` and `replacement` with no taxonomy field.
 - **The 300-line ceiling holds; space is bought with a reference.**
   `plugins/s/skills/review/SKILL.md` is capped under 300 lines by the
   `review-skill-references` requirement and pinned by `test_under_line_ceiling`.
@@ -88,8 +69,6 @@ below 300 lines with no rubric substance lost.
   disclosure, and a cap that rises whenever it binds is not a cap. Raising it is
   possible but never incidental: it takes its own amendment stating why the
   larger body is the right shape.
-  *(amended 2026-09-14: added after `review-risk-lenses` consumed the headroom,
-  leaving nine lines for the two remaining members.)*
 - **A reference states its whole trigger.** A member that moves guidance behind a
   load condition writes that condition in full at the pointer, never only inside
   the file the condition gates. A pointer that under-states its trigger makes the
@@ -98,8 +77,6 @@ below 300 lines with no rubric substance lost.
   `plugins/s/skills/review/tests/test_skill_references.py` pins every pointer
   against its reference's own condition sentence; a member that adds a reference
   extends that test rather than working around it.
-  *(amended 2026-09-14: added after the spec-aware pointer shipped half its
-  trigger in `review-skill-references` and the review gate caught it.)*
 - **Progressive disclosure binds the plugin skill only.** Follow the existing
   `plugins/s/skills/plan/references/` idiom. `SKILL.md` names each reference by
   its `${CLAUDE_PLUGIN_ROOT}` path and states the condition that loads it. The
@@ -131,9 +108,6 @@ below 300 lines with no rubric substance lost.
   configuration's `lint` key. Detection still never reaches a linter the engine
   does not know; configuration overrides, disables, or permits execution, and
   never teaches a new linter.
-  *(amended 2026-09-14: extended so configuration may permit script execution,
-  after planning `review-static-analysis` found the original wording granted
-  config only override and disable.)*
 - **Incremental review applies to gate mode only.** Prior findings are read
   back from the PR's posted threads, which `review_gate.py` already parses over
   GraphQL. No member adds a local cache. A pre-push `/s:review` stays stateless.
