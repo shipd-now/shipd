@@ -145,6 +145,6 @@ reads every team folder in it. That includes the base wiki and every nested
 team's own store. Give that group a workspace repository of its own —
 **separate repos, not directories, are the isolation boundary.**
 
-Day to day, `shipd workspace` prints a team's roster of projects, members, and
-initiatives. `shipd workspace sync` re-checks the members you use, and
-`shipd board` reports delivery across every declared project's repos.
+Day to day, `shipd workspace` prints a team's roster and `shipd workspace sync`
+re-checks the members you use. `shipd board` covers every declared project's
+repos from the workspace root, and only those beneath the folder it runs from.

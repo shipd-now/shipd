@@ -2556,6 +2556,14 @@ def workspace_project_roots(root):
     root — so a member the machine-local map points at an existing checkout is
     aggregated from that checkout, not from an empty workspace-relative path.
 
+    A **project folder** — an invocation root whose real path lies strictly
+    beneath the registry root's, such as ``workspaces/<ws>/<project>`` or any
+    other intermediate directory — narrows the pairs to the declared repos
+    whose real path lies beneath it, in the same order, so a board run from a
+    project folder covers that project's repos and nothing else. An
+    intermediate directory holding no declared repo yields ``[]``. The
+    registry root itself, and any root outside it, keep every declared repo.
+
     Fail-soft throughout — display never crashes on an invalid registry: an
     unloadable registry, a malformed member map (ignored, leaving
     workspace-relative resolution), a non-object project or repo entry, an entry
@@ -2569,6 +2577,10 @@ def workspace_project_roots(root):
         registry = load_workspace(reg_root)
     except ConfigError:
         return []
+    real_root = os.path.realpath(root)
+    real_reg = os.path.realpath(reg_root)
+    descendants_only = (real_root != real_reg
+                        and real_root.startswith(real_reg + os.sep))
     try:
         repo_map = load_repo_map(reg_root)
     except ConfigError:
@@ -2594,6 +2606,9 @@ def workspace_project_roots(root):
             if not os.path.isdir(repo_root):
                 continue
             real = os.path.realpath(repo_root)
+            if descendants_only and real != real_root and not real.startswith(
+                    real_root + os.sep):
+                continue
             if real in seen:
                 continue
             seen.add(real)

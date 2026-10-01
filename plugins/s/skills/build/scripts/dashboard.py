@@ -1446,7 +1446,11 @@ def _lane_signature(cards, group_mode, search_query, initiative_by_epic=None,
     epic's full ``(slug, project)`` identity because two universes' same-slug
     epics can sit in one lane with different initiatives (delivery-dashboard
     board-aggregation). The card's own project folds in too, so a header's
-    ``[<project>]`` marker changing repaints its lane. Depends solely on
+    ``[<project>]`` marker changing repaints its lane, and each card folds in
+    its member row's own ``project`` field as well, so a standalone row whose
+    universe changes repaints its lane even though the ``standalone``
+    pseudo-epic carries no project (delivery-dashboard
+    board-card-project-marker). Depends solely on
     board-derived content plus the grouping mode and query, never on other
     transient UI state (e.g. a collapsed epic group), so such state survives
     an unchanged refresh while changing the mode always repaints."""
@@ -1469,7 +1473,8 @@ def _lane_signature(cards, group_mode, search_query, initiative_by_epic=None,
         sig.append((epic_slug, project, status, initiative,
                     member.get("slug"), member.get("state"),
                     entry.get("stage"), entry.get("state"), build_stage,
-                    tuple(member.get("actions") or ())))
+                    tuple(member.get("actions") or ()),
+                    member.get("project")))
     return tuple(sig)
 
 
@@ -1492,14 +1497,18 @@ def _search_matches(query, epic_slug, initiative, member_slug):
 _RISK_TIERS = ("high", "medium", "low")
 
 
-def _filter_matches(filters, epic_slug, initiative, member):
+def _filter_matches(filters, epic_slug, initiative, member, project=None):
     """Whether a member is kept by the active filter chips (delivery-dashboard
     board-filter-strip spec) — **faceted**: chips are grouped by kind
-    (``risk``/``epic``/``initiative``) and the member passes when, for **every**
-    kind present, it matches **at least one** of that kind's values (same-kind
-    OR, cross-kind AND). ``risk`` tests the member's ``risk`` rating, ``epic``
-    the member's epic slug, ``initiative`` the epic's initiative slug (a
-    ``None`` initiative contributes no slug, so it never matches). Empty filters
+    (``risk``/``epic``/``initiative``/``project``) and the member passes when,
+    for **every** kind present, it matches **at least one** of that kind's
+    values (same-kind OR, cross-kind AND). ``risk`` tests the member's ``risk``
+    rating, ``epic`` the member's epic slug, ``initiative`` the epic's
+    initiative slug (a ``None`` initiative contributes no slug, so it never
+    matches), and ``project`` the card's project as the caller resolves it —
+    the epic's project, else the member row's own, exactly as
+    :meth:`TaskCard._card_project` derives it — so a ``None`` project (the
+    invocation root's own universe) never matches a project chip. Empty filters
     match everything. Pure — no ``textual``."""
     by_kind = {}
     for kind, value in filters:
@@ -1509,6 +1518,7 @@ def _filter_matches(filters, epic_slug, initiative, member):
         "risk": member.get("risk"),
         "epic": epic_slug,
         "initiative": init_slug,
+        "project": project,
     }
     for kind, values in by_kind.items():
         field = field_for.get(kind)
@@ -1522,8 +1532,9 @@ def _filter_options(board, active):
     (delivery-dashboard board-filter-strip spec): the risk tiers
     ``high``/``medium``/``low``, then each epic slug in board order, then each
     distinct initiative slug in group order (the no-initiative bucket
-    contributes none), minus any chip already in ``active``. Pure — no
-    ``textual``."""
+    contributes none), then each distinct project slug — epics in board order,
+    then standalone rows, a null project contributing none — minus any chip
+    already in ``active``. Pure — no ``textual``."""
     active = set(active)
     options = [("risk", tier) for tier in _RISK_TIERS]
     for epic in board.get("epics", []):
@@ -1537,6 +1548,15 @@ def _filter_options(board, active):
         if slug and slug not in seen:
             seen.add(slug)
             options.append(("initiative", slug))
+    # The project universes on the board, in the order a reader meets them: the
+    # epics' own, then the standalone rows', which carry theirs on the row.
+    projects = set()
+    rows = list(board.get("epics", [])) + list(board.get("standalone", []))
+    for row in rows:
+        slug = row.get("project")
+        if slug and slug not in projects:
+            projects.add(slug)
+            options.append(("project", slug))
     return [opt for opt in options if opt not in active]
 
 
@@ -1962,7 +1982,10 @@ class MemberDetailScreen(ModalScreen):
     reference to its epic's status, a horizontal rule, then — resolved via
     the dependency-free :func:`change_artifacts` — a tabbed view of the
     change's on-disk spec files (Plan / Spec / Tasks) rendered as Markdown,
-    or a not-yet-planned notice when it has none. Dismissed by ``Escape`` or
+    or a not-yet-planned notice when it has none. A ``project`` the card
+    passes down closes the badge row with a muted ``project: <slug>`` chip
+    (delivery-dashboard board-card-project-marker); ``None`` — the invocation
+    root's own universe — yields no such badge. Dismissed by ``Escape`` or
     a click on the ``✕`` close control."""
 
     BINDINGS = [
@@ -2045,12 +2068,17 @@ class MemberDetailScreen(ModalScreen):
     }
     """
 
-    def __init__(self, epic_slug, member, entry=None, epic_status=None):
+    def __init__(self, epic_slug, member, entry=None, epic_status=None,
+                 project=None):
         super().__init__()
         self.epic_slug = epic_slug
         self.member = member
         self.entry = entry or {}
         self.epic_status = epic_status
+        # The card's project universe (delivery-dashboard
+        # board-card-project-marker) — `None` for the invocation root's own,
+        # which every single-universe board's card carries.
+        self.project = project
         # Resolve this member's own session and, when it does, prepare a single-
         # session tail plus its accumulated events for the activity panel
         # (session-activity-timeline). No resolvable session -> no panel.
@@ -2145,6 +2173,10 @@ class MemberDetailScreen(ModalScreen):
                 yield Static(
                     "epic: %s [%s]" % (self.epic_slug, self.epic_status or "?"),
                     classes="modal-badge badge-muted", markup=False)
+                if self.project:
+                    yield Static("project: %s" % self.project,
+                                 classes="modal-badge badge-muted",
+                                 markup=False)
             if meta:
                 yield Static("\n".join(meta), classes="modal-meta-lines",
                              markup=False)
@@ -2783,6 +2815,11 @@ class TaskCard(Static):
     a no-op when that action is not among the member's eligible ``actions``.
     Also carries ``epic_status`` — the change's epic status, unused for
     rendering the card itself but threaded into the detail modal it opens.
+    A card whose project is non-null — its epic's project, else its member
+    row's own ``project`` field (:meth:`_card_project`) — closes its row with
+    the same escaped muted ``[<project>]`` marker the epic group header wears
+    (delivery-dashboard board-card-project-marker), after the slug and after
+    any stage or signal label, and passes that project to the detail modal.
     ``Enter`` pushes the member detail modal; the arrow keys move focus
     spatially across cards and lanes via :meth:`BoardApp.move_card_focus`."""
 
@@ -2814,56 +2851,74 @@ class TaskCard(Static):
         self.epic_project = epic_project
         super().__init__(self._card_text(), **kwargs)
 
+    def _card_project(self):
+        """The project universe this card belongs to, or ``None`` for the
+        invocation root's own (delivery-dashboard board-card-project-marker):
+        the epic's project when the card has one, else the member row's own
+        ``project`` field — which `build_board` sets on an aggregated
+        standalone row, the one card with no epic to inherit from."""
+        return self.epic_project or self.member.get("project")
+
     def _card_text(self):
         # The slug's matched span is wrapped in `[$accent]…[/]` under an active
         # query (delivery-dashboard board-search spec); an empty query or a
         # non-slug (epic/initiative) match leaves the slug plain.
         slug = _highlight_slug(self.member["slug"], self.search_query)
+        signal = member_signal(self.member, self.entry)
         # A shipped row swaps the risk glyph for a subtle-tier ✓ (no stage);
         # the theme-variable markup resolves through the same merged-variables
         # path as the `[$text-error]✗` stall marker (delivery-dashboard
         # board-tui / board-shipd-theme spec).
         if _member_column(self.member, self.entry) == "shipped":
-            return "[$fg-subtle]✓[/] %s" % slug
+            text = "[$fg-subtle]✓[/] %s" % slug
         # A signalling member (delivery-dashboard board-parked-member-signal
         # and board-drafted-member specs) renders its glyph and muted state
         # label in place of the risk glyph and live stage, so it is never
         # mistaken for an idle or actively-driving card. A parked kind takes
         # the error tier; the informational `drafted` kind takes the accent
         # tier — its member is awaiting a merge, not stuck.
-        signal = member_signal(self.member, self.entry)
-        if signal is not None:
+        elif signal is not None:
             glyph_var = "$accent" if signal["kind"] == "drafted" \
                 else "$text-error"
-            return "[%s]%s[/] %s[$fg-muted] · %s[/]" % (
+            text = "[%s]%s[/] %s[$fg-muted] · %s[/]" % (
                 glyph_var, signal["glyph"], slug, signal["label"])
-        # A risk-coloured ● glyph precedes the slug; a missing or unknown risk
-        # renders the glyph in the muted foreground tier.
-        risk = (self.member.get("risk") or "").lower()
-        glyph_var = "$risk-%s" % risk if risk in ("low", "medium", "high") \
-            else "$fg-muted"
-        text = "[%s]●[/] %s" % (glyph_var, slug)
-        # While the member is being driven its live stage is appended in the
-        # muted tier after the slug; failing that, a live interactive build
-        # heartbeat — the lane placement `_member_column` already honours —
-        # appends its own stage the same way (delivery-dashboard
-        # board-live-build-lane spec).
-        if self.entry.get("state") == "driving":
-            stage = self.entry.get("stage")
-            if stage:
-                text += "[$fg-muted] · %s[/]" % stage
-            return text
-        build_hb = self.member.get("build_heartbeat")
-        if _build_is_live(build_hb):
-            stage = build_hb.get("stage")
-            if stage:
-                text += "[$fg-muted] · %s[/]" % stage
+        else:
+            # A risk-coloured ● glyph precedes the slug; a missing or unknown
+            # risk renders the glyph in the muted foreground tier.
+            risk = (self.member.get("risk") or "").lower()
+            glyph_var = "$risk-%s" % risk \
+                if risk in ("low", "medium", "high") else "$fg-muted"
+            text = "[%s]●[/] %s" % (glyph_var, slug)
+            # While the member is being driven its live stage is appended in
+            # the muted tier after the slug; failing that, a live interactive
+            # build heartbeat — the lane placement `_member_column` already
+            # honours — appends its own stage the same way (delivery-dashboard
+            # board-live-build-lane spec).
+            if self.entry.get("state") == "driving":
+                stage = self.entry.get("stage")
+                if stage:
+                    text += "[$fg-muted] · %s[/]" % stage
+            else:
+                build_hb = self.member.get("build_heartbeat")
+                if _build_is_live(build_hb):
+                    stage = build_hb.get("stage")
+                    if stage:
+                        text += "[$fg-muted] · %s[/]" % stage
+        # One append point for every branch: the project marker closes the row,
+        # its brackets escaped (`\[`) exactly as `epic_group_title` escapes the
+        # header's, so content markup paints them literally instead of
+        # swallowing the slug as a style tag (delivery-dashboard
+        # board-card-project-marker). A null project leaves the text as it was.
+        project = self._card_project()
+        if project:
+            text += " [$fg-muted]\\[%s][/]" % project
         return text
 
     def action_select(self):
         self.app.push_screen(
             MemberDetailScreen(self.epic_slug, self.member, self.entry,
-                               self.epic_status))
+                               self.epic_status,
+                               project=self._card_project()))
 
     def on_click(self, event: Click) -> None:
         self.focus()
@@ -3549,10 +3604,10 @@ class FilterPickerScreen(ModalScreen):
     ``+ filter`` control) pushes (delivery-dashboard board-filter-strip spec):
     a small centred box listing one selectable button per available
     ``(kind, value)`` option — computed by the caller from the pure
-    :func:`_filter_options` (the risk tiers, each epic slug, and each
-    initiative slug, minus the already-active chips). Each option button
-    carries its ``chip_kind``/``chip_value`` and is labelled ``"<kind>:
-    <value>"``; pressing one dismisses the picker and adds its chip through
+    :func:`_filter_options` (the risk tiers, each epic slug, each initiative
+    slug, and each project slug, minus the already-active chips). Each option
+    button carries its ``chip_kind``/``chip_value`` and is labelled
+    ``"<kind>: <value>"``; pressing one dismisses the picker and adds its chip through
     :meth:`BoardApp.apply_filter`. ``Escape`` (or the ``✕`` control) dismisses
     without selecting. All CSS is through ``$`` theme variables
     (board-shipd-theme rule)."""
@@ -4002,7 +4057,8 @@ class BoardApp(App):
         self.search_query = ""
         # The active filter chips (delivery-dashboard board-filter-strip spec):
         # an ordered, duplicate-free list of `(kind, value)` tuples with kinds
-        # `risk`/`epic`/`initiative`. View-level state only — never persisted —
+        # `risk`/`epic`/`initiative`/`project`. View-level state only — never
+        # persisted —
         # folded into `_lane_signature` so a chip change repaints and an idle
         # refresh under steady chips does not.
         self.filters = []
@@ -4281,8 +4337,9 @@ class BoardApp(App):
         active filter chips (board-filter-strip spec): each card spec is tested
         with :func:`_search_matches` **and** :func:`_filter_matches`, its epic's
         initiative resolved via :func:`_find_epic` on the card's full
-        ``(slug, project)`` identity. An empty query and empty chips keep every
-        member."""
+        ``(slug, project)`` identity and its project resolved the way the card
+        itself does — the epic's, else the member row's own. An empty query and
+        empty chips keep every member."""
         raw = _lane_contents(self.board)
         contents = {}
         for lane_name in LANES:
@@ -4294,8 +4351,9 @@ class BoardApp(App):
                 initiative = epic.get("initiative") if epic else None
                 if (_search_matches(self.search_query, epic_slug, initiative,
                                     member["slug"])
-                        and _filter_matches(self.filters, epic_slug,
-                                            initiative, member)):
+                        and _filter_matches(
+                            self.filters, epic_slug, initiative, member,
+                            project=project or member.get("project"))):
                     kept.append(spec)
             contents[lane_name] = kept
         return contents

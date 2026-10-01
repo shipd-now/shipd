@@ -77,7 +77,8 @@ teams you ignore stay unmaterialized, and cost nothing but their tracked
 manifest and wiki.
 
 `shipd workspace` reports the team's roster of projects and initiatives.
-`shipd board` reports delivery across every declared project's repos.
+`shipd board` covers every declared project's repos from the workspace root,
+and only the repos beneath the folder it runs from otherwise.
 
 ## What the shape costs
 

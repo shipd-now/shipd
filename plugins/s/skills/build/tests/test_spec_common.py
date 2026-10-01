@@ -2024,6 +2024,52 @@ class WorkspaceUniverseSeamTest(unittest.TestCase):
                     sc.aggregation_universes(ws),
                     [(None, ws), ("alpha", os.path.join(ws, "repos/alpha"))])
 
+    def test_project_folder_yields_only_the_repos_beneath_it(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = self._workspace(tmp, {
+                "alpha": {"repos": ["alpha/web", "alpha/api"]},
+                "beta": {"repos": ["beta/svc"]},
+            }, ("alpha/web", "alpha/api", "beta/svc"))
+            folder = os.path.join(ws, "alpha")
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.workspace_project_roots(folder),
+                    [("alpha", os.path.join(ws, "alpha/web")),
+                     ("alpha", os.path.join(ws, "alpha/api"))])
+                self.assertEqual(
+                    sc.aggregation_universes(folder),
+                    [(None, folder),
+                     ("alpha", os.path.join(ws, "alpha/web")),
+                     ("alpha", os.path.join(ws, "alpha/api"))])
+
+    def test_intermediate_folder_holding_no_repo_yields_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = self._workspace(tmp, {
+                "alpha": {"repos": ["alpha/web", "alpha/api"]},
+                "beta": {"repos": ["beta/svc"]},
+            }, ("alpha/web", "alpha/api", "beta/svc", "scratch"))
+            scratch = os.path.join(ws, "scratch")
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(sc.workspace_project_roots(scratch), [])
+                self.assertEqual(sc.aggregation_universes(scratch),
+                                 [(None, scratch)])
+
+    def test_registry_root_still_yields_every_declared_repo(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = self._workspace(tmp, {
+                "alpha": {"repos": ["alpha/web", "alpha/api"]},
+                "beta": {"repos": ["beta/svc"]},
+            }, ("alpha/web", "alpha/api", "beta/svc"))
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.workspace_project_roots(ws),
+                    [("alpha", os.path.join(ws, "alpha/web")),
+                     ("alpha", os.path.join(ws, "alpha/api")),
+                     ("beta", os.path.join(ws, "beta/svc"))])
+
     def test_inside_a_member_repo_the_seam_yields_nothing(self):
         with tempfile.TemporaryDirectory() as tmp, \
                 tempfile.TemporaryDirectory() as home:
