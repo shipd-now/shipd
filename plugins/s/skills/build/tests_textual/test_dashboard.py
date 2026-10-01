@@ -1318,6 +1318,19 @@ class FilterMatchesTest(unittest.TestCase):
         self.assertTrue(dashboard._filter_matches(
             [("risk", "high"), ("risk", "low")], "ep1", self.init_a, self.low))
 
+    def test_project_kind_tests_the_cards_project(self):
+        # The `project` kind (delivery-dashboard board-filter-strip) tests the
+        # project the card derives, which the caller resolves and passes in.
+        fm = dashboard._filter_matches
+        self.assertTrue(fm([("project", "cai")], "ep", None, self.high,
+                           project="cai"))
+        self.assertFalse(fm([("project", "cai")], "ep", None, self.high,
+                            project="shipd"))
+
+    def test_a_null_project_never_matches_a_project_chip(self):
+        self.assertFalse(dashboard._filter_matches(
+            [("project", "cai")], "ep", None, self.high, project=None))
+
     def test_cross_kind_chips_and(self):
         fm = dashboard._filter_matches
         # High-risk member of ep1 passes both kinds.
@@ -1352,6 +1365,26 @@ class FilterOptionsTest(unittest.TestCase):
             ("epic", "ep1"), ("epic", "ep2"), ("epic", "ep3"),
             ("initiative", "ia"), ("initiative", "ib"),
         ])
+
+    def test_project_options_follow_the_initiative_options(self):
+        # Each distinct non-null project slug is offered after every
+        # initiative option — epics in board order, then standalone rows
+        # (delivery-dashboard board-filter-strip).
+        board = self._board()
+        board["epics"][0]["project"] = "cai"
+        board["epics"][1]["project"] = "shipd"
+        board["standalone"] = [{"slug": "solo", "project": "shipd"},
+                               {"slug": "root"}]
+        options = dashboard._filter_options(board, [])
+        self.assertEqual(options[-2:],
+                         [("project", "cai"), ("project", "shipd")])
+        self.assertEqual(options.index(("initiative", "ib")),
+                         options.index(("project", "cai")) - 1)
+        # `ep3` and the `root` standalone row carry no project, and a repeated
+        # slug is offered once.
+        self.assertEqual(
+            [opt for opt in options if opt[0] == "project"],
+            [("project", "cai"), ("project", "shipd")])
 
     def test_active_chips_are_excluded(self):
         options = dashboard._filter_options(
@@ -1912,12 +1945,49 @@ class FilterStripLaneTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(empties)
             self.assertIn("nothing unplanned", str(empties.first().render()))
 
+    async def test_a_project_chip_mounts_only_that_projects_members(self):
+        # A `project` chip (delivery-dashboard board-filter-strip) keeps the
+        # `cai` members and drops both the other project's and the invocation
+        # root's own, whose project is null and so never matches.
+        def multi_project_board():
+            board = _split_lane_board()
+            board["epics"][0]["project"] = "cai"
+            board["epics"][1]["project"] = "shipd"
+            board["standalone"] = [
+                {"slug": "solo", "description": "d", "risk": "low",
+                 "state": "ready", "location": "/x", "actions": ["run"],
+                 "session_id": None, "project": "cai"},
+                {"slug": "root", "description": "d", "risk": "low",
+                 "state": "ready", "location": "/x", "actions": ["run"],
+                 "session_id": None},
+            ]
+            return board
+
+        app = dashboard.BoardApp(root="/x", board_fn=multi_project_board)
+        async with app.run_test() as pilot:
+            self.assertEqual(self._slugs(app), ["m1", "m2", "root", "solo"])
+            await app.apply_filter("project", "cai")
+            await pilot.pause()
+            self.assertEqual(self._slugs(app), ["m1", "solo"])
+
     def test_lane_signature_differs_when_only_filters_differ(self):
         cards = [("ep1", "active", {"slug": "m1", "state": "ready"}, None)]
         sig_none = dashboard._lane_signature(cards, "epic", "", None, ())
         sig_filtered = dashboard._lane_signature(
             cards, "epic", "", None, (("risk", "high"),))
         self.assertNotEqual(sig_none, sig_filtered)
+
+    def test_lane_signature_differs_when_a_standalone_rows_project_differs(
+            self):
+        # A standalone row carries its own project (delivery-dashboard
+        # board-card-project-marker), so a universe change on the row must
+        # repaint its lane even though the pseudo-epic's project stays null.
+        def cards(project):
+            member = {"slug": "m1", "state": "ready", "project": project}
+            return [("standalone", None, member, {}, None)]
+        self.assertNotEqual(
+            dashboard._lane_signature(cards("cai"), "epic", "", None, ()),
+            dashboard._lane_signature(cards("shipd"), "epic", "", None, ()))
 
     async def test_steady_chips_retain_cards_and_a_chip_change_repaints(self):
         app = dashboard.BoardApp(root="/x", board_fn=_kanban_board)
@@ -1972,6 +2042,22 @@ class FilterPickerTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 self._picker_options(app.screen),
                 dashboard._filter_options(app.board, app.filters))
+
+    async def test_the_picker_lists_the_boards_project_options(self):
+        def project_board():
+            board = _kanban_board()
+            board["epics"][0]["project"] = "cai"
+            return board
+
+        app = dashboard.BoardApp(root="/x", board_fn=project_board)
+        async with app.run_test() as pilot:
+            await pilot.press("f")
+            await pilot.pause()
+            self.assertIn(("project", "cai"),
+                          self._picker_options(app.screen))
+            labels = [str(b.label) for b in app.screen.query(Button)
+                      if getattr(b, "chip_kind", None) is not None]
+            self.assertIn("project: cai", labels)
 
     async def test_active_chips_are_absent_from_the_picker(self):
         app = dashboard.BoardApp(root="/x", board_fn=_kanban_board)
@@ -2400,6 +2486,35 @@ class SpecDetailModalTest(DashboardTestBase, unittest.IsolatedAsyncioTestCase):
             self.assertIn("ready", header_text)  # state
             self.assertIn("epic: ep [active]", header_text)
 
+    async def test_badge_row_ends_with_the_project_badge(self):
+        # The card passes its project down (delivery-dashboard
+        # board-card-project-marker), so a project epic's member names its
+        # universe in the modal as the badge row's last chip.
+        self._plant_artifacts("documented")
+
+        def project_board():
+            board = _detail_board(self.root, "documented")
+            board["epics"][0]["project"] = "cai"
+            return board
+
+        app = dashboard.BoardApp(root=self.root, board_fn=project_board)
+        async with app.run_test() as pilot:
+            await self._open_detail(pilot, app, "documented")
+            row = app.screen.query_one(".modal-badge-row")
+            badges = [str(w.content) for w in row.query(".modal-badge")]
+            self.assertEqual(badges[-1], "project: cai")
+
+    async def test_a_root_universe_member_has_no_project_badge(self):
+        self._plant_artifacts("documented")
+        app = dashboard.BoardApp(
+            root=self.root,
+            board_fn=lambda: _detail_board(self.root, "documented"))
+        async with app.run_test() as pilot:
+            await self._open_detail(pilot, app, "documented")
+            row = app.screen.query_one(".modal-badge-row")
+            badges = [str(w.content) for w in row.query(".modal-badge")]
+            self.assertFalse([b for b in badges if b.startswith("project:")])
+
     async def test_tabbed_view_lists_discovered_artifacts(self):
         self._plant_artifacts("documented")
         app = dashboard.BoardApp(
@@ -2691,7 +2806,80 @@ class TaskCardRowTest(unittest.TestCase):
         self.assertIn("TaskCard:focus", css)
 
 
+    # --- The muted project marker (delivery-dashboard
+    # board-card-project-marker spec) ---
+
+    def test_epic_project_closes_the_row_with_the_muted_marker(self):
+        member = {"slug": "sl", "state": "ready", "actions": [],
+                  "risk": "low"}
+        card = dashboard.TaskCard("ep", member, {}, "active",
+                                  epic_project="cai")
+        self.assertEqual(card._card_text(),
+                         "[$risk-low]●[/] sl [$fg-muted]\\[cai][/]")
+
+    def test_standalone_rows_own_project_closes_the_row(self):
+        member = {"slug": "sl", "state": "ready", "actions": [],
+                  "project": "shipd"}
+        card = dashboard.TaskCard(None, member, {}, "active",
+                                  epic_project=None)
+        self.assertTrue(
+            card._card_text().endswith(" [$fg-muted]\\[shipd][/]"))
+
+    def test_the_marker_follows_the_live_stage_suffix(self):
+        member = {"slug": "sl", "state": "active", "actions": [],
+                  "risk": "low"}
+        card = dashboard.TaskCard("ep", member,
+                                  {"state": "driving", "stage": "gate"},
+                                  "active", epic_project="cai")
+        self.assertEqual(
+            card._card_text(),
+            "[$risk-low]●[/] sl[$fg-muted] · gate[/]"
+            " [$fg-muted]\\[cai][/]")
+
+    def test_a_shipped_row_carries_the_marker_after_the_check(self):
+        member = {"slug": "sl", "state": "archived", "actions": [],
+                  "risk": "high"}
+        card = dashboard.TaskCard("ep", member, {}, "active",
+                                  epic_project="cai")
+        self.assertEqual(card._card_text(),
+                         "[$fg-subtle]✓[/] sl [$fg-muted]\\[cai][/]")
+
+    def test_a_null_project_leaves_the_row_byte_identical(self):
+        self.assertEqual(_bare_card("low")._card_text(),
+                         "[$risk-low]●[/] sl")
+        self.assertEqual(_bare_card("high", state="archived")._card_text(),
+                         "[$fg-subtle]✓[/] sl")
+        driving = _bare_card("low", state="active",
+                             entry={"state": "driving", "stage": "build"})
+        self.assertEqual(driving._card_text(),
+                         "[$risk-low]●[/] sl[$fg-muted] · build[/]")
+
+
 class TaskCardRowMountedTest(unittest.IsolatedAsyncioTestCase):
+    async def test_the_project_marker_survives_every_grouping_mode(self):
+        # The marker is appended by `_card_text` itself, so it rides along in
+        # the `initiative` and flat `none` modes too, where no epic group
+        # header carries the project (delivery-dashboard
+        # board-card-project-marker).
+        def project_board():
+            board = _kanban_board()
+            board["epics"][0]["project"] = "cai"
+            return board
+
+        marker = " [$fg-muted]\\[cai][/]"
+        app = dashboard.BoardApp(root="/x", board_fn=project_board)
+        async with app.run_test() as pilot:
+            self.assertEqual(app.group_mode, "epic")
+            self.assertTrue(_find_card(app, "rdy")._card_text()
+                            .endswith(marker))
+            for mode in ("initiative", "none"):
+                await pilot.press("g")
+                await pilot.pause()
+                self.assertEqual(app.group_mode, mode)
+                self.assertTrue(
+                    _find_card(app, "rdy")._card_text().endswith(marker),
+                    "the %s mode card dropped the project marker" % mode)
+
     async def test_high_risk_card_markup_resolves_when_mounted(self):
         # The custom `$risk-*` theme variables must resolve in Content markup
         # the same way the `[$text-error]✗` stall marker already does —
