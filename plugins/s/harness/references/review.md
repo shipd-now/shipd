@@ -20,6 +20,15 @@ preamble, no fences, no commentary, and no emoji:
 {
   "verdict": "pass" | "changes-requested",
   "effort": 3,
+  "endpoints": {
+    "base_given": "main",
+    "base": "main",
+    "base_sha": "<40-char commit id>",
+    "head": "feature" | null,
+    "head_sha": "<40-char commit id>" | null,
+    "merge_base": "<40-char commit id>",
+    "mode": "working-tree" | "merge-base" | "linear"
+  },
   "findings": [
     {
       "id": "f1",
@@ -45,13 +54,25 @@ with severity `high`. `spec_coverage` is present only when a planned change was
 in scope. If the analysis could not run at all, still emit a well-formed
 object whose `could_not_verify` explains why.
 
+`endpoints` carries the engine's resolved endpoint metadata — `base_given`,
+`base_sha`, `head_sha`, and `merge_base` straight from `semdiff`'s meta, plus
+`base`/`head`/`mode`. `merge_base` is absent under `--linear`; `head`/
+`head_sha` are `null` in working-tree mode. The poster rejects a payload
+carrying no `endpoints.merge_base` before writing anything to the pull
+request. `plugins/s/skills/review/references/json-output.md` specifies this
+same object identically, since it is a second machine-payload surface for
+the same contract.
+
 ## The posting flow
 
 1. **Resolve the pull request** for the branch under review (usually the
-   current `change/<name>`), capturing its number and head SHA.
-2. **Review head against base with merge-base semantics**, so the "after" side
-   is exactly what the pull request shows. Do the full analysis — posting is
-   never a reason to shortcut it.
+   current `change/<name>`), capturing its number, base commit, and head
+   commit — never a local branch name, which is how a stale or
+   fork-relative base used to leak into the review.
+2. **Fetch both resolved commits, then review by commit id**, with
+   merge-base semantics, so the "after" side is exactly what the pull
+   request shows. Do the full analysis — posting is never a reason to
+   shortcut it.
 3. **Write the JSON object to a temp file.**
 4. **Run the poster** with that file. It upserts a single marker summary
    comment, posts anchored inline comments for the findings that fall inside

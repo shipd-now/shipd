@@ -220,5 +220,90 @@ class ReleaseArchiveExtractionTest(unittest.TestCase):
             self.assertIn("echo difft", fh.read())
 
 
+class BaseFreshnessProbeTest(unittest.TestCase):
+    """`semdiff doctor`'s base-freshness line: report-only, reads only
+    already-fetched refs with no network (no `--fix` is ever passed here),
+    and never changes doctor's exit code — the exit code stays tied solely
+    to required-tool presence."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-doctor-base-")
+        self.bindir = _bindir(self.tmp, "bin", ["git"])
+        # A stub `difft` so the required-tool check passes without a real
+        # difftastic binary — doctor only checks PATH presence, not function.
+        stub = os.path.join(self.bindir, "difft")
+        with open(stub, "w") as fh:
+            fh.write("#!/bin/sh\nexit 0\n")
+        os.chmod(stub, 0o755)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _run(self, repo):
+        env = {"PATH": self.bindir, "HOME": self.tmp}
+        return subprocess.run([sys.executable, SCRIPT, "doctor"], cwd=repo,
+                              capture_output=True, text=True, env=env)
+
+    def _git(self, repo, *args):
+        return subprocess.run(["git", "-C", repo, *args],
+                              capture_output=True, text=True, check=True)
+
+    def _write(self, repo, rel, text):
+        with open(os.path.join(repo, rel), "w") as fh:
+            fh.write(text)
+
+    def test_behind_base_reports_count_and_remedy_without_failing(self):
+        origin = os.path.join(self.tmp, "origin.git")
+        work = os.path.join(self.tmp, "work")
+        clone = os.path.join(self.tmp, "clone")
+        subprocess.run(["git", "init", "-q", "--bare", origin],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "clone", "-q", origin, work],
+                       check=True, capture_output=True)
+        self._git(work, "config", "user.email", "t@example.com")
+        self._git(work, "config", "user.name", "Test")
+        self._git(work, "config", "commit.gpgsign", "false")
+        self._write(work, "keep.txt", "hello\n")
+        self._git(work, "add", "-A")
+        self._git(work, "commit", "-qm", "init")
+        self._git(work, "checkout", "-q", "-B", "main")
+        self._git(work, "push", "-q", "-u", "origin", "main")
+
+        subprocess.run(["git", "clone", "-q", origin, clone],
+                       check=True, capture_output=True)
+
+        # Advance origin by three commits, never fetched into the clone.
+        for n in range(3):
+            self._write(work, f"advance{n}.txt", f"advance {n}\n")
+            self._git(work, "add", "-A")
+            self._git(work, "commit", "-qm", f"advance {n}")
+        self._git(work, "push", "-q", "origin", "main")
+
+        self._git(clone, "fetch", "-q", "origin")
+
+        r = self._run(clone)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        out = r.stdout + r.stderr
+        self.assertIn("3", out)
+        self.assertIn("behind", out.lower())
+
+    def test_no_counterpart_reports_nothing_to_compare(self):
+        repo = os.path.join(self.tmp, "solo")
+        os.makedirs(repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        repo], check=True, capture_output=True)
+        self._git(repo, "config", "user.email", "t@example.com")
+        self._git(repo, "config", "user.name", "Test")
+        self._git(repo, "config", "commit.gpgsign", "false")
+        self._write(repo, "keep.txt", "hello\n")
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-qm", "init")
+
+        r = self._run(repo)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        out = (r.stdout + r.stderr).lower()
+        self.assertIn("nothing to compare", out)
+
+
 if __name__ == "__main__":
     unittest.main()

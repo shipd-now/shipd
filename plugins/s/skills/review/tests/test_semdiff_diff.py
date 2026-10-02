@@ -183,6 +183,31 @@ class DiffTestCase(unittest.TestCase):
         self.assertEqual(out["mode"], "linear")
         self.assertEqual(out["head"], "feature")
 
+    # -- endpoint disclosure --------------------------------------------------
+
+    def test_endpoints_disclosed_as_commit_ids(self):
+        rc, out, err = run_semdiff(self.repo, "diff", "main", "feature")
+        self.assertEqual(rc, 0, err)
+        # base_given is the ref as invoked, not a commit id — the other three
+        # are commit ids.
+        self.assertEqual(out["base_given"], "main")
+        for key in ("base_sha", "head_sha", "merge_base"):
+            self.assertIn(key, out)
+            self.assertEqual(len(out[key]), 40, f"{key}={out[key]!r}")
+
+    def test_working_tree_mode_discloses_null_head_and_fork_point(self):
+        rc, out, err = run_semdiff(self.repo, "diff", "main")
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(out["head_sha"])
+        fork_point = git(self.repo, "merge-base", "main", "HEAD").stdout.strip()
+        self.assertEqual(out["merge_base"], fork_point)
+
+    def test_linear_mode_emits_no_merge_base(self):
+        rc, out, err = run_semdiff(self.repo, "diff", "main", "feature",
+                                   "--linear")
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("merge_base", out)
+
     # -- missing difft is a hard failure -------------------------------------
 
     def test_missing_difft_fails_the_diff(self):
@@ -400,6 +425,143 @@ class EmptyEndpointTest(unittest.TestCase):
                          "an emptied tracked file was reported as deleted")
         self.assertEqual(kinds.get("filled.py"), "modified",
                          "a filled tracked empty file was reported as added")
+
+
+class StaleBaseTest(unittest.TestCase):
+    """A local base behind its remote-tracking counterpart must resolve to
+    that counterpart rather than being read literally — the defect this
+    change fixes: a review diffing a stale local `main` reported findings in
+    files the reviewed branch never touched. Built over a real local
+    "remote": a bare origin, a throwaway work clone that advances it, and the
+    clone under test, which only ever fetches (never pulls, merges, or
+    checks out anything but its own branches)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-stale-base-")
+        self.origin = os.path.join(self.tmp, "origin.git")
+        self.work = os.path.join(self.tmp, "work")
+        self.clone = os.path.join(self.tmp, "clone")
+        subprocess.run(["git", "init", "-q", "--bare", self.origin],
+                       check=True, capture_output=True)
+
+        # A throwaway work clone seeds origin's initial commit and later
+        # advances it — a bare repo cannot be committed to directly.
+        subprocess.run(["git", "clone", "-q", self.origin, self.work],
+                       check=True, capture_output=True)
+        git(self.work, "config", "user.email", "t@example.com")
+        git(self.work, "config", "user.name", "Test")
+        git(self.work, "config", "commit.gpgsign", "false")
+        self._write(self.work, "keep.txt", "hello\n")
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-qm", "init")
+        git(self.work, "checkout", "-q", "-B", "main")
+        git(self.work, "push", "-q", "-u", "origin", "main")
+
+        # The clone under test: tracks origin/main, currently in sync.
+        subprocess.run(["git", "clone", "-q", self.origin, self.clone],
+                       check=True, capture_output=True)
+        git(self.clone, "config", "user.email", "t@example.com")
+        git(self.clone, "config", "user.name", "Test")
+        git(self.clone, "config", "commit.gpgsign", "false")
+
+        # Advance origin by three commits through the work clone, without
+        # ever fetching them into the clone under test.
+        for n in range(3):
+            self._write(self.work, f"advance{n}.txt", f"advance {n}\n")
+            git(self.work, "add", "-A")
+            git(self.work, "commit", "-qm", f"advance {n}")
+        git(self.work, "push", "-q", "origin", "main")
+
+        # Fetch in the clone: updates refs/remotes/origin/main only, leaving
+        # the clone's local `main` three commits behind.
+        git(self.clone, "fetch", "-q", "origin")
+
+        # Cut `feature` from the advanced origin, with one commit of its
+        # own, entirely locally — never pushed.
+        git(self.clone, "checkout", "-q", "-b", "feature", "origin/main")
+        self._write(self.clone, "feature.txt", "feature only\n")
+        git(self.clone, "add", "-A")
+        git(self.clone, "commit", "-qm", "feature edit")
+        git(self.clone, "checkout", "-q", "main")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, repo, rel, text):
+        path = os.path.join(repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(text)
+
+    def test_stale_local_base_resolves_to_remote_tracking_counterpart(self):
+        rc, out, err = run_semdiff(self.clone, "diff", "main", "feature")
+        self.assertEqual(rc, 0, err)
+        paths = {f["path"] for f in out["files"]}
+        # Only feature's own commit — the three "advance" commits already
+        # sit on origin/main, so they must not show up as feature's doing.
+        self.assertEqual(paths, {"feature.txt"})
+        origin_main = git(self.clone, "rev-parse", "origin/main").stdout.strip()
+        self.assertNotEqual(out["base"], "main")
+        self.assertEqual(out["base"], origin_main)
+
+    def test_working_tree_mode_reports_only_the_edit(self):
+        self._write(self.clone, "local_edit.txt", "edited\n")
+        rc, out, err = run_semdiff(self.clone, "diff", "main")
+        self.assertEqual(rc, 0, err)
+        paths = {f["path"] for f in out["files"]}
+        # Anchored on the fork point, not the resolved base's tip: the three
+        # "advance" commits are the base's own advance, not local edits.
+        self.assertEqual(paths, {"local_edit.txt"})
+
+    def test_fully_qualified_ref_is_taken_as_given(self):
+        rc, out, err = run_semdiff(self.clone, "diff", "refs/heads/main",
+                                   "feature")
+        self.assertEqual(rc, 0, err)
+        paths = {f["path"] for f in out["files"]}
+        # The literal local branch is used, not its remote-tracking
+        # counterpart, so the three commits between it and `feature` are not
+        # excluded from the comparison.
+        self.assertEqual(paths, {"advance0.txt", "advance1.txt",
+                                 "advance2.txt", "feature.txt"})
+
+
+class CommitIdBaseTest(unittest.TestCase):
+    """A commit id carries no local-branch counterpart to promote, so it is
+    read exactly as given — the opt-out path, exercised with no remote at
+    all to show promotion never even attempts to run."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-commitid-base-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+        self._write("base.txt", "base\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+        git(self.repo, "checkout", "-q", "-b", "feature")
+        self._write("feature.txt", "feature\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "feature edit")
+        git(self.repo, "checkout", "-q", "main")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        with open(os.path.join(self.repo, rel), "w") as fh:
+            fh.write(text)
+
+    def test_commit_id_base_resolves_unchanged(self):
+        commit_id = git(self.repo, "rev-parse", "main").stdout.strip()
+        rc, out, err = run_semdiff(self.repo, "diff", commit_id, "feature")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(out["base"], commit_id)
+        paths = {f["path"] for f in out["files"]}
+        self.assertEqual(paths, {"feature.txt"})
 
 
 if __name__ == "__main__":

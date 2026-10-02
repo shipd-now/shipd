@@ -49,13 +49,34 @@ Each file below is read only when its condition fires — not by default.
 
 ## Determine what to review
 
+**Base freshness — before the first `semdiff` call, every mode.** Fetch the
+base's remote:
+
+```
+git fetch origin <base>
+```
+
+Name the base's own remote where it tracks another one — read it from
+`git config branch.<base>.remote` rather than assuming `origin`.
+
+The fetch writes remote-tracking refs only — never the working tree, the
+index, or a local branch — so the skill's no-modification guarantee is
+unchanged; it never pulls, rebases, or checks anything out on your behalf.
+The engine resolves a short branch base to its remote-tracking commit on its
+own once fetched, so no manual staleness check is needed. If the fetch
+fails, continue the review and record a could-not-verify entry naming that
+the base went unchecked against its remote, rather than ending the review. A
+two-ref `lint` run records its own could-not-verify entry naming that the
+linters read the checkout rather than the reviewed head, since `lint` passes
+changed paths to linter binaries that read them from disk.
+
 - **Local changes before pushing** (the default): `diff <base>` compares
   `<base>` against the working tree, defaulting to `main` (or `master`).
 - **An already-pushed branch or PR, given as two refs**: `diff <base> <head>`
   reviews what `<head>` added since diverging from `<base>`, PR-style
   (three-dot) — the "after" content is `<head>`, not your checkout. Add
-  `--linear` for two-dot; refs must exist locally (fetch first). Output
-  echoes the resolved `base`/`head`/`mode`.
+  `--linear` for two-dot; refs must exist locally (see Base freshness, above).
+  Output echoes the resolved `base`/`head`/`mode`.
 - **A named pull request** — a URL, `#<number>`, a bare number, or a branch
   pointed at one: posts its verdict by default, no ask required. See
   `${CLAUDE_PLUGIN_ROOT}/skills/review/references/posting.md` for the flow.
@@ -198,7 +219,12 @@ missing test are two findings, not one.
    and, in spec-aware mode, task count and unmet-scenario count. 1 = trivial;
    3 = moderate (several files/cohorts or a signature change); 5 = complex.
    State the number with a one-line justification citing the counts.
-2. **Findings header — directly below the effort score.** A line
+2. **Resolved endpoints — directly under the effort score.** State the base,
+   head, and merge base (where the mode carries one) as commit ids — the
+   engine's `base_sha`, `head_sha`, and `merge_base` — before any findings,
+   so a reader sees exactly which commits produced them. In working-tree mode
+   the `merge_base` is the before side, not `base_sha`.
+3. **Findings header — directly below the endpoints line.** A line
    `## Findings: <marker> <VERDICT>` — `✅ Ship it` when no finding is high or
    medium; `❌ Fix required` otherwise. This is the **same** decision as the
    verdict in
@@ -210,20 +236,20 @@ missing test are two findings, not one.
    stays byte-identical. The pre-rename `<!-- am-semantic-review -->` marker is
    still recognized on read, so a PR whose summary predates the rename is
    edited in place rather than given a second summary comment.
-3. **Summary table** — one row per finding, most-severe first, columns
+4. **Summary table** — one row per finding, most-severe first, columns
    `# | rating | details`; rating is 🔴 high / 🟠 med / 🟡 low (display label
    `med`; the severity value stays `medium`). No findings → print
    `## Findings: ✅ Ship it` and "No problems found." and omit the empty
    table. `review_gate.py post` closes the summary comment with one stat
    line, `Reviewed N files, +A -D lines.`, counted from the PR's own file
    list — the review body you write carries no such line.
-4. **Collapsible walkthrough** in `<details><summary>Walkthrough</summary>`.
-5. **Diagrams — only when structurally warranted.** Mermaid: sequence for
+5. **Collapsible walkthrough** in `<details><summary>Walkthrough</summary>`.
+6. **Diagrams — only when structurally warranted.** Mermaid: sequence for
    API/flow changes, ER for schema/data-model, state for lifecycle logic.
    Emoji-free labels. Dark-mode-safe: any colour must be low-alpha `rgba()`
    (~0.05–0.15), never opaque pastel fills; never hard-code label text colour;
    never rely on colour alone — label bands as text.
-6. **Findings by cohort** — reuse the summary table's numbers — then the
+7. **Findings by cohort** — reuse the summary table's numbers — then the
    **verdict** and an explicit list of **what you could not verify**.
 
 ## Degradation
@@ -280,7 +306,10 @@ report, the summary comment, and `--json` — never "issue" or "concern".
   anchored inline comment's leading marker, and each folded-findings bullet.
   Nowhere else: not in prose, findings, other tables, or mermaid labels. The
   `--json` output (json-output.md) carries none.
-- **Read-only.** The review never edits the repo.
+- **Read-only, except the base-freshness fetch.** The review never edits the
+  repo — the review-start fetch (see Base freshness, above) writes
+  remote-tracking refs only, never the working tree, the index, or a local
+  branch, and the skill never pulls, rebases, or checks anything out.
 - **shipd naming only** — no other product branding or brand marks.
 - Prefer the tool's JSON over re-deriving diffs; that keeps token cost low.
 - Whole-file added/deleted entries have `"hunks": []` and a `"lines"` count. An

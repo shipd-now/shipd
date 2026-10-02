@@ -7,11 +7,21 @@ edits the repository.
 
 <!-- include:preamble -->
 
-1. **Decide what to compare, and say so.** By default compare the working tree
-   against `main` (`master` where that is the default branch). When the user
-   names two refs, compare `<base>...<head>` so the "after" side is what a
-   pull request would show; fetch first, since both refs must exist locally.
-   State the resolved base, head, and mode before the findings.
+1. **Fetch the base's remote, then decide what to compare, and say so.**
+   Before the first comparison, in every mode — working tree, two refs, or a
+   pull request alike — fetch the base's remote, e.g. `git fetch origin
+   main`. The fetch writes remote-tracking refs only, never the working
+   tree, the index, or a local branch, so the review's no-modification
+   guarantee holds; never pull, rebase, or check anything out. If the fetch
+   fails, continue the review and record a could-not-verify entry naming
+   that the base went unchecked against its remote, rather than ending the
+   review. By default compare the working tree against `main` (`master`
+   where that is the default branch), anchored on the fork point —
+   `git merge-base <base> HEAD` — rather than the base's own tip, so an
+   advance the base picked up after you branched is never read as a local
+   edit of yours. When the user names two refs, compare `<base>...<head>` so
+   the "after" side is what a pull request would show. State the resolved
+   base, head, and mode — as commit ids — before the findings.
 2. **Map the change into cohorts.** `git diff --name-status <base>` gives the
    changed files; group them into architectural cohorts — contracts, database,
    api, frontend, tests, and this repo's own spec artifacts. Review cohort by
