@@ -564,5 +564,39 @@ class CommitIdBaseTest(unittest.TestCase):
         self.assertEqual(paths, {"feature.txt"})
 
 
+class UnresolvableBaseRefTest(unittest.TestCase):
+    """An unknown or misspelled base ref must be named as such rather than
+    blamed on history topology: `git merge-base` returning empty because the
+    ref never resolved in the first place is a different failure than two
+    refs that both resolve but share no common history."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-unresolvable-base-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+        self._write("keep.txt", "hello\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        with open(os.path.join(self.repo, rel), "w") as fh:
+            fh.write(text)
+
+    def test_unknown_base_ref_named_not_unrelated_histories(self):
+        rc, out, err = run_semdiff(self.repo, "diff", "no-such-ref")
+        self.assertNotEqual(rc, 0, "an unresolvable base ref did not fail")
+        self.assertIsNone(out, "an unresolvable base ref still emitted JSON")
+        self.assertIn("no-such-ref", err)
+        self.assertNotIn("unrelated histories", err.lower())
+
+
 if __name__ == "__main__":
     unittest.main()

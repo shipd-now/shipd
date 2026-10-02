@@ -103,7 +103,11 @@ The flow:
    that, it computes the pull request's own merge base from `baseRefOid` and
    `headRefOid` and compares it with the payload's `endpoints.merge_base`; on
    a mismatch — or an absent `endpoints.merge_base` — it aborts before writing
-   anything, naming both merge bases (or the missing field).
+   anything, naming both merge bases (or the missing field). A review run
+   with `--linear` (two-dot) never carries `endpoints.merge_base` at all —
+   `resolve_endpoints` omits it by design for that mode — so a `--linear`
+   review always trips this guard and cannot be posted; re-run the review
+   without `--linear` before posting it.
 
 **The default ending, once posted.** Where the invoker asked for nothing
 beyond the review, stop here: implement no finding, author no reply, run

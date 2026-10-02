@@ -638,7 +638,9 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
     payload_merge_base = (review.get("endpoints") or {}).get("merge_base")
     if not payload_merge_base:
         _fail("review payload carries no endpoints.merge_base — an "
-              "unverified base is not a verified base")
+              "unverified base is not a verified base. A --linear "
+              "(two-dot) review carries no merge base and cannot be "
+              "posted; re-run the review without --linear.")
     if payload_merge_base != pr_merge_base:
         _fail("base mismatch: the pull request's own merge base is %r, "
               "but the review's endpoints.merge_base is %r"

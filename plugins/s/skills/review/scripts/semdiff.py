@@ -282,6 +282,8 @@ def resolve_endpoints(base, head, linear):
     counterpart = remote_counterpart(base)
     if counterpart:
         base = counterpart
+    if run(["git", "rev-parse", "--verify", "--quiet", base]).returncode != 0:
+        die(f"unknown base ref '{base}'.")
     base_sha = run(["git", "rev-parse", base]).stdout.strip()
     head_sha = run(["git", "rev-parse", head]).stdout.strip() if head else None
     if head is None:
