@@ -5,7 +5,12 @@ Every network boundary is the injectable ``gh`` command seam; no test spawns a
 real ``gh`` process or touches the network. ``FakeGh`` is a stateful dispatcher
 that answers the exact ``gh`` invocations the poster makes and records the
 writes (status payload, review payloads, comment bodies, protection PATCH) for
-assertions.
+assertions. ``FakeGit`` is the matching stub for the base-guard's ``git`` seam;
+``setUpModule`` patches ``review_gate._default_git`` to one for the whole
+module, so every pre-existing ``post(...)`` call below — none of which passes
+``git=`` — exercises the guard against a merge base that matches `_review`'s
+default ``endpoints.merge_base``, rather than shelling out to a real ``git``
+that has never heard of these fake SHAs.
 """
 
 import json
@@ -14,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
@@ -32,6 +38,47 @@ def _read_gate_yml():
         return fh.read()
 
 
+# A 40-character placeholder commit id — never a real object — that every
+# pre-existing test's `FakeGit` default merge-base answer matches, since
+# `_review`'s own default `endpoints.merge_base` is the same constant.
+DEFAULT_MERGE_BASE = "deadbeef" * 5
+
+
+class FakeGit:
+    """A stateful fake of the ``git`` runner seam `post`'s base guard uses to
+    compute the pull request's own merge base. Call signature mirrors
+    ``_default_git``: ``git(args) -> (returncode, stdout, stderr)``. Ignores
+    its arguments and always answers with the one configured merge base —
+    sufficient for every test here, which only ever cares whether that
+    answer matches (or mismatches) the review payload's own."""
+
+    def __init__(self, merge_base=DEFAULT_MERGE_BASE):
+        self.merge_base = merge_base
+        self.calls = []
+
+    def __call__(self, args):
+        self.calls.append(list(args))
+        return 0, self.merge_base + "\n", ""
+
+
+_fake_git_patcher = None
+
+
+def setUpModule():
+    # Every pre-existing call to `review_gate.post(...)` below omits `git=`,
+    # so it falls to `post`'s lazy `_default_git` lookup. Patching the module
+    # attribute here — rather than relying on a frozen default argument —
+    # means those calls see a deterministic stub instead of shelling out to a
+    # real `git` that has never heard of these fake SHAs.
+    global _fake_git_patcher
+    _fake_git_patcher = mock.patch.object(review_gate, "_default_git", FakeGit())
+    _fake_git_patcher.start()
+
+
+def tearDownModule():
+    _fake_git_patcher.stop()
+
+
 MARKER = "<!-- shipd-semantic-review -->"
 LEGACY_MARKER = "<!-- am-semantic-review -->"
 
@@ -43,7 +90,8 @@ class FakeGh:
     (returncode, stdout, stderr)`` where ``args`` is everything after ``gh``.
     """
 
-    def __init__(self, *, head_sha="abc123", number=7, repo="o/r",
+    def __init__(self, *, head_sha="abc123", base_sha="base456", number=7,
+                 repo="o/r",
                  pr_url="https://github.com/o/r/pull/7",
                  default_branch="main", contexts=("ci",),
                  conversation_resolution=False, strict=True,
@@ -52,6 +100,7 @@ class FakeGh:
                  files=None, existing_comments=None, review_fail_times=0,
                  viewer="gate-bot", review_threads=None, commits=None):
         self.head_sha = head_sha
+        self.base_sha = base_sha
         self.number = number
         self.repo = repo
         self.pr_url = pr_url
@@ -101,6 +150,7 @@ class FakeGh:
         self.calls.append((args, input))
         if args[:2] == ["pr", "view"]:
             return 0, json.dumps({"number": self.number,
+                                  "baseRefOid": self.base_sha,
                                   "headRefOid": self.head_sha,
                                   "url": self.pr_url}), ""
         if args[0] == "repo" and "nameWithOwner" in args:
@@ -298,7 +348,10 @@ PATCH_A = (
 
 def _review(verdict="pass", effort=2, findings=None, **extra):
     obj = {"verdict": verdict, "effort": effort,
-           "findings": findings or [], "could_not_verify": []}
+           "findings": findings or [], "could_not_verify": [],
+           # Matches the module-patched `FakeGit`'s default answer, so every
+           # pre-existing caller below clears `post`'s base guard unchanged.
+           "endpoints": {"merge_base": DEFAULT_MERGE_BASE}}
     obj.update(extra)
     return obj
 
@@ -508,6 +561,51 @@ class PostTest(unittest.TestCase):
         gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
         review_gate.post("7", _review(verdict="pass"), gh)
         self.assertEqual(gh.review_posts, [])
+
+
+class PostBaseGuardTest(unittest.TestCase):
+    """`post`'s base guard: aborts before any GitHub write when the review
+    payload's ``endpoints.merge_base`` does not match the pull request's own
+    merge base — computed through the injectable ``git`` seam — or is
+    missing outright, and stays invisible when it matches."""
+
+    def test_mismatched_merge_base_aborts_before_any_write(self):
+        gh = FakeGh()
+        git = FakeGit(merge_base="f" * 40)
+        with self.assertRaises(review_gate.ReviewGateError) as caught:
+            review_gate.post(
+                "7", _review(verdict="pass",
+                             endpoints={"merge_base": "a" * 40}),
+                gh, git=git)
+        self.assertIn("a" * 40, str(caught.exception))
+        self.assertIn("f" * 40, str(caught.exception))
+        self.assertEqual(gh.marker_comments(), [])
+        self.assertIsNone(gh.posted_status)
+        self.assertEqual(gh.review_posts, [])
+
+    def test_absent_merge_base_aborts_before_any_write(self):
+        gh = FakeGh()
+        git = FakeGit(merge_base="f" * 40)
+        with self.assertRaises(review_gate.ReviewGateError) as caught:
+            review_gate.post("7", _review(verdict="pass", endpoints={}),
+                             gh, git=git)
+        self.assertIn("merge_base", str(caught.exception))
+        self.assertEqual(gh.marker_comments(), [])
+        self.assertIsNone(gh.posted_status)
+        self.assertEqual(gh.review_posts, [])
+
+    def test_matching_merge_base_posts_exactly_as_before(self):
+        gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
+        git = FakeGit(merge_base=DEFAULT_MERGE_BASE)
+        findings = [{"id": "f1", "severity": "high", "location": "a.py:5",
+                     "what": "boom", "why": "w", "fix": "x"}]
+        result = review_gate.post(
+            "7", _review(verdict="changes-requested", findings=findings),
+            gh, git=git)
+        self.assertEqual(gh.posted_status["state"], "failure")
+        self.assertEqual(len(gh.review_posts), 1)
+        self.assertEqual(len(gh.marker_comments()), 1)
+        self.assertEqual(result["state"], "failure")
 
 
 SUGGESTION_FENCE = "```suggestion"

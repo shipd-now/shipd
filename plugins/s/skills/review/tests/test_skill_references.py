@@ -232,8 +232,8 @@ class SkillMdStructureTest(unittest.TestCase):
 
     def test_under_line_ceiling(self):
         self.assertLess(
-            len(self.lines), 300,
-            "SKILL.md must stay under 300 lines once the references split "
+            len(self.lines), 330,
+            "SKILL.md must stay under 330 lines once the references split "
             "out the condition-gated sections")
 
     def test_no_moved_headings_remain(self):
@@ -255,6 +255,9 @@ class SkillMdStructureTest(unittest.TestCase):
 
     def test_difft_probe_stayed_inline(self):
         self.assertIn("command -v difft", self.text)
+
+    def test_base_freshness_block_stayed_inline(self):
+        self.assertIn("Base freshness", self.text)
 
     def test_degradation_section_stops_rather_than_completes(self):
         """Difftastic is now required: a still-missing `difft` after the one
@@ -454,6 +457,43 @@ class TaxonomyFieldParityTest(unittest.TestCase):
             missing,
             f"{JSON_OUTPUT_MD} taxonomy is missing values: "
             f"{sorted(missing)}")
+
+
+class BaseFreshnessParityTest(unittest.TestCase):
+    """The fetch-before-every-mode rule is stated on both surfaces that run
+    outside `${CLAUDE_PLUGIN_ROOT}` resolution: the skill's own `SKILL.md`
+    and the harness command body, which cannot read a file under
+    `skills/review/references/`."""
+
+    def test_both_surfaces_state_the_fetch_before_every_mode_rule(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                text = _read(path)
+                self.assertIn(
+                    "every mode", text,
+                    f"{path} does not state the fetch runs in every mode")
+                self.assertIn(
+                    "remote-tracking refs only", text,
+                    f"{path} does not name the fetch's write scope")
+
+
+class EndpointsFieldParityTest(unittest.TestCase):
+    """The `endpoints` object is specified identically by both
+    machine-payload surfaces: the plugin skill's `json-output.md` and the
+    harness reference that ships to every harness declaring
+    `file-references`."""
+
+    FIELDS = ("base_given", "base", "base_sha", "head", "head_sha",
+             "merge_base", "mode")
+
+    def test_both_surfaces_name_the_same_endpoints_field_set(self):
+        for path in (JSON_OUTPUT_MD, HARNESS_REVIEW_MD):
+            with self.subTest(path=path):
+                text = _read(path)
+                for field in self.FIELDS:
+                    self.assertIn(
+                        f'"{field}"', text,
+                        f"{path} does not name endpoints field {field!r}")
 
 
 class TableConditionAgreementTest(unittest.TestCase):

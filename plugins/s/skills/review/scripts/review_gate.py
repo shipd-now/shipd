@@ -134,11 +134,18 @@ def _fail(msg):
     raise ReviewGateError(msg)
 
 
-# --- default (production) gh seam ------------------------------------------
+# --- default (production) gh/git seams --------------------------------------
 
 def _default_gh(args, input=None):
     proc = subprocess.run(
         ["gh"] + list(args), input=input, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return proc.returncode, proc.stdout or "", proc.stderr or ""
+
+
+def _default_git(args):
+    proc = subprocess.run(
+        ["git"] + list(args), text=True,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 
@@ -501,11 +508,22 @@ def _status_description(review, disposition="all"):
 
 def _resolve_pr(gh, pr):
     rc, out, err = gh(["pr", "view", str(pr),
-                       "--json", "number,headRefOid,url"])
+                       "--json", "number,baseRefOid,headRefOid,url"])
     if rc != 0:
         _fail("gh pr view %s failed: %s" % (pr, err.strip()))
     d = json.loads(out)
-    return d["number"], d["headRefOid"], d.get("url")
+    return d["number"], d["baseRefOid"], d["headRefOid"], d.get("url")
+
+
+def _pr_merge_base(git, base_sha, head_sha):
+    """The merge base of the pull request's own ``baseRefOid`` and
+    ``headRefOid``, through the injectable ``git`` runner — what `post`'s
+    base guard compares the review payload's own `endpoints.merge_base`
+    against. Returns None when the runner fails (e.g. a shallow clone
+    missing one of the two commits), which the guard treats as a mismatch —
+    an unresolvable base is never treated as a verified one."""
+    rc, out, _err = git(["merge-base", base_sha, head_sha])
+    return out.strip() if rc == 0 and out.strip() else None
 
 
 def _resolve_repo(gh):
@@ -604,13 +622,29 @@ def _post_review(gh, repo, number, sha, anchored, commentable=None):
     return rc == 0
 
 
-def post(pr, review, gh, out=_noop, disposition="all", model=None):
+def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
     """Publish ``review`` (a parsed /s:review --json object) to pull request
     ``pr`` through the ``gh`` seam. ``disposition`` is the acting review-stage
     scope (see ``status_state``) and ``model`` the tier the reviewing session
-    ran on, both recorded as provenance in the summary. Returns a small result
-    dict."""
-    number, sha, pr_url = _resolve_pr(gh, pr)
+    ran on, both recorded as provenance in the summary. ``git`` is the
+    injectable runner the base guard computes the pull request's own merge
+    base through; it defaults to the real ``git`` binary (``_default_git``),
+    resolved lazily here rather than frozen as the parameter's own default so
+    a test can patch the module attribute instead of threading the fake
+    through every call. Returns a small result dict."""
+    git = git or _default_git
+    number, base_sha, sha, pr_url = _resolve_pr(gh, pr)
+    pr_merge_base = _pr_merge_base(git, base_sha, sha)
+    payload_merge_base = (review.get("endpoints") or {}).get("merge_base")
+    if not payload_merge_base:
+        _fail("review payload carries no endpoints.merge_base — an "
+              "unverified base is not a verified base. A --linear "
+              "(two-dot) review carries no merge base and cannot be "
+              "posted; re-run the review without --linear.")
+    if payload_merge_base != pr_merge_base:
+        _fail("base mismatch: the pull request's own merge base is %r, "
+              "but the review's endpoints.merge_base is %r"
+              % (pr_merge_base, payload_merge_base))
     repo = _resolve_repo(gh)
     files = _pr_files(gh, repo, number)
     commentable = {f.get("filename"): commentable_lines(f.get("patch") or "")
@@ -839,7 +873,7 @@ def reply(pr, comment_id, body, gh, out=_noop):
     ``comment_id`` on pull request ``pr``, through the ``gh`` seam. Uses the REST
     ``in_reply_to`` create so the reply threads under the gate's comment. Returns
     ``{"url": <html_url>}``; a rejected create (unknown comment id) raises."""
-    number, _sha, _url = _resolve_pr(gh, pr)
+    number, _base_sha, _sha, _url = _resolve_pr(gh, pr)
     repo = _resolve_repo(gh)
     url = _post_reply(gh, repo, number, comment_id, body)
     out("reply posted: %s" % (url or "(created)"))
@@ -900,7 +934,7 @@ def resolve(pr, gh, check=False, out=_noop):
     touched. Undispositioned gate threads are listed, left unresolved, and make
     the verb non-zero. ``check`` mutates nothing and only counts unresolved
     gate threads. Prints ``unresolved=<n>`` and returns a result dict."""
-    number, _sha, _url = _resolve_pr(gh, pr)
+    number, _base_sha, _sha, _url = _resolve_pr(gh, pr)
     repo = _resolve_repo(gh)
     viewer, commit_dates, threads = _list_review_threads(gh, repo, number)
 
@@ -952,7 +986,7 @@ def autoreply(pr, gh, disposition, body=None, out=_noop):
     if disposition not in AUTOREPLY_DISPOSITIONS:
         _fail("autoreply needs disposition %s, got %r"
               % (" or ".join(AUTOREPLY_DISPOSITIONS), disposition))
-    number, _sha, _url = _resolve_pr(gh, pr)
+    number, _base_sha, _sha, _url = _resolve_pr(gh, pr)
     repo = _resolve_repo(gh)
     viewer, _commit_dates, threads = _list_review_threads(gh, repo, number)
     text = body or _AUTOREPLY_BODY[disposition]
@@ -1003,7 +1037,7 @@ def prior(pr, gh):
 
     Returns a list of ``{"hash", "path", "severity", "what", "thread_id",
     "resolved", "disposition"}`` dicts, one per gate-authored thread."""
-    number, _sha, _url = _resolve_pr(gh, pr)
+    number, _base_sha, _sha, _url = _resolve_pr(gh, pr)
     repo = _resolve_repo(gh)
     viewer, commit_dates, threads = _list_review_threads(gh, repo, number)
     commit_stamps = [c for c in map(_as_utc, commit_dates) if c is not None]
@@ -1047,10 +1081,10 @@ def _load_review(src):
         return json.load(fh)
 
 
-def _cmd_post(args, gh):
+def _cmd_post(args, gh, git=None):
     review = _load_review(args.from_)
     result = post(args.pr, review, gh, out=lambda m: print(m, file=sys.stderr),
-                  disposition=args.disposition, model=args.model)
+                  disposition=args.disposition, model=args.model, git=git)
     print(json.dumps(result))
     return 0
 

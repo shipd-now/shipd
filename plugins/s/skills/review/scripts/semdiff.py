@@ -189,10 +189,70 @@ def cmd_doctor(args):
     if not ok:
         print(f"{PROG}: required tools missing. Re-run with --fix to install "
               f"what can be automated (difft).", file=sys.stderr)
+    base_freshness_probe(args.fix)
     return 0 if ok else 1
 
 
 # --- diff -------------------------------------------------------------------
+
+
+def remote_counterpart(base):
+    """The commit of <base>'s remote-tracking counterpart — the branch's
+    configured upstream, else `refs/remotes/origin/<base>` — or None when
+    <base> is not a local branch, or carries no such counterpart.
+
+    Read-only: no fetch, no checkout, no write of any kind. A qualified ref,
+    a commit id, or a tag never matches `refs/heads/<base>`, so each is
+    `None` here — the invoker's unambiguous opt-out from promotion."""
+    if run(["git", "rev-parse", "--verify", "--quiet",
+            f"refs/heads/{base}"]).returncode != 0:
+        return None
+    r = run(["git", "rev-parse", "--symbolic-full-name", f"{base}@{{upstream}}"])
+    ref = r.stdout.strip() if r.returncode == 0 else f"refs/remotes/origin/{base}"
+    r = run(["git", "rev-parse", "--verify", "--quiet", ref])
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _base_remote_name(base):
+    """The remote a base's upstream lives on (e.g. "origin"), or "origin" as
+    the same fallback `remote_counterpart` uses."""
+    r = run(["git", "rev-parse", "--abbrev-ref", f"{base}@{{upstream}}"])
+    return r.stdout.strip().split("/")[0] if r.returncode == 0 else "origin"
+
+
+def base_freshness_probe(fix):
+    """Print a report-only base-freshness line comparing the repo's default
+    base branch (`main`, else `master`) against its remote-tracking
+    counterpart. Without `fix` this reaches the network not at all, reading
+    only already-fetched refs; with `fix` it fetches that remote first.
+    Never changes `doctor`'s exit code."""
+    base = None
+    for candidate in ("main", "master"):
+        if run(["git", "rev-parse", "--verify", "--quiet",
+                f"refs/heads/{candidate}"]).returncode == 0:
+            base = candidate
+            break
+    if base is None:
+        print("  ~ base: no local main or master branch to compare")
+        return
+    if fix:
+        run(["git", "fetch", "-q", _base_remote_name(base)])
+    counterpart = remote_counterpart(base)
+    if not counterpart:
+        print(f"  ~ base {base}: no remote-tracking counterpart — "
+              f"nothing to compare")
+        return
+    r = run(["git", "rev-parse", "--abbrev-ref", f"{base}@{{upstream}}"])
+    ref_name = r.stdout.strip() if r.returncode == 0 else f"origin/{base}"
+    counts = run(["git", "rev-list", "--left-right", "--count",
+                  f"{base}...{counterpart}"]).stdout.split()
+    ahead, behind = (counts + ["0", "0"])[:2]
+    if ahead == "0" and behind == "0":
+        print(f"  + base {base} is up to date with {ref_name}")
+    else:
+        print(f"  ~ base {base} is {behind} commit(s) behind {ref_name} "
+              f"({ahead} ahead) — remedy: git fetch {ref_name.split('/')[0]}, "
+              f"or re-run `semdiff doctor --fix`")
 
 
 def resolve_endpoints(base, head, linear):
@@ -205,19 +265,50 @@ def resolve_endpoints(base, head, linear):
       - head given, --linear → old=base, new=head (plain two-dot A..B diff).
     new_ref is None signals "read the after side from the working tree".
     diff_spec is the ref list handed to `git diff --name-only`.
+
+    <base> is promoted to its remote-tracking counterpart's commit when it
+    names a short local branch carrying one — a stale local branch is never
+    read as the base. A fully-qualified ref, a commit id, or a tag is taken
+    as given (remote_counterpart returns None for each), which is the
+    invoker's unambiguous opt-out.
+
+    The returned meta also discloses the endpoints as commit ids:
+    `base_given` (the ref as invoked, before promotion), `base_sha`,
+    `head_sha` (null when the after side is the working tree), and
+    `merge_base` — the fork point in working-tree mode, the three-dot merge
+    base in merge-base mode, and absent under `--linear`.
     """
+    base_given = base
+    counterpart = remote_counterpart(base)
+    if counterpart:
+        base = counterpart
+    if run(["git", "rev-parse", "--verify", "--quiet", base]).returncode != 0:
+        die(f"unknown base ref '{base}'.")
+    base_sha = run(["git", "rev-parse", base]).stdout.strip()
+    head_sha = run(["git", "rev-parse", head]).stdout.strip() if head else None
     if head is None:
-        return base, None, [base], {"base": base, "head": None,
-                                    "mode": "working-tree"}
+        fork_point = run(["git", "merge-base", base, "HEAD"]).stdout.strip()
+        if not fork_point:
+            die(f"no merge base between '{base}' and HEAD (unrelated "
+                f"histories?).")
+        return fork_point, None, [fork_point], {
+            "base": base, "head": None, "mode": "working-tree",
+            "base_given": base_given, "base_sha": base_sha,
+            "head_sha": None, "merge_base": fork_point,
+        }
     if linear:
-        return base, head, [base, head], {"base": base, "head": head,
-                                          "mode": "linear"}
+        return base, head, [base, head], {
+            "base": base, "head": head, "mode": "linear",
+            "base_given": base_given, "base_sha": base_sha,
+            "head_sha": head_sha,
+        }
     mb = run(["git", "merge-base", base, head]).stdout.strip()
     if not mb:
         die(f"no merge base between '{base}' and '{head}' (unrelated "
             f"histories?). Use --linear for a direct comparison.")
     return mb, head, [f"{base}...{head}"], {
         "base": base, "head": head, "merge_base": mb, "mode": "merge-base",
+        "base_given": base_given, "base_sha": base_sha, "head_sha": head_sha,
     }
 
 

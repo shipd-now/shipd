@@ -53,15 +53,25 @@ The flow:
    points at a pull request (usually the current `change/<name>`):
 
    ```
-   gh pr view <target> --json number,headRefOid,baseRefName,url
+   gh pr view <target> --json number,baseRefOid,headRefOid,url
    ```
 
-   This one call resolves the pull request's number, head SHA, base branch,
-   and URL together.
-2. **Review head vs base with merge-base semantics.** Run the review as
-   `diff <baseRefName> <headRefOid>` so both sides match the PR exactly as
-   GitHub shows it — the same three-dot semantics described under "Determine
-   what to review". Do the full analysis; do not shortcut it.
+   This one call resolves the pull request's number, base commit, head
+   commit, and URL together — never a local branch name. Resolving the base
+   through a local `baseRefName` was the original defect this replaces.
+2. **Fetch both resolved commits, then review by commit id.** Fetch the
+   pull request's head ref and its base so both commits are present locally
+   whatever fork the head lives in:
+
+   ```
+   git fetch origin pull/<number>/head <baseRefOid>
+   ```
+
+   Then run the review as `diff <baseRefOid> <headRefOid>` so both sides are
+   the exact commits GitHub resolved for this PR — the same three-dot
+   semantics described under "Determine what to review". Do the full
+   analysis; do not shortcut it. The rendered report names the base commit
+   it used, so a reader can see precisely what the review compared.
 3. **Read prior dispositions and drop what was already answered.** Run
    `review_gate.py prior <pr>` and, for every finding this review is about to
    post, compare its `hash` — the same identity `_finding_hash(<path>,
@@ -89,7 +99,15 @@ The flow:
    them. It upserts the marker summary comment, posts anchored inline comments
    for in-diff findings (folding the rest into the summary), and sets the
    `semantic-review` commit status on the head SHA by scope — under the default
-   `all`, `success` iff the verdict is `pass`, else `failure`.
+   `all`, `success` iff the verdict is `pass`, else `failure`. Before any of
+   that, it computes the pull request's own merge base from `baseRefOid` and
+   `headRefOid` and compares it with the payload's `endpoints.merge_base`; on
+   a mismatch — or an absent `endpoints.merge_base` — it aborts before writing
+   anything, naming both merge bases (or the missing field). A review run
+   with `--linear` (two-dot) never carries `endpoints.merge_base` at all —
+   `resolve_endpoints` omits it by design for that mode — so a `--linear`
+   review always trips this guard and cannot be posted; re-run the review
+   without `--linear` before posting it.
 
 **The default ending, once posted.** Where the invoker asked for nothing
 beyond the review, stop here: implement no finding, author no reply, run

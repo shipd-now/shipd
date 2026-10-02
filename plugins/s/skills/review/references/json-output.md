@@ -10,6 +10,15 @@ rendering changes. Shape:
 {
   "verdict": "pass" | "changes-requested",
   "effort": 3,
+  "endpoints": {
+    "base_given": "main",
+    "base": "main",
+    "base_sha": "<40-char commit id>",
+    "head": "feature" | null,
+    "head_sha": "<40-char commit id>" | null,
+    "merge_base": "<40-char commit id>",
+    "mode": "working-tree" | "merge-base" | "linear"
+  },
   "findings": [
     {
       "id": "f1",
@@ -40,6 +49,16 @@ finding with severity `high`. `spec_coverage` is present only when a change is
 in scope. Valid JSON only — no fences, no commentary, **no emoji**. If the
 analysis cannot run, still emit a well-formed object with `could_not_verify`
 explaining why.
+
+`endpoints` carries the engine's own resolved endpoint metadata verbatim —
+`base_given`, `base_sha`, `head_sha`, and `merge_base` straight from
+`semdiff`'s meta, plus `base`/`head`/`mode`. `merge_base` is absent under
+`--linear`; `head`/`head_sha` are `null` in working-tree mode. The poster
+(`review_gate.py post`) rejects a payload carrying no `endpoints.merge_base`
+before writing anything to the pull request — an unverified base is not a
+verified one. `plugins/s/harness/references/review.md` specifies this same
+`endpoints` object identically, since it is a second machine-payload surface
+for the same contract.
 
 ## The optional `suggestion` object
 
