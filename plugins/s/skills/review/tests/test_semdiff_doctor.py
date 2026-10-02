@@ -256,8 +256,15 @@ class BaseFreshnessProbeTest(unittest.TestCase):
         origin = os.path.join(self.tmp, "origin.git")
         work = os.path.join(self.tmp, "work")
         clone = os.path.join(self.tmp, "clone")
-        subprocess.run(["git", "init", "-q", "--bare", origin],
+        subprocess.run(["git", "init", "-q", "-b", "main", "--bare", origin],
                        check=True, capture_output=True)
+        # Pin origin's HEAD explicitly: only `main` is ever pushed, so a
+        # HEAD left to an ambient `init.defaultBranch` (e.g. `master` in
+        # CI) would dangle, and the clone under test would then DWIM a
+        # brand-new local `main` from an already-advanced `origin/main` —
+        # silently erasing the stale-base setup below.
+        subprocess.run(["git", "--git-dir", origin, "symbolic-ref", "HEAD",
+                        "refs/heads/main"], check=True, capture_output=True)
         subprocess.run(["git", "clone", "-q", origin, work],
                        check=True, capture_output=True)
         self._git(work, "config", "user.email", "t@example.com")
@@ -268,9 +275,17 @@ class BaseFreshnessProbeTest(unittest.TestCase):
         self._git(work, "commit", "-qm", "init")
         self._git(work, "checkout", "-q", "-B", "main")
         self._git(work, "push", "-q", "-u", "origin", "main")
+        initial_sha = self._git(work, "rev-parse", "main").stdout.strip()
 
+        # The clone under test: its local `main` is created explicitly at
+        # the pre-advance commit rather than left to `git clone`/`checkout`
+        # DWIM, which — once origin has moved on — would resolve to the
+        # wrong commit.
         subprocess.run(["git", "clone", "-q", origin, clone],
                        check=True, capture_output=True)
+        self._git(clone, "checkout", "-q", "-B", "main", initial_sha)
+        self._git(clone, "branch", "-q", "--set-upstream-to=origin/main",
+                  "main")
 
         # Advance origin by three commits, never fetched into the clone.
         for n in range(3):
@@ -280,6 +295,23 @@ class BaseFreshnessProbeTest(unittest.TestCase):
         self._git(work, "push", "-q", "origin", "main")
 
         self._git(clone, "fetch", "-q", "origin")
+
+        # Precondition: the stale-base setup this fixture exists to build
+        # must actually hold, or this test would be testing nothing — as
+        # happened in CI before this fixture was pinned.
+        clone_main = self._git(clone, "rev-parse", "main").stdout.strip()
+        clone_origin_main = self._git(clone, "rev-parse",
+                                      "origin/main").stdout.strip()
+        self.assertNotEqual(
+            clone_main, clone_origin_main,
+            "fixture precondition failed: clone's main must be behind "
+            "origin/main")
+        behind = self._git(clone, "rev-list", "--count",
+                           "main..origin/main").stdout.strip()
+        self.assertEqual(
+            behind, "3",
+            "fixture precondition failed: clone's main must be exactly "
+            "3 commits behind origin/main")
 
         r = self._run(clone)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

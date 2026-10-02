@@ -441,7 +441,15 @@ class StaleBaseTest(unittest.TestCase):
         self.origin = os.path.join(self.tmp, "origin.git")
         self.work = os.path.join(self.tmp, "work")
         self.clone = os.path.join(self.tmp, "clone")
-        subprocess.run(["git", "init", "-q", "--bare", self.origin],
+        subprocess.run(["git", "init", "-q", "-b", "main", "--bare",
+                        self.origin], check=True, capture_output=True)
+        # Pin origin's HEAD explicitly: only `main` is ever pushed, so a
+        # HEAD left to an ambient `init.defaultBranch` (e.g. `master` in
+        # CI) would dangle, and the clone under test would then DWIM a
+        # brand-new local `main` from an already-advanced `origin/main` —
+        # silently erasing the stale-base setup below.
+        subprocess.run(["git", "--git-dir", self.origin, "symbolic-ref",
+                        "HEAD", "refs/heads/main"],
                        check=True, capture_output=True)
 
         # A throwaway work clone seeds origin's initial commit and later
@@ -456,13 +464,20 @@ class StaleBaseTest(unittest.TestCase):
         git(self.work, "commit", "-qm", "init")
         git(self.work, "checkout", "-q", "-B", "main")
         git(self.work, "push", "-q", "-u", "origin", "main")
+        initial_sha = git(self.work, "rev-parse", "main").stdout.strip()
 
-        # The clone under test: tracks origin/main, currently in sync.
+        # The clone under test: tracks origin/main, currently in sync. Its
+        # local `main` is created explicitly at the pre-advance commit
+        # rather than left to `git clone`/`checkout` DWIM, which — once
+        # origin has moved on — would resolve to the wrong commit.
         subprocess.run(["git", "clone", "-q", self.origin, self.clone],
                        check=True, capture_output=True)
         git(self.clone, "config", "user.email", "t@example.com")
         git(self.clone, "config", "user.name", "Test")
         git(self.clone, "config", "commit.gpgsign", "false")
+        git(self.clone, "checkout", "-q", "-B", "main", initial_sha)
+        git(self.clone, "branch", "-q", "--set-upstream-to=origin/main",
+            "main")
 
         # Advance origin by three commits through the work clone, without
         # ever fetching them into the clone under test.
@@ -483,6 +498,23 @@ class StaleBaseTest(unittest.TestCase):
         git(self.clone, "add", "-A")
         git(self.clone, "commit", "-qm", "feature edit")
         git(self.clone, "checkout", "-q", "main")
+
+        # Precondition: the stale-base setup this fixture exists to build
+        # must actually hold, or every test below would be testing
+        # nothing — as happened in CI before this fixture was pinned.
+        clone_main = git(self.clone, "rev-parse", "main").stdout.strip()
+        clone_origin_main = git(self.clone, "rev-parse",
+                                "origin/main").stdout.strip()
+        self.assertNotEqual(
+            clone_main, clone_origin_main,
+            "fixture precondition failed: clone's main must be behind "
+            "origin/main")
+        behind = git(self.clone, "rev-list", "--count",
+                     "main..origin/main").stdout.strip()
+        self.assertEqual(
+            behind, "3",
+            "fixture precondition failed: clone's main must be exactly "
+            "3 commits behind origin/main")
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
