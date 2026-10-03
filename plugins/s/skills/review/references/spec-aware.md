@@ -30,3 +30,9 @@ lint findings, and best-effort impact files. Then, against the structural diff:
 
 Report under a **Spec coverage** heading: a Met/Unmet/Can't-tell scenario
 table, then the task-honesty and uncovered-code items.
+
+## JSON output
+
+When the user passes `--json`, include the resolved change's `slug`, `location`,
+and `dir` in the `change` member of the JSON object — the same `location` and
+`dir` that `semdiff change` reports.

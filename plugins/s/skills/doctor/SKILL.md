@@ -70,7 +70,8 @@ code is `1` when a required check failed, `0` otherwise.
 Parse each line into `(level, check, detail)` and keep the whole output
 verbatim as the **before** state. The checks are `python`, `git`, `config`,
 `pipeline`, `wiki`, `store`, `store-sync`, `gh`, `difft`, `textual`,
-`snapshot`, `statusline`, `protection`, `automerge`, and `copilot-secret`.
+`snapshot`, `statusline`, `protection`, `automerge`, `copilot-secret`, and
+`fast-pass`.
 
 `wiki` is **report-only** and always `ok`: it names the wiki store the working
 directory resolves — a workspace store, the repo-local fallback store, or
@@ -92,6 +93,12 @@ local git only. It has no remedy row in the table below — never push, pull,
 or fetch on its behalf, including on a `warn store-sync` finding naming
 unpushed or unpulled commits: relay that line to the user exactly as the
 other informational checks.
+
+`fast-pass` is **report-only**: it names whether the repository's
+`SHIPD_FAST_PASS` variable is enabled or off. It has no remedy row in the table
+below — never set or unset the variable on its behalf; relay that line to the
+user exactly as the other informational checks. Enabling unattended merging is a
+consented setup step owned by `/s:gate`, never a repair the preflight proposes.
 
 **Unparseable output is your own failure.** If the command produced no output,
 no closing `doctor:` line, or lines that do not match the format above, report

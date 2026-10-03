@@ -70,3 +70,11 @@ Do not run it, do not read the token, and never suggest a broader-scope token.
 Where a `protection`, `automerge`, or `copilot-secret` detail says the token
 lacks admin permission, the finding is report-only: the call would be denied.
 Name what an admin has to change and move on.
+
+## `fast-pass` — report-only
+
+The `fast-pass` check names whether the repository's `SHIPD_FAST_PASS` variable
+is enabled or off — never a problem to remedy. It has no remedy row, so never
+set or unset the variable on its behalf. Relay the line to the user exactly as
+the other informational checks. Enabling unattended merging is a consented
+setup step owned by `/s:gate`, never a repair the preflight proposes.

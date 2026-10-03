@@ -227,6 +227,67 @@ def status_state(verdict, findings=None, disposition="all"):
     return "success" if verdict == "pass" else "failure"
 
 
+def fast_pass_eligible(review):
+    """Determine whether a pull request is eligible for automatic merging
+    without human review.
+
+    A pull request is eligible only when all of these hold:
+    1. The review's `verdict` is `pass`.
+    2. The review resolved a change whose `location` is `completed`.
+    3. `spec_coverage` is non-empty and every entry's `state` is `met`.
+
+    Returns True if eligible, False otherwise.
+    """
+    # Check verdict
+    if review.get("verdict") != "pass":
+        return False
+
+    # Check change member and location
+    change = review.get("change")
+    if not change or change.get("location") != "completed":
+        return False
+
+    # Check spec_coverage
+    spec_coverage = review.get("spec_coverage", [])
+    if not spec_coverage:
+        return False
+
+    # Check that all states are "met"
+    for coverage in spec_coverage:
+        if coverage.get("state") != "met":
+            return False
+
+    return True
+
+
+def _fast_pass_unmet_reason(review):
+    """Determine which condition blocked fast-pass eligibility, returning a
+    short human string naming the first unmet one. Returns None when all
+    conditions are met (the review is eligible)."""
+    # Check verdict
+    if review.get("verdict") != "pass":
+        return "verdict is not pass"
+
+    # Check change member and location
+    change = review.get("change")
+    if not change:
+        return "no change in scope"
+    if change.get("location") != "completed":
+        return "change location is not completed"
+
+    # Check spec_coverage
+    spec_coverage = review.get("spec_coverage", [])
+    if not spec_coverage:
+        return "spec_coverage is empty"
+
+    # Check that all states are "met"
+    for coverage in spec_coverage:
+        if coverage.get("state") != "met":
+            return "spec_coverage state is not met"
+
+    return None
+
+
 def _verdict_header(verdict):
     if verdict == "pass":
         return "## Findings: ✅ Ship it"
@@ -271,13 +332,14 @@ def review_footer(files):
 
 
 def render_summary(review, unanchored, disposition="all", model=None,
-                   files=None):
+                   files=None, fast_pass_outcome=None):
     """Render the marker-tagged summary comment body: the ☕ brand line, the
     verdict header, effort, the policy provenance lines, the
     ``# | rating | details`` findings table (or ``NO_PROBLEMS`` in its
     place), an "Additional findings" section carrying the ``unanchored``
     findings in full (they get no inline comment), and — given the PR's
-    ``files`` list — the ``review_footer`` stat line as the last line.
+    ``files`` list — the ``review_footer`` stat line as the last line. When
+    ``fast_pass_outcome`` is provided, append a one-line fast-pass footer.
 
     The brand line opens the visible body — the hidden ``MARKER`` stays line 1
     and byte-identical, so upsert matching is unmoved.
@@ -319,6 +381,8 @@ def render_summary(review, unanchored, disposition="all", model=None,
                 out.append("  - Why: %s" % why)
             if fix:
                 out.append("  - Fix: %s" % fix)
+    if fast_pass_outcome:
+        out += ["", fast_pass_outcome]
     footer = review_footer(files)
     if footer:
         out += ["", footer]
@@ -675,10 +739,39 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
                 render_summary(review, findings, disposition, model, files))
             _post_review(gh, repo, number, sha, [])
 
+    # Fast-pass auto-merge logic
+    fast_pass_armed = False
+    fast_pass_outcome_line = None
+    if fast_pass_eligible(review):
+        # Check if SHIPD_FAST_PASS variable is set
+        rc, _, _ = gh(["variable", "get", "SHIPD_FAST_PASS"])
+        if rc == 0:
+            # Attempt to merge
+            merge_rc, _, _ = gh(["pr", "merge", str(number), "--auto",
+                                 "--squash", "--delete-branch"])
+            if merge_rc == 0:
+                fast_pass_armed = True
+                fast_pass_outcome_line = "**Fast-pass:** armed — merging automatically."
+                out("fast-pass auto-merge armed")
+            else:
+                fast_pass_outcome_line = "**Fast-pass:** not armed — merge call failed."
+                out("fast-pass auto-merge merge call failed")
+        else:
+            fast_pass_outcome_line = "**Fast-pass:** not armed — SHIPD_FAST_PASS not enabled."
+    else:
+        reason = _fast_pass_unmet_reason(review)
+        fast_pass_outcome_line = "**Fast-pass:** not armed — %s." % reason
+
+    # Update the summary comment with the fast-pass outcome
+    comment_url = _upsert_summary(
+        gh, repo, number,
+        render_summary(review, unanchored, disposition, model, files,
+                       fast_pass_outcome=fast_pass_outcome_line))
+
     out("semantic-review status: %s" % state)
     return {"state": state, "summary_url": comment_url,
             "anchored": len(anchored), "unanchored": len(unanchored),
-            "disposition": disposition}
+            "disposition": disposition, "fast_pass_armed": fast_pass_armed}
 
 
 def _enabled(value):

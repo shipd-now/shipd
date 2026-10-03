@@ -42,6 +42,7 @@ preamble, no fences, no commentary, and no emoji:
       "note": ""
     }
   ],
+  "change": { "slug": "…", "location": "planned" | "completed", "dir": "…" },
   "spec_coverage": [ { "scenario": "WHEN … THEN …", "state": "met" | "unmet" | "cant-tell" } ],
   "could_not_verify": [ "…" ]
 }
@@ -50,9 +51,9 @@ preamble, no fences, no commentary, and no emoji:
 Rules: `verdict` is `changes-requested` **iff** any finding is high or medium,
 else `pass` — the same decision the rendered verdict states, and the two must
 never diverge. An unmet spec scenario must appear as a `spec-coverage` finding
-with severity `high`. `spec_coverage` is present only when a planned change was
-in scope. If the analysis could not run at all, still emit a well-formed
-object whose `could_not_verify` explains why.
+with severity `high`. `change` and `spec_coverage` are present only when a
+planned change was in scope. If the analysis could not run at all, still emit
+a well-formed object whose `could_not_verify` explains why.
 
 `endpoints` carries the engine's resolved endpoint metadata — `base_given`,
 `base_sha`, `head_sha`, and `merge_base` straight from `semdiff`'s meta, plus

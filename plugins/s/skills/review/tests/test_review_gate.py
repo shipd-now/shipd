@@ -98,7 +98,8 @@ class FakeGh:
                  protection_get_error=None, also_checks=False,
                  checks_only=False,
                  files=None, existing_comments=None, review_fail_times=0,
-                 viewer="gate-bot", review_threads=None, commits=None):
+                 viewer="gate-bot", review_threads=None, commits=None,
+                 variable_get_enabled=False, merge_call_fails=False):
         self.head_sha = head_sha
         self.base_sha = base_sha
         self.number = number
@@ -142,6 +143,9 @@ class FakeGh:
         self.commits = list(commits or [])
         self.resolved_thread_ids = []   # thread node ids passed to the mutation
         self.reply_posts = []           # parsed in_reply_to reply payloads
+        # Fast-pass variable control
+        self.variable_get_enabled = variable_get_enabled
+        self.merge_call_fails = merge_call_fails
 
     # -- dispatch -----------------------------------------------------------
 
@@ -158,6 +162,10 @@ class FakeGh:
         if args[0] == "repo" and "defaultBranchRef" in args:
             return 0, json.dumps(
                 {"defaultBranchRef": {"name": self.default_branch}}), ""
+        if args[:3] == ["variable", "get", "SHIPD_FAST_PASS"]:
+            return (0, "true", "") if self.variable_get_enabled else (1, "", "variable not set")
+        if args[:3] == ["pr", "merge", str(self.number)] and "--auto" in args:
+            return (1, "", "merge failed") if self.merge_call_fails else (0, "", "")
         if args[0] == "api":
             return self._api(args, input)
         return 1, "", "unexpected gh call: %r" % (args,)
@@ -1692,6 +1700,206 @@ class GateInstructionPinningTest(unittest.TestCase):
         # it for the flag.
         window = text[idx:idx + 400]
         self.assertIn("--add-dir", window)
+
+
+class FastPassEligibleTest(unittest.TestCase):
+    """Tests for the `fast_pass_eligible` predicate that determines whether
+    a pull request is eligible for automatic merging without human review."""
+
+    def test_eligible_review(self):
+        """An eligible review has: completed location, pass verdict, every
+        spec_coverage state met, and variable true."""
+        review = _review(
+            verdict="pass",
+            change={"slug": "test-change", "location": "completed", "dir": ".shipd/completed/2026-01-01-test-change"},
+            spec_coverage=[
+                {"scenario": "WHEN x THEN y", "state": "met"},
+                {"scenario": "WHEN a THEN b", "state": "met"}
+            ]
+        )
+        self.assertTrue(review_gate.fast_pass_eligible(review))
+
+    def test_cant_tell_state(self):
+        """A review with cant-tell state is ineligible."""
+        review = _review(
+            verdict="pass",
+            change={"slug": "test-change", "location": "completed", "dir": ".shipd/completed/2026-01-01-test-change"},
+            spec_coverage=[
+                {"scenario": "WHEN x THEN y", "state": "met"},
+                {"scenario": "WHEN a THEN b", "state": "cant-tell"}
+            ]
+        )
+        self.assertFalse(review_gate.fast_pass_eligible(review))
+
+    def test_unmet_state(self):
+        """A review with unmet state is ineligible."""
+        review = _review(
+            verdict="pass",
+            change={"slug": "test-change", "location": "completed", "dir": ".shipd/completed/2026-01-01-test-change"},
+            spec_coverage=[
+                {"scenario": "WHEN x THEN y", "state": "met"},
+                {"scenario": "WHEN a THEN b", "state": "unmet"}
+            ]
+        )
+        self.assertFalse(review_gate.fast_pass_eligible(review))
+
+    def test_planned_location(self):
+        """A review with planned location is ineligible."""
+        review = _review(
+            verdict="pass",
+            change={"slug": "test-change", "location": "planned", "dir": ".shipd/planned/test-change"},
+            spec_coverage=[
+                {"scenario": "WHEN x THEN y", "state": "met"}
+            ]
+        )
+        self.assertFalse(review_gate.fast_pass_eligible(review))
+
+    def test_empty_spec_coverage(self):
+        """A review with empty spec_coverage is ineligible."""
+        review = _review(
+            verdict="pass",
+            change={"slug": "test-change", "location": "completed", "dir": ".shipd/completed/2026-01-01-test-change"},
+            spec_coverage=[]
+        )
+        self.assertFalse(review_gate.fast_pass_eligible(review))
+
+    def test_absent_change_member(self):
+        """A review without a change member is ineligible."""
+        review = _review(
+            verdict="pass",
+            spec_coverage=[
+                {"scenario": "WHEN x THEN y", "state": "met"}
+            ]
+        )
+        self.assertFalse(review_gate.fast_pass_eligible(review))
+
+    def test_changes_requested_verdict_none_disposition(self):
+        """A review with changes-requested verdict under none disposition is
+        ineligible — the predicate reads the review's own `verdict`, never the
+        disposition-mapped status state, so `status_state`'s `success` under
+        `none` never fast-passes a review that itself requested changes."""
+        review = _review(
+            verdict="changes-requested",
+            disposition="none",
+            change={"slug": "test-change", "location": "completed", "dir": ".shipd/completed/2026-01-01-test-change"},
+            spec_coverage=[
+                {"scenario": "WHEN x THEN y", "state": "met"}
+            ]
+        )
+        self.assertFalse(review_gate.fast_pass_eligible(review))
+
+    def test_variable_read_exits_non_zero(self):
+        """The variable read is not part of the pure predicate — it is
+        `post()`'s job. A review that is otherwise fully eligible by every
+        predicate-checked field stays predicate-eligible regardless of the
+        variable; `post()` is what arms nothing when the variable read fails."""
+        review = _review(
+            verdict="pass",
+            change={"slug": "test-change", "location": "completed", "dir": ".shipd/completed/2026-01-01-test-change"},
+            spec_coverage=[
+                {"scenario": "WHEN x THEN y", "state": "met"}
+            ]
+        )
+        self.assertTrue(review_gate.fast_pass_eligible(review))
+        gh = FakeGh()  # variable_get_enabled defaults to False
+        review_gate.post("7", review, gh)
+        merge_calls = [call for call in gh.calls
+                      if len(call[0]) > 2 and call[0][:3] == ["pr", "merge", "7"]]
+        self.assertEqual(merge_calls, [])
+        self.assertIn("not armed", gh.summary_body())
+
+
+class FastPassPostTest(unittest.TestCase):
+    """Tests for fast-pass auto-merge in the post function."""
+
+    def test_eligible_review_runs_variable_get_and_merge(self):
+        """An eligible review with SHIPD_FAST_PASS enabled runs variable get
+        and pr merge --auto, with status set before merge. The summary comment
+        records that fast-pass is armed."""
+        gh = FakeGh(variable_get_enabled=True)
+        review = _review(
+            verdict="pass",
+            change={"slug": "test-change", "location": "completed", "dir": ".shipd/completed/2026-01-01-test-change"},
+            spec_coverage=[
+                {"scenario": "WHEN x THEN y", "state": "met"}
+            ]
+        )
+        review_gate.post(7, review, gh)
+
+        # Assert that variable get was called
+        var_get_calls = [call for call in gh.calls if call[0][:3] == ["variable", "get", "SHIPD_FAST_PASS"]]
+        self.assertEqual(len(var_get_calls), 1, "variable get SHIPD_FAST_PASS should be called exactly once")
+
+        # Assert that merge was called
+        merge_calls = [call for call in gh.calls if len(call[0]) > 2 and call[0][:3] == ["pr", "merge", "7"] and "--auto" in call[0]]
+        self.assertEqual(len(merge_calls), 1, "pr merge --auto should be called exactly once")
+
+        # Assert that status was set before the merge call (by checking call order)
+        status_calls = [i for i, call in enumerate(gh.calls) if "/statuses/" in str(call[0])]
+        merge_call_indices = [i for i, call in enumerate(gh.calls) if len(call[0]) > 2 and call[0][:3] == ["pr", "merge", "7"]]
+        if status_calls and merge_call_indices:
+            self.assertTrue(max(status_calls) < min(merge_call_indices),
+                          "status should be set before merge is called")
+
+        # Assert that the summary comment records that fast-pass is armed
+        summary_body = gh.summary_body()
+        self.assertIsNotNone(summary_body, "summary comment should be created")
+        self.assertIn("Fast-pass", summary_body, "summary should mention fast-pass")
+        self.assertIn("armed", summary_body, "summary should state that fast-pass is armed")
+
+    def test_ineligible_review_no_merge_call(self):
+        """An ineligible review (changes-requested verdict) runs no merge call
+        and the summary comment names the unmet condition."""
+        gh = FakeGh(variable_get_enabled=True)
+        review = _review(
+            verdict="changes-requested",
+            change={"slug": "test-change", "location": "completed", "dir": ".shipd/completed/2026-01-01-test-change"},
+            spec_coverage=[
+                {"scenario": "WHEN x THEN y", "state": "met"}
+            ]
+        )
+        review_gate.post(7, review, gh)
+
+        # Assert that no merge call was made
+        merge_calls = [call for call in gh.calls if len(call[0]) > 2 and call[0][:3] == ["pr", "merge", "7"]]
+        self.assertEqual(len(merge_calls), 0, "no merge call should be made for ineligible review")
+
+        # Assert that the summary comment names the unmet condition
+        summary_body = gh.summary_body()
+        self.assertIsNotNone(summary_body, "summary comment should be created")
+        self.assertIn("Fast-pass", summary_body, "summary should mention fast-pass")
+        self.assertIn("not armed", summary_body, "summary should state that fast-pass is not armed")
+        self.assertIn("verdict", summary_body, "summary should mention the verdict condition")
+
+    def test_merge_call_exit_non_zero(self):
+        """When the merge call exits non-zero, post() does not raise. The posted
+        status stands unchanged. The summary comment reflects that fast-pass
+        did not arm due to the merge failure."""
+        gh = FakeGh(variable_get_enabled=True, merge_call_fails=True)
+        review = _review(
+            verdict="pass",
+            change={"slug": "test-change", "location": "completed", "dir": ".shipd/completed/2026-01-01-test-change"},
+            spec_coverage=[
+                {"scenario": "WHEN x THEN y", "state": "met"}
+            ]
+        )
+
+        # This should not raise an exception
+        result = review_gate.post(7, review, gh)
+
+        # Assert that the merge was attempted
+        merge_calls = [call for call in gh.calls if len(call[0]) > 2 and call[0][:3] == ["pr", "merge", "7"]]
+        self.assertEqual(len(merge_calls), 1, "merge should be attempted")
+
+        # Assert that the returned state is unchanged (not affected by the merge failure)
+        self.assertEqual(result["state"], "success", "status should be success for pass verdict")
+
+        # Assert that the summary comment reflects the merge failure
+        summary_body = gh.summary_body()
+        self.assertIsNotNone(summary_body, "summary comment should be created")
+        self.assertIn("Fast-pass", summary_body, "summary should mention fast-pass")
+        self.assertIn("not armed", summary_body, "summary should state that fast-pass is not armed")
+        self.assertIn("merge", summary_body, "summary should mention merge failure")
 
 
 class GateTemplateDifftPinTest(unittest.TestCase):

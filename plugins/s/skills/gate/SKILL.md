@@ -186,6 +186,7 @@ steps:
 | --- | --- | --- |
 | Require the check | `python3 "${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/review_gate.py" protect` | Requires the `semantic-review` status context on the default branch and turns on conversation resolution. Preserves every protection field the branch already has; creates the minimal protection when the branch has none. |
 | Allow auto-merge | `gh api -X PATCH repos/<nwo> -F allow_auto_merge=true` | Lets `gh pr merge --auto` arm on this repository. **Omitted under `pr-mode: draft`.** |
+| Fast-pass auto-merge | `gh variable set SHIPD_FAST_PASS --body true` | A reviewed pull request carrying a completed shipd change whose every delta scenario the review verified then merges without a human. **Omitted under `pr-mode: draft` alongside auto-merge.** |
 | Strict verdicts (optional) | `gh variable set SHIPD_GATE_FAIL_OPEN --body false` | A review that produces no verdict marker then posts nothing and the required check stays `pending`, instead of passing fail-open. |
 
 Honor the dialog-and-prose-separation rule:
@@ -213,6 +214,11 @@ here to consent to.
 every step), perform no protection write, no repository PATCH, and no variable
 set. Go straight to steps 7 and 8: the token hand-off, then the closing
 `shipd doctor` verification — with the manual hints for the steps not taken.
+
+**Declining the fast-pass step alone sets no variable.** When the user
+consents to other steps but not fast-pass, run no `gh variable set
+SHIPD_FAST_PASS` call, and state plainly in the closing report that reviewed
+pull requests still wait for a human merge.
 
 ## 6. Run only the consented steps
 
@@ -269,13 +275,15 @@ output ends with a `doctor: N problem(s)` summary line:
 <shipd> doctor
 ```
 
-Report the `protection`, `automerge`, and `copilot-secret` lines verbatim as
-the verification of what was set up:
+Report the `protection`, `automerge`, `copilot-secret`, and `fast-pass` lines
+verbatim as the verification of what was set up:
 
 - `protection` — whether the default branch now requires `semantic-review`.
 - `automerge` — whether auto-merge is allowed (waived under `pr-mode: draft`).
 - `copilot-secret` — `warn` here is the fail-open fallback naming itself: the
   gate is installed without the reviewer token.
+- `fast-pass` — whether the fast-pass variable is enabled or off (omitted under
+  `pr-mode: draft` like auto-merge).
 
 **Never infer a setting's state from a step you ran** — these lines are the
 evidence. If the preflight output cannot be parsed into

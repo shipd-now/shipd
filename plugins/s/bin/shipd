@@ -1145,9 +1145,38 @@ def check_copilot_secret(root, context, run=_gh_run):
             % (context["nwo"], _admin_note(context)))
 
 
+def check_fast_pass(context, run=_gh_run):
+    """Whether the repository has fast-pass auto-merge enabled via the
+    SHIPD_FAST_PASS variable. The fast-pass feature is always report-only:
+    the feature being off is the safe default, and being on is a repository
+    setting, so neither state is a problem. Returns ok with a note of the
+    state."""
+    if context.get("skip"):
+        return ("ok", "fast-pass", "skipped: %s" % context["skip"])
+    status, payload = _gh_api("repos/%s/actions/variables" % context["nwo"],
+                              run=run)
+    variables = payload.get("variables") if isinstance(payload, dict) else None
+    if status != 200 or not isinstance(variables, list):
+        return ("ok", "fast-pass",
+                "could not be verified: reading %s's Actions variables was "
+                "denied (%s)" % (context["nwo"], _http_reason(status)))
+    # Find SHIPD_FAST_PASS variable
+    fast_pass_var = None
+    for entry in variables:
+        if isinstance(entry, dict) and entry.get("name") == "SHIPD_FAST_PASS":
+            fast_pass_var = entry.get("value")
+            break
+    if fast_pass_var == "true":
+        return ("ok", "fast-pass",
+                "SHIPD_FAST_PASS is set to true on %s — unattended merging is "
+                "enabled" % context["nwo"])
+    return ("ok", "fast-pass",
+            "SHIPD_FAST_PASS is off on %s" % context["nwo"])
+
+
 def default_checks(root):
     """Every preflight check, required ones first, as ``(level, name, detail)``
-    triples. The three GitHub-side checks close the list and share one resolved
+    triples. The four GitHub-side checks close the list and share one resolved
     repository context, so the whole preflight makes at most two ``gh`` calls
     beyond the per-check probes."""
     context = gh_context()
@@ -1167,7 +1196,8 @@ def default_checks(root):
             check_statusline(),
             check_protection(context),
             check_automerge(root, context),
-            check_copilot_secret(root, context)]
+            check_copilot_secret(root, context),
+            check_fast_pass(context)]
 
 
 def doctor_report(results):
