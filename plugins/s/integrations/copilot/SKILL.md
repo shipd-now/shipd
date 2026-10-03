@@ -200,6 +200,12 @@ without a scope check, is always **high** regardless of your confidence.
 Low findings never block. When unsure between two levels, state the doubt
 rather than inflating.
 
+**Fast-pass marker (optional).** When the pull request carries a completed shipd
+change directory whose every delta scenario you judged met, emit the fast-pass
+marker `<!-- shipd-fast-pass: eligible -->` on its own line, directly above the
+verdict marker. This signals that the pull request may be automatically merged
+without further human review.
+
 **End the review body with the verdict, twice.** A human-readable verdict line
 — `**Verdict: Ship it**` or `**Verdict: Fix required**` — and, on its own line
 directly below it, the matching machine-readable marker:

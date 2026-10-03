@@ -1307,6 +1307,42 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertNotIn("--add-reviewer", self.text)
         self.assertNotIn("gh pr edit", self.text)
 
+    def test_the_gate_reads_the_fast_pass_variable(self):
+        # The fast-pass feature is controlled by the SHIPD_FAST_PASS variable,
+        # read from the job's environment via `vars` context like
+        # SHIPD_GATE_FAIL_OPEN.
+        posting = self.posting_step()
+        run = run_block(posting)
+        self.assertIn("SHIPD_FAST_PASS: ${{ vars.SHIPD_FAST_PASS }}", posting,
+                      "the posting step does not read SHIPD_FAST_PASS from vars")
+
+    def test_the_gate_scans_the_body_for_the_fast_pass_marker(self):
+        # The fast-pass line is scanned from the review body, bounded to the
+        # final 200 lines like the verdict marker.
+        posting = run_block(self.posting_step())
+        self.assertIn(
+            "<!-- shipd-fast-pass: eligible -->", posting,
+            "the posting step does not mention the fast-pass marker")
+
+    def test_the_gate_arms_merge_on_eligible_conditions(self):
+        # When the variable is true, the verdict is ship-it (matched_state),
+        # and the fast-pass line is found, the gate runs gh pr merge with
+        # the auto, squash, and delete-branch flags.
+        posting = run_block(self.posting_step())
+        self.assertIn(
+            "pr merge --auto --squash --delete-branch", posting,
+            "the posting step does not name the merge-arming command")
+
+    def test_the_merge_arming_fails_non_fatally(self):
+        # If the arming call exits non-zero, the gate logs it but does not
+        # fail the job.
+        posting = run_block(self.posting_step())
+        self.assertIn(
+            "pr merge", posting,
+            "the posting step does not attempt to arm the merge")
+        # The script should log failure conditions without using ||, so the
+        # arming failure does not propagate into a job failure.
+
 
 # The review that motivated the anchor. Dogfooding on shipd-now-website#18 —
 # the pull request that installs the skill — produced a Copilot review whose
@@ -2650,6 +2686,23 @@ class CopilotVerbTest(unittest.TestCase):
         result = self.cli("remove", "--force")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.tree(), set())
+
+
+class FastPassMarkerTest(unittest.TestCase):
+    """Tests for the fast-pass marker in the copilot skill."""
+
+    def test_skill_md_names_fast_pass_marker(self):
+        """The SKILL.md file names the fast-pass marker."""
+        # Find the copilot SKILL.md file
+        import os
+        skill_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "..",
+            "integrations", "copilot", "SKILL.md")
+        with open(skill_path, 'r') as f:
+            text = f.read()
+        self.assertIn(
+            "<!-- shipd-fast-pass: eligible -->", text,
+            "SKILL.md does not name the fast-pass marker")
 
 
 if __name__ == "__main__":

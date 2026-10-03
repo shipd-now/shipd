@@ -38,6 +38,7 @@ rendering changes. Shape:
       }
     }
   ],
+  "change": { "slug": "…", "location": "planned" | "completed", "dir": "…" },
   "spec_coverage": [ { "scenario": "WHEN … THEN …", "state": "met" | "unmet" | "cant-tell" } ],
   "could_not_verify": [ "…" ]
 }
@@ -45,9 +46,9 @@ rendering changes. Shape:
 
 Rules: `verdict` is `changes-requested` iff any finding is high or medium, else
 `pass`. An unmet acceptance criterion MUST also appear as a `spec-coverage`
-finding with severity `high`. `spec_coverage` is present only when a change is
-in scope. Valid JSON only — no fences, no commentary, **no emoji**. If the
-analysis cannot run, still emit a well-formed object with `could_not_verify`
+finding with severity `high`. `change` and `spec_coverage` are present only
+when a change is in scope. Valid JSON only — no fences, no commentary, **no emoji**.
+If the analysis cannot run, still emit a well-formed object with `could_not_verify`
 explaining why.
 
 `endpoints` carries the engine's own resolved endpoint metadata verbatim —
@@ -59,6 +60,11 @@ before writing anything to the pull request — an unverified base is not a
 verified one. `plugins/s/harness/references/review.md` specifies this same
 `endpoints` object identically, since it is a second machine-payload surface
 for the same contract.
+
+`change` carries the resolved shipd change's metadata when spec-aware mode
+resolved a change. Run `semdiff change <name>` to retrieve the change's
+`slug`, `location` (`planned` or `completed`), and `dir` (the change directory
+path relative to the repo root), then carry all three into the `change` member.
 
 ## The optional `suggestion` object
 

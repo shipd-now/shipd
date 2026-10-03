@@ -528,6 +528,27 @@ class TableConditionAgreementTest(unittest.TestCase):
                     f"{MIN_SHARED_CONTENT_WORDS} shared content words")
 
 
+class ChangeFieldParityTest(unittest.TestCase):
+    """The `change` object is specified identically by both
+    machine-payload surfaces: the plugin skill's `json-output.md` and the
+    harness reference that ships to every harness declaring
+    `file-references`. It carries `slug`, `location`, and `dir`."""
+
+    FIELDS = ("slug", "location", "dir")
+
+    def test_both_surfaces_name_the_same_change_field_set(self):
+        for path in (JSON_OUTPUT_MD, HARNESS_REVIEW_MD):
+            with self.subTest(path=path):
+                text = _read(path)
+                self.assertIn(
+                    '"change"', text,
+                    f"{path} does not name a `change` member")
+                for field in self.FIELDS:
+                    self.assertIn(
+                        f'"{field}"', text,
+                        f"{path} does not name change field {field!r}")
+
+
 class PostingDefaultInvertedTest(unittest.TestCase):
     """Posting fires by default once a pull request is in scope, not only on
     an explicit request. Pinned against both the `SKILL.md` References table

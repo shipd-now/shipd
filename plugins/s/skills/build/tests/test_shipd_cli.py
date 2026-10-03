@@ -1146,7 +1146,8 @@ class DoctorCheckTest(unittest.TestCase):
     ALL_CHECKS = ("python", "git", "config", "pipeline", "schema", "wiki",
                   "store", "store-sync", "local-state", "gh", "difft",
                   "textual", "snapshot",
-                  "statusline", "protection", "automerge", "copilot-secret")
+                  "statusline", "protection", "automerge", "copilot-secret",
+                  "fast-pass")
 
     def probed_check_names(self, root):
         """The check names ``default_checks`` reports, with every check — and
@@ -1966,7 +1967,7 @@ class DoctorCheckTest(unittest.TestCase):
                           "wiki", "store", "store-sync", "local-state", "gh",
                           "difft",
                           "textual", "snapshot", "statusline", "protection",
-                          "automerge", "copilot-secret"])
+                          "automerge", "copilot-secret", "fast-pass"])
 
     # -- statusline --------------------------------------------------------
 
@@ -2442,6 +2443,62 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual((level, name), ("warn", "copilot-secret"))
         self.assertIn("lacks admin permission", detail)
 
+    # -- fast-pass -----------------------------------------------------------
+
+    def fast_pass(self, variables_response=None):
+        probes = ({} if variables_response is None
+                  else {"actions/variables": variables_response})
+        context, run = self.resolve_context(
+            self.gh_responses(self.repo_payload(), probes))
+        return shipd.check_fast_pass(context, run=run)
+
+    def test_fast_pass_variable_true_is_ok(self):
+        level, name, detail = self.fast_pass(self.ok_json(
+            {"total_count": 1,
+             "variables": [{"name": "SHIPD_FAST_PASS", "value": "true"}]}))
+        self.assertEqual((level, name), ("ok", "fast-pass"))
+        self.assertNotIn("warn", (level,))
+        self.assertIn("enabled", detail.lower())
+
+    def test_absent_fast_pass_variable_is_ok(self):
+        level, name, detail = self.fast_pass(self.ok_json(
+            {"total_count": 0, "variables": []}))
+        self.assertEqual((level, name), ("ok", "fast-pass"))
+        self.assertNotIn("warn", (level,))
+        self.assertIn("off", detail.lower())
+
+    def test_fast_pass_variable_with_value_other_than_true_is_ok(self):
+        level, name, detail = self.fast_pass(self.ok_json(
+            {"total_count": 1,
+             "variables": [{"name": "SHIPD_FAST_PASS", "value": "false"}]}))
+        self.assertEqual((level, name), ("ok", "fast-pass"))
+        self.assertNotIn("warn", (level,))
+
+    def test_denied_variables_listing_is_ok_unverifiable(self):
+        level, name, detail = self.fast_pass(self.HTTP_403)
+        self.assertEqual((level, name), ("ok", "fast-pass"))
+        self.assertIn("could not be verified", detail)
+
+    def test_github_side_checks_report_in_order(self):
+        context, run = self.resolve_context(self.gh_responses(
+            self.repo_payload(),
+            {"branches/main/protection":
+                self.ok_json({"required_status_checks":
+                              {"contexts": ["ci", "semantic-review"]}}),
+             "actions/secrets":
+                self.ok_json({"secrets": [{"name": "COPILOT_GITHUB_TOKEN"}]}),
+             "actions/variables":
+                self.ok_json({"variables": [{"name": "SHIPD_FAST_PASS",
+                                             "value": "true"}]})}))
+        root = self.repo_with_gate("ordered")
+        results = [shipd.check_protection(context, run=run),
+                   self.automerge_check(root, context),
+                   shipd.check_copilot_secret(root, context, run=run),
+                   shipd.check_fast_pass(context, run=run)]
+        self.assertEqual([name for _l, name, _d in results],
+                         ["protection", "automerge", "copilot-secret",
+                          "fast-pass"])
+
     # -- a gh that never answers --------------------------------------------
 
     def timing_out_subprocess(self):
@@ -2500,7 +2557,8 @@ class DoctorCheckTest(unittest.TestCase):
     def test_the_github_checks_report_after_statusline(self):
         names = self.probed_check_names(self.tmp)
         self.assertEqual(names[names.index("statusline") + 1:],
-                         ["protection", "automerge", "copilot-secret"])
+                         ["protection", "automerge", "copilot-secret",
+                          "fast-pass"])
 
     def test_the_github_checks_never_fail_the_preflight(self):
         root = self.repo_with_gate("never-fail")

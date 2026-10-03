@@ -53,13 +53,13 @@ command and, in plain words, what it changes on GitHub — plus "do none of them
   protect`. Requires `semantic-review` on the default branch with conversation
   resolution, preserving existing protection fields, minimal where none exist.
 - **Allow auto-merge** — `gh api -X PATCH repos/<nwo> -F allow_auto_merge=true`.
+- **Fast-pass auto-merge** — `gh variable set SHIPD_FAST_PASS --body true`. A verified completed change then merges unattended; omitted under `pr-mode: draft`.
 - **Strict verdicts (optional)** — `gh variable set SHIPD_GATE_FAIL_OPEN --body
   false`. State the trade-off: a review with no verdict marker then leaves the
   required check `pending` instead of passing fail-open — only worth taking
   alongside the reviewer token.
 
-Recommend the first two; hand-offs are never choices. Declining runs nothing —
-go straight to the token relay and the verification.
+Recommend the first two; hand-offs are never choices. Declining runs nothing — go straight to the token relay and the verification. Declining fast-pass alone sets no variable; say in the closing report that reviewed pull requests still wait for a human merge.
 
 ## 5. Run what was approved
 
@@ -81,8 +81,7 @@ check passes fail-open — the gate is **advisory until the secret exists**.
 
 ## 7. Verify, then report honestly
 
-Run `shipd doctor` and read its `protection`, `automerge`, and
-`copilot-secret` lines back verbatim as the evidence — never infer a setting's
+Run `shipd doctor` and read its `protection`, `automerge`, `copilot-secret`, and `fast-pass` lines back verbatim as the evidence — never infer a setting's
 state from a step you ran. Close with the verdict: what is installed, what is
 required at merge time, strict or advisory, and the exact commands the user
 still runs themselves. Add the note nothing here touches: asking for a review

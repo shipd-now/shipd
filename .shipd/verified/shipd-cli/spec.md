@@ -824,9 +824,9 @@ NOT grow a new check name for this validation.
 ### Requirement: Doctor GitHub-side gate checks
 id: doctor-github-checks
 
-The `doctor` verb SHALL additionally report three GitHub-side checks —
-`protection`, `automerge`, and `copilot-secret`, in that order directly after
-`statusline` — probed read-only through the `gh` CLI, each behind an
+The `doctor` verb SHALL additionally report four GitHub-side checks —
+`protection`, `automerge`, `copilot-secret`, and `fast-pass`, in that order
+directly after `statusline` — probed read-only through the `gh` CLI, each behind an
 injectable runner so the test suite never touches the network, and each
 reporting `warn` at worst. If `gh` is absent or unauthenticated, or the
 working directory resolves no GitHub repository (via
@@ -865,11 +865,20 @@ report `ok` with an unverifiable note when the listing is denied. Where that
 workflow file does not exist, the check SHALL report `ok` with a skipped
 note.
 
-#### Scenario: No GitHub remote skips all three checks
+The `fast-pass` check SHALL probe the repository Actions variable
+`SHIPD_FAST_PASS` read-only through the same injectable runner: it SHALL report
+`ok` naming unattended merging as enabled where the variable reads exactly
+`true`, `ok` naming it off where the variable is absent or reads anything else,
+and `ok` with an unverifiable note where the read is denied. The check SHALL
+never `warn`: the fast-pass being off is the safe default and the fast-pass
+being on is a consented setting, so neither state is a problem to report.
+
+#### Scenario: No GitHub remote skips every GitHub-side check
 - **WHEN** `shipd doctor` runs in a repository that resolves no GitHub
   repository through `gh repo view`
-- **THEN** `protection`, `automerge`, and `copilot-secret` each report `ok`
-  with a note naming why they were skipped, and the exit code is unaffected
+- **THEN** `protection`, `automerge`, `copilot-secret`, and `fast-pass` each
+  report `ok` with a note naming why they were skipped, and the exit code is
+  unaffected
 
 #### Scenario: Unprotected default branch warns
 - **WHEN** `shipd doctor` runs where the protection probe returns 404 for the
@@ -909,6 +918,20 @@ note.
   `.github/workflows/copilot-review-gate.yml`
 - **THEN** the `copilot-secret` line begins `ok` and notes the check was
   skipped
+
+#### Scenario: An enabled fast-pass is reported
+- **WHEN** `shipd doctor` runs where `SHIPD_FAST_PASS` reads `true`
+- **THEN** the `fast-pass` line begins `ok` and names unattended merging as
+  enabled
+
+#### Scenario: An absent variable reports the fast-pass off
+- **WHEN** `shipd doctor` runs where `SHIPD_FAST_PASS` is unset
+- **THEN** the `fast-pass` line begins `ok` and names the fast-pass as off
+
+#### Scenario: A denied variable read never warns
+- **WHEN** `shipd doctor` runs where the variable read is denied
+- **THEN** the `fast-pass` line begins `ok` with an unverifiable note and the
+  exit code is `0`
 
 ### Requirement: Update verb
 id: cli-update

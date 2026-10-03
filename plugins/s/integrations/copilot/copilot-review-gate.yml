@@ -407,6 +407,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHIPD_GATE_FAIL_OPEN: ${{ vars.SHIPD_GATE_FAIL_OPEN }}
+          SHIPD_FAST_PASS: ${{ vars.SHIPD_FAST_PASS }}
           EVENT_NAME: ${{ github.event_name }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -625,6 +626,59 @@ jobs:
           fi
           if [[ -n "$state" ]]; then
             post_status "$state" "$description"
+          fi
+
+          # Fast-pass: arm auto-merge when eligible. A review is eligible only
+          # when the SHIPD_FAST_PASS variable reads `true`, the verdict is
+          # `success` (from a ship-it marker, not fail-open), and the body
+          # carries the fast-pass marker line.
+          fast_pass_marker='<!-- shipd-fast-pass: eligible -->'
+          fast_pass_armed=false
+          if [[ "${SHIPD_FAST_PASS:-}" == "true" ]]; then
+            # The variable is enabled. Check if we have a ship-it verdict
+            # (not fail-open).
+            if [[ "$state" == "success" && -n "$matched_state" ]]; then
+              # We have a ship-it marker (matched_state was set). Now scan
+              # for the fast-pass line in the body, bounded to 200 lines.
+              found_fast_pass=false
+              scan_body="$body"
+              scanned=0
+              while (( scanned < 200 )); do
+                scanned=$(( scanned + 1 ))
+                head="${scan_body%$'\n'*}"
+                if (( ${#head} == ${#scan_body} )); then
+                  line="$scan_body"
+                  scan_body=""
+                else
+                  line="${scan_body:${#head}+1}"
+                  scan_body="$head"
+                fi
+                # Trim leading whitespace
+                line_trimmed="${line%%[![:space:]]*}"
+                line_trimmed="${line:${#line_trimmed}}"
+                if [[ "$line_trimmed" == "$fast_pass_marker" ]]; then
+                  found_fast_pass=true
+                  break
+                fi
+                [[ -z "$scan_body" ]] && break
+              done
+              if [[ "$found_fast_pass" == "true" ]]; then
+                # All conditions met: arm the auto-merge.
+                if "$gh_bin" pr merge --auto --squash --delete-branch \
+                    --repo "$REPO" "$PR_NUMBER" 2>/dev/null; then
+                  fast_pass_armed=true
+                else
+                  echo "Fast-pass auto-merge arming failed for PR #$PR_NUMBER" \
+                    "but the posted status stands." >&2
+                fi
+              else
+                echo "Fast-pass variable is true and verdict is success, but" \
+                  "the fast-pass marker was not found in the review body." >&2
+              fi
+            else
+              echo "Fast-pass variable is true but verdict is not success" \
+                "(state=$state, matched_state=$matched_state)." >&2
+            fi
           fi
 
           # What the gate judged, where a human can read it — published as a
