@@ -416,7 +416,7 @@ class SummaryFooterTest(unittest.TestCase):
                          "Reviewed 2 files, +112 -3 lines.")
 
     def test_footer_follows_the_additional_findings_section(self):
-        finding = {"id": "f1", "severity": "medium", "location": "z.py:1",
+        finding = {"id": "f1", "severity": "medium", "locations": ["z.py:1"],
                    "what": "boom", "why": "w", "fix": "x"}
         body = review_gate.render_summary(
             _review(verdict="changes-requested", findings=[finding]),
@@ -457,7 +457,7 @@ class SummaryFooterTest(unittest.TestCase):
 
     def test_folded_repost_keeps_the_footer(self):
         gh = FakeGh(files=self.FILES, review_fail_times=1)
-        findings = [{"id": "f1", "severity": "high", "location": "a.py:5",
+        findings = [{"id": "f1", "severity": "high", "locations": ["a.py:5"],
                      "what": "boom", "why": "w", "fix": "x"}]
         review_gate.post(
             "7", _review(verdict="changes-requested", findings=findings), gh)
@@ -483,7 +483,7 @@ class SummaryBrandTest(unittest.TestCase):
             self.assertTrue(rest[1].startswith("## Findings:"))
 
     def test_brand_line_survives_disposition_and_model(self):
-        findings = [{"id": "f1", "severity": "high", "location": "z.py:1",
+        findings = [{"id": "f1", "severity": "high", "locations": ["z.py:1"],
                      "what": "boom", "why": "w", "fix": "x"}]
         lines = self._lines(_review(verdict="changes-requested",
                                     findings=findings),
@@ -786,11 +786,11 @@ class PostDispositionTest(unittest.TestCase):
     """`post --disposition <scope>` maps the commit status by merge policy while
     the summary body and verdict stay severity-honest."""
 
-    HIGH = {"id": "f1", "severity": "high", "location": "z.py:1",
+    HIGH = {"id": "f1", "severity": "high", "locations": ["z.py:1"],
             "what": "high boom", "why": "w", "fix": "x"}
-    MEDIUM = {"id": "f2", "severity": "medium", "location": "z.py:2",
+    MEDIUM = {"id": "f2", "severity": "medium", "locations": ["z.py:2"],
               "what": "medium boom", "why": "w", "fix": "x"}
-    LOW = {"id": "f3", "severity": "low", "location": "z.py:3",
+    LOW = {"id": "f3", "severity": "low", "locations": ["z.py:3"],
            "what": "low boom", "why": "w", "fix": "x"}
 
     def test_all_scope_keeps_verdict_mapping(self):
@@ -1238,7 +1238,7 @@ def _gate_thread(tid, severity, *, what="boom", path="a.py", **kw):
     marker it carries) are exercised against the real renderer, never a
     hand-written imitation."""
     body = review_gate._inline_body(
-        {"location": "%s:1" % path, "severity": severity, "what": what,
+        {"locations": ["%s:1" % path], "severity": severity, "what": what,
          "why": "w", "fix": "x"})
     return _thread(tid, body=body, path=path, **kw)
 
@@ -1281,7 +1281,7 @@ class FoldedFindingSeverityDotTest(unittest.TestCase):
     lands on the PR."""
 
     def test_folded_medium_finding_carries_its_dot(self):
-        finding = {"id": "f1", "severity": "medium", "location": "z.py:1",
+        finding = {"id": "f1", "severity": "medium", "locations": ["z.py:1"],
                    "what": "boom", "why": "w", "fix": "x"}
         body = review_gate.render_summary(
             _review(verdict="changes-requested", findings=[finding]),
@@ -1468,7 +1468,7 @@ class IdentityMarkerTest(unittest.TestCase):
 
     def test_rendered_body_ends_with_the_marker_and_severity_still_parses(self):
         for sev in ("high", "medium", "low"):
-            f = {"location": "a.py:5", "severity": sev, "what": "boom",
+            f = {"locations": ["a.py:5"], "severity": sev, "what": "boom",
                  "why": "w", "fix": "x"}
             body = review_gate._inline_body(f)
             lines = body.split("\n")
@@ -1477,7 +1477,7 @@ class IdentityMarkerTest(unittest.TestCase):
             self.assertEqual(review_gate.parse_severity(body), sev)
 
     def test_marker_comes_after_a_suggestion_fence(self):
-        f = {"location": "a.py:5", "severity": "high", "what": "boom",
+        f = {"locations": ["a.py:5"], "severity": "high", "what": "boom",
              "why": "w", "fix": "x"}
         suggestion = (5, 5, ["    return None"])
         body = review_gate._inline_body(f, suggestion)
@@ -1487,16 +1487,16 @@ class IdentityMarkerTest(unittest.TestCase):
         self.assertEqual(review_gate.parse_severity(body), "high")
 
     def test_a_moved_line_number_hashes_identically(self):
-        f1 = {"location": "a.py:5", "severity": "high", "what": "boom"}
-        f2 = {"location": "a.py:99", "severity": "high", "what": "boom"}
+        f1 = {"locations": ["a.py:5"], "severity": "high", "what": "boom"}
+        f2 = {"locations": ["a.py:99"], "severity": "high", "what": "boom"}
         h1 = review_gate._extract_finding_hash(review_gate._inline_body(f1))
         h2 = review_gate._extract_finding_hash(review_gate._inline_body(f2))
         self.assertIsNotNone(h1)
         self.assertEqual(h1, h2)
 
     def test_a_reworded_what_hashes_differently(self):
-        f1 = {"location": "a.py:5", "severity": "high", "what": "boom one"}
-        f2 = {"location": "a.py:5", "severity": "high", "what": "boom two"}
+        f1 = {"locations": ["a.py:5"], "severity": "high", "what": "boom one"}
+        f2 = {"locations": ["a.py:5"], "severity": "high", "what": "boom two"}
         h1 = review_gate._extract_finding_hash(review_gate._inline_body(f1))
         h2 = review_gate._extract_finding_hash(review_gate._inline_body(f2))
         self.assertNotEqual(h1, h2)
