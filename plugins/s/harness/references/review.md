@@ -34,7 +34,7 @@ preamble, no fences, no commentary, and no emoji:
       "id": "f1",
       "severity": "high" | "medium" | "low",
       "category": "bug" | "contract" | "edge-case" | "untouched-caller" | "spec-coverage" | "test-coverage" | "security" | "performance" | "stability" | "data-integrity",
-      "location": "path/to/file.ext:LINE",
+      "locations": ["path/to/file.ext:LINE", "other/file.ext:LINE2"],
       "what": "one-line statement of the defect",
       "why": "why it matters",
       "fix": "concrete fix",
@@ -54,6 +54,10 @@ never diverge. An unmet spec scenario must appear as a `spec-coverage` finding
 with severity `high`. `change` and `spec_coverage` are present only when a
 planned change was in scope. If the analysis could not run at all, still emit
 a well-formed object whose `could_not_verify` explains why.
+
+The `locations` array is non-empty; `locations[0]` is the primary site where
+the fix would be applied, and any further entries are sites where the same
+defect recurs.
 
 `endpoints` carries the engine's resolved endpoint metadata — `base_given`,
 `base_sha`, `head_sha`, and `merge_base` straight from `semdiff`'s meta, plus

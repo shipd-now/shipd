@@ -193,16 +193,36 @@ def _parse_location(location):
         return None, None
 
 
+def _parse_locations(f):
+    """Extract and parse all locations from a finding, returning a list of
+    ``(path, line)`` tuples (or ``(None, None)`` for unparseable entries),
+    dropping entries that fail to parse."""
+    locations = f.get("locations") or []
+    result = []
+    for loc in locations:
+        path, line = _parse_location(loc)
+        if path is not None:
+            result.append((path, line))
+        else:
+            result.append((None, None))
+    return result
+
+
 def _split_findings(findings, commentable):
     """Partition ``findings`` into ``(anchored, unanchored)`` against the
     per-path ``commentable`` line sets. ``anchored`` items are
-    ``(finding, path, line)`` tuples; ``unanchored`` is the raw findings."""
+    ``(finding, path, line, index)`` tuples (one per anchorable location);
+    ``unanchored`` is the raw findings (only if none of its locations are
+    commentable)."""
     anchored, unanchored = [], []
     for f in findings:
-        path, line = _parse_location(f.get("location", ""))
-        if path is not None and line in commentable.get(path, set()):
-            anchored.append((f, path, line))
-        else:
+        locations = _parse_locations(f)
+        has_anchored = False
+        for idx, (path, line) in enumerate(locations):
+            if path is not None and line in commentable.get(path, set()):
+                anchored.append((f, path, line, idx))
+                has_anchored = True
+        if not has_anchored:
             unanchored.append(f)
     return anchored, unanchored
 
@@ -295,7 +315,12 @@ def _verdict_header(verdict):
 
 
 def _detail_cell(f):
-    loc = f.get("location") or ""
+    # Get the first location (primary site)
+    locations = f.get("locations") or []
+    loc = locations[0] if locations else ""
+    # Add "(+N more)" if there are multiple locations
+    if len(locations) > 1:
+        loc = "%s (+%d more)" % (loc, len(locations) - 1)
     what = (f.get("what") or "").replace("|", "\\|")
     return ("%s — %s" % (loc, what)).strip(" —")
 
@@ -371,7 +396,10 @@ def render_summary(review, unanchored, disposition="all", model=None,
                 "", "_Findings not anchored to a line in the PR diff:_", ""]
         for f in unanchored:
             sev = f.get("severity", "low")
-            loc = f.get("location") or "(no location)"
+            locations = f.get("locations") or []
+            loc = locations[0] if locations else "(no location)"
+            if len(locations) > 1:
+                loc = "%s (+%d more)" % (loc, len(locations) - 1)
             dot = _SEV_DOT.get(sev, "")
             rated_sev = ("%s %s" % (dot, sev)) if dot else sev
             out.append(
@@ -450,16 +478,25 @@ def _parse_what(body):
     return rest
 
 
-def _finding_hash(path, what):
+def _finding_hash(path, what, index=0):
     """The finding identity `_inline_body` embeds and `prior` matches against:
-    the first twelve hex characters of the SHA-256 of ``path``, a newline, and
-    ``what`` lowercased with whitespace runs collapsed to a single space.
+    the first twelve hex characters of the SHA-256 of ``path``, a newline,
+    ``what`` lowercased with whitespace runs collapsed to a single space, and
+    optionally an ``index`` when the finding declares more than one location.
 
     A line number is deliberately excluded — a finding's line moves as the
     diff around it changes, so an anchor-based identity would miss the
-    recurrence it exists to catch."""
+    recurrence it exists to catch. The index is included only when there are
+    multiple locations, so a single-location finding's hash is byte-identical
+    to today's. Each site of a multi-location finding gets its own identity
+    via the index, so each is dispositioned independently."""
     normalized = " ".join((what or "").lower().split())
-    digest = hashlib.sha256(("%s\n%s" % (path or "", normalized)).encode("utf-8"))
+    # Only include index in the digest when it's non-zero (multi-location case)
+    if index > 0:
+        payload = "%s\n%s\n%d" % (path or "", normalized, index)
+    else:
+        payload = "%s\n%s" % (path or "", normalized)
+    digest = hashlib.sha256(payload.encode("utf-8"))
     return digest.hexdigest()[:12]
 
 
@@ -523,7 +560,7 @@ def _suggestion(f, commentable=None):
     return start, end, lines
 
 
-def _inline_body(f, suggestion=None):
+def _inline_body(f, suggestion=None, location_index=0):
     """The text body of one anchored inline comment — the finding's what / why
     / fix as prose, followed by a committable ``suggestion`` fenced block when
     ``suggestion`` is the ``(start, end, lines)`` triple ``_suggestion``
@@ -535,7 +572,11 @@ def _inline_body(f, suggestion=None):
     body — after any suggestion fence, never before the leading severity
     marker, so `parse_severity`'s lstripped-start match stays untouched. The
     hash comes from `_finding_hash` against the finding's location path (the
-    line dropped, so a moved line still matches) and its `what` text.
+    line dropped, so a moved line still matches), its `what` text, and
+    optionally the location index when the finding declares multiple locations.
+
+    When a finding has multiple locations, the inline body is appended with
+    an "Also recurs at:" line naming all other sites.
 
     No emoji."""
     sev = f.get("severity", "low")
@@ -548,8 +589,27 @@ def _inline_body(f, suggestion=None):
         parts.append("Fix: %s" % f["fix"])
     if suggestion:
         parts += ["", "```suggestion"] + list(suggestion[2]) + ["```"]
-    path, _line = _parse_location(f.get("location") or "")
-    parts += ["", "<!-- shipd-finding %s -->" % _finding_hash(path, f.get("what"))]
+
+    # Get all locations for the finding
+    locations = f.get("locations") or []
+
+    # Get the path for this location
+    path = None
+    if locations and location_index < len(locations):
+        path, _line = _parse_location(locations[location_index])
+
+    # If there are multiple locations, append "Also recurs at:"
+    if len(locations) > 1:
+        other_locations = [locations[i] for i in range(len(locations))
+                          if i != location_index]
+        parts.append("")
+        parts.append("Also recurs at: " + ", ".join(other_locations))
+
+    # Count total locations for the hash
+    num_locations = len(locations) if locations else 1
+    parts += ["", "<!-- shipd-finding %s -->" %
+              _finding_hash(path, f.get("what"),
+                           index=location_index if num_locations > 1 else 0)]
     return "\n".join(parts)
 
 
@@ -645,15 +705,19 @@ def _set_status(gh, repo, sha, state, description, target_url):
         _fail("setting commit status failed: %s" % err.strip())
 
 
-def _review_comment(f, path, line, commentable=None):
+def _review_comment(f, path, line, commentable=None, location_index=0):
     """One inline comment payload for an anchored finding. A finding carrying
     a committable suggestion anchors on the range that suggestion replaces —
     GitHub applies a suggestion to the lines its comment spans — and a
     multi-line range takes the ``start_line``/``line`` pair; every other
-    finding keeps its location-line anchor unchanged."""
-    suggestion = _suggestion(f, commentable)
+    finding keeps its location-line anchor unchanged.
+
+    A suggestion is only ever attached to the comment anchored at locations[0];
+    all other comments render as prose only."""
+    # Suggestions only attach to the primary location (index 0)
+    suggestion = _suggestion(f, commentable) if location_index == 0 else None
     comment = {"path": path, "side": "RIGHT",
-               "body": _inline_body(f, suggestion)}
+               "body": _inline_body(f, suggestion, location_index=location_index)}
     if suggestion is None:
         comment["line"] = line
         return comment
@@ -674,8 +738,9 @@ def _post_review(gh, repo, number, sha, anchored, commentable=None):
     comments = [
         _review_comment(f, p, ln,
                         None if commentable is None
-                        else commentable.get(p, set()))
-        for f, p, ln in anchored]
+                        else commentable.get(p, set()),
+                        location_index=idx)
+        for f, p, ln, idx in anchored]
     body = ("Semantic review — see the summary comment for the full report."
             if comments else
             "Semantic review posted — see the summary comment.")

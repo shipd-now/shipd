@@ -185,9 +185,10 @@ guidance and worked examples once one fires:
   operation with no down-migration, backup, or recovery path.
 
 ### 6. Report by cohort
-Group findings under cohort headings, most severe first. For each finding: the
-**location**, **what** is wrong, **why** it matters, a concrete **fix**, and an
-explicit **severity**.
+Group findings under cohort headings, most severe first. For each finding: a
+**location** (the fix site, never a symptom), **what**, **why**, **fix**, and
+**severity**. When a defect recurs at multiple sites, write one finding whose
+`locations` array names every site.
 
 **Severity rubric.**
 - **high** — a correctness bug, a contract break with an un-updated consumer,

@@ -530,9 +530,9 @@ class PostTest(unittest.TestCase):
     def test_red_verdict_anchors_inline_and_folds_out_of_diff(self):
         gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
         findings = [
-            {"id": "f1", "severity": "high", "location": "a.py:5",
+            {"id": "f1", "severity": "high", "locations": ["a.py:5"],
              "what": "boom in a", "why": "w", "fix": "x"},
-            {"id": "f2", "severity": "medium", "location": "b.py:99",
+            {"id": "f2", "severity": "medium", "locations": ["b.py:99"],
              "what": "boom in b", "why": "w", "fix": "x"},
         ]
         review_gate.post(
@@ -554,7 +554,7 @@ class PostTest(unittest.TestCase):
     def test_review_422_retries_without_inline(self):
         gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}],
                     review_fail_times=1)
-        findings = [{"id": "f1", "severity": "high", "location": "a.py:5",
+        findings = [{"id": "f1", "severity": "high", "locations": ["a.py:5"],
                      "what": "boom", "why": "w", "fix": "x"}]
         review_gate.post(
             "7", _review(verdict="changes-requested", findings=findings), gh)
@@ -605,7 +605,7 @@ class PostBaseGuardTest(unittest.TestCase):
     def test_matching_merge_base_posts_exactly_as_before(self):
         gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
         git = FakeGit(merge_base=DEFAULT_MERGE_BASE)
-        findings = [{"id": "f1", "severity": "high", "location": "a.py:5",
+        findings = [{"id": "f1", "severity": "high", "locations": ["a.py:5"],
                      "what": "boom", "why": "w", "fix": "x"}]
         result = review_gate.post(
             "7", _review(verdict="changes-requested", findings=findings),
@@ -619,9 +619,14 @@ class PostBaseGuardTest(unittest.TestCase):
 SUGGESTION_FENCE = "```suggestion"
 
 
-def _finding(location="a.py:5", *, severity="high", what="boom",
+def _finding(locations=None, *, severity="high", what="boom",
              suggestion=None):
-    f = {"id": "f1", "severity": severity, "location": location,
+    if locations is None:
+        locations = ["a.py:5"]
+    elif isinstance(locations, str):
+        # Support the old API for backwards compatibility during migration
+        locations = [locations]
+    f = {"id": "f1", "severity": severity, "locations": locations,
          "what": what, "why": "w", "fix": "x"}
     if suggestion is not None:
         f["suggestion"] = suggestion
@@ -689,7 +694,7 @@ class SuggestionTest(unittest.TestCase):
 
     def test_unanchorable_confident_fix_is_folded_and_carries_no_suggestion(
             self):
-        gh = _post_finding(_finding(location="b.py:99", suggestion={
+        gh = _post_finding(_finding(locations=["b.py:99"], suggestion={
             "confident": True, "start_line": 99, "end_line": 99,
             "lines": ["fixed"]}))
         self.assertEqual(_inline_comments(gh), [])
@@ -742,9 +747,9 @@ class ReviewEventTest(unittest.TestCase):
     pinned here and cannot drift silently."""
 
     FINDINGS = [
-        _finding(location="a.py:5"),
-        _finding(location="b.py:99", severity="medium", what="out of diff"),
-        _finding(location="a.py:3", severity="low", what="fixable",
+        _finding(locations=["a.py:5"]),
+        _finding(locations=["b.py:99"], severity="medium", what="out of diff"),
+        _finding(locations=["a.py:3"], severity="low", what="fixable",
                  suggestion={"confident": True, "start_line": 3,
                              "end_line": 4, "lines": ["one", "two"]}),
     ]
@@ -1935,6 +1940,99 @@ class GateTemplateDifftPinTest(unittest.TestCase):
             semdiff.DIFFT_VERSION, text,
             "the ci workflow does not pin the same difftastic version as "
             "the engine's DIFFT_VERSION")
+
+
+class MultiLocationFindingTest(unittest.TestCase):
+    """A finding with multiple `locations` names every site where the defect
+    recurs. Each anchorable location gets its own inline comment with a shared
+    finding hash that includes the location index. Suggestions attach only to
+    the locations[0] comment."""
+
+    def test_two_anchorable_locations_post_two_inline_comments(self):
+        """Two locations, both in diff, post two distinct inline comments."""
+        finding = _finding(locations=["a.py:5", "b.py:10"])
+        gh = _post_finding(finding, files=[
+            {"filename": "a.py", "patch": PATCH_A},
+            {"filename": "b.py", "patch": "@@ -8,3 +8,3 @@\n unchanged\n+added\n unchanged\n"},
+        ])
+        comments = _inline_comments(gh)
+        self.assertEqual(len(comments), 2)
+        self.assertEqual(comments[0]["path"], "a.py")
+        self.assertEqual(comments[0]["line"], 5)
+        self.assertEqual(comments[1]["path"], "b.py")
+        self.assertEqual(comments[1]["line"], 10)
+        # Both should carry the finding's what/why/fix
+        for comment in comments:
+            self.assertIn("boom", comment["body"])
+            self.assertIn("w", comment["body"])  # why
+            self.assertIn("x", comment["body"])  # fix
+
+    def test_one_anchorable_one_off_diff_location_posts_one_comment(self):
+        """Mixed anchorable/off-diff locations post only the anchorable one."""
+        finding = _finding(locations=["a.py:5", "z.py:99"])
+        gh = _post_finding(finding)
+        comments = _inline_comments(gh)
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(comments[0]["path"], "a.py")
+        self.assertEqual(comments[0]["line"], 5)
+        # Not folded into "Additional findings"
+        body = gh.summary_body()
+        self.assertNotIn("Additional findings", body)
+
+    def test_all_off_diff_locations_folded_whole(self):
+        """All locations off-diff, folded into summary."""
+        finding = _finding(locations=["z.py:99", "y.py:88"])
+        gh = _post_finding(finding)
+        comments = _inline_comments(gh)
+        self.assertEqual(len(comments), 0)
+        body = gh.summary_body()
+        self.assertIn("Additional findings", body)
+
+    def test_all_off_diff_multi_location_shows_locations_zero_and_more(self):
+        """All off-diff multi-location finding shows locations[0] + (+N more)."""
+        finding = _finding(locations=["z.py:99", "y.py:88", "x.py:77"])
+        gh = _post_finding(finding)
+        comments = _inline_comments(gh)
+        self.assertEqual(len(comments), 0)
+        body = gh.summary_body()
+        self.assertIn("Additional findings", body)
+        # Should show z.py:99 (locations[0]) and (+2 more)
+        self.assertIn("z.py:99", body)
+        self.assertIn("(+2 more)", body)
+        # Should not show the full location strings separately
+        self.assertNotIn("y.py:88", body)
+        self.assertNotIn("x.py:77", body)
+
+    def test_suggestion_only_on_locations_zero_comment(self):
+        """Suggestion attaches only to locations[0] comment."""
+        finding = _finding(
+            locations=["a.py:5", "b.py:10"],
+            suggestion={"confident": True, "start_line": 5, "end_line": 5,
+                       "lines": ["    return None"]})
+        gh = _post_finding(finding, files=[
+            {"filename": "a.py", "patch": PATCH_A},
+            {"filename": "b.py", "patch": "@@ -8,3 +8,3 @@\n unchanged\n+added\n unchanged\n"},
+        ])
+        comments = _inline_comments(gh)
+        self.assertEqual(len(comments), 2)
+        # First comment (locations[0]) has suggestion
+        self.assertIn(SUGGESTION_FENCE, comments[0]["body"])
+        # Second comment (locations[1]) is prose only
+        self.assertNotIn(SUGGESTION_FENCE, comments[1]["body"])
+
+    def test_summary_shows_plus_n_more_for_multi_location(self):
+        """Summary table and folded findings show locations[0] + (+N more)."""
+        findings = [
+            _finding(locations=["a.py:5", "b.py:10", "c.py:20"]),
+            _finding(locations=["x.py:1"], what="single"),
+        ]
+        gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
+        review_gate.post("7", _review(findings=findings), gh)
+        body = gh.summary_body()
+        # Multi-location finding should show "(+2 more)"
+        self.assertIn("(+2 more)", body)
+        # Single-location finding should not
+        self.assertNotIn("single(+", body)
 
 
 if __name__ == "__main__":

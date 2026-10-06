@@ -749,6 +749,62 @@ class NoProblemsWordingTest(unittest.TestCase):
                 self.assertIn("Reviewed N files, +A -D lines.", _read(path))
 
 
+class FindingLocationSchemaTest(unittest.TestCase):
+    """The `location` field becomes `locations`, an array of site strings.
+
+    Both `json-output.md` and `harness/references/review.md` document a
+    finding's location as a non-empty `locations` array, where `locations[0]`
+    is the primary/fix site and any further entries are recurring sites.
+    """
+
+    def test_json_output_documents_locations_array(self):
+        text = _read(JSON_OUTPUT_MD)
+        # Check for the locations array in the example
+        self.assertIn(
+            '"locations":', text,
+            f"{JSON_OUTPUT_MD} must document a `locations` array field")
+        self.assertIn(
+            '"locations": [', text,
+            f"{JSON_OUTPUT_MD} must show `locations` as a non-empty array")
+        # Check that the old singular location is not present
+        self.assertNotIn(
+            '"location": "path/to/file.ext:LINE"', text,
+            f"{JSON_OUTPUT_MD} must not contain the singular `location` "
+            "string field")
+
+    def test_harness_reference_documents_locations_array(self):
+        text = _read(HARNESS_REVIEW_MD)
+        # Check for the locations array in the example
+        self.assertIn(
+            '"locations":', text,
+            f"{HARNESS_REVIEW_MD} must document a `locations` array field")
+        self.assertIn(
+            '"locations": [', text,
+            f"{HARNESS_REVIEW_MD} must show `locations` as a non-empty array")
+        # Check that the old singular location is not present
+        self.assertNotIn(
+            '"location": "path/to/file.ext:LINE"', text,
+            f"{HARNESS_REVIEW_MD} must not contain the singular `location` "
+            "string field")
+
+    def test_both_surfaces_document_locations_identically(self):
+        json_text = _read(JSON_OUTPUT_MD)
+        harness_text = _read(HARNESS_REVIEW_MD)
+        # Both should mention locations as the primary/fix site
+        for path, text in [
+            (JSON_OUTPUT_MD, json_text),
+            (HARNESS_REVIEW_MD, harness_text),
+        ]:
+            with self.subTest(path=path):
+                self.assertIn(
+                    "locations[0]", text,
+                    f"{path} must state that locations[0] is the "
+                    "primary/fix site")
+                self.assertIn(
+                    "non-empty", text,
+                    f"{path} must state that locations is a non-empty array")
+
+
 class SeverityDotParityTest(unittest.TestCase):
     """The `review-skill` requirement binds both posting surfaces —
     `review_gate.py` and the vendored `copilot-review-gate.yml` workflow —
