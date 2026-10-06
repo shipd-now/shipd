@@ -24,7 +24,7 @@ rendering changes. Shape:
       "id": "f1",
       "severity": "high" | "medium" | "low",
       "category": "bug" | "contract" | "edge-case" | "untouched-caller" | "spec-coverage" | "test-coverage" | "security" | "performance" | "stability" | "data-integrity",
-      "location": "path/to/file.ext:LINE",
+      "locations": ["path/to/file.ext:LINE", "other/file.ext:LINE2"],
       "what": "one-line statement of the defect",
       "why": "why it matters",
       "fix": "concrete fix",
@@ -50,6 +50,10 @@ finding with severity `high`. `change` and `spec_coverage` are present only
 when a change is in scope. Valid JSON only — no fences, no commentary, **no emoji**.
 If the analysis cannot run, still emit a well-formed object with `could_not_verify`
 explaining why.
+
+The `locations` array is non-empty; `locations[0]` is the primary site where
+the fix would be applied, and any further entries are sites where the same
+defect recurs.
 
 `endpoints` carries the engine's own resolved endpoint metadata verbatim —
 `base_given`, `base_sha`, `head_sha`, and `merge_base` straight from
@@ -85,7 +89,7 @@ wrong costs a suggestion and not the review:
   need not match the range: a fix may add or remove lines. Never express an
   edit inside a line — no `start_column`/`end_column`, whose mere presence
   declares a partial-line edit and degrades the finding;
-- the finding's `location` anchors to a RIGHT-side line of the PR diff (the
+- `locations[0]` anchors to a RIGHT-side line of the PR diff (the
   same rule that decides inline-vs-summary for every finding), and every line
   in `start_line..end_line` is in that diff too — a comment spanning a line the
   diff does not carry is rejected outright.

@@ -75,7 +75,8 @@ The flow:
 3. **Read prior dispositions and drop what was already answered.** Run
    `review_gate.py prior <pr>` and, for every finding this review is about to
    post, compare its `hash` — the same identity `_finding_hash(<path>,
-   <normalized what>)` computes and `_inline_body` embeds as the trailing
+   <normalized what>)` computes (plus the location's own index, for a finding
+   that names more than one) and `_inline_body` embeds as the trailing
    `<!-- shipd-finding <hash> -->` marker — against `prior`'s entries. Omit a
    finding whose hash matches an entry classified `replied`: a human already
    gave it a reasoned answer, and reposting it unchanged only repeats the
@@ -96,8 +97,9 @@ The flow:
    step 3, and write it to a temp path, e.g. `"$TMPDIR/review.json"`.
 5. **Run the poster.** `review_gate.py post <pr> --from "$TMPDIR/review.json"`,
    adding `--disposition <scope>` and `--model <tier>` when the invoker passed
-   them. It upserts the marker summary comment, posts anchored inline comments
-   for in-diff findings (folding the rest into the summary), and sets the
+   them. It upserts the marker summary comment, posts one inline comment per
+   anchorable location across a finding's `locations` array (folding a finding
+   into the summary only when none of its locations anchor), and sets the
    `semantic-review` commit status on the head SHA by scope — under the default
    `all`, `success` iff the verdict is `pass`, else `failure`. Before any of
    that, it computes the pull request's own merge base from `baseRefOid` and
