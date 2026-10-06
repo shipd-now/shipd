@@ -4,10 +4,10 @@
 id: wordmark-static
 
 The engine SHALL provide a stdlib-only module
-`plugins/s/skills/build/scripts/wordmark.py` whose banner art constant is
-byte-identical (trailing spaces included) to the fenced block-character
-banner at the top of the repository `README.md`, and whose `render(stream)`
-writes that banner to `stream`. If color is disabled for the stream (per
+`plugins/s/skills/build/scripts/wordmark.py` whose banner art constant `ART`
+is the canonical shipd banner — the single source of truth every other copy
+of the banner matches byte for byte — and whose `render(stream)` writes that
+banner to `stream`. If color is disabled for the stream (per
 `cli_common.color_enabled`: non-TTY, or `NO_COLOR` set non-empty), then the
 output SHALL be the plain art lines with no ANSI escape sequences. Where
 color is enabled, the module SHALL decorate the glyphs with a horizontal
@@ -29,10 +29,14 @@ truecolor gradient interpolated linearly per column from `#8888a0`
   `\x1b[38;2;136;136;160m`, the rightmost with `\x1b[38;2;198;255;78m`, and
   each line ends with `\x1b[0m`
 
-#### Scenario: Art stays in sync with the README banner
-- **WHEN** the module's art constant is compared to the lines inside the
-  README's opening fenced banner block
-- **THEN** they are byte-identical
+#### Scenario: Art matches the pinned banner
+- **WHEN** the module's art constant is compared to the test suite's pinned
+  literal copy of the banner
+- **THEN** they are byte-identical, trailing spaces included
+
+#### Scenario: Art does not depend on the README
+- **WHEN** the wordmark tests run
+- **THEN** none of them reads `README.md`
 
 ### Requirement: Two-phase finite animation
 id: wordmark-animation

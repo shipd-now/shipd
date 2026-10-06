@@ -1,28 +1,21 @@
 # project-readme
 
-### Requirement: README displays the shipd banner
+### Requirement: README opens with the shipd brand and introduction
 id: readme-displays-the-shipd-banner
 
-The `README.md` at the repository root SHALL open with an ASCII-art header
-that renders the project name **shipd**. The banner SHALL be enclosed in a
-fenced code block so it renders as monospaced preformatted text on GitHub
-and in terminals, and SHALL be followed by a short what-it-is introduction
-(at most a few sentences) before any installation or mechanics content.
+The `README.md` at the repository root SHALL open with the brand icon and a
+short what-it-is introduction (at most a few sentences) before any
+installation or mechanics content, and SHALL NOT carry a fenced ASCII-art
+banner above that introduction.
 
-#### Scenario: Banner is the first content
+#### Scenario: No banner precedes the introduction
 - **WHEN** a reader opens `README.md`
-- **THEN** the first rendered block is the fenced ASCII-art header spelling
-  `shipd` (uppercase block styling permitted)
+- **THEN** no fenced code block appears before the introduction paragraph
 
-#### Scenario: Banner is preformatted
-- **WHEN** the README is viewed on GitHub
-- **THEN** the banner is inside a fenced code block and its columns stay
-  aligned
-
-#### Scenario: What-it-is precedes mechanics
-- **WHEN** a reader continues past the banner
-- **THEN** a short prose introduction states what shipd is before any
-  install or engine documentation appears
+#### Scenario: Introduction precedes mechanics
+- **WHEN** a reader opens `README.md`
+- **THEN** a short prose introduction states what shipd is before any install
+  or engine documentation appears
 
 ### Requirement: README catalogs the plugin's skills
 id: readme-catalogs-the-plugin-s-skills
@@ -254,11 +247,11 @@ skill pickup, and optional difftastic/ripgrep with engine degradation.
 ### Requirement: README carries the brand marks
 id: readme-brand-marks
 
-The repository SHALL keep the coffee-cup vector brand as `icon.svg` at the repository root, and `README.md` SHALL display it via an `img` element referencing that file, placed after the fenced ASCII banner so the banner remains the first rendered block. The README introduction SHALL present the product name with the ☕ brand mark directly before it, and the linked `docs/what-is-shipd.md` SHALL open its level-1 title with the same mark.
+The repository SHALL keep the coffee-cup vector brand as `icon.svg` at the repository root, and `README.md` SHALL display it via an `img` element referencing that file as its first rendered element. The README introduction SHALL present the product name with the ☕ brand mark directly before it, and the linked `docs/what-is-shipd.md` SHALL open its level-1 title with the same mark.
 
-#### Scenario: Icon is displayed without displacing the banner
+#### Scenario: Icon opens the README
 - **WHEN** `README.md` is rendered
-- **THEN** the fenced ASCII banner is still the first rendered block, and an `img` element referencing the repo-root `icon.svg` floats beside the top content
+- **THEN** its first element is an `img` element referencing the repo-root `icon.svg`, floating beside the introduction
 
 #### Scenario: Intro carries the mark
 - **WHEN** a reader reaches the README introduction
