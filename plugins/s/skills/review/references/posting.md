@@ -75,7 +75,8 @@ The flow:
 3. **Read prior dispositions and drop what was already answered.** Run
    `review_gate.py prior <pr>` and, for every finding this review is about to
    post, compare its `hash` — the same identity `_finding_hash(<path>,
-   <normalized what>)` computes and `_inline_body` embeds as the trailing
+   <normalized what>)` computes (plus the location's own index, for a finding
+   that names more than one) and `_inline_body` embeds as the trailing
    `<!-- shipd-finding <hash> -->` marker — against `prior`'s entries. Omit a
    finding whose hash matches an entry classified `replied`: a human already
    gave it a reasoned answer, and reposting it unchanged only repeats the
