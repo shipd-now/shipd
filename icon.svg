@@ -1,5 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 450 400" width="100%" height="100%">
-  <path d="M 315 160 L 380 160 Q 395 160 395 175 L 395 240 Q 395 250 385 255 L 310 290 L 305 260 L 365 235 L 365 190 L 315 190 Z" fill="#64605D"/>
-  <ellipse cx="210" cy="130" rx="113" ry="10" fill="#EFEBE3"/>
-  <path d="M 97 130 C 97 140, 323 140, 323 130 L 308 310 C 303 335, 273 335, 210 335 C 147 335, 117 335, 112 310 Z" fill="#76726F"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+<style>
+  .cup { fill: #0A0A0D; }
+  .rim { fill: #B9B5AC; }
+  @media (prefers-color-scheme: dark) {
+    .cup { fill: #FFFFFF; }
+    .rim { fill: #C9C9D2; }
+  }
+</style>
+<g transform="translate(-40.3 -29.7) scale(0.57)">
+<path class="cup" d="M 315 160 L 380 160 Q 395 160 395 175 L 395 240 Q 395 250 385 255 L 310 290 L 305 260 L 365 235 L 365 190 L 315 190 Z"/>
+<ellipse class="rim" cx="210" cy="130" rx="113" ry="10"/>
+<path class="cup" d="M 97 130 C 97 140, 323 140, 323 130 L 308 310 C 303 335, 273 335, 210 335 C 147 335, 117 335, 112 310 Z"/>
+<circle cx="210" cy="232" r="38" fill="#38A842"/>
+</g>
 </svg>

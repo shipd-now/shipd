@@ -1,4 +1,4 @@
-<img src="icon.svg" align="right" width="160" alt="☕ shipd">
+<img src="icon.svg" align="right" width="240" alt="☕ shipd">
 
 ☕ **shipd** ([shipd.now](https://shipd.now)) is a spec-driven delivery system for
 AI coding agents, distributed as a Claude Code plugin — everything is invoked as
