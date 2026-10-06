@@ -3,9 +3,8 @@
 static render (plain or truecolor gradient), the finite two-phase animation,
 and the script-level preview CLI.
 
-The banner art is the contract's source of truth: it must stay byte-identical
-to the fenced block at the top of the repository ``README.md``, so the tests
-read that fence and compare against it rather than restating the art."""
+The banner art is pinned here as a literal copy (``EXPECTED_ART``): an
+accidental edit to ``wordmark.ART`` fails the tests."""
 
 import io
 import os
@@ -16,7 +15,6 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
 REPO_ROOT = os.path.normpath(os.path.join(HERE, "..", "..", "..", "..", ".."))
-README = os.path.join(REPO_ROOT, "README.md")
 WORDMARK = os.path.join(SCRIPTS, "wordmark.py")
 if SCRIPTS not in sys.path:
     sys.path.insert(0, SCRIPTS)
@@ -33,13 +31,15 @@ HIDE = "\x1b[?25l"
 SHOW = "\x1b[?25h"
 
 
-def readme_banner():
-    """Return the lines inside the README's opening fenced block."""
-    with open(README, encoding="utf-8") as handle:
-        lines = handle.read().split("\n")
-    start = lines.index("```")
-    end = lines.index("```", start + 1)
-    return tuple(lines[start + 1:end])
+EXPECTED_ART = (
+    '╭───────────────────────────────────────────────╮',
+    '│                                               │',
+    '│    █▀▀▀ █  █ █ █▀▀▄ █▀▀▄   █▀▀▄ █▀▀█ █   █    │',
+    '│    ▀▀▀█ █▀▀█ █ █▀▀  █  █   █  █ █  █ █ ▄ █    │',
+    '│    ▀▀▀▀ ▀  ▀ ▀ ▀    ▀▀▀  ▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀▀    │',
+    '│                                               │',
+    '╰───────────────────────────────────────────────╯',
+)
 
 
 class TtyStream(io.StringIO):
@@ -61,18 +61,29 @@ class SpySleep(object):
 
 
 class ArtFidelityTest(unittest.TestCase):
-    def test_art_equals_the_readme_fence(self):
-        self.assertEqual(tuple(wordmark.ART), readme_banner())
+    def test_art_equals_the_pinned_banner(self):
+        self.assertEqual(tuple(wordmark.ART), EXPECTED_ART)
 
     def test_art_is_not_empty(self):
         self.assertTrue(wordmark.ART)
 
+    def test_onboard_banner_equals_the_art(self):
+        path = os.path.join(REPO_ROOT, "plugins", "s", "skills", "onboard",
+                            "SKILL.md")
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().split("\n")
+        at = next(i for i, l in enumerate(lines)
+                  if l.startswith("**Step 1 — banner"))
+        start = lines.index("```", at)
+        end = lines.index("```", start + 1)
+        self.assertEqual(tuple(lines[start + 1:end]), tuple(wordmark.ART))
+
 
 class PlainRenderTest(unittest.TestCase):
-    def test_piped_render_is_byte_identical_to_the_readme_banner(self):
+    def test_piped_render_is_byte_identical_to_the_pinned_banner(self):
         stream = io.StringIO()
         wordmark.render(stream)
-        expected = "".join(line + "\n" for line in readme_banner())
+        expected = "".join(line + "\n" for line in EXPECTED_ART)
         self.assertEqual(stream.getvalue(), expected)
 
     def test_piped_render_carries_no_escape_sequences(self):
@@ -93,7 +104,7 @@ class PlainRenderTest(unittest.TestCase):
                 os.environ["NO_COLOR"] = old
         out = stream.getvalue()
         self.assertNotIn(ESC, out)
-        self.assertEqual(out, "".join(line + "\n" for line in readme_banner()))
+        self.assertEqual(out, "".join(line + "\n" for line in EXPECTED_ART))
 
 
 class ColoredRenderTest(unittest.TestCase):
@@ -128,7 +139,7 @@ class ColoredRenderTest(unittest.TestCase):
     def test_stripping_escapes_recovers_the_plain_art(self):
         import re
         plain = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", self.out)
-        self.assertEqual(plain, "".join(l + "\n" for l in readme_banner()))
+        self.assertEqual(plain, "".join(l + "\n" for l in EXPECTED_ART))
 
 
 class AnimateDisabledTest(unittest.TestCase):
@@ -137,7 +148,7 @@ class AnimateDisabledTest(unittest.TestCase):
         spy = SpySleep()
         wordmark.animate(stream, sleep=spy)
         self.assertEqual(stream.getvalue(),
-                         "".join(line + "\n" for line in readme_banner()))
+                         "".join(line + "\n" for line in EXPECTED_ART))
         self.assertEqual(spy.calls, [])
         self.assertNotIn(ESC, stream.getvalue())
 
@@ -200,13 +211,13 @@ class PreviewCliTest(unittest.TestCase):
         proc = self.run_preview()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout,
-                         "".join(line + "\n" for line in readme_banner()))
+                         "".join(line + "\n" for line in EXPECTED_ART))
 
     def test_animate_flag_degrades_to_one_plain_banner_when_piped(self):
         proc = self.run_preview("--animate")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout,
-                         "".join(line + "\n" for line in readme_banner()))
+                         "".join(line + "\n" for line in EXPECTED_ART))
 
     def test_no_wordmark_verb_is_added_to_the_shipd_binary(self):
         """The preview stays script-level: the binary's curated verb set is

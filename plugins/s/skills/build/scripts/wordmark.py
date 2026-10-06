@@ -28,8 +28,8 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cli_common as cc  # noqa: E402
 
-# The banner art — copy of README.md's opening fenced block, byte for byte.
-# Keep in sync with that fence (test_wordmark asserts equality).
+# The banner art — the canonical shipd banner. `plugins/s/skills/onboard/SKILL.md`
+# carries a verbatim copy (test_wordmark asserts both).
 ART = (
     "╭───────────────────────────────────────────────╮",
     "│                                               │",
