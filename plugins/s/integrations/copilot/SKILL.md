@@ -72,15 +72,17 @@ how it is called is wrong even though its line exists.
 
 ### 5. Apply the risk lenses
 
-Whatever the cohort, watch for five triggers: secret or credential exposure (a
+Whatever the cohort, watch for six triggers: secret or credential exposure (a
 new key, token, password, connection string, or personal data landing in a
 literal, log line, error message, or fixture); an authorization boundary — a
 new route, handler, job, or query — reached without checking the caller's
 scope, role, or ownership; unbounded work whose iteration count or size is
 driven by user input with no cap; resource release — a file handle, socket,
 lock, connection, or transaction not released on every exit path, including
-the error path; and migration reversibility — a schema migration or
-destructive data operation with no down-path, backfill, or backup.
+the error path; migration reversibility — a schema migration or destructive
+data operation with no down-path, backfill, or backup; and packaging and
+dependency manifests — a manifest or lockfile that disagrees with the code or
+with each other, or omits a new file from what it publishes.
 
 ### 6. Report
 

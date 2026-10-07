@@ -83,3 +83,45 @@ with no down-migration, no backup step, or no way to recover the prior state.
   column.
 
 Rates on the existing high/medium/low rubric — no floor.
+
+## Packaging and dependency manifests
+
+Look at every changed packaging or dependency manifest — `package.json` and its
+lockfile, `go.mod`/`go.sum`, `Cargo.toml`, `pyproject.toml`,
+`requirements.txt`, `Gemfile`, `composer.json`, `pom.xml`, `build.gradle` — as
+a contract about what the package ships, exports and depends on. The diff that
+changes code and the diff that changes the manifest have to agree, and the
+manifest and its lockfile have to agree with each other.
+
+Four questions, in the order they bite:
+
+- **Does a new file actually ship?** Where the manifest carries an allowlist of
+  published paths (`files` in `package.json`, `include` in `Cargo.toml`,
+  `MANIFEST.in`, a `package_data` block), a new module the diff adds but the
+  allowlist omits is absent from the published artifact even though every test
+  passes locally.
+- **Does the manifest declare what the code imports?** A new `import` or
+  `require` of a package the manifest never declares works locally — the
+  dependency is present transitively, or in the lockfile — and fails on a clean
+  install.
+- **Do the manifest and the lockfile agree?** A dependency added to only one of
+  them is a drift that resolves differently for whoever installs next. Treat a
+  lockfile-only addition as the manifest's omission, not the lockfile's.
+- **Did a version constraint move, and should it have?** A widened range admits
+  releases nobody has tested against; a narrowed or pinned one can strand a
+  consumer. Either is a contract change, chased like any other.
+
+- **Real finding.** The diff adds `lib/diagnostics.js` and requires it from the
+  entry point, but `package.json`'s `files` array still lists only `lib/index.js`
+  — the published package omits the new module and fails at require time for
+  every consumer, while the repository's own tests pass.
+- **Real finding.** A new runtime `require` resolves because the package sits
+  in the lockfile as somebody else's transitive dependency, with nothing in
+  `dependencies` declaring it. The next dependency bump that drops the
+  transitive path breaks the build.
+- **Reflex, not worth reporting.** A lockfile churns hashes or ordering with no
+  dependency added, removed, or re-ranged — noise from a tool, not a contract
+  change.
+
+Rates on the existing high/medium/low rubric — no floor. Category is normally
+`contract`, since the manifest is one.

@@ -49,7 +49,7 @@ edits the repository.
    actually governs, does an escape hatch let its guarantee lapse, does it
    terminate cheaply on hostile input, and do its boundaries agree with its
    doc comment?
-7. **Apply the risk lenses.** Whatever the cohort, watch for five triggers:
+7. **Apply the risk lenses.** Whatever the cohort, watch for six triggers:
    secret or credential exposure (a key, token, password, or personal data
    in a literal, log line, error message, or fixture); authorization boundary (a
    route, handler, job, or query reached without checking the caller's
@@ -57,7 +57,9 @@ edits the repository.
    driven by user input with no cap); resource release (a handle, socket,
    lock, connection, or transaction not released on every exit path,
    including errors); migration reversibility (a schema migration or
-   destructive operation with no down-path, backfill, or backup).
+   destructive operation with no down-path, backfill, or backup); packaging
+   and dependency manifests (a manifest or lockfile disagreeing with the
+   code or with each other, or omitting a new file from what it publishes).
 8. **Breadth sweep for minor defects.** After the risk lenses, revisit each
    changed file once more, end to end, for a remaining low-severity defect
    the structural and signature-chasing steps above would not catch alone.

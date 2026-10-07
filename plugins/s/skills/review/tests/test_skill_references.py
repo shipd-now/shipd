@@ -82,6 +82,7 @@ TRIGGER_PHRASES = (
     "unbounded work",
     "resource release",
     "migration reversibility",
+    "packaging and dependency manifests",
 )
 
 # The five new-code checks, named exactly as plan.md's Implementation
