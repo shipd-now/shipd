@@ -666,10 +666,27 @@ def cmd_diff(args):
 
 # --- files (cohort grouping) ------------------------------------------------
 
+# A packaging or dependency manifest declares what the package ships, exports
+# and depends on — a contract, and reviewed as one. Matched on the basename, so
+# a manifest anywhere in the tree lands in `contracts` rather than inheriting
+# the cohort of whatever directory holds it.
+MANIFEST_BASENAMES = frozenset((
+    "package.json", "package-lock.json", "npm-shrinkwrap.json",
+    "yarn.lock", "pnpm-lock.yaml",
+    "go.mod", "go.sum",
+    "cargo.toml", "cargo.lock",
+    "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt",
+    "pipfile", "pipfile.lock", "poetry.lock",
+    "gemfile", "gemfile.lock",
+    "composer.json", "composer.lock",
+    "pom.xml", "build.gradle", "build.gradle.kts",
+))
+
 # Rules are segment-aware: a keyword must be a whole path segment (or a filename
 # marker), so e.g. "openspec/" does NOT match the "spec" test-cohort keyword.
 COHORT_RULES = [
-    ("contracts", lambda p, seg, base: p.endswith(".proto") or "proto" in seg),
+    ("contracts", lambda p, seg, base: p.endswith(".proto") or "proto" in seg
+     or base.lower() in MANIFEST_BASENAMES),
     ("database", lambda p, seg, base: {"models", "model", "repository",
      "store", "db", "migrations"} & seg or "migration" in base
      or "schema" in base),

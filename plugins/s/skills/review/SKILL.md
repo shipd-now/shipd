@@ -142,7 +142,7 @@ purpose — never wave it through. Read
 - **Doc comment versus code** — documented behavior matches the actual code.
 
 ### 5b. Risk lenses
-Check every diff, in every cohort, against five fixed triggers, always — never
+Check every diff, in every cohort, against six fixed triggers, always — never
 gated on cohort or file type. Read
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/risk-lenses.md` for the full
 guidance and worked examples once one fires:
@@ -158,6 +158,8 @@ guidance and worked examples once one fires:
   released on every exit path, including the error path.
 - **Migration reversibility** — a schema migration or destructive data operation with no
   down-migration, backup, or recovery path.
+- **Packaging and dependency manifests** — a manifest or lockfile that disagrees with the
+  code, with each other, or omits a new file from what it publishes.
 
 ### 5c. Breadth sweep for minor defects
 Revisit each changed file end to end for a remaining defect of the minor kinds

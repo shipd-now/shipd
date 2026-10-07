@@ -95,6 +95,30 @@ class FilesCohortTest(unittest.TestCase):
         self.assertEqual(cohort_of("randomtop/file.py"), "randomtop")
         self.assertEqual(out["summary"]["files"], 6)
 
+    def test_manifests_land_in_contracts(self):
+        """A packaging or dependency manifest is a contract, wherever it sits.
+
+        It declares what the package ships, exports and depends on, so it is
+        reviewed in the contracts cohort — foundational, before api and
+        frontend — rather than inheriting the cohort of its directory. A
+        benchmark run missed three manifest defects (a new file absent from
+        `package.json`'s `files`, dependencies present only in the lockfile)
+        partly because manifests scattered across unrelated cohorts.
+        """
+        for rel in ("package.json", "server/package.json", "go.mod",
+                    "rust/Cargo.toml", "tests/fixtures/package.json"):
+            self._write(rel, "{}\n")
+        rc, out, err = run_semdiff(self.repo, "files", "main")
+        self.assertEqual(rc, 0, err)
+        contracts = out["cohorts"].get("contracts", [])
+        for rel in ("package.json", "server/package.json", "go.mod",
+                    "rust/Cargo.toml"):
+            self.assertIn(rel, contracts)
+        # The contracts rule is matched first, so a manifest under tests/
+        # lands in contracts too. Pinned deliberately: a fixture manifest
+        # reviewed as a contract is reviewed early, never skipped.
+        self.assertIn("tests/fixtures/package.json", contracts)
+
 
 class ContextTest(unittest.TestCase):
     def setUp(self):
