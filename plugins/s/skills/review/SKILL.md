@@ -150,8 +150,7 @@ with the values the call sites supply.
 ### 5. Judge new code on its own terms
 Judge every new function, class, guard, or helper in the diff against its stated
 purpose — never wave it through. Read
-`${CLAUDE_PLUGIN_ROOT}/skills/review/references/new-code-checks.md` for the full
-guidance and worked examples:
+`${CLAUDE_PLUGIN_ROOT}/skills/review/references/new-code-checks.md` for guidance:
 - **Wrong quantity measured** — limit measures the wrong dimension.
 - **Escape hatch lapsing the guarantee** — flag or fallback steps around the invariant.
 - **Termination on hostile input** — routine terminates cheaply on hostile input.
@@ -178,8 +177,9 @@ guidance and worked examples once one fires:
   operation with no down-migration, backup, or recovery path.
 
 ### 5c. Breadth sweep for minor defects
-Revisit each changed file for remaining low-severity defects the structural diff
-and signature-chasing steps do not catch.
+Revisit each changed file end to end for a remaining low-severity defect of
+the categories named in the rubric below — a pass the structural diff and
+signature-chasing steps do not catch.
 
 ### 6. Report by cohort
 Group findings under cohort headings, most severe first. For each finding: a
