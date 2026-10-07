@@ -31,6 +31,13 @@ carrying its severity, its file path and line range, its prose detail, and —
 only where the agent judges the fix confident and expressible as one or more
 contiguous whole lines — a replacement for those lines.
 
+The template's `low` severity SHALL be a real defect whose impact is contained,
+never pure style, naming preference, or formatting, which SHALL NOT be reported
+as a finding at any severity. The template SHALL state beside that rubric that
+severity follows what a defect does rather than the kind of defect it is, so
+data loss, data corruption, a security exposure, or a broken guarantee is
+`medium` or `high`.
+
 #### Scenario: Template exists with the placeholder marker
 - **WHEN** `plugins/s/integrations/copilot/SKILL.md` is read
 - **THEN** it contains the literal line `<!-- shipd-copilot v{version} -->`
@@ -57,6 +64,12 @@ contiguous whole lines — a replacement for those lines.
 - **THEN** they require a machine-readable findings file whose entries carry
   severity, path, line range, and detail, and carry a replacement only for a
   fix the agent judges confident and expressible as contiguous whole lines
+
+#### Scenario: The template's low rubric excludes pure style
+- **WHEN** the template's severity rubric is read
+- **THEN** `low` names a real defect whose impact is contained, pure style is
+  excluded from findings at any severity, and the rule that impact outranks
+  the kind of defect appears beside it
 
 ### Requirement: Copilot review setup workflow template
 id: setup-workflow-template

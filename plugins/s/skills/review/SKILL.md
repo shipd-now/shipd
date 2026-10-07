@@ -62,15 +62,13 @@ git fetch origin <base>
 Name the base's own remote where it tracks another one — read it from
 `git config branch.<base>.remote` rather than assuming `origin`.
 
-The fetch writes remote-tracking refs only — never the working tree, index,
-or a local branch — so the skill's no-modification guarantee holds; it
-never pulls, rebases, or checks anything out. The engine resolves a short
-branch to its remote-tracking commit once fetched, with no manual
-staleness check needed. A failed fetch continues the review with a
-could-not-verify entry naming the unchecked base, rather than ending it; a
-two-ref `lint` run similarly notes that the linters read the checkout, not
-the reviewed head, since `lint` passes changed paths to linter binaries
-that read them from disk.
+The fetch writes remote-tracking refs only — never the working tree, index, or a local
+branch — so the skill's no-modification guarantee holds; it never pulls, rebases, or
+checks anything out. The engine resolves a short branch to its remote-tracking commit
+once fetched, with no manual staleness check needed. A failed fetch continues the review
+with a could-not-verify entry naming the unchecked base, rather than ending it; a
+two-ref `lint` run similarly notes that the linters read the checkout, not the reviewed
+head, since `lint` passes changed paths to linter binaries that read them from disk.
 
 - **Local changes before pushing** (the default): `diff <base>` compares
   `<base>` against the working tree, defaulting to `main` (or `master`).
@@ -127,9 +125,10 @@ argument each call site passes in (same reference as step 3):
 - **Unreachable guard / dead branch** — a defensive branch the real call never hits.
 - **Comment / intent vs. actual behaviour** — a comment the real call sites contradict.
 
-Both are usually low severity alone, but they compound. Whenever you quote a
-mechanism in the walkthrough, confirm the path that reaches it actually runs
-with the values the call sites supply.
+Either alone often looks small, but together they compound. Send both to step
+6's rubric to rate by what they do — this step never rates on its own. Whenever
+you quote a mechanism in the walkthrough, confirm the path that reaches it
+actually runs with the values the call sites supply.
 
 ### 5. Judge new code on its own terms
 Judge every new function, class, guard, or helper in the diff against its stated
@@ -161,11 +160,14 @@ guidance and worked examples once one fires:
 - **Packaging and dependency manifests** — a manifest or lockfile that disagrees with the
   code, with each other, or omits a new file from what it publishes.
 
-### 5c. Breadth sweep for minor defects
-Revisit each changed file end to end for a remaining defect of the minor kinds
-named in the rubric below — a pass the structural diff and signature-chasing
-steps do not catch. Rate what the sweep finds by the rubric's impact floor, not
-by the kind that surfaced it.
+### 5c. Breadth sweep
+Revisit each changed file end to end for a remaining defect the structural
+diff and signature-chasing steps above do not catch on their own: a swallowed
+or silently-dropped error, a resource or file leak on a rare or cleanup path,
+dead or duplicated code, a field or variable declared but never read, an
+unstable or incorrect identity such as a list key derived from an array
+index, or a blocking call in an async context. Send what the sweep finds back
+to step 6's rubric to rate — this step never rates on its own.
 
 ### 5d. Check the PR description against the diff
 When a pull request's title and description are available, read
@@ -186,13 +188,13 @@ Group findings under cohort headings, most severe first. For each finding: a
   unmet spec acceptance criterion.
 - **medium** — an unhandled edge case, an untouched caller at genuine risk, or a likely-
   wrong behaviour you cannot fully confirm.
-- **low** — a real but minor defect: swallowed errors, resource leaks on rare paths,
-  dead or duplicated code, unread variables, unstable ids, or blocking calls in async
-  contexts. Pure style, naming, and formatting are never findings.
-- **Impact floor.** That low list names *kinds* of defect, not severities. Rate every
-  finding by what it does, not which kind it resembles: data loss, data corruption, a
-  security exposure, or a broken guarantee is `medium` or `high` even when it arrives
-  as one of those kinds. A swallowed error that loses a file is not low.
+- **low** — a real defect whose impact is contained: nothing lost, corrupted,
+  exposed, or promised and unmet. Pure style, naming, and formatting are never
+  findings.
+- **Impact rule.** Rate every finding by what the defect does, not by the kind
+  of defect it is: data loss, data corruption, a security exposure, or a
+  broken guarantee is `medium` or `high` however minor the kind looks. An error
+  swallowed on a path that loses a file is not low.
 - **Exposure floor.** A secret or credential exposure finding, or an authorization
   boundary reached without the caller's scope check, is always `high`, whatever the
   reviewer's confidence.

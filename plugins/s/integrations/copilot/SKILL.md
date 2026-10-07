@@ -192,7 +192,12 @@ body remains the review, and the verdict marker below is what gates the merge.
   or an unmet acceptance criterion.
 - **medium** — an unhandled edge case, an untouched caller at genuine risk, or
   a likely-wrong behaviour you cannot fully confirm.
-- **low** — style, naming, minor redundancy, defensive nits.
+- **low** — a real defect whose impact is contained. Pure style, naming, and
+  formatting are never findings, at any severity.
+
+Rate every finding by what the defect does, not by the kind of defect it is:
+data loss, data corruption, a security exposure, or a broken guarantee is
+**medium** or **high** however minor the kind looks.
 
 A secret/credential exposure finding, or an authorization boundary reached
 without a scope check, is always **high** regardless of your confidence.
