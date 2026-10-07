@@ -103,9 +103,12 @@ edits the repository.
     **Fix required** when any finding is high or medium, **Ship it** otherwise.
     When you are unsure between two levels, state the doubt rather than
     inflating it. Close with an explicit list of what you could not verify.
-12. **Check test coverage per finding.** For every finding you write, at every
-    severity, ask whether an existing test would fail if that defect
-    regressed; when none would, raise the gap as its own finding.
+12. **Check test coverage, rolled up per cohort.** For every finding you
+    write, at every severity, ask whether an existing test would fail if
+    that defect regressed. Raise one `test-coverage` finding per cohort
+    with uncovered findings, naming each defect it would guard and where
+    the tests belong — never one per finding, which multiplies with the
+    findings and buries them. Anchor it once, where the tests belong.
 13. **Hand off.** Fix-required findings go back through `/s:build`'s
     implementation loop while the branch is still open, or — once it has
     merged — become a new change through `/s:plan`. Never open a second pull

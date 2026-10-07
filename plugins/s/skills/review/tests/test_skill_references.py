@@ -127,11 +127,6 @@ _AUTHZ_FLOOR_PATTERNS = (
     re.compile(r"(?is)\bhigh\b.{0,160}authorization boundary"),
 )
 
-# Proxies for "the impact severity floor is stated": the low rubric lists
-# *kinds* of defect, and a surface carrying it must say the kind does not set
-# the severity — otherwise a data-loss bug arriving as a "swallowed error"
-# gets rated low, and low never blocks a merge. Each surface must say both
-# that the list is kinds-not-severities and that impact overrides it.
 # Proxies for "the description check runs in both directions". The shipped
 # v0.6.253 wording asked only for "verify every claim against the diff",
 # which cannot reach an undersell: unmentioned scope has no claim to check,
@@ -142,6 +137,11 @@ _BOTH_DIRECTIONS_PATTERNS = (
     re.compile(r"(?is)(?:never\s+mentions|does\s+not\s+mention|unmentioned)"),
 )
 
+# Proxies for "the impact severity floor is stated": the low rubric lists
+# *kinds* of defect, and a surface carrying it must say the kind does not set
+# the severity — otherwise a data-loss bug arriving as a "swallowed error"
+# gets rated low, and low never blocks a merge. Each surface must say both
+# that the list is kinds-not-severities and that impact overrides it.
 _IMPACT_FLOOR_PATTERNS = (
     # `[*_\s]*` so markdown emphasis around the word — "names *kinds* of
     # defect" — does not defeat the match.
@@ -318,7 +318,8 @@ class SkillMdStructureTest(unittest.TestCase):
     def test_workflow_steps_stayed_inline(self):
         self.assertIn("## Workflow", self.text)
         self.assertIn("### 1. Map the change", self.text)
-        self.assertIn("### 7. Check test coverage per finding", self.text)
+        self.assertIn("### 7. Check test coverage, rolled up per cohort",
+                      self.text)
 
     def test_severity_rubric_stayed_inline(self):
         self.assertIn("Severity rubric.", self.text)
@@ -471,6 +472,33 @@ class OtherRubricSurfacesUntouchedTest(unittest.TestCase):
     def test_harness_review_body_names_no_reference_path(self):
         text = _read(HARNESS_REVIEW_BODY)
         self.assertNotRegex(text, REFERENCES_UNDER_SKILL_RE)
+
+
+class TestCoverageRollupTest(unittest.TestCase):
+    """Both surfaces raise test-coverage findings per cohort, not per finding.
+
+    Step 7 originally wrote one test-coverage finding for each finding, at
+    every severity. That multiplies with the findings themselves: a
+    benchmarking run measured 50 test-coverage findings across three rounds
+    against 7 golden testing findings in the whole set, half of every low
+    finding produced, burying the defects the step exists to flag.
+    """
+
+    def test_both_surfaces_roll_up_per_cohort(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                text = re.sub(r"\s+", " ", _read(path).lower())
+                # `[*_`\s]+` between words so markdown emphasis and code
+                # ticks — "**one** `test-coverage` finding" — do not defeat
+                # the match, the same trap the impact-floor patterns hit.
+                self.assertRegex(
+                    text,
+                    r"one[*_`\s]+test-coverage[*_`\s]+finding[*_`\s]+per"
+                    r"[*_`\s]+cohort",
+                    f"{path} must raise one test-coverage finding per cohort")
+                self.assertIn(
+                    "never one per finding", text,
+                    f"{path} must rule out the per-finding form explicitly")
 
 
 class DescriptionCheckDirectionsTest(unittest.TestCase):
