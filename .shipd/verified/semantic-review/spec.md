@@ -218,6 +218,18 @@ caller or symptom site the fix does not touch. Where the same defect recurs
 at more than one call site, the skill SHALL report one finding whose
 locations name every recurring site, rather than one finding per site.
 
+A `low`-severity finding SHALL be a real but minor defect — a swallowed or
+silently-dropped error, a resource or file leak on a rare or cleanup path,
+dead or duplicated code, a field or variable declared but never read, an
+unstable or incorrect identity such as a list/row key derived from array
+index instead of a stable id, or a blocking/synchronous call where the
+surrounding context is async or event-driven — never pure style, naming
+preference, or formatting, which SHALL NOT be reported as a finding at any
+severity. The skill SHALL run a breadth sweep, after judging new code and
+applying the risk lenses, that revisits each changed file once more, end to
+end, for a remaining low-severity defect of those kinds that the targeted
+structural and signature-chasing passes above would not otherwise surface.
+
 Emoji SHALL appear at four sanctioned sites and nowhere else: the ✅/❌ verdict
 marker, the 🔴/🟠/🟡 severity dots of the summary table, the ☕ of the posted
 summary comment's `**☕ shipd** semantic review` brand line, and the 🔴/🟠/🟡
@@ -231,7 +243,7 @@ payload SHALL stay free of emoji: the dot is added when a finding is rendered,
 never carried in the machine object. Branding is shipd-only, and the skill SHALL
 NOT modify the repo.
 
-The skill SHALL additionally carry three judgement passes. It SHALL treat a
+The skill SHALL additionally carry four judgement passes. It SHALL treat a
 changed limit, bound, timeout, retry count, buffer size or threshold as a
 contract change and chase its consumers through `semdiff context`, and it
 SHALL compare two or more parallel implementations the diff touches against
@@ -240,10 +252,11 @@ judge every function, class, guard or helper the diff introduces against its
 own stated purpose — whether it measures the quantity its limit governs,
 whether an escape hatch lapses its guarantee, whether it terminates cheaply
 on hostile input, and whether its boundaries and its doc comment agree. It
-SHALL run a test-coverage check over each finding it writes, at every
-severity, asking whether an existing test would fail if that defect
-regressed, and SHALL raise any gap as its own finding in the `test-coverage`
-category, which the `--json` finding shape SHALL accept.
+SHALL run the breadth sweep described above. It SHALL run a test-coverage
+check over each finding it writes, at every severity, asking whether an
+existing test would fail if that defect regressed, and SHALL raise any gap
+as its own finding in the `test-coverage` category, which the `--json`
+finding shape SHALL accept.
 
 The `--json` finding shape's taxonomy field SHALL be named `category`. The
 name `cohort` SHALL denote only the architectural grouping `semdiff files`
@@ -258,7 +271,7 @@ alone. Where `content_truncated` is true, it SHALL read the remainder.
 The skill SHALL bind its rendered report and its posted summary comment to
 the shipd documentation standard, referencing that standard by path rather
 than restating any rule, and SHALL name one finding a "finding" throughout.
-The harness command body for the review SHALL carry the same three
+The harness command body for the review SHALL carry the same four
 judgement passes as the skill, so the two surfaces do not drift.
 
 #### Scenario: Blocking verdict matches severities
@@ -309,7 +322,8 @@ judgement passes as the skill, so the two surfaces do not drift.
 - **WHEN** `plugins/s/harness/bodies/review.md` is inspected
 - **THEN** it instructs the reviewer to chase changed constants, to compare
   parallel sites against each other, to judge newly added code on its own
-  terms, and to check test coverage per finding
+  terms, to sweep each changed file once more for remaining low-severity
+  defects, and to check test coverage per finding
 
 #### Scenario: A finding anchors at its fix site
 - **WHEN** a defect's symptom is observable at a caller but the fix changes a
@@ -321,6 +335,24 @@ judgement passes as the skill, so the two surfaces do not drift.
 - **WHEN** the same defect recurs at more than one call site in the diff
 - **THEN** the review reports one finding whose locations name every
   recurring site, not one finding per site
+
+#### Scenario: A real minor defect is rated low, not waved through
+- **WHEN** the diff carries a swallowed error, a dead or duplicated block, an
+  unread field, or an index-derived list key
+- **THEN** the review reports it as a low-severity finding rather than
+  omitting it as style
+
+#### Scenario: Pure style stays out of the findings
+- **WHEN** a diff carries only a naming preference, a formatting choice, or
+  other pure style difference with no functional effect
+- **THEN** the review reports no finding for it, at any severity
+
+#### Scenario: The breadth sweep runs after the targeted passes
+- **WHEN** a changed file carries a low-severity defect that sits beside a
+  hunk rather than inside it — so the structural diff and signature-chasing
+  passes would not surface it on their own
+- **THEN** the breadth sweep still reports it, after the new-code judgement
+  and risk-lens passes have run
 
 ### Requirement: Spec-aware verification
 id: spec-aware-review

@@ -61,7 +61,10 @@ edits the repository.
    not released on every exit path, including the error path. Migration reversibility:
    a schema migration or destructive data operation with no down-path,
    backfill, or backup.
-8. **Verify the spec when a change is in scope** — the user named one, exactly
+8. **Breadth sweep for minor defects.** After the risk lenses, revisit each
+   changed file once more, end to end, for a remaining low-severity defect
+   the structural and signature-chasing steps above would not catch alone.
+9. **Verify the spec when a change is in scope** — the user named one, exactly
    one change sits under `.shipd/planned/`, or the diff adds or edits a change
    directory under `.shipd/planned/` or `.shipd/completed/`, whose slug is that
    directory's name with any leading `YYYY-MM-DD-` date prefix stripped. Read
@@ -74,23 +77,26 @@ edits the repository.
    `shipd lint <change>` findings verbatim; an archived change under
    `.shipd/completed/` has no lint to surface, since its deltas are already
    merged.
-9. **Report by cohort, most severe first.** Give each finding a location, what
-   is wrong, why it matters, a concrete fix, and an explicit severity:
-   - **high** — a correctness bug, a contract break with an un-updated
-     consumer, or an unmet spec scenario;
-   - **medium** — an unhandled edge case, a caller at genuine risk, or a
-     likely-wrong behaviour you cannot fully confirm;
-   - **low** — style, naming, minor redundancy, defensive nits.
-   A secret/credential exposure finding, or an authorization boundary reached
-   without a scope check, is always **high** regardless of your confidence.
-   Open with an effort score of 1–5 justified by the counts, then the verdict:
-   **Fix required** when any finding is high or medium, **Ship it** otherwise.
-   When you are unsure between two levels, state the doubt rather than
-   inflating it. Close with an explicit list of what you could not verify.
-10. **Check test coverage per finding.** For every finding you write, at every
+10. **Report by cohort, most severe first.** Give each finding a location, what
+    is wrong, why it matters, a concrete fix, and an explicit severity:
+    - **high** — a correctness bug, a contract break with an un-updated
+      consumer, or an unmet spec scenario;
+    - **medium** — an unhandled edge case, a caller at genuine risk, or a
+      likely-wrong behaviour you cannot fully confirm;
+    - **low** — a real but minor defect: a swallowed error, a resource/file
+      leak on a rare path, dead or duplicated code, an unread field, an
+      unstable identity (e.g. an index-based list key), or a blocking call in
+      an async context. Pure style, naming, and formatting are never findings.
+    A secret/credential exposure finding, or an authorization boundary reached
+    without a scope check, is always **high** regardless of your confidence.
+    Open with an effort score of 1–5 justified by the counts, then the verdict:
+    **Fix required** when any finding is high or medium, **Ship it** otherwise.
+    When you are unsure between two levels, state the doubt rather than
+    inflating it. Close with an explicit list of what you could not verify.
+11. **Check test coverage per finding.** For every finding you write, at every
     severity, ask whether an existing test would fail if that defect
     regressed; when none would, raise the gap as its own finding.
-11. **Hand off.** Fix-required findings go back through `/s:build`'s
+12. **Hand off.** Fix-required findings go back through `/s:build`'s
     implementation loop while the branch is still open, or — once it has
     merged — become a new change through `/s:plan`. Never open a second pull
     request on an already-merged branch.
