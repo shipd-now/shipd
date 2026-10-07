@@ -673,20 +673,46 @@ def cmd_diff(args):
 MANIFEST_BASENAMES = frozenset((
     "package.json", "package-lock.json", "npm-shrinkwrap.json",
     "yarn.lock", "pnpm-lock.yaml",
-    "go.mod", "go.sum",
+    "go.mod", "go.sum", "go.work", "go.work.sum",
     "cargo.toml", "cargo.lock",
     "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt",
-    "pipfile", "pipfile.lock", "poetry.lock",
-    "gemfile", "gemfile.lock",
+    "pipfile", "pipfile.lock", "poetry.lock", "uv.lock",
+    "gemfile", "gemfile.lock", "podfile", "podfile.lock",
     "composer.json", "composer.lock",
-    "pom.xml", "build.gradle", "build.gradle.kts",
+    "pom.xml", "build.gradle", "build.gradle.kts", "build.sbt",
+    "directory.packages.props", "directory.build.props",
+    "packages.config", "packages.lock.json",
+    "package.swift", "package.resolved",
+    "mix.exs", "mix.lock",
+    "pubspec.yaml", "pubspec.lock",
 ))
+
+# Manifests whose basename varies by project or package, so no exact-name set
+# can hold them — a C# project file is named after its project, a gemspec
+# after its gem.
+MANIFEST_SUFFIXES = (".csproj", ".fsproj", ".vbproj", ".gemspec", ".nuspec",
+                     ".cabal")
+
+
+def _is_manifest(base):
+    """True when ``base`` names a packaging or dependency manifest.
+
+    Three shapes, because manifests do not share one naming convention:
+    an exact name (`package.json`), a project-specific suffix
+    (`Acme.Api.csproj`), and the `requirements*.txt` family, whose split
+    files (`requirements-dev.txt`) are as much a declaration as the plain
+    one.
+    """
+    low = base.lower()
+    return (low in MANIFEST_BASENAMES
+            or low.endswith(MANIFEST_SUFFIXES)
+            or (low.startswith("requirements") and low.endswith(".txt")))
 
 # Rules are segment-aware: a keyword must be a whole path segment (or a filename
 # marker), so e.g. "openspec/" does NOT match the "spec" test-cohort keyword.
 COHORT_RULES = [
     ("contracts", lambda p, seg, base: p.endswith(".proto") or "proto" in seg
-     or base.lower() in MANIFEST_BASENAMES),
+     or _is_manifest(base)),
     ("database", lambda p, seg, base: {"models", "model", "repository",
      "store", "db", "migrations"} & seg or "migration" in base
      or "schema" in base),
