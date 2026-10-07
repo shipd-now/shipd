@@ -100,8 +100,9 @@ Four questions, in the order they bite:
   `MANIFEST.in`, a `package_data` block), a new module the diff adds but the
   allowlist omits is absent from the published artifact even though every test
   passes locally. Anchor the finding at the manifest — the line a fix would
-  change — and name the importing line as a further location, since that is
-  the site where the omission breaks at run time.
+  change — and name the importing line as a further location under the
+  review skill's general further-location permission, because the import
+  independently shows the omission: it is the line that fails at run time.
 - **Does the manifest declare what the code imports?** A new `import` or
   `require` of a package the manifest never declares works locally — the
   dependency is present transitively, or in the lockfile — and fails on a clean
@@ -118,8 +119,9 @@ Four questions, in the order they bite:
   — the published package omits the new module and fails at require time for
   every consumer, while the repository's own tests pass. The finding anchors
   at `package.json`, the line a fix would change, and names the entry point's
-  `require` line as a further location, since that is where the omission
-  breaks.
+  `require` line as a further location under that same general permission,
+  because the import independently shows the omission — it is the line that
+  fails at run time.
 - **Real finding.** A new runtime `require` resolves because the package sits
   in the lockfile as somebody else's transitive dependency, with nothing in
   `dependencies` declaring it. The next dependency bump that drops the

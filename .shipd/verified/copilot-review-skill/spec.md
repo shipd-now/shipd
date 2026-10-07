@@ -36,7 +36,11 @@ never pure style, naming preference, or formatting, which SHALL NOT be reported
 as a finding at any severity. The template SHALL state beside that rubric that
 severity follows what a defect does rather than the kind of defect it is, so
 data loss, data corruption, a security exposure, or a broken guarantee is
-`medium` or `high`.
+`medium` or `high`, and SHALL name concrete instances beside those categories:
+a success response that hides a failure, a cleanup path that drops the record
+and leaves the data or the reverse, and an error path that loses the only copy.
+The template SHALL also state that uncertainty about a severity is not grounds
+for omitting a finding.
 
 #### Scenario: Template exists with the placeholder marker
 - **WHEN** `plugins/s/integrations/copilot/SKILL.md` is read
@@ -70,6 +74,13 @@ data loss, data corruption, a security exposure, or a broken guarantee is
 - **THEN** `low` names a real defect whose impact is contained, pure style is
   excluded from findings at any severity, and the rule that impact outranks
   the kind of defect appears beside it
+
+#### Scenario: The template names concrete impact instances
+- **WHEN** the template's severity rubric is read
+- **THEN** the rating rule beside it names a success response that hides a
+  failure, a cleanup path that drops the record and leaves the data, and an
+  error path that loses the only copy, and states that an unplaceable severity
+  is reported at a best estimate rather than omitted
 
 ### Requirement: Copilot review setup workflow template
 id: setup-workflow-template
