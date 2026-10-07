@@ -87,8 +87,13 @@ edits the repository.
       leak on a rare path, dead or duplicated code, an unread field, an
       unstable identity (e.g. an index-based list key), or a blocking call in
       an async context. Pure style, naming, and formatting are never findings.
-    A secret/credential exposure finding, or an authorization boundary reached
-    without a scope check, is always **high** regardless of your confidence.
+    That low list names *kinds* of defect, not severities. Rate every finding by
+    what it does, not which kind it resembles: data loss, data corruption, a
+    security exposure, or a broken guarantee is medium or high even when it
+    arrives as one of those kinds — a swallowed error that loses a file is not
+    low. A secret or credential exposure finding, or an authorization boundary
+    reached without a scope check, is always **high** regardless of your
+    confidence.
     Open with an effort score of 1–5 justified by the counts, then the verdict:
     **Fix required** when any finding is high or medium, **Ship it** otherwise.
     When you are unsure between two levels, state the doubt rather than

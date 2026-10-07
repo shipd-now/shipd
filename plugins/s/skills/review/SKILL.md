@@ -160,9 +160,10 @@ guidance and worked examples once one fires:
   down-migration, backup, or recovery path.
 
 ### 5c. Breadth sweep for minor defects
-Revisit each changed file end to end for a remaining low-severity defect of
-the categories named in the rubric below — a pass the structural diff and
-signature-chasing steps do not catch.
+Revisit each changed file end to end for a remaining defect of the minor kinds
+named in the rubric below — a pass the structural diff and signature-chasing
+steps do not catch. Rate what the sweep finds by the rubric's impact floor, not
+by the kind that surfaced it.
 
 ### 5d. Check the PR description against the diff
 When a pull request's title and description are available, read
@@ -183,6 +184,10 @@ Group findings under cohort headings, most severe first. For each finding: a
 - **low** — a real but minor defect: swallowed errors, resource leaks on rare paths,
   dead or duplicated code, unread variables, unstable ids, or blocking calls in async
   contexts. Pure style, naming, and formatting are never findings.
+- **Impact floor.** That low list names *kinds* of defect, not severities. Rate every
+  finding by what it does, not which kind it resembles: data loss, data corruption, a
+  security exposure, or a broken guarantee is `medium` or `high` even when it arrives
+  as one of those kinds. A swallowed error that loses a file is not low.
 - **Exposure floor.** A secret or credential exposure finding, or an authorization
   boundary reached without the caller's scope check, is always `high`, whatever the
   reviewer's confidence.
