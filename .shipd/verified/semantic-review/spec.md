@@ -369,6 +369,10 @@ judgement passes as the skill, so the two surfaces do not drift.
 - **THEN** all five new-code check names appear inline, so a reviewer that
   never opens `references/new-code-checks.md` still knows every check exists
 
+#### Scenario: The breadth sweep names its target categories
+- **WHEN** `plugins/s/skills/review/SKILL.md`'s breadth-sweep step is inspected
+- **THEN** it points at the severity rubric's low-severity categories as what to look for, not only at the structural passes it runs after
+
 ### Requirement: Spec-aware verification
 id: spec-aware-review
 

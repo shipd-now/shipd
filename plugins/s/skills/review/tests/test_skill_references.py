@@ -329,6 +329,21 @@ class SkillMdStructureTest(unittest.TestCase):
             f"check(s) not named inline in SKILL.md (outside the "
             f"References table): {missing}")
 
+    def test_breadth_sweep_points_at_the_rubric_categories(self):
+        """The breadth-sweep step tells the reviewer what to look for.
+
+        A line-budget trim once dropped "end to end" and the pointer at the
+        severity rubric's own category list from this step, leaving only a
+        vague "revisit each file" instruction — the categories are what the
+        sweep exists to find, so losing the pointer silently weakens it.
+        """
+        match = re.search(r"^### 5c\. [^\n]*\n(.*?)(?=\n### |\Z)", self.text,
+                          re.DOTALL | re.MULTILINE)
+        self.assertIsNotNone(match, "no '### 5c.' breadth-sweep step found")
+        section = match.group(1).lower()
+        self.assertIn("end to end", section)
+        self.assertIn("rubric", section)
+
     def test_every_reference_file_is_named(self):
         named = set(REFERENCE_PATH_RE.findall(self.text))
         on_disk = {
