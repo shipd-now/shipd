@@ -167,8 +167,11 @@ by the kind that surfaced it.
 
 ### 5d. Check the PR description against the diff
 When a pull request's title and description are available, read
-`${CLAUDE_PLUGIN_ROOT}/skills/review/references/pr-description.md` and verify
-every claim against the diff.
+`${CLAUDE_PLUGIN_ROOT}/skills/review/references/pr-description.md` and check
+them against the diff in both directions — every claim against the diff, and
+the diff's substantial content against what the description never mentions.
+An unmentioned feature has no claim to check, so only the second direction
+finds it.
 
 ### 6. Report by cohort
 Group findings under cohort headings, most severe first. For each finding: a
