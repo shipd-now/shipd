@@ -328,10 +328,20 @@ class ShippedRenderTest(unittest.TestCase):
                     % (command, token))
 
     def test_every_body_stays_lean_at_the_full_vocabulary(self):
+        """No shipped body balloons at the full feature vocabulary.
+
+        The ceiling guards against bloat; it is not a budget to compress real
+        instructions into. Four bodies (review, epic, gate, ask) had reached
+        116-119 against an earlier ceiling of 120, so every change to them
+        was paying a compression tax — and twice that tax silently dropped
+        content a reviewer later had to restore. A body that legitimately
+        grows a step belongs under a raised ceiling, not under reworded
+        instructions.
+        """
         for command in hb.commands():
             lines = len(hb.render(command, hr.FEATURES,
                                   refs_dir=REFS).splitlines())
-            self.assertLess(lines, 120,
+            self.assertLess(lines, 140,
                             "%s renders %d lines" % (command, lines))
 
     def test_a_fallback_pointer_appears_only_when_files_can_be_read(self):

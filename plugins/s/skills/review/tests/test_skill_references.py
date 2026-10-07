@@ -97,6 +97,23 @@ NEW_CODE_CHECKS = (
     "doc comment versus code",
 )
 
+# The checks whose detail moved into `call-site-tracing.md`. Same rule as
+# NEW_CODE_CHECKS: the detail may live in a conditionally-loaded reference,
+# but the name stays inline, so skipping the read costs guidance depth and
+# never the check's existence.
+DOWNSTREAM_CHECKS = (
+    "untouched callers",
+    "every match is a candidate",
+    "misses extensionless scripts",
+    "changed constants are contract changes",
+    "uneven sibling sites",
+)
+
+CALL_SITE_VALUE_CHECKS = (
+    "unreachable guard",
+    "comment / intent vs. actual behaviour",
+)
+
 # Proxies for "the exposure severity floor is stated": a floor sentence puts
 # the word `high` in the same neighbourhood as the trigger it floors. `re`'s
 # DOTALL lets the window span a wrapped line; the window is generous (160
@@ -217,6 +234,12 @@ def _missing_checks(text):
     return [check for check in NEW_CODE_CHECKS if check not in lowered]
 
 
+def _missing_named(text, names):
+    """Which of ``names`` are absent from ``text``, same matching as above."""
+    lowered = re.sub(r"\s+", " ", text.lower())
+    return [name for name in names if name not in lowered]
+
+
 def _exposure_floor_stated(text):
     return (
         any(p.search(text) for p in _EXPOSURE_FLOOR_PATTERNS)
@@ -328,6 +351,25 @@ class SkillMdStructureTest(unittest.TestCase):
             missing,
             f"check(s) not named inline in SKILL.md (outside the "
             f"References table): {missing}")
+
+    def test_extracted_call_site_check_names_stay_inline(self):
+        """The checks moved into `call-site-tracing.md` keep their names here.
+
+        Same rule the risk lenses and the new-code checks already follow: a
+        check that applies to every diff carrying the thing it inspects may
+        defer its *detail* to a conditionally-loaded reference, but never its
+        name — otherwise a reviewer who skips the read loses the check
+        itself, not just the guidance behind it.
+        """
+        inline_text = _text_excluding_references_section(self.text)
+        for label, names in (("downstream-impact", DOWNSTREAM_CHECKS),
+                             ("call-site-value", CALL_SITE_VALUE_CHECKS)):
+            with self.subTest(group=label):
+                missing = _missing_named(inline_text, names)
+                self.assertFalse(
+                    missing,
+                    f"{label} check(s) not named inline in SKILL.md "
+                    f"(outside the References table): {missing}")
 
     def test_breadth_sweep_points_at_the_rubric_categories(self):
         """The breadth-sweep step tells the reviewer what to look for.

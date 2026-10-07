@@ -231,8 +231,8 @@ path.
 #### Scenario: Harness epic body mirrors the consult
 - **WHEN** `plugins/s/harness/bodies/epic.md` is inspected
 - **THEN** its question-round section carries the consult sentence naming
-  the four tiers and the rubric path, and the rendered body stays under the
-  120-line budget
+  the four tiers and the rubric path, and the rendered body stays within
+  the rendered-body size budget `harness-command-bodies` owns
 
 ### Requirement: Epic amendment mode
 id: epic-amend-mode
