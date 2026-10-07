@@ -46,6 +46,7 @@ Each file below is read only when its condition fires — not by default.
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/posting.md` | a pull request is in scope for the review — it also reads prior findings back before reporting |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/risk-lenses.md` | a risk lens trigger fires during review of the diff |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/linters.md` | `semdiff lint` has run, to interpret each linter's state, weigh its findings, or read the `lint` configuration key |
+| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/new-code-checks.md` | a function, class, guard, or helper is new in the diff |
 
 ## Determine what to review
 
@@ -149,21 +150,9 @@ with the values the call sites supply.
 ### 5. Judge new code on its own terms
 For every function, class, guard, or helper the diff introduces, judge it
 against its own stated purpose — do not wave it through because it is new
-rather than modified:
-
-- **Wrong quantity measured.** A limit, cap, or check that measures the wrong
-  thing (bytes where the guarantee is about lines, wall time where it is about
-  CPU time) looks correct and is not.
-- **Escape hatch lapsing the guarantee.** A flag, default, or fallback branch
-  that quietly steps around the very invariant the code exists to enforce.
-- **Termination on hostile input.** Does the routine terminate — and cheaply —
-  on empty, oversized, malformed, or adversarial input, not only the input the
-  happy-path test exercises?
-- **Boundary agreement.** Off-by-one and inclusive/exclusive edges: does the
-  code's actual boundary match the one its doc comment or name claims?
-- **Doc comment versus code.** Where the new code carries a doc comment or
-  docstring, confirm it describes what the code actually does, not what it was
-  meant to do.
+rather than modified. Read
+`${CLAUDE_PLUGIN_ROOT}/skills/review/references/new-code-checks.md` for the five
+checks and worked examples.
 
 ### 5b. Risk lenses
 Check every diff, in every cohort, against five fixed triggers, always — never
@@ -184,6 +173,11 @@ guidance and worked examples once one fires:
 - **Migration reversibility** — a schema migration or destructive data
   operation with no down-migration, backup, or recovery path.
 
+### 5c. Breadth sweep for minor defects
+After applying the risk lenses, revisit each changed file end to end for a
+remaining low-severity defect of the categories named in the rubric — a pass
+the structural diff and signature-chasing steps do not catch.
+
 ### 6. Report by cohort
 Group findings under cohort headings, most severe first. For each finding: a
 **location** (the fix site, never a symptom), **what**, **why**, **fix**, and
@@ -195,7 +189,13 @@ Group findings under cohort headings, most severe first. For each finding: a
   or an unmet spec acceptance criterion.
 - **medium** — an unhandled edge case, an untouched caller at genuine risk, or
   a likely-wrong behaviour you cannot fully confirm.
-- **low** — style, naming, minor redundancy, defensive nits.
+- **low** — a real but minor defect: a swallowed or silently-dropped error; a
+  resource or file leak on a rare or cleanup path; dead or duplicated code; a
+  field or variable declared but never read; an unstable or incorrect identity
+  (e.g. a list/row key derived from array index instead of a stable id); a
+  blocking/synchronous call where the surrounding context is async or
+  event-driven. Pure style, naming preference, and formatting are never
+  findings at any severity.
 - **Exposure floor.** A secret or credential exposure finding, or an
   authorization boundary reached without the caller's scope check, is always
   `high`, whatever the reviewer's confidence.
