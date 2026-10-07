@@ -451,9 +451,11 @@ spec work — a declared pipeline never half-runs. Where the resolved
 `build` entry declares `subagent_model`, build SHALL spawn `s:sub-agent`
 and `s:validator` workers with the Agent tool's model parameter set to
 the tier resolved relative to the session's own model — `session` omits
-the parameter; `tier-below`/`tier-two-below` step one/two below the
-session's model on the ladder `fable`, `opus`, `sonnet`, `haiku`,
-clamped at the bottom; any other value passes verbatim as a concrete id.
+the parameter; `tier-below`/`tier-two-below` select the model the
+orchestrator judges one/two capability steps below the session's own
+model among the Agent tool's options, falling back to the lowest option
+below and omitting the parameter when none sits below; any other value
+passes verbatim as a concrete id.
 Where the resolved `build` entry declares `parallelism`, that value SHALL
 cap concurrent execution sub-agents, taking precedence over the
 `parallelism` configuration key and the default of three. Where the
@@ -495,6 +497,13 @@ SHALL supersede self-resolution.
   model resolved against a detached anchor
 - **WHEN** the interactive flow's self-resolved tier would differ
 - **THEN** the conveyed concrete value is used for the spawns
+
+#### Scenario: Tier aliases resolve against the available options
+- **GIVEN** a resolved build entry declaring `subagent_model: tier-below`
+- **WHEN** `/s:build` spawns execution sub-agents
+- **THEN** the skill directs the orchestrator to pick the model it judges
+  one capability step below its own from the Agent tool's options, and
+  the skill text names no fixed model ladder
 
 ### Requirement: Loud branch reuse in the worktree helper
 id: loud-branch-reuse
@@ -777,3 +786,36 @@ worktree and delete no branch.
 - **WHEN** `worktree.sh sweep` runs
 - **THEN** no worktree is removed, no branch is deleted, the output reports that
   no base branch resolves, and the exit code is zero
+
+### Requirement: Provider-neutral model down
+id: provider-neutral-model-down
+
+The build skill SHALL run the orchestrator on the session's model and,
+where the resolved `build` entry declares no `subagent_model`, SHALL
+direct it to spawn execution sub-agents on the model down — the model the
+orchestrator judges one capability step below its own and a decent fit
+for the tasks, chosen from the Agent tool's options in that session. If
+no option sits below the orchestrator's model, then the skill SHALL
+direct it to omit the model parameter so sub-agents inherit the session's
+model. The skill SHALL forbid spawning sub-agents on a model stronger
+than the orchestrator's. The build skill body, and the autopilot skill's
+in-session tier table, SHALL NOT name any provider's models or model
+ids.
+
+#### Scenario: The build skill names no provider models
+- **GIVEN** the build skill's `SKILL.md`
+- **WHEN** it is searched case-insensitively for `fable`, `opus`,
+  `sonnet`, and `haiku`
+- **THEN** no occurrence is found
+
+#### Scenario: The autopilot in-session table names no ladder
+- **GIVEN** the autopilot skill's "declared `model`" table
+- **WHEN** its `tier-below` / `tier-two-below` row is read
+- **THEN** it describes the orchestrator's judgement among the Agent
+  tool's options and names no model
+
+#### Scenario: Default spawns use the orchestrator's own pick
+- **GIVEN** a resolved build entry declaring no `subagent_model`
+- **WHEN** the build skill's model policy is read
+- **THEN** it directs the orchestrator to choose the model down from the
+  Agent tool's options, and to omit the parameter when none sits below
