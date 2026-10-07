@@ -47,6 +47,7 @@ Each file below is read only when its condition fires — not by default.
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/risk-lenses.md` | a risk lens trigger fires during review of the diff |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/linters.md` | `semdiff lint` has run, to interpret each linter's state, weigh its findings, or read the `lint` configuration key |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/new-code-checks.md` | a function, class, guard, or helper is new in the diff |
+| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/pr-description.md` | a pull request's title and description are available |
 
 ## Determine what to review
 
@@ -60,24 +61,23 @@ git fetch origin <base>
 Name the base's own remote where it tracks another one — read it from
 `git config branch.<base>.remote` rather than assuming `origin`.
 
-The fetch writes remote-tracking refs only — never the working tree, the
-index, or a local branch — so the skill's no-modification guarantee is
-unchanged; it never pulls, rebases, or checks anything out on your behalf.
-The engine resolves a short branch base to its remote-tracking commit on its
-own once fetched, so no manual staleness check is needed. If the fetch
-fails, continue the review and record a could-not-verify entry naming that
-the base went unchecked against its remote, rather than ending the review. A
-two-ref `lint` run records its own could-not-verify entry naming that the
-linters read the checkout rather than the reviewed head, since `lint` passes
-changed paths to linter binaries that read them from disk.
+The fetch writes remote-tracking refs only — never the working tree, index,
+or a local branch — so the skill's no-modification guarantee holds; it
+never pulls, rebases, or checks anything out. The engine resolves a short
+branch to its remote-tracking commit once fetched, with no manual
+staleness check needed. A failed fetch continues the review with a
+could-not-verify entry naming the unchecked base, rather than ending it; a
+two-ref `lint` run similarly notes that the linters read the checkout, not
+the reviewed head, since `lint` passes changed paths to linter binaries
+that read them from disk.
 
 - **Local changes before pushing** (the default): `diff <base>` compares
   `<base>` against the working tree, defaulting to `main` (or `master`).
 - **An already-pushed branch or PR, given as two refs**: `diff <base> <head>`
   reviews what `<head>` added since diverging from `<base>`, PR-style
   (three-dot) — the "after" content is `<head>`, not your checkout. Add
-  `--linear` for two-dot; refs must exist locally (see Base freshness, above).
-  Output echoes the resolved `base`/`head`/`mode`.
+  `--linear` for two-dot (refs must exist locally, see Base freshness,
+  above); output echoes the resolved `base`/`head`/`mode`.
 - **A named pull request** — a URL, `#<number>`, a bare number, or a branch
   pointed at one: posts its verdict by default, no ask required. See
   `${CLAUDE_PLUGIN_ROOT}/skills/review/references/posting.md` for the flow.
@@ -95,35 +95,33 @@ cohort**, foundational layers first (contracts and database before api before
 frontend) — not alphabetically, not file-by-file.
 
 ### 2. Read the structural diff
-Run `diff <base> [<head>]`. Per-file, syntax-aware hunks with formatting-only
-noise stripped. Reason about *what changed structurally* — new/removed/modified
-signatures, altered control flow, changed contracts — from this JSON. Do
-**not** open the raw files unless a hunk is genuinely ambiguous. Each file
-entry carries an `engine` field (`difft` = syntax-aware; `text` = the
-degradation engine); the summary carries `signature_changes`, a best-effort
-count you refine.
+Run `diff <base> [<head>]` for per-file, syntax-aware hunks with
+formatting-only noise stripped. Reason about *what changed structurally* —
+new/removed/modified signatures, altered control flow, changed contracts —
+from this JSON. Do **not** open the raw files unless a hunk is genuinely
+ambiguous. Each file entry carries an `engine` field (`difft` = syntax-aware;
+`text` = the degradation engine); the summary carries `signature_changes`, a
+best-effort count you refine.
 
 ### 3. Check downstream impact
 For any changed function/type/message signature, run `context <symbol>` to find
 references. Use `--lang` / `--path` to cut noise on common names.
 
-- Callers that appear in `context` but **not** in the diff are your
-  highest-value findings: code the user changed a contract for but did not
-  update.
-- Treat every match as a **candidate to verify, never as "safe."** The lookup
-  is best-effort grep, not a complete call graph. Unmatched files are *not*
-  proven unaffected — say so rather than implying coverage you do not have.
-- `--lang` filters by extension and misses extensionless scripts — retry
-  without it before concluding there are no references.
-- **Changed constants are contract changes.** A changed limit, bound, timeout,
-  retry count, buffer size, or threshold is not a stylistic tweak — it changes
-  what callers can rely on. Chase every consumer of the changed constant
-  through `context <symbol>` exactly as you would a changed signature.
-- **Uneven sibling sites.** When the diff touches two or more parallel
-  implementations of the same thing (sibling handlers, mirrored engines,
-  duplicated validation), compare them against each other, not only against
-  the base. Name any hardening, guard, or edge-case handling applied to one
-  and not the other.
+- Callers that appear in `context` but **not** in the diff are your highest-value
+  findings: code the user changed a contract for but did not update.
+- Treat every match as a **candidate to verify, never as "safe."** The lookup is best-
+  effort grep, not a complete call graph. Unmatched files are *not* proven unaffected —
+  say so rather than implying coverage you do not have.
+- `--lang` filters by extension and misses extensionless scripts — retry without it
+  before concluding there are no references.
+- **Changed constants are contract changes.** A changed limit, bound, timeout, retry
+  count, buffer size, or threshold is not a stylistic tweak — it changes what callers
+  can rely on. Chase every consumer of the changed constant through `context <symbol>`
+  exactly as you would a changed signature.
+- **Uneven sibling sites.** When the diff touches two or more parallel implementations
+  of the same thing (sibling handlers, mirrored engines, duplicated validation), compare
+  them against each other, not only against the base. Name any hardening, guard, or
+  edge-case handling applied to one and not the other.
 
 ### 3b. Read the linter output
 Run `lint <base> [<head>]` over the same endpoints as the diff. Read
@@ -136,12 +134,11 @@ finding automatically.
 Do not judge a new branch, guard, or helper in isolation — follow the actual
 argument each call site passes in:
 
-- **Unreachable guard / dead branch.** A defensive branch the real call can
-  never hit. Flag it as dead code, and never describe it in the walkthrough as
-  if it executes.
-- **Comment / intent vs. actual behaviour.** A comment that promises behaviour
-  the code does not produce given how it is called is wrong even though the
-  line it sits on exists.
+- **Unreachable guard / dead branch.** A defensive branch the real call can never hit.
+  Flag it as dead code, and never describe it in the walkthrough as if it executes.
+- **Comment / intent vs. actual behaviour.** A comment that promises behaviour the code
+  does not produce given how it is called is wrong even though the line it sits on
+  exists.
 
 Both are usually low severity alone, but they compound. Whenever you quote a
 mechanism in the walkthrough, confirm the path that reaches it actually runs
@@ -163,23 +160,27 @@ gated on cohort or file type. Read
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/risk-lenses.md` for the full
 guidance and worked examples once one fires:
 
-- **Secret or credential exposure** — a new literal, log line, or error
-  message carrying a key, token, password, or personal data. Always rated
-  `high`, whatever the reviewer's confidence.
-- **Authorization boundary** — a new route, handler, or query reaching data
-  without checking the caller's scope, role, or ownership. Always rated
-  `high`.
-- **Unbounded work** — a loop, recursion, batch, or fan-out whose size is
-  driven by user input or external data with no cap.
-- **Resource release** — a file handle, socket, lock, connection, or
-  transaction not released on every exit path, including the error path.
-- **Migration reversibility** — a schema migration or destructive data
-  operation with no down-migration, backup, or recovery path.
+- **Secret or credential exposure** — a new literal, log line, or error message carrying
+  a key, token, password, or personal data. Always rated `high`, whatever the reviewer's
+  confidence.
+- **Authorization boundary** — a new route, handler, or query reaching data without
+  checking the caller's scope, role, or ownership. Always rated `high`.
+- **Unbounded work** — a loop, recursion, batch, or fan-out whose size is driven by user
+  input or external data with no cap.
+- **Resource release** — a file handle, socket, lock, connection, or transaction not
+  released on every exit path, including the error path.
+- **Migration reversibility** — a schema migration or destructive data operation with no
+  down-migration, backup, or recovery path.
 
 ### 5c. Breadth sweep for minor defects
 Revisit each changed file end to end for a remaining low-severity defect of
 the categories named in the rubric below — a pass the structural diff and
 signature-chasing steps do not catch.
+
+### 5d. Check the PR description against the diff
+When a pull request's title and description are available, read
+`${CLAUDE_PLUGIN_ROOT}/skills/review/references/pr-description.md` and verify
+every claim against the diff.
 
 ### 6. Report by cohort
 Group findings under cohort headings, most severe first. For each finding: a
@@ -188,17 +189,16 @@ Group findings under cohort headings, most severe first. For each finding: a
 `locations` array names every site.
 
 **Severity rubric.**
-- **high** — a correctness bug, a contract break with an un-updated consumer,
-  or an unmet spec acceptance criterion.
-- **medium** — an unhandled edge case, an untouched caller at genuine risk, or
-  a likely-wrong behaviour you cannot fully confirm.
-- **low** — a real but minor defect: swallowed errors, resource leaks on rare
-  paths, dead or duplicated code, unread variables, unstable ids, or blocking
-  calls in async contexts. Pure style, naming, and formatting are never
-  findings.
-- **Exposure floor.** A secret or credential exposure finding, or an
-  authorization boundary reached without the caller's scope check, is always
-  `high`, whatever the reviewer's confidence.
+- **high** — a correctness bug, a contract break with an un-updated consumer, or an
+  unmet spec acceptance criterion.
+- **medium** — an unhandled edge case, an untouched caller at genuine risk, or a likely-
+  wrong behaviour you cannot fully confirm.
+- **low** — a real but minor defect: swallowed errors, resource leaks on rare paths,
+  dead or duplicated code, unread variables, unstable ids, or blocking calls in async
+  contexts. Pure style, naming, and formatting are never findings.
+- **Exposure floor.** A secret or credential exposure finding, or an authorization
+  boundary reached without the caller's scope check, is always `high`, whatever the
+  reviewer's confidence.
 
 Any high **or** medium finding blocks (Fix required); low never blocks. When
 unsure between two levels, state the doubt rather than inflating.

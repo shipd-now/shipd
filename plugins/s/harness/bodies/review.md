@@ -8,20 +8,18 @@ edits the repository.
 <!-- include:preamble -->
 
 1. **Fetch the base's remote, then decide what to compare, and say so.**
-   Before the first comparison, in every mode — working tree, two refs, or a
-   pull request alike — fetch the base's remote, e.g. `git fetch origin
-   main`. The fetch writes remote-tracking refs only, never the working
-   tree, the index, or a local branch, so the review's no-modification
-   guarantee holds; never pull, rebase, or check anything out. If the fetch
-   fails, continue the review and record a could-not-verify entry naming
-   that the base went unchecked against its remote, rather than ending the
-   review. By default compare the working tree against `main` (`master`
-   where that is the default branch), anchored on the fork point —
-   `git merge-base <base> HEAD` — rather than the base's own tip, so an
-   advance the base picked up after you branched is never read as a local
-   edit of yours. When the user names two refs, compare `<base>...<head>` so
-   the "after" side is what a pull request would show. State the resolved
-   base, head, and mode — as commit ids — before the findings.
+   In every mode — working tree, two refs, or a pull request — fetch the
+   base's remote first, e.g. `git fetch origin main`. It writes
+   remote-tracking refs only, never the working tree, index, or a local
+   branch, and never pulls, rebases, or checks anything out. If the fetch
+   fails, continue and record a could-not-verify entry naming the unchecked
+   base, rather than ending the review. By default compare the working tree
+   against `main` (`master` when that's the default), anchored on the fork
+   point — `git merge-base <base> HEAD` — not the base's own tip, so an
+   advance picked up after you branched is never read as your own edit.
+   For two refs, compare `<base>...<head>` so the "after" side is what a
+   pull request would show. State the resolved base, head, and mode
+   — as commit ids — before the findings.
 2. **Map the change into cohorts.** `git diff --name-status <base>` gives the
    changed files; group them into architectural cohorts — contracts, database,
    api, frontend, tests, and this repo's own spec artifacts. Review cohort by
@@ -51,33 +49,35 @@ edits the repository.
    actually governs, does an escape hatch let its guarantee lapse, does it
    terminate cheaply on hostile input, and do its boundaries agree with its
    doc comment?
-7. **Apply the risk lenses.** Whatever the cohort, watch for five triggers.
-   Secret or credential exposure: a new key, token, password, connection
-   string, or personal data landing in a literal, log line, error message, or
-   fixture. Authorization boundary: a new route, handler, job, or query
-   reached without checking the caller's scope, role, or ownership.
-   Unbounded work: iteration count or size driven by user input with no cap.
-   Resource release: a file handle, socket, lock, connection, or transaction
-   not released on every exit path, including the error path. Migration reversibility:
-   a schema migration or destructive data operation with no down-path,
-   backfill, or backup.
+7. **Apply the risk lenses.** Whatever the cohort, watch for five triggers:
+   secret or credential exposure (a key, token, password, or personal data
+   in a literal, log line, error message, or fixture); authorization boundary (a
+   route, handler, job, or query reached without checking the caller's
+   scope, role, or ownership); unbounded work (iteration count or size
+   driven by user input with no cap); resource release (a handle, socket,
+   lock, connection, or transaction not released on every exit path,
+   including errors); migration reversibility (a schema migration or
+   destructive operation with no down-path, backfill, or backup).
 8. **Breadth sweep for minor defects.** After the risk lenses, revisit each
    changed file once more, end to end, for a remaining low-severity defect
    the structural and signature-chasing steps above would not catch alone.
 9. **Verify the spec when a change is in scope** — the user named one, exactly
    one change sits under `.shipd/planned/`, or the diff adds or edits a change
-   directory under `.shipd/planned/` or `.shipd/completed/`, whose slug is that
-   directory's name with any leading `YYYY-MM-DD-` date prefix stripped. Read
-   it with `python3 "$S/spec_status.py" cat change <change>`, then classify every
+   directory under `.shipd/planned/` or `.shipd/completed/` (its slug strips
+   any leading `YYYY-MM-DD-` date prefix). Read it with `python3
+   "$S/spec_status.py" cat change <change>`, then classify every
    `#### Scenario:` against the diff as **met** (citing the file and hunk),
-   **unmet**, or **can't-tell** — the last is a real outcome, not a failure to
-   force. Every unmet scenario is a high-severity finding. Cross-check the
-   `- [x]` tasks against the diff and flag any marked done with no change
-   behind it, and — while the change sits under `.shipd/planned/` — surface
-   `shipd lint <change>` findings verbatim; an archived change under
-   `.shipd/completed/` has no lint to surface, since its deltas are already
-   merged.
-10. **Report by cohort, most severe first.** Give each finding a location, what
+   **unmet**, or **can't-tell** — a real outcome, not a failure to force;
+   every unmet scenario is a high-severity finding. Cross-check the `- [x]`
+   tasks against the diff, flag any marked done with no change behind it,
+   and — while under `.shipd/planned/` — surface `shipd lint <change>`
+   findings verbatim; an archived `.shipd/completed/` change has none to
+   surface, its deltas already merged.
+10. **Check the PR description against the diff when one is available —
+    given inline, or via `gh pr view --json title,body`.** A title/body
+    claim the diff contradicts or exceeds is its own finding, category
+    `description-drift`, severity by the normal rubric.
+11. **Report by cohort, most severe first.** Give each finding a location, what
     is wrong, why it matters, a concrete fix, and an explicit severity:
     - **high** — a correctness bug, a contract break with an un-updated
       consumer, or an unmet spec scenario;
@@ -93,10 +93,10 @@ edits the repository.
     **Fix required** when any finding is high or medium, **Ship it** otherwise.
     When you are unsure between two levels, state the doubt rather than
     inflating it. Close with an explicit list of what you could not verify.
-11. **Check test coverage per finding.** For every finding you write, at every
+12. **Check test coverage per finding.** For every finding you write, at every
     severity, ask whether an existing test would fail if that defect
     regressed; when none would, raise the gap as its own finding.
-12. **Hand off.** Fix-required findings go back through `/s:build`'s
+13. **Hand off.** Fix-required findings go back through `/s:build`'s
     implementation loop while the branch is still open, or — once it has
     merged — become a new change through `/s:plan`. Never open a second pull
     request on an already-merged branch.

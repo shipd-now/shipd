@@ -230,6 +230,8 @@ applying the risk lenses, that revisits each changed file once more, end to
 end, for a remaining low-severity defect of those kinds that the targeted
 structural and signature-chasing passes above would not otherwise surface.
 
+Where a pull request's title and description are available, the skill SHALL check each concrete claim against the diff and report a mismatch as its own finding in the `description-drift` category, severity by the normal rubric, judged on what the mismatch implies for correctness or completeness — never a finding for a description that is merely terse or informal.
+
 The five checks the skill applies to judge new code (a wrong quantity
 measured, an escape hatch lapsing the guarantee, non-termination on hostile
 input, a boundary disagreement, and a doc comment versus the actual code)
@@ -252,7 +254,7 @@ payload SHALL stay free of emoji: the dot is added when a finding is rendered,
 never carried in the machine object. Branding is shipd-only, and the skill SHALL
 NOT modify the repo.
 
-The skill SHALL additionally carry four judgement passes. It SHALL treat a
+The skill SHALL additionally carry five judgement passes. It SHALL treat a
 changed limit, bound, timeout, retry count, buffer size or threshold as a
 contract change and chase its consumers through `semdiff context`, and it
 SHALL compare two or more parallel implementations the diff touches against
@@ -261,7 +263,7 @@ judge every function, class, guard or helper the diff introduces against its
 own stated purpose — whether it measures the quantity its limit governs,
 whether an escape hatch lapses its guarantee, whether it terminates cheaply
 on hostile input, and whether its boundaries and its doc comment agree. It
-SHALL run the breadth sweep described above. It SHALL run a test-coverage
+SHALL run the breadth sweep described above. It SHALL check the PR description against the diff as described above. It SHALL run a test-coverage
 check over each finding it writes, at every severity, asking whether an
 existing test would fail if that defect regressed, and SHALL raise any gap
 as its own finding in the `test-coverage` category, which the `--json`
@@ -280,7 +282,7 @@ alone. Where `content_truncated` is true, it SHALL read the remainder.
 The skill SHALL bind its rendered report and its posted summary comment to
 the shipd documentation standard, referencing that standard by path rather
 than restating any rule, and SHALL name one finding a "finding" throughout.
-The harness command body for the review SHALL carry the same four
+The harness command body for the review SHALL carry the same five
 judgement passes as the skill, so the two surfaces do not drift.
 
 #### Scenario: Blocking verdict matches severities
@@ -332,7 +334,8 @@ judgement passes as the skill, so the two surfaces do not drift.
 - **THEN** it instructs the reviewer to chase changed constants, to compare
   parallel sites against each other, to judge newly added code on its own
   terms, to sweep each changed file once more for remaining low-severity
-  defects, and to check test coverage per finding
+  defects, to check the PR description against the diff, and to check test
+  coverage per finding
 
 #### Scenario: A finding anchors at its fix site
 - **WHEN** a defect's symptom is observable at a caller but the fix changes a
@@ -372,6 +375,16 @@ judgement passes as the skill, so the two surfaces do not drift.
 #### Scenario: The breadth sweep names its target categories
 - **WHEN** `plugins/s/skills/review/SKILL.md`'s breadth-sweep step is inspected
 - **THEN** it points at the severity rubric's low-severity categories as what to look for, not only at the structural passes it runs after
+
+#### Scenario: A description claim the diff contradicts is a finding
+- **WHEN** a pull request's description claims behavior the diff does not
+  implement, falls short of, or exceeds
+- **THEN** the review reports it as a `description-drift` finding, severity
+  by the normal rubric
+
+#### Scenario: Description-drift is scoped to reviews that saw a description
+- **WHEN** no pull request title or description was available to the review
+- **THEN** no `description-drift` finding is reported
 
 ### Requirement: Spec-aware verification
 id: spec-aware-review
