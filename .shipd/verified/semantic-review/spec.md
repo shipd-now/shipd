@@ -225,7 +225,12 @@ unstable or incorrect identity such as a list/row key derived from array
 index instead of a stable id, or a blocking/synchronous call where the
 surrounding context is async or event-driven — never pure style, naming
 preference, or formatting, which SHALL NOT be reported as a finding at any
-severity. The skill SHALL run a breadth sweep, after judging new code and
+severity. Those kinds SHALL NOT set the severity: the skill SHALL rate every
+finding by what the defect does, so data loss, data corruption, a security
+exposure, or a broken guarantee is `medium` or `high` even when it arrives as
+one of the minor kinds — a swallowed error that loses a file is not `low`.
+Every surface that states the low rubric SHALL state that floor beside it.
+The skill SHALL run a breadth sweep, after judging new code and
 applying the risk lenses, that revisits each changed file once more, end to
 end, for a remaining low-severity defect of those kinds that the targeted
 structural and signature-chasing passes above would not otherwise surface.
@@ -396,6 +401,18 @@ judgement passes as the skill, so the two surfaces do not drift.
 #### Scenario: Description-drift is scoped to reviews that saw a description
 - **WHEN** no pull request title or description was available to the review
 - **THEN** no `description-drift` finding is reported
+
+#### Scenario: Impact overrides the kind that surfaced a defect
+- **WHEN** a defect arrives as one of the low rubric's minor kinds — a
+  swallowed error — but loses a file when the error fires
+- **THEN** the review rates it `medium` or `high`, not `low`, so it blocks
+  the merge
+
+#### Scenario: Both rubric surfaces state the impact floor
+- **WHEN** `plugins/s/skills/review/SKILL.md` and
+  `plugins/s/harness/bodies/review.md` are inspected
+- **THEN** each states that the low list names kinds of defect rather than
+  severities, and that impact floors a finding at `medium` or `high`
 
 ### Requirement: Spec-aware verification
 id: spec-aware-review

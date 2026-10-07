@@ -127,6 +127,18 @@ _AUTHZ_FLOOR_PATTERNS = (
     re.compile(r"(?is)\bhigh\b.{0,160}authorization boundary"),
 )
 
+# Proxies for "the impact severity floor is stated": the low rubric lists
+# *kinds* of defect, and a surface carrying it must say the kind does not set
+# the severity — otherwise a data-loss bug arriving as a "swallowed error"
+# gets rated low, and low never blocks a merge. Each surface must say both
+# that the list is kinds-not-severities and that impact overrides it.
+_IMPACT_FLOOR_PATTERNS = (
+    # `[*_\s]*` so markdown emphasis around the word — "names *kinds* of
+    # defect" — does not defeat the match.
+    re.compile(r"(?is)kinds?[*_\s]+of[*_\s]+defect,?[*_\s]+not[*_\s]+severit"),
+    re.compile(r"(?is)data loss.{0,200}\b(?:medium|high)\b"),
+)
+
 MOVED_HEADINGS = (
     "## Machine output mode",
     "## Posting to a PR",
@@ -245,6 +257,10 @@ def _exposure_floor_stated(text):
         any(p.search(text) for p in _EXPOSURE_FLOOR_PATTERNS)
         and any(p.search(text) for p in _AUTHZ_FLOOR_PATTERNS)
     )
+
+
+def _impact_floor_stated(text):
+    return all(p.search(text) for p in _IMPACT_FLOOR_PATTERNS)
 
 
 def _taxonomy_field_and_values(path):
@@ -441,6 +457,31 @@ class OtherRubricSurfacesUntouchedTest(unittest.TestCase):
     def test_harness_review_body_names_no_reference_path(self):
         text = _read(HARNESS_REVIEW_BODY)
         self.assertNotRegex(text, REFERENCES_UNDER_SKILL_RE)
+
+
+class ImpactFloorParityTest(unittest.TestCase):
+    """Both surfaces carrying the low rubric also carry its impact floor.
+
+    The low rubric lists kinds of defect — a swallowed error, a leak on a
+    rare path, dead code. Without a floor saying the kind does not set the
+    severity, a data-loss bug that arrives as a swallowed error gets rated
+    `low`, and low never blocks a merge. A benchmarking run found exactly
+    that: a file lost when `chmod` failed after a rename, rated low.
+
+    The copilot template is deliberately excluded — it still carries the
+    older style-and-nits rubric, a tracked inconsistency rather than a
+    surface this floor applies to.
+    """
+
+    def test_both_rubric_surfaces_state_the_impact_floor(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertTrue(
+                    _impact_floor_stated(_read(path)),
+                    f"{path} must state that the low rubric names kinds of "
+                    "defect rather than severities, and that impact (data "
+                    "loss, corruption, exposure, a broken guarantee) floors "
+                    "a finding at medium or high")
 
 
 class ReferenceFreeSurfacesCarryRiskLensesTest(unittest.TestCase):
