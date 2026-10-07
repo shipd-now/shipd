@@ -232,14 +232,18 @@ structural and signature-chasing passes above would not otherwise surface.
 
 Where a pull request's title and description are available, the skill SHALL check each concrete claim against the diff and report a mismatch as its own finding in the `description-drift` category, severity by the normal rubric, judged on what the mismatch implies for correctness or completeness — never a finding for a description that is merely terse or informal.
 
-The five checks the skill applies to judge new code (a wrong quantity
+Where a check applies to every diff that carries the thing it inspects and
+its detail lives in a conditionally-loaded reference file, the check's name
+SHALL be stated inline in `SKILL.md` — so that skipping the reference's read
+degrades only the depth of guidance available, never the existence of the
+check itself. This SHALL hold for the five new-code checks (a wrong quantity
 measured, an escape hatch lapsing the guarantee, non-termination on hostile
-input, a boundary disagreement, and a doc comment versus the actual code)
-SHALL have their names stated inline in `SKILL.md`, outside any
-conditionally-loaded reference file — the same always-applies guarantee the
-risk lenses already carry — so that skipping the reference's read degrades
-only the depth of guidance available, never the existence of the check
-itself.
+input, a boundary disagreement, and a doc comment versus the actual code),
+for the five downstream-impact checks (untouched callers, every match a
+candidate, `--lang` missing extensionless scripts, changed constants as
+contract changes, and uneven sibling sites), for the two call-site-value
+checks (an unreachable guard and a comment the real call sites contradict),
+and for the risk lenses, which already carry it.
 
 Emoji SHALL appear at four sanctioned sites and nowhere else: the ✅/❌ verdict
 marker, the 🔴/🟠/🟡 severity dots of the summary table, the ☕ of the posted
@@ -371,6 +375,13 @@ judgement passes as the skill, so the two surfaces do not drift.
   References table
 - **THEN** all five new-code check names appear inline, so a reviewer that
   never opens `references/new-code-checks.md` still knows every check exists
+
+#### Scenario: The extracted call-site check names survive the same way
+- **WHEN** `plugins/s/skills/review/SKILL.md` is inspected outside its
+  References table
+- **THEN** the five downstream-impact check names and the two
+  call-site-value check names appear inline too, so a reviewer that never
+  opens `references/call-site-tracing.md` still knows every check exists
 
 #### Scenario: The breadth sweep names its target categories
 - **WHEN** `plugins/s/skills/review/SKILL.md`'s breadth-sweep step is inspected

@@ -159,5 +159,5 @@ both its sub-agent and single-agent renderings.
 - **WHEN** `plugins/s/harness/bodies/build.md` is rendered with and without
   the subagents feature
 - **THEN** both renderings carry the consult sentence naming the four tiers
-  and the rubric path, and each rendered body stays under the 120-line
-  budget
+  and the rubric path, and each rendered body stays within the
+  rendered-body size budget `harness-command-bodies` owns
