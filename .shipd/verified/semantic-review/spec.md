@@ -235,7 +235,24 @@ applying the risk lenses, that revisits each changed file once more, end to
 end, for a remaining low-severity defect of those kinds that the targeted
 structural and signature-chasing passes above would not otherwise surface.
 
-Where a pull request's title and description are available, the skill SHALL check each concrete claim against the diff and report a mismatch as its own finding in the `description-drift` category, severity by the normal rubric, judged on what the mismatch implies for correctness or completeness — never a finding for a description that is merely terse or informal.
+Where a pull request's title and description are available, the skill SHALL
+check them against the diff in **both** directions and report a mismatch from
+either as its own finding in the `description-drift` category, severity by the
+normal rubric and its impact floor, judged on what the mismatch implies for
+correctness or completeness — never a finding for a description that is merely
+terse or informal. The first direction takes each concrete claim and asks
+whether the diff supports, contradicts, or falls short of it. The second takes
+the diff's substantial content — a new feature path, dependency, migration, or
+public surface, or a behavioral change to an existing one — and asks what the
+description never mentions; it SHALL be a distinct pass, because unmentioned
+scope carries no claim for the first direction to iterate over. Every surface
+stating this check SHALL name both directions, so a reviewer that opens no
+reference file runs neither pass believing the other sufficed.
+
+A `description-drift` finding whose drift is a property of the description
+rather than of any one line SHALL carry its primary anchor alone. A further
+location SHALL be added only where that site independently shows the drift on
+its own terms.
 
 Where a check applies to every diff that carries the thing it inspects and
 its detail lives in a conditionally-loaded reference file, the check's name
@@ -413,6 +430,24 @@ judgement passes as the skill, so the two surfaces do not drift.
   `plugins/s/harness/bodies/review.md` are inspected
 - **THEN** each states that the low list names kinds of defect rather than
   severities, and that impact floors a finding at `medium` or `high`
+
+#### Scenario: Unmentioned scope is found by the second direction
+- **WHEN** a pull request's description is accurate about what it claims but
+  the diff also adds a feature path the description never mentions
+- **THEN** the review reports a `description-drift` finding for the
+  unmentioned scope, which checking each claim against the diff cannot reach
+
+#### Scenario: Every description surface names both directions
+- **WHEN** `plugins/s/skills/review/SKILL.md`,
+  `plugins/s/harness/bodies/review.md`, and
+  `plugins/s/skills/review/references/pr-description.md` are inspected
+- **THEN** each names both directions of the check
+
+#### Scenario: A description-level finding does not fan out to code sites
+- **WHEN** a drift is a property of the description rather than of any
+  particular line
+- **THEN** the finding carries its primary anchor alone, with a further
+  location only where that site independently shows the drift
 
 ### Requirement: Spec-aware verification
 id: spec-aware-review

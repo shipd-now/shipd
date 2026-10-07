@@ -132,6 +132,16 @@ _AUTHZ_FLOOR_PATTERNS = (
 # the severity — otherwise a data-loss bug arriving as a "swallowed error"
 # gets rated low, and low never blocks a merge. Each surface must say both
 # that the list is kinds-not-severities and that impact overrides it.
+# Proxies for "the description check runs in both directions". The shipped
+# v0.6.253 wording asked only for "verify every claim against the diff",
+# which cannot reach an undersell: unmentioned scope has no claim to check,
+# so a benchmark run matched the undersell case 0 times out of 3 in every
+# configuration. Each surface must name the second direction explicitly.
+_BOTH_DIRECTIONS_PATTERNS = (
+    re.compile(r"(?is)both\s+directions"),
+    re.compile(r"(?is)(?:never\s+mentions|does\s+not\s+mention|unmentioned)"),
+)
+
 _IMPACT_FLOOR_PATTERNS = (
     # `[*_\s]*` so markdown emphasis around the word — "names *kinds* of
     # defect" — does not defeat the match.
@@ -261,6 +271,10 @@ def _exposure_floor_stated(text):
 
 def _impact_floor_stated(text):
     return all(p.search(text) for p in _IMPACT_FLOOR_PATTERNS)
+
+
+def _both_directions_stated(text):
+    return all(p.search(text) for p in _BOTH_DIRECTIONS_PATTERNS)
 
 
 def _taxonomy_field_and_values(path):
@@ -457,6 +471,34 @@ class OtherRubricSurfacesUntouchedTest(unittest.TestCase):
     def test_harness_review_body_names_no_reference_path(self):
         text = _read(HARNESS_REVIEW_BODY)
         self.assertNotRegex(text, REFERENCES_UNDER_SKILL_RE)
+
+
+class DescriptionCheckDirectionsTest(unittest.TestCase):
+    """Every surface carrying the description check names both directions.
+
+    Checking each claim against the diff finds contradictions and oversells.
+    It cannot find an undersell: unmentioned scope has no claim to iterate
+    over, so the pass has to run the other way too — the diff's substantial
+    content against what the description is silent about. The first shipped
+    wording asked only for the claim direction and matched the benchmark's
+    undersell case 0 of 3 rounds in every configuration.
+
+    `pr-description.md` carries the full method; `SKILL.md` and the harness
+    body each have to name the second direction themselves, since a reader
+    who never opens the reference would otherwise run one pass and believe
+    the check complete.
+    """
+
+    def test_every_description_surface_names_both_directions(self):
+        paths = (SKILL_MD, HARNESS_REVIEW_BODY,
+                 os.path.join(REFERENCES_DIR, "pr-description.md"))
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertTrue(
+                    _both_directions_stated(_read(path)),
+                    f"{path} must name both directions of the description "
+                    "check — each claim against the diff, and the diff's "
+                    "substance against what the description never mentions")
 
 
 class ImpactFloorParityTest(unittest.TestCase):

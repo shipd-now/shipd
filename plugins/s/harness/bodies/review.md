@@ -74,9 +74,14 @@ edits the repository.
    findings verbatim; an archived `.shipd/completed/` change has none to
    surface, its deltas already merged.
 10. **Check the PR description against the diff when one is available —
-    given inline, or via `gh pr view --json title,body`.** A title/body
-    claim the diff contradicts or exceeds is its own finding, category
-    `description-drift`, severity by the normal rubric.
+    given inline, or via `gh pr view --json title,body`.** Check both
+    directions: each title/body claim against the diff, and the diff's
+    substantial content against what the description never mentions — an
+    unmentioned feature has no claim to check, so only the second direction
+    finds it. Either mismatch is its own finding, category
+    `description-drift`, severity by the normal rubric. Anchor a
+    description-level finding at one location only, unless another site
+    independently shows the drift.
 11. **Report by cohort, most severe first.** Give each finding a location, what
     is wrong, why it matters, a concrete fix, and an explicit severity:
     - **high** — a correctness bug, a contract break with an un-updated
