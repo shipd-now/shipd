@@ -337,11 +337,19 @@ class ShippedRenderTest(unittest.TestCase):
         content a reviewer later had to restore. A body that legitimately
         grows a step belongs under a raised ceiling, not under reworded
         instructions.
+
+        The ceiling rose again, 140 -> 160, in `review-location-impact`: the
+        review body reached 139 of 140 carrying that change's three new
+        rubric rules, and the compression that bought the last line damaged
+        meaning — "a cleanup dropping the record or the data" lost the
+        orphaning the instance describes, the same content-loss failure mode
+        this docstring already records twice over. `body-content` owns this
+        number now, so a future raise belongs there, not restated here.
         """
         for command in hb.commands():
             lines = len(hb.render(command, hr.FEATURES,
                                   refs_dir=REFS).splitlines())
-            self.assertLess(lines, 140,
+            self.assertLess(lines, 160,
                             "%s renders %d lines" % (command, lines))
 
     def test_a_fallback_pointer_appears_only_when_files_can_be_read(self):

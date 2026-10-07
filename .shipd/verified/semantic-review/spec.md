@@ -243,10 +243,13 @@ rendered report SHALL carry an effort score (1–5), a findings header reading
 with 🔴/🟠/🟡 severity dots, a collapsible walkthrough, and an explicit
 list of what could not be verified.
 
-A finding's location SHALL name the line its own fix would change — never a
-caller or symptom site the fix does not touch. Where the same defect recurs
-at more than one call site, the skill SHALL report one finding whose
-locations name every recurring site, rather than one finding per site.
+A finding's primary location SHALL name the line its own fix would change —
+never a symptom site in place of it. A further location SHALL be added only
+where that site independently shows the defect on its own terms; this is the
+general permission the packaging and description-drift cases rely on, so no
+other requirement SHALL grant it separately. Where the same defect recurs at
+more than one call site, the skill SHALL report one finding whose locations
+name every recurring site, rather than one finding per site.
 
 The skill SHALL run a breadth sweep, after judging new code and applying the
 risk lenses, that revisits each changed file once more, end to end, for a
@@ -266,9 +269,17 @@ corrupted, exposed, or promised and unmet. Pure style, naming preference, and
 formatting SHALL NOT be reported as a finding at any severity. The skill SHALL
 rate every finding by what the defect does rather than by the kind of defect it
 is, so data loss, data corruption, a security exposure, or a broken guarantee
-is `medium` or `high` however minor its kind looks — an error swallowed on a
-path that loses a file is not `low`. Every surface that states the low rubric
-SHALL state that rating rule beside it.
+is `medium` or `high` however minor its kind looks. Because those four are
+categories rather than situations, every surface stating the rating rule SHALL
+also name concrete instances a reviewer can recognise: a success response that
+hides a failure, a cleanup path that drops the record and leaves the data or
+the reverse, and an error path that loses the only copy. Every surface that
+states the low rubric SHALL state that rating rule beside it.
+
+Uncertainty about a finding's severity SHALL NOT be grounds for omitting the
+finding. Where the skill cannot place a severity, it SHALL report the finding
+at its best estimate and say the estimate is uncertain, rather than leaving it
+out — a defect it can describe is a defect it SHALL report.
 
 Where a pull request's title and description are available, the skill SHALL
 check them against the diff in **both** directions and report a mismatch from
@@ -1031,7 +1042,7 @@ that flow rather than restating it.
 Guidance that runs on every review SHALL stay inline in `SKILL.md`: the
 workflow steps, the severity rubric, the presentation shape, the review-start
 difftastic probe and its degradation ladder, the base-freshness block, and the
-guardrails. `SKILL.md` SHALL stay under 330 lines; this requirement owns that
+guardrails. `SKILL.md` SHALL stay under 350 lines; this requirement owns that
 ceiling, and no other requirement SHALL restate the figure.
 
 Each reference file SHALL open with a level-1 title and state its own load
@@ -1063,7 +1074,7 @@ into a reference SHALL NOT change that guidance's substance.
 
 #### Scenario: The skill body fits the ceiling
 - **WHEN** `plugins/s/skills/review/SKILL.md` is measured
-- **THEN** it is under 330 lines
+- **THEN** it is under 350 lines
 
 #### Scenario: A reference states its own trigger
 - **WHEN** a file under `plugins/s/skills/review/references/` is read on its own
@@ -1096,8 +1107,9 @@ SHALL rate on the existing high, medium and low rubric with no floor.
 
 A packaging finding that a file the diff adds is omitted from what the manifest
 publishes SHALL anchor at the manifest — the line a fix would change — and
-SHALL name the importing line as a further location, because that is the site
-at which the omission breaks.
+SHALL name the importing line as a further location under the general
+further-location permission the review skill states, because the import
+independently shows the omission: it is the line that fails at run time.
 
 The `--json` finding taxonomy SHALL accept the values `security`,
 `performance`, `stability`, and `data-integrity` in addition to those it

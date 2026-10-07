@@ -179,9 +179,11 @@ finds it.
 
 ### 6. Report by cohort
 Group findings under cohort headings, most severe first. For each finding: a
-**location** (the fix site, never a symptom), **what**, **why**, **fix**, and
-**severity**. When a defect recurs at multiple sites, write one finding whose
-`locations` array names every site.
+**location** (the fix site — the line your own fix would change, never a
+symptom site in place of it), **what**, **why**, **fix**, and **severity**. A
+further location is added only where that site independently shows the
+defect on its own terms. When a defect recurs at multiple sites, write one
+finding whose `locations` array names every site.
 
 **Severity rubric.**
 - **high** — a correctness bug, a contract break with an un-updated consumer, or an
@@ -194,13 +196,20 @@ Group findings under cohort headings, most severe first. For each finding: a
 - **Impact rule.** Rate every finding by what the defect does, not by the kind
   of defect it is: data loss, data corruption, a security exposure, or a
   broken guarantee is `medium` or `high` however minor the kind looks. An error
-  swallowed on a path that loses a file is not low.
+  swallowed on a path that loses a file is not low. Concrete instances: a
+  success response that hides a failure — an empty result returned as if real
+  while a count or flag says otherwise; a cleanup path that drops the record
+  and leaves the data, or the reverse; and an error path that loses the only
+  copy.
 - **Exposure floor.** A secret or credential exposure finding, or an authorization
   boundary reached without the caller's scope check, is always `high`, whatever the
   reviewer's confidence.
 
 Any high **or** medium finding blocks (Fix required); low never blocks. When
-unsure between two levels, state the doubt rather than inflating.
+unsure between two levels, state the doubt rather than inflating. Uncertainty
+about severity is never grounds for omitting a finding: where you cannot
+place one, report it at your best estimate and say the estimate is
+uncertain — a defect you can describe is a defect you report.
 
 ### 7. Check test coverage, rolled up per cohort
 Ask of **every** finding you write, at **every** severity: would an existing

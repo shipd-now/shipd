@@ -89,8 +89,9 @@ edits the repository.
     `description-drift`, severity by the normal rubric. Anchor a
     description-level finding at one location only, unless another site
     independently shows the drift.
-11. **Report by cohort, most severe first.** Give each finding a location, what
-    is wrong, why it matters, a concrete fix, and an explicit severity:
+11. **Report by cohort, most severe first.** Give each finding a location (fix
+    site, not symptom; a further site only where it independently shows the
+    defect), what is wrong, why it matters, a fix, and severity:
     - **high** — a correctness bug, a contract break with an un-updated
       consumer, or an unmet spec scenario;
     - **medium** — an unhandled edge case, a caller at genuine risk, or a
@@ -100,14 +101,17 @@ edits the repository.
       formatting are never findings.
     Rate every finding by what the defect does, not by the kind of defect it
     is: data loss, data corruption, a security exposure, or a broken guarantee
-    is medium or high however minor the kind looks — an error swallowed on a
-    path that loses a file is not low. A secret or credential exposure
-    finding, or an authorization boundary reached without a scope check, is
-    always **high** regardless of your confidence.
+    is medium or high however minor the kind looks — a success response that
+    hides a failure, returning an empty result as if real while a count or
+    flag says otherwise; a cleanup path that drops the record but leaves the
+    data, or the reverse; and an error path that loses the only copy. A secret
+    or credential exposure finding, or an authorization boundary reached
+    without a scope check, is always **high** regardless of your confidence.
     Open with an effort score of 1–5 justified by the counts, then the verdict:
     **Fix required** when any finding is high or medium, **Ship it** otherwise.
-    When you are unsure between two levels, state the doubt rather than
-    inflating it. Close with an explicit list of what you could not verify.
+    When unsure between two levels, state the doubt, not inflate it; never drop
+    a finding for unclear severity — report your best estimate, flagged
+    uncertain. Close with an explicit list of what you could not verify.
 12. **Check test coverage, rolled up per cohort.** For every finding you
     write, at every severity, ask whether an existing test would fail if
     that defect regressed. Raise one `test-coverage` finding per cohort

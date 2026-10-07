@@ -157,6 +157,42 @@ MOVED_HEADINGS = (
     "## Spec-aware review",
 )
 
+# Proxies for "the generalised further-location permission is stated, and the
+# fix-site prohibition on a symptom is qualified by it rather than standing
+# as a flat ban". `review-location-impact` generalised the rule already
+# carried for `description-drift`'s further location so the location field's
+# "fix site, never a symptom" parenthetical and the permission read as one
+# rule rather than a contradiction a reviewer could read either reference or
+# the inline surface and land on. `[*_\s]+` guards every join against
+# markdown emphasis defeating the match.
+_LOCATION_RULE_PATTERN = re.compile(
+    r"(?is)fix[*_\s]+site.{0,40}(?:never|not)[*_\s]+(?:a[*_\s]+)?symptom"
+    r".{0,120}further[*_\s]+(?:location|site).{0,80}independently[*_\s]+"
+    r"shows[*_\s]+the[*_\s]+defect")
+
+# The three concrete impact instances (review-location-impact), one pattern
+# per instance, written loosely enough to match each surface's own wording
+# (SKILL.md and the copilot template share phrasing; the harness body
+# compresses it to fit its line ceiling) while still distinguishing the
+# three from each other, per plan.md's Implementation section.
+IMPACT_INSTANCE_PATTERNS = (
+    re.compile(r"(?is)success[*_\s]+response.{0,20}hid(?:es|ing)[*_\s]+"
+               r"(?:a[*_\s]+)?failure"),
+    re.compile(r"(?is)cleanup.{0,20}drop(?:s|ping)[*_\s]+the[*_\s]+record"),
+    re.compile(r"(?is)los(?:es|ing)[*_\s]+the[*_\s]+only[*_\s]+copy"),
+)
+
+# Proxy for "the no-drop rule is stated": uncertainty about severity is never
+# grounds to omit a finding; report the best estimate and flag it uncertain
+# instead. Measured on v0.6.261: edge-case findings fell 8 -> 2 over three
+# rounds while test-coverage findings stayed flat at 4/4/4, and because the
+# medium rubric already names an unhandled edge case, a re-rating would have
+# moved them *up*, not away — they were being dropped, not re-rated.
+_NO_DROP_RULE_PATTERN = re.compile(
+    r"(?is)never.{0,70}(?:grounds[*_\s]+for[*_\s]+omitting[*_\s]+a[*_\s]+"
+    r"finding|drop[*_\s]+a[*_\s]+finding).{0,100}best[*_\s]+estimate"
+    r".{0,40}uncertain")
+
 # The defect-kind words the old `low` bullet named on `SKILL.md` and the
 # harness body, before this change moved the kinds list into the
 # breadth-sweep step. A lowercased match of any of these inside the `low`
@@ -330,9 +366,24 @@ class SkillMdStructureTest(unittest.TestCase):
         cls.lines = cls.text.splitlines()
 
     def test_under_line_ceiling(self):
+        """SKILL.md's ceiling rose from 330 to 350.
+
+        Everything review-location-impact adds is a rule applied on every
+        review, and the detail that could be extracted already has been —
+        the new-code checks, the downstream checks, the call-site checks, the
+        risk lenses. A measured defect (the location rule's contradiction
+        between SKILL.md and a conditionally-read reference) showed an
+        always-applies rule loses to the inline surface when it is deferred
+        to a reference, so reflow and extraction cannot pay for this growth.
+        The precedent is exact: the harness body's ceiling went 120 -> 140 in
+        v0.6.254 for the same reason — "The ceiling guards against bloat; it
+        is not a budget to compress real instructions into... A body that
+        legitimately grows a step belongs under a raised ceiling, not under
+        reworded instructions."
+        """
         self.assertLess(
-            len(self.lines), 330,
-            "SKILL.md must stay under 330 lines once the references split "
+            len(self.lines), 350,
+            "SKILL.md must stay under 350 lines once the references split "
             "out the condition-gated sections")
 
     def test_no_moved_headings_remain(self):
@@ -559,6 +610,84 @@ class DescriptionCheckDirectionsTest(unittest.TestCase):
                     f"{path} must name both directions of the description "
                     "check — each claim against the diff, and the diff's "
                     "substance against what the description never mentions")
+
+
+class LocationRuleGeneralisedTest(unittest.TestCase):
+    """The two reference-free surfaces state the generalised location rule.
+
+    `review-skill`'s location field used to forbid a symptom site inline
+    while `review-risk-lenses`'s packaging lens separately permitted one for
+    a file-not-shipped finding — one requirement forbade what the other
+    mandated. Measured on v0.6.261: the pg-pool finding named the second
+    location in only 1 of 3 rounds, because the permission lived in a
+    conditionally-read reference while the prohibition sat on the always-read
+    surface. `review-location-impact` generalises the rule inline instead, so
+    the fix-site prohibition and the further-location permission read as one
+    rule on both surfaces that can read no reference file. The copilot
+    template is excluded here on purpose — it carries no fix-site or symptom
+    rule to begin with, so there is nothing for the generalisation to attach
+    to.
+    """
+
+    def test_both_reference_free_surfaces_state_the_generalised_rule(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _LOCATION_RULE_PATTERN,
+                    f"{path} must state the fix-site prohibition on a "
+                    "symptom together with the further-location permission, "
+                    "not as an unqualified ban")
+
+
+class ImpactInstancesPresentTest(unittest.TestCase):
+    """All three rubric surfaces name the three concrete impact instances.
+
+    The abstract impact rule (data loss, corruption, exposure, a broken
+    guarantee) is four nouns a reviewer did not recognise in practice: on
+    v0.6.261 `QuerySummaries` stayed `low` in all three rounds while its own
+    finding text described a 200 with an empty page, a non-zero total, and
+    `has_more` true — it never connected that to "a broken guarantee". Each
+    instance here is drawn from a measured defect (`QuerySummaries`,
+    `cleanup_media`, `move_file`), so the test asserts on a distinctive
+    phrase per instance rather than a whole sentence — a later reword of the
+    surrounding prose should not break this test spuriously.
+    """
+
+    def test_each_instance_appears_on_every_surface(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY, COPILOT_SKILL_MD):
+            text = _read(path)
+            for pattern in IMPACT_INSTANCE_PATTERNS:
+                with self.subTest(path=path, pattern=pattern.pattern):
+                    self.assertRegex(
+                        text, pattern,
+                        f"{path} is missing a concrete impact instance "
+                        f"matching {pattern.pattern!r}")
+
+
+class NoDropRuleTest(unittest.TestCase):
+    """All three rubric surfaces state the no-drop rule.
+
+    Measured on v0.6.261 (3 PRs x 3 rounds): edge-case findings fell from
+    4/3/1 to 1/1/0 per round, 8 total down to 2, while test-coverage findings
+    stayed exactly flat at 4/4/4. The `low` bullet's "nothing lost, corrupted,
+    exposed, or promised and unmet" definition left those findings with
+    neither a kind to anchor on nor a severity they could prove, so the
+    reviewer reported nothing rather than rate them. That is a worse failure
+    mode than mis-rating: a mis-rated defect is at least countable. Because
+    the `medium` rubric already names "an unhandled edge case", a re-rating
+    would have moved these findings *up*, not away, which is the evidence
+    they were being dropped rather than re-rated. This pins the fix: never
+    omit a finding for an unclear severity, report the best estimate instead.
+    """
+
+    def test_all_rubric_surfaces_state_the_no_drop_rule(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY, COPILOT_SKILL_MD):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _NO_DROP_RULE_PATTERN,
+                    f"{path} must state that an unclear severity is never "
+                    "grounds to drop a finding, and that the finding is "
+                    "instead reported at a best estimate, flagged uncertain")
 
 
 class ImpactFloorParityTest(unittest.TestCase):
