@@ -138,15 +138,16 @@ _BOTH_DIRECTIONS_PATTERNS = (
     re.compile(r"(?is)(?:never\s+mentions|does\s+not\s+mention|unmentioned)"),
 )
 
-# Proxies for "the impact severity floor is stated": the low rubric lists
-# *kinds* of defect, and a surface carrying it must say the kind does not set
-# the severity — otherwise a data-loss bug arriving as a "swallowed error"
-# gets rated low, and low never blocks a merge. Each surface must say both
-# that the list is kinds-not-severities and that impact overrides it.
+# Proxies for "the rating rule is stated": severity follows what a defect
+# does, never the kind of defect it is — otherwise a data-loss bug arriving
+# as a "swallowed error" gets rated low, and low never blocks a merge. Each
+# surface must say both that rating follows impact rather than kind, and
+# that data loss reaches medium or high.
 _IMPACT_FLOOR_PATTERNS = (
-    # `[*_\s]*` so markdown emphasis around the word — "names *kinds* of
-    # defect" — does not defeat the match.
-    re.compile(r"(?is)kinds?[*_\s]+of[*_\s]+defect,?[*_\s]+not[*_\s]+severit"),
+    # `[*_\s]+` so markdown emphasis around a word does not defeat the match.
+    re.compile(
+        r"(?is)what[*_\s]+the[*_\s]+defect[*_\s]+does,?[*_\s]+not[*_\s]+by"
+        r"[*_\s]+the[*_\s]+kind[*_\s]+of[*_\s]+defect"),
     re.compile(r"(?is)data loss.{0,200}\b(?:medium|high)\b"),
 )
 
@@ -155,6 +156,30 @@ MOVED_HEADINGS = (
     "## Posting to a PR",
     "## Spec-aware review",
 )
+
+# The defect-kind words the old `low` bullet named on `SKILL.md` and the
+# harness body, before this change moved the kinds list into the
+# breadth-sweep step. A lowercased match of any of these inside the `low`
+# bullet's own text means the kind list drifted back under `low`.
+MOVED_KIND_WORDS = (
+    "swallowed", "leak", "duplicated", "unread", "unstable", "blocking call",
+)
+
+# Matches from the `- **low**` bullet marker through the first occurrence of
+# the word "findings" and the rest of that line — the bullet always ends
+# "... are never findings[.,]...", so this captures exactly the bullet's own
+# text without spilling into whatever rule or sentence follows it (which, on
+# the harness body and the copilot template, sits on the very next line with
+# no blank-line or bullet-marker boundary to stop a looser scan).
+LOW_BULLET_RE = re.compile(r"-\s*\*\*low\*\*.*?\bfindings\b[^\n]*",
+                           re.DOTALL | re.IGNORECASE)
+
+
+def _low_bullet_text(text):
+    match = LOW_BULLET_RE.search(text)
+    if match is None:
+        raise AssertionError("no '- **low**' bullet found")
+    return match.group(0)
 
 # Matches a reference path as SKILL.md is expected to name it, e.g.
 # "${CLAUDE_PLUGIN_ROOT}/skills/review/references/spec-aware.md".
@@ -403,20 +428,26 @@ class SkillMdStructureTest(unittest.TestCase):
                     f"{label} check(s) not named inline in SKILL.md "
                     f"(outside the References table): {missing}")
 
-    def test_breadth_sweep_points_at_the_rubric_categories(self):
+    def test_breadth_sweep_names_the_defect_kinds_itself(self):
         """The breadth-sweep step tells the reviewer what to look for.
 
-        A line-budget trim once dropped "end to end" and the pointer at the
-        severity rubric's own category list from this step, leaving only a
-        vague "revisit each file" instruction — the categories are what the
-        sweep exists to find, so losing the pointer silently weakens it.
+        This change moves the kinds list out from under the severity
+        rubric's `low` bullet and into the breadth-sweep step itself, so the
+        step no longer points at the rubric for the list — it states a
+        representative set of the kinds directly. A line-budget trim once
+        dropped "end to end" from this step, so that phrasing is still
+        pinned here too.
         """
         match = re.search(r"^### 5c\. [^\n]*\n(.*?)(?=\n### |\Z)", self.text,
                           re.DOTALL | re.MULTILINE)
         self.assertIsNotNone(match, "no '### 5c.' breadth-sweep step found")
         section = match.group(1).lower()
         self.assertIn("end to end", section)
-        self.assertIn("rubric", section)
+        for kind in ("swallowed", "leak", "dead or duplicated",
+                     "never read", "unstable", "blocking call"):
+            self.assertIn(
+                kind, section,
+                f"breadth-sweep step is missing defect kind {kind!r}")
 
     def test_every_reference_file_is_named(self):
         named = set(REFERENCE_PATH_RE.findall(self.text))
@@ -531,28 +562,65 @@ class DescriptionCheckDirectionsTest(unittest.TestCase):
 
 
 class ImpactFloorParityTest(unittest.TestCase):
-    """Both surfaces carrying the low rubric also carry its impact floor.
+    """All three rubric surfaces carrying the low bullet also carry the
+    rating rule beside it.
 
-    The low rubric lists kinds of defect — a swallowed error, a leak on a
-    rare path, dead code. Without a floor saying the kind does not set the
-    severity, a data-loss bug that arrives as a swallowed error gets rated
-    `low`, and low never blocks a merge. A benchmarking run found exactly
-    that: a file lost when `chmod` failed after a rename, rated low.
+    The low bullet names no kind of defect any more — the kinds moved to the
+    breadth sweep — so without a stated rule that severity follows impact
+    rather than kind, a data-loss bug that arrives as a swallowed error could
+    still be rated `low`, and low never blocks a merge. A benchmarking run
+    found exactly that: a file lost when `chmod` failed after a rename, rated
+    low.
 
-    The copilot template is deliberately excluded — it still carries the
-    older style-and-nits rubric, a tracked inconsistency rather than a
-    surface this floor applies to.
+    The copilot template used to be excluded here: it carried the older
+    style-and-nits rubric, a tracked inconsistency rather than a surface this
+    rule applied to. That rubric is now fixed to match the other two, so the
+    template joins the loop — the widened parity check is what stops the
+    drift recurring.
     """
 
-    def test_both_rubric_surfaces_state_the_impact_floor(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+    def test_all_rubric_surfaces_state_the_rating_rule(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY, COPILOT_SKILL_MD):
             with self.subTest(path=path):
                 self.assertTrue(
                     _impact_floor_stated(_read(path)),
-                    f"{path} must state that the low rubric names kinds of "
-                    "defect rather than severities, and that impact (data "
-                    "loss, corruption, exposure, a broken guarantee) floors "
-                    "a finding at medium or high")
+                    f"{path} must state that severity follows what the "
+                    "defect does rather than the kind of defect it is, and "
+                    "that impact (data loss, corruption, exposure, a broken "
+                    "guarantee) rates a finding medium or high")
+
+
+class LowBulletNamesNoKindTest(unittest.TestCase):
+    """The `low` bullet itself names no defect kind, on any of the three
+    rubric surfaces.
+
+    Measured on a ReviewBench benchmark run (v0.6.260, 3 rounds): printing
+    the defect kinds under the `low` heading is what made the impact floor
+    lose every time it mattered — `move_file` deleting the only copy, rated
+    `low` in one round and `medium` in another, and `QuerySummaries`
+    swallowing a database error, rated `low` in all three rounds. The kinds
+    now live in the breadth-sweep step, where they are a detection aid
+    rather than a severity label; this test pins the other half of that
+    move — that the `low` bullet never lists them again.
+    """
+
+    def test_low_bullet_names_no_moved_defect_kind(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY, COPILOT_SKILL_MD):
+            with self.subTest(path=path):
+                bullet = _low_bullet_text(_read(path)).lower()
+                found = [w for w in MOVED_KIND_WORDS if w in bullet]
+                self.assertFalse(
+                    found,
+                    f"{path}'s low bullet still names defect kind(s) "
+                    f"{found}: {bullet!r}")
+
+    def test_copilot_low_bullet_drops_the_style_and_nits_wording(self):
+        bullet = _low_bullet_text(_read(COPILOT_SKILL_MD)).lower()
+        for phrase in ("redundancy", "defensive nits"):
+            self.assertNotIn(
+                phrase, bullet,
+                f"copilot template's low bullet still carries {phrase!r}, "
+                "the contradiction task 5.1 was meant to remove")
 
 
 class ReferenceFreeSurfacesCarryRiskLensesTest(unittest.TestCase):

@@ -248,22 +248,27 @@ caller or symptom site the fix does not touch. Where the same defect recurs
 at more than one call site, the skill SHALL report one finding whose
 locations name every recurring site, rather than one finding per site.
 
-A `low`-severity finding SHALL be a real but minor defect — a swallowed or
-silently-dropped error, a resource or file leak on a rare or cleanup path,
-dead or duplicated code, a field or variable declared but never read, an
-unstable or incorrect identity such as a list/row key derived from array
-index instead of a stable id, or a blocking/synchronous call where the
-surrounding context is async or event-driven — never pure style, naming
-preference, or formatting, which SHALL NOT be reported as a finding at any
-severity. Those kinds SHALL NOT set the severity: the skill SHALL rate every
-finding by what the defect does, so data loss, data corruption, a security
-exposure, or a broken guarantee is `medium` or `high` even when it arrives as
-one of the minor kinds — a swallowed error that loses a file is not `low`.
-Every surface that states the low rubric SHALL state that floor beside it.
-The skill SHALL run a breadth sweep, after judging new code and
-applying the risk lenses, that revisits each changed file once more, end to
-end, for a remaining low-severity defect of those kinds that the targeted
-structural and signature-chasing passes above would not otherwise surface.
+The skill SHALL run a breadth sweep, after judging new code and applying the
+risk lenses, that revisits each changed file once more, end to end, for a
+remaining defect the targeted structural and signature-chasing passes above
+would not otherwise surface. That sweep SHALL name the kinds of defect it hunts
+— a swallowed or silently-dropped error, a resource or file leak on a rare or
+cleanup path, dead or duplicated code, a field or variable declared but never
+read, an unstable or incorrect identity such as a list/row key derived from
+array index instead of a stable id, and a blocking/synchronous call where the
+surrounding context is async or event-driven — and SHALL NOT describe them as
+minor, because the kind of a defect is a detection aid and not a severity
+class.
+
+The severity rubric SHALL NOT list those kinds under `low`. A `low`-severity
+finding SHALL be a real defect whose impact is contained — nothing lost,
+corrupted, exposed, or promised and unmet. Pure style, naming preference, and
+formatting SHALL NOT be reported as a finding at any severity. The skill SHALL
+rate every finding by what the defect does rather than by the kind of defect it
+is, so data loss, data corruption, a security exposure, or a broken guarantee
+is `medium` or `high` however minor its kind looks — an error swallowed on a
+path that loses a file is not `low`. Every surface that states the low rubric
+SHALL state that rating rule beside it.
 
 Where a pull request's title and description are available, the skill SHALL
 check them against the diff in **both** directions and report a mismatch from
@@ -408,11 +413,11 @@ judgement passes as the skill, so the two surfaces do not drift.
 - **THEN** the review reports one finding whose locations name every
   recurring site, not one finding per site
 
-#### Scenario: A real minor defect is rated low, not waved through
+#### Scenario: A real defect of a minor kind is reported, not waved through
 - **WHEN** the diff carries a swallowed error, a dead or duplicated block, an
   unread field, or an index-derived list key
-- **THEN** the review reports it as a low-severity finding rather than
-  omitting it as style
+- **THEN** the review reports it as a finding, rated by its own impact, rather
+  than omitting it as style
 
 #### Scenario: Pure style stays out of the findings
 - **WHEN** a diff carries only a naming preference, a formatting choice, or
@@ -420,9 +425,9 @@ judgement passes as the skill, so the two surfaces do not drift.
 - **THEN** the review reports no finding for it, at any severity
 
 #### Scenario: The breadth sweep runs after the targeted passes
-- **WHEN** a changed file carries a low-severity defect that sits beside a
-  hunk rather than inside it — so the structural diff and signature-chasing
-  passes would not surface it on their own
+- **WHEN** a changed file carries a defect that sits beside a hunk rather
+  than inside it — so the structural diff and signature-chasing passes would
+  not surface it on their own
 - **THEN** the breadth sweep still reports it, after the new-code judgement
   and risk-lens passes have run
 
@@ -439,9 +444,10 @@ judgement passes as the skill, so the two surfaces do not drift.
   call-site-value check names appear inline too, so a reviewer that never
   opens `references/call-site-tracing.md` still knows every check exists
 
-#### Scenario: The breadth sweep names its target categories
+#### Scenario: The breadth sweep names the kinds itself
 - **WHEN** `plugins/s/skills/review/SKILL.md`'s breadth-sweep step is inspected
-- **THEN** it points at the severity rubric's low-severity categories as what to look for, not only at the structural passes it runs after
+- **THEN** it names the kinds of defect to look for in the step itself, and the
+  severity rubric's `low` bullet does not list those kinds
 
 #### Scenario: A description claim the diff contradicts is a finding
 - **WHEN** a pull request's description claims behavior the diff does not
@@ -454,16 +460,17 @@ judgement passes as the skill, so the two surfaces do not drift.
 - **THEN** no `description-drift` finding is reported
 
 #### Scenario: Impact overrides the kind that surfaced a defect
-- **WHEN** a defect arrives as one of the low rubric's minor kinds — a
+- **WHEN** a defect arrives as one of the kinds the breadth sweep names — a
   swallowed error — but loses a file when the error fires
 - **THEN** the review rates it `medium` or `high`, not `low`, so it blocks
   the merge
 
-#### Scenario: Both rubric surfaces state the impact floor
+#### Scenario: Both rubric surfaces state the rating rule
 - **WHEN** `plugins/s/skills/review/SKILL.md` and
   `plugins/s/harness/bodies/review.md` are inspected
-- **THEN** each states that the low list names kinds of defect rather than
-  severities, and that impact floors a finding at `medium` or `high`
+- **THEN** each states that severity follows what the defect does rather than
+  the kind of defect it is, and that data loss, corruption, exposure, or a
+  broken guarantee is `medium` or `high`
 
 #### Scenario: Unmentioned scope is found by the second direction
 - **WHEN** a pull request's description is accurate about what it claims but
@@ -1087,6 +1094,11 @@ reached without the caller's scope check, SHALL carry severity `high`
 regardless of the reviewer's confidence. Findings from the remaining triggers
 SHALL rate on the existing high, medium and low rubric with no floor.
 
+A packaging finding that a file the diff adds is omitted from what the manifest
+publishes SHALL anchor at the manifest — the line a fix would change — and
+SHALL name the importing line as a further location, because that is the site
+at which the omission breaks.
+
 The `--json` finding taxonomy SHALL accept the values `security`,
 `performance`, `stability`, and `data-integrity` in addition to those it
 already accepts.
@@ -1152,6 +1164,12 @@ the exposure severity floor inline.
 - **WHEN** a lockfile changes hashes or ordering with no dependency added,
   removed, or re-ranged
 - **THEN** the review reports nothing for it
+
+#### Scenario: A file-not-shipped finding names the import too
+- **WHEN** the diff adds a module, requires it from an entry point, and the
+  manifest's published-files allowlist omits it
+- **THEN** the finding's primary location is the manifest and its locations
+  also name the importing line
 
 ### Requirement: Taxonomy parity across payload surfaces
 id: review-taxonomy-parity

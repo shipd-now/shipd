@@ -60,9 +60,14 @@ edits the repository.
    destructive operation with no down-path, backfill, or backup); packaging
    and dependency manifests (a manifest or lockfile disagreeing with the
    code or with each other, or omitting a new file from what it publishes).
-8. **Breadth sweep for minor defects.** After the risk lenses, revisit each
-   changed file once more, end to end, for a remaining low-severity defect
-   the structural and signature-chasing steps above would not catch alone.
+8. **Breadth sweep.** After the risk lenses, revisit each changed file once
+   more, end to end, for a remaining defect the structural and
+   signature-chasing steps above would not catch alone: a swallowed or
+   silently-dropped error, a resource or file leak on a rare or cleanup path,
+   dead or duplicated code, a field or variable declared but never read, an
+   unstable or incorrect identity such as a list key derived from an array
+   index, or a blocking call in an async context. Send what it finds back to
+   step 11's rubric to rate.
 9. **Verify the spec when a change is in scope** — the user named one, exactly
    one change sits under `.shipd/planned/`, or the diff adds or edits a change
    directory under `.shipd/planned/` or `.shipd/completed/` (its slug strips
@@ -90,17 +95,15 @@ edits the repository.
       consumer, or an unmet spec scenario;
     - **medium** — an unhandled edge case, a caller at genuine risk, or a
       likely-wrong behaviour you cannot fully confirm;
-    - **low** — a real but minor defect: a swallowed error, a resource/file
-      leak on a rare path, dead or duplicated code, an unread field, an
-      unstable identity (e.g. an index-based list key), or a blocking call in
-      an async context. Pure style, naming, and formatting are never findings.
-    That low list names *kinds* of defect, not severities. Rate every finding by
-    what it does, not which kind it resembles: data loss, data corruption, a
-    security exposure, or a broken guarantee is medium or high even when it
-    arrives as one of those kinds — a swallowed error that loses a file is not
-    low. A secret or credential exposure finding, or an authorization boundary
-    reached without a scope check, is always **high** regardless of your
-    confidence.
+    - **low** — a real defect whose impact is contained: nothing lost,
+      corrupted, exposed, or promised and unmet. Pure style, naming, and
+      formatting are never findings.
+    Rate every finding by what the defect does, not by the kind of defect it
+    is: data loss, data corruption, a security exposure, or a broken guarantee
+    is medium or high however minor the kind looks — an error swallowed on a
+    path that loses a file is not low. A secret or credential exposure
+    finding, or an authorization boundary reached without a scope check, is
+    always **high** regardless of your confidence.
     Open with an effort score of 1–5 justified by the counts, then the verdict:
     **Fix required** when any finding is high or medium, **Ship it** otherwise.
     When you are unsure between two levels, state the doubt rather than
