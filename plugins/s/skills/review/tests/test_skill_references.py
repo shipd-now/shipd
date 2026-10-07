@@ -60,7 +60,7 @@ import review_gate  # noqa: E402
 ALL_TAXONOMY_VALUES = frozenset((
     "bug", "contract", "edge-case", "untouched-caller", "spec-coverage",
     "test-coverage", "security", "performance", "stability",
-    "data-integrity",
+    "data-integrity", "description-drift",
 ))
 
 # Matches the one line in a taxonomy site naming the finding field as
@@ -501,7 +501,7 @@ class TaxonomyFieldParityTest(unittest.TestCase):
             f"{JSON_OUTPUT_MD} and {HARNESS_REVIEW_MD}: "
             f"symmetric difference {sorted(symmetric_diff)}")
 
-    def test_value_set_contains_all_ten_values(self):
+    def test_value_set_contains_all_eleven_values(self):
         missing = ALL_TAXONOMY_VALUES - self.json_values
         self.assertFalse(
             missing,

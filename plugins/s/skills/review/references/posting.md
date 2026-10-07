@@ -53,12 +53,15 @@ The flow:
    points at a pull request (usually the current `change/<name>`):
 
    ```
-   gh pr view <target> --json number,baseRefOid,headRefOid,url
+   gh pr view <target> --json number,baseRefOid,headRefOid,url,title,body
    ```
 
    This one call resolves the pull request's number, base commit, head
    commit, and URL together — never a local branch name. Resolving the base
    through a local `baseRefName` was the original defect this replaces.
+   `title` and `body` feed the PR-description check
+   (`references/pr-description.md`) as claims to verify against the diff,
+   never as resolution metadata.
 2. **Fetch both resolved commits, then review by commit id.** Fetch the
    pull request's head ref and its base so both commits are present locally
    whatever fork the head lives in:

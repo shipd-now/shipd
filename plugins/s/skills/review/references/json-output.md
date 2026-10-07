@@ -23,7 +23,7 @@ rendering changes. Shape:
     {
       "id": "f1",
       "severity": "high" | "medium" | "low",
-      "category": "bug" | "contract" | "edge-case" | "untouched-caller" | "spec-coverage" | "test-coverage" | "security" | "performance" | "stability" | "data-integrity",
+      "category": "bug" | "contract" | "edge-case" | "untouched-caller" | "spec-coverage" | "test-coverage" | "security" | "performance" | "stability" | "data-integrity" | "description-drift",
       "locations": ["path/to/file.ext:LINE", "other/file.ext:LINE2"],
       "what": "one-line statement of the defect",
       "why": "why it matters",
@@ -54,6 +54,10 @@ explaining why.
 The `locations` array is non-empty; `locations[0]` is the primary site where
 the fix would be applied, and any further entries are sites where the same
 defect recurs.
+
+`description-drift` names a finding where a pull request's title or body
+makes a claim the diff contradicts, undersells, or oversells — present only
+when a pull request's title and description were available to review.
 
 `endpoints` carries the engine's own resolved endpoint metadata verbatim —
 `base_given`, `base_sha`, `head_sha`, and `merge_base` straight from
