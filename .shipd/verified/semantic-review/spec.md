@@ -994,7 +994,8 @@ that flow rather than restating it.
 Guidance that runs on every review SHALL stay inline in `SKILL.md`: the
 workflow steps, the severity rubric, the presentation shape, the review-start
 difftastic probe and its degradation ladder, the base-freshness block, and the
-guardrails. `SKILL.md` SHALL stay under 330 lines.
+guardrails. `SKILL.md` SHALL stay under 330 lines; this requirement owns that
+ceiling, and no other requirement SHALL restate the figure.
 
 Each reference file SHALL open with a level-1 title and state its own load
 condition, so a file read on its own explains why it was read. Moving guidance
@@ -1062,7 +1063,7 @@ already accepts.
 Both surfaces that cannot read a reference file — the harness command body at
 `plugins/s/harness/bodies/review.md` and the vendored template at
 `plugins/s/integrations/copilot/SKILL.md` — SHALL carry the lens guidance and
-the exposure severity floor inline. `SKILL.md` SHALL stay under 300 lines.
+the exposure severity floor inline.
 
 #### Scenario: Every trigger is inline and ungated
 - **WHEN** `plugins/s/skills/review/SKILL.md` is inspected
@@ -1103,7 +1104,7 @@ the exposure severity floor inline. `SKILL.md` SHALL stay under 300 lines.
 
 #### Scenario: The skill body still fits the ceiling
 - **WHEN** `plugins/s/skills/review/SKILL.md` is measured
-- **THEN** it is under 300 lines
+- **THEN** it is within the line ceiling `review-skill-references` owns
 
 ### Requirement: Taxonomy parity across payload surfaces
 id: review-taxonomy-parity
@@ -1216,7 +1217,7 @@ its output, with the detailed guidance in
 `${CLAUDE_PLUGIN_ROOT}` path beside its load condition. The inline step SHALL
 state that a linter finding is corroboration the reviewer weighs, reported only
 where it bears on the change, and never promoted to a review finding
-automatically. `SKILL.md` SHALL stay under 300 lines.
+automatically.
 
 #### Scenario: The step is inline and the detail is referenced
 - **WHEN** `plugins/s/skills/review/SKILL.md` is inspected
@@ -1230,7 +1231,7 @@ automatically. `SKILL.md` SHALL stay under 300 lines.
 
 #### Scenario: The skill body still fits the ceiling
 - **WHEN** `plugins/s/skills/review/SKILL.md` is measured
-- **THEN** it is under 300 lines
+- **THEN** it is within the line ceiling `review-skill-references` owns
 
 ### Requirement: Incremental gate review
 id: review-incremental
@@ -1262,7 +1263,7 @@ which pull request answered them. A review that is not posting SHALL read
 nothing back and omit nothing.
 
 `SKILL.md` SHALL state this trigger in the `Load when` cell of its existing
-`posting.md` References row, adding no line, and SHALL stay under 300 lines.
+`posting.md` References row, adding no line.
 
 #### Scenario: A reworded finding is reported again
 - **WHEN** a prior thread was answered with a reasoned reply and the new review
@@ -1302,7 +1303,8 @@ nothing back and omit nothing.
 #### Scenario: The trigger costs no line
 - **WHEN** `plugins/s/skills/review/SKILL.md` is measured and its References
   table inspected
-- **THEN** the file is under 300 lines and the `posting.md` row's `Load when`
+- **THEN** the file is within the line ceiling
+  `review-skill-references` owns and the `posting.md` row's `Load when`
   cell states the read-back trigger
 
 ### Requirement: Documentation states difftastic as required
