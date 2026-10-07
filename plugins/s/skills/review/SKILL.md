@@ -148,11 +148,15 @@ mechanism in the walkthrough, confirm the path that reaches it actually runs
 with the values the call sites supply.
 
 ### 5. Judge new code on its own terms
-For every function, class, guard, or helper the diff introduces, judge it
-against its own stated purpose — do not wave it through because it is new
-rather than modified. Read
-`${CLAUDE_PLUGIN_ROOT}/skills/review/references/new-code-checks.md` for the five
-checks and worked examples.
+Judge every new function, class, guard, or helper in the diff against its stated
+purpose — never wave it through. Read
+`${CLAUDE_PLUGIN_ROOT}/skills/review/references/new-code-checks.md` for the full
+guidance and worked examples:
+- **Wrong quantity measured** — limit measures the wrong dimension.
+- **Escape hatch lapsing the guarantee** — flag or fallback steps around the invariant.
+- **Termination on hostile input** — routine terminates cheaply on hostile input.
+- **Boundary agreement** — documented boundary matches the actual code.
+- **Doc comment versus code** — documented behavior matches the actual code.
 
 ### 5b. Risk lenses
 Check every diff, in every cohort, against five fixed triggers, always — never
@@ -174,9 +178,8 @@ guidance and worked examples once one fires:
   operation with no down-migration, backup, or recovery path.
 
 ### 5c. Breadth sweep for minor defects
-After applying the risk lenses, revisit each changed file end to end for a
-remaining low-severity defect of the categories named in the rubric — a pass
-the structural diff and signature-chasing steps do not catch.
+Revisit each changed file for remaining low-severity defects the structural diff
+and signature-chasing steps do not catch.
 
 ### 6. Report by cohort
 Group findings under cohort headings, most severe first. For each finding: a
@@ -189,13 +192,10 @@ Group findings under cohort headings, most severe first. For each finding: a
   or an unmet spec acceptance criterion.
 - **medium** — an unhandled edge case, an untouched caller at genuine risk, or
   a likely-wrong behaviour you cannot fully confirm.
-- **low** — a real but minor defect: a swallowed or silently-dropped error; a
-  resource or file leak on a rare or cleanup path; dead or duplicated code; a
-  field or variable declared but never read; an unstable or incorrect identity
-  (e.g. a list/row key derived from array index instead of a stable id); a
-  blocking/synchronous call where the surrounding context is async or
-  event-driven. Pure style, naming preference, and formatting are never
-  findings at any severity.
+- **low** — a real but minor defect: swallowed errors, resource leaks on rare
+  paths, dead or duplicated code, unread variables, unstable ids, or blocking
+  calls in async contexts. Pure style, naming, and formatting are never
+  findings.
 - **Exposure floor.** A secret or credential exposure finding, or an
   authorization boundary reached without the caller's scope check, is always
   `high`, whatever the reviewer's confidence.

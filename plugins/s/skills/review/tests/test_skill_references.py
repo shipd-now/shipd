@@ -84,6 +84,19 @@ TRIGGER_PHRASES = (
     "migration reversibility",
 )
 
+# The five new-code checks, named exactly as plan.md's Implementation
+# section orders them. Every surface that carries the checks inline must
+# name each of these verbatim (case-insensitively) — this is deliberately a
+# literal match, not a loose keyword search, because the plan fixes this
+# exact naming as the shared vocabulary across all surfaces.
+NEW_CODE_CHECKS = (
+    "wrong quantity measured",
+    "escape hatch lapsing the guarantee",
+    "termination on hostile input",
+    "boundary agreement",
+    "doc comment versus code",
+)
+
 # Proxies for "the exposure severity floor is stated": a floor sentence puts
 # the word `high` in the same neighbourhood as the trigger it floors. `re`'s
 # DOTALL lets the window span a wrapped line; the window is generous (160
@@ -197,6 +210,13 @@ def _missing_triggers(text):
     return [phrase for phrase in TRIGGER_PHRASES if phrase not in lowered]
 
 
+def _missing_checks(text):
+    # Collapse all whitespace runs (including newlines) to a single space
+    # before matching, using the same rationale as `_missing_triggers`.
+    lowered = re.sub(r"\s+", " ", text.lower())
+    return [check for check in NEW_CODE_CHECKS if check not in lowered]
+
+
 def _exposure_floor_stated(text):
     return (
         any(p.search(text) for p in _EXPOSURE_FLOOR_PATTERNS)
@@ -293,6 +313,21 @@ class SkillMdStructureTest(unittest.TestCase):
             "SKILL.md must state that a secret/credential exposure finding "
             "and an authorization-boundary finding both carry severity "
             "`high`")
+
+    def test_new_code_checks_named_inline(self):
+        """All five new-code checks appear in the workflow, not only the table.
+
+        `SKILL.md` can read a reference file, so a check named only in the
+        `## References` table (and left implicit in the workflow) would let
+        a reviewer who never opens `new-code-checks.md` miss it entirely — the
+        opposite of the "always visible" design this change requires.
+        """
+        inline_text = _text_excluding_references_section(self.text)
+        missing = _missing_checks(inline_text)
+        self.assertFalse(
+            missing,
+            f"check(s) not named inline in SKILL.md (outside the "
+            f"References table): {missing}")
 
     def test_every_reference_file_is_named(self):
         named = set(REFERENCE_PATH_RE.findall(self.text))

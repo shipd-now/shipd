@@ -230,6 +230,15 @@ applying the risk lenses, that revisits each changed file once more, end to
 end, for a remaining low-severity defect of those kinds that the targeted
 structural and signature-chasing passes above would not otherwise surface.
 
+The five checks the skill applies to judge new code (a wrong quantity
+measured, an escape hatch lapsing the guarantee, non-termination on hostile
+input, a boundary disagreement, and a doc comment versus the actual code)
+SHALL have their names stated inline in `SKILL.md`, outside any
+conditionally-loaded reference file — the same always-applies guarantee the
+risk lenses already carry — so that skipping the reference's read degrades
+only the depth of guidance available, never the existence of the check
+itself.
+
 Emoji SHALL appear at four sanctioned sites and nowhere else: the ✅/❌ verdict
 marker, the 🔴/🟠/🟡 severity dots of the summary table, the ☕ of the posted
 summary comment's `**☕ shipd** semantic review` brand line, and the 🔴/🟠/🟡
@@ -353,6 +362,12 @@ judgement passes as the skill, so the two surfaces do not drift.
   passes would not surface it on their own
 - **THEN** the breadth sweep still reports it, after the new-code judgement
   and risk-lens passes have run
+
+#### Scenario: The five new-code check names survive a skipped reference read
+- **WHEN** `plugins/s/skills/review/SKILL.md` is inspected outside its
+  References table
+- **THEN** all five new-code check names appear inline, so a reviewer that
+  never opens `references/new-code-checks.md` still knows every check exists
 
 ### Requirement: Spec-aware verification
 id: spec-aware-review
