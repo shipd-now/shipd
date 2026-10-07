@@ -329,7 +329,7 @@ parameter set to the tier resolved **relative to this session**:
 | declared `model` | Agent tool `model` |
 | --- | --- |
 | `session` | omit the parameter — the sub-agent inherits this session's model |
-| `tier-below` / `tier-two-below` | the alias one / two steps below this session's own model on the ladder `fable` → `opus` → `sonnet` → `haiku`, clamped at `haiku` |
+| `tier-below` / `tier-two-below` | the model you judge one / two capability steps below this session's own model among the Agent tool's options; when fewer options sit below, the lowest one below; when none does, omit the parameter |
 | anything else | a concrete model id — pass it verbatim |
 
 **A declared `tools` binding decorates the stage instruction.** When the entry

@@ -2,9 +2,9 @@
 name: build
 description: >-
   Orchestrate a feature end-to-end with spec-driven development: plan and design
-  the shipd artifacts on the most powerful model, then delegate implementation
-  to execution sub-agents on the tier below, answer their questions, verify, and
-  merge + archive with the plugin's own spec engine. Use
+  the shipd artifacts on the session's model, then delegate implementation to
+  execution sub-agents on a model one step down, answer their questions,
+  verify, and merge + archive with the plugin's own spec engine. Use
   when asked to build/implement/ship a feature, add a capability, or "orchestrate"
   work — anything non-trivial that benefits from a spec-first plan plus delegated
   execution. Trigger phrases: "build", "implement", "add a feature", "/s:build".
@@ -15,26 +15,20 @@ description: >-
 You are the **Orchestrator**: architect and project manager. You **plan, specify,
 design, validate, coordinate, and verify** — you do **not** write the final
 implementation code yourself. Implementation is delegated to **execution
-sub-agents** running on the next tier down (the second-most-powerful model).
+sub-agents** running on the model down (one step below yours).
 
-**Model policy — the whole point of this skill (tier-based, model-agnostic):**
-- **Planning/design/validation/Q&A (you):** run on the **most powerful** model
-  available — the current session model. Do not downgrade yourself.
-- **Implementation (sub-agents):** spawn on the **second-most-powerful** tier — one
-  step below the orchestrator. The cheaper tier writes the code; you keep the
-  reasoning-heavy work.
-- **Mapping tiers to a concrete `model:` value.** The Agent tool needs a concrete
-  model, so translate the tier at spawn time based on the model *you* are running:
-  - orchestrating on the top general tier (e.g. Opus) → spawn sub-agents on the next
-    tier down (e.g. `sonnet`);
-  - orchestrating on a frontier/flagship tier above that (e.g. Fable) → spawn
-    sub-agents one step down (e.g. `opus`);
-  - if unsure of the exact ladder, pick the Agent `model` option you judge to be
-    one clear capability step below your own, and never spawn sub-agents on a tier
-    equal to or stronger than the orchestrator. Only drop two steps (e.g. `haiku`)
-    if the user asks to optimize for cost on simple tasks.
-  This keeps the skill correct as new models ship — the roles are "strongest" and
-  "one below," not fixed names.
+**Model policy — the whole point of this skill (provider-neutral):**
+- **Planning/design/validation/Q&A (you):** run on the session's model — the
+  user chose it; do not downgrade yourself.
+- **Implementation (sub-agents):** spawn on the **model down**: the model you
+  judge one clear capability step below your own and a decent fit for the
+  tasks.
+- You pick the model down at spawn time from the `model` options the Agent
+  tool offers in this session. This skill names no provider's models.
+- When no option sits below your own model, omit the parameter so sub-agents
+  inherit the session's model. Never spawn sub-agents on a model stronger than
+  your own.
+- Drop two steps only when the user asks to optimize for cost on simple tasks.
 - **A declared `subagent_model` overrides the tier policy.** When the pipeline
   resolved in Phase 0 gives the `build` entry a `subagent_model`, spawn the
   worker sub-agents — both `s:sub-agent` executors (Phase 3) and the
@@ -45,7 +39,7 @@ sub-agents** running on the next tier down (the second-most-powerful model).
   | declared `subagent_model` | Agent tool `model` |
   | --- | --- |
   | `session` | omit the parameter — the sub-agent inherits this session's model |
-  | `tier-below` / `tier-two-below` | the alias one / two steps below this session's own model on the ladder `fable` → `opus` → `sonnet` → `haiku`, clamped at `haiku` |
+  | `tier-below` / `tier-two-below` | the model you judge one / two capability steps below this session's own model among the Agent tool's options; when fewer options sit below, the lowest one below; when none does, omit the parameter |
   | anything else | a concrete model id — pass it verbatim |
 
   When the resolved entry declares no `subagent_model` (the default pipeline
@@ -330,14 +324,13 @@ message arrives: if it answers the pending question, fold it in and continue;
 otherwise re-offer the same choices as a plain-text numbered list and wait for
 a typed reply. Only an explicitly selected or typed stop/decline ends the flow.
 
-## Phase 3 — Spawn execution sub-agents (second-most-powerful tier)
+## Phase 3 — Spawn execution sub-agents (model down)
 
 Spawn sub-agents with the **Agent tool**, `subagent_type: s:sub-agent`, and
-`model` set to the **second-most-powerful** tier per the model policy above (one
-step below the orchestrator) — or, when the pipeline resolved in Phase 0
-declares a `subagent_model` on its `build` entry, to the tier that policy's
-session-relative table resolves for it (omitting the parameter entirely for
-`session`). The `s:sub-agent` definition
+`model` set to the **model down** per the model policy above — or, when the
+pipeline resolved in Phase 0 declares a `subagent_model` on its `build` entry,
+to the tier that policy's session-relative table resolves for it (omitting the
+parameter entirely for `session`). The `s:sub-agent` definition
 (`${CLAUDE_PLUGIN_ROOT}/agents/sub-agent.md`) already carries the full role
 contract, so there is no template to build or substitute: the spawn message
 supplies only the change name, the absolute `<CLAIM_SCRIPT>` path (resolve
@@ -510,7 +503,7 @@ actually satisfies the spec:
    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_lint.py" <change-name>
    ```
    It must still exit `0`.
-4. If anything fails, spawn a sub-agent (second-most-powerful tier) to fix it, or fix the spec
+4. If anything fails, spawn a sub-agent (model down) to fix it, or fix the spec
    yourself if the contract was wrong — then re-verify.
 5. **Adversarial validation gate** — unless the pipeline opted out. When the
    `build` entry resolved in Phase 0 declares `validator` false, **skip this
@@ -957,7 +950,7 @@ untouched:
 ## Operating rules
 
 - You are the architect: you never write final implementation code; sub-agents do.
-- Most-powerful tier plans; the tier below executes. Never invert this.
+- The session's model plans; the model down executes. Never invert this.
 - The full spec workflow always runs, whatever the size of the task — never
   skipped, never shortcut for "trivial" work.
 - Spec first, code second. Lint clean (`spec_lint.py` exit 0) before spawning
