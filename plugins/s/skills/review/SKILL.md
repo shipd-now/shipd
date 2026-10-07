@@ -198,15 +198,16 @@ Group findings under cohort headings, most severe first. For each finding: a
 Any high **or** medium finding blocks (Fix required); low never blocks. When
 unsure between two levels, state the doubt rather than inflating.
 
-### 7. Check test coverage per finding
-Run this check over **every** finding you write, at **every** severity —
-including low. For each one, ask: would an existing test fail if this defect
-regressed? When no test would catch it, raise the gap as its own finding in a
-`test-coverage` category (see
+### 7. Check test coverage, rolled up per cohort
+Ask of **every** finding you write, at **every** severity: would an existing
+test fail if this defect regressed? Then roll the answers up — raise **one**
+`test-coverage` finding per cohort that has uncovered findings (see
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` for the shape),
-naming the defect it would guard and where the test belongs. This runs
-alongside, not instead of, the finding it covers — a real defect and its
-missing test are two findings, not one.
+naming each defect it would guard and where the tests belong. Never one per
+finding: that multiplies with the findings themselves and buries the defects
+it was meant to flag. A cohort whose findings are all covered raises none.
+Anchor the roll-up once, where the tests belong — it reports a gap spanning
+sites, not a defect at each.
 
 ## Presentation (human mode — the default)
 

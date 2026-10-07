@@ -289,11 +289,15 @@ judge every function, class, guard or helper the diff introduces against its
 own stated purpose — whether it measures the quantity its limit governs,
 whether an escape hatch lapses its guarantee, whether it terminates cheaply
 on hostile input, and whether its boundaries and its doc comment agree. It
-SHALL run the breadth sweep described above. It SHALL check the PR description against the diff as described above. It SHALL run a test-coverage
-check over each finding it writes, at every severity, asking whether an
-existing test would fail if that defect regressed, and SHALL raise any gap
-as its own finding in the `test-coverage` category, which the `--json`
-finding shape SHALL accept.
+SHALL run the breadth sweep described above. It SHALL check the PR description against the diff as described above. It SHALL ask of each
+finding it writes, at every severity, whether an existing test would fail if
+that defect regressed, and SHALL report the gaps **rolled up per cohort** —
+one `test-coverage` finding per cohort carrying uncovered findings, naming
+each defect it would guard and where the tests belong, anchored once where
+the tests belong. It SHALL NOT raise one such finding per finding: that count
+scales with the findings themselves, so it buries the defects the check
+exists to surface. A cohort whose findings are all covered SHALL raise none.
+The `--json` finding shape SHALL accept the `test-coverage` category.
 
 The `--json` finding shape's taxonomy field SHALL be named `category`. The
 name `cohort` SHALL denote only the architectural grouping `semdiff files`
@@ -360,8 +364,8 @@ judgement passes as the skill, so the two surfaces do not drift.
 - **THEN** it instructs the reviewer to chase changed constants, to compare
   parallel sites against each other, to judge newly added code on its own
   terms, to sweep each changed file once more for remaining low-severity
-  defects, to check the PR description against the diff, and to check test
-  coverage per finding
+  defects, to check the PR description against the diff, and to roll test
+  coverage up per cohort
 
 #### Scenario: A finding anchors at its fix site
 - **WHEN** a defect's symptom is observable at a caller but the fix changes a
@@ -448,6 +452,15 @@ judgement passes as the skill, so the two surfaces do not drift.
   particular line
 - **THEN** the finding carries its primary anchor alone, with a further
   location only where that site independently shows the drift
+
+#### Scenario: Test-coverage findings roll up rather than multiplying
+- **WHEN** a review writes four uncovered findings across two cohorts
+- **THEN** it raises two `test-coverage` findings, one per cohort naming the
+  defects it would guard, not four
+
+#### Scenario: A fully covered cohort raises no test-coverage finding
+- **WHEN** every finding in a cohort would already fail an existing test
+- **THEN** that cohort raises no `test-coverage` finding
 
 ### Requirement: Spec-aware verification
 id: spec-aware-review
