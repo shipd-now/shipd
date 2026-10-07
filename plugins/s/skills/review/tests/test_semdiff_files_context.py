@@ -119,6 +119,44 @@ class FilesCohortTest(unittest.TestCase):
         # reviewed as a contract is reviewed early, never skipped.
         self.assertIn("tests/fixtures/package.json", contracts)
 
+    def test_manifests_whose_name_varies_are_matched_too(self):
+        """A manifest named after its project or package still groups right.
+
+        An exact-basename set cannot hold these: a C# project file is named
+        after its project, a gemspec after its gem, and the
+        `requirements*.txt` family splits by environment. The benchmark's
+        test set carries C# and Swift projects, so the suffix and prefix
+        shapes are load-bearing, not hypothetical.
+        """
+        varying = ("Acme.Api.csproj", "src/Lib.fsproj", "Old.vbproj",
+                   "my_gem.gemspec", "Thing.nuspec",
+                   "requirements-dev.txt")
+        fixed = ("Directory.Packages.props", "packages.lock.json",
+                 "Package.swift", "Package.resolved", "mix.exs",
+                 "pubspec.yaml", "uv.lock", "go.work", "Podfile",
+                 "build.sbt")
+        for rel in varying + fixed:
+            self._write(rel, "x\n")
+        rc, out, err = run_semdiff(self.repo, "files", "main")
+        self.assertEqual(rc, 0, err)
+        contracts = out["cohorts"].get("contracts", [])
+        for rel in varying + fixed:
+            self.assertIn(rel, contracts, "%s is a manifest" % rel)
+
+    def test_non_manifests_keep_their_cohorts(self):
+        """The manifest match must not pull ordinary files into contracts.
+
+        `_is_manifest` grew a suffix list and a `requirements*` prefix rule;
+        both are the kind of broad match that can over-capture, so the
+        negative case is pinned alongside the positive one.
+        """
+        rc, out, err = run_semdiff(self.repo, "files", "main")
+        self.assertEqual(rc, 0, err)
+        contracts = out["cohorts"].get("contracts", [])
+        for rel in ("api/routes/users.py", "web/components/App.tsx",
+                    "tests/test_x.py", "randomtop/file.py"):
+            self.assertNotIn(rel, contracts)
+
 
 class ContextTest(unittest.TestCase):
     def setUp(self):
