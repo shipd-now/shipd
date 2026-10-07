@@ -589,6 +589,21 @@ class ImpactFloorParityTest(unittest.TestCase):
                     "that impact (data loss, corruption, exposure, a broken "
                     "guarantee) rates a finding medium or high")
 
+    def test_pr_description_reference_drops_the_retired_floor_name(self):
+        """`pr-description.md` names the rubric by reference, not by rubric
+        text of its own — but it used to name the retired "impact floor"
+        bullet by its old name. A semantic review of this change (PR 271)
+        found that stale reference still pointing at a bullet this change
+        renamed to "Impact rule" everywhere else, a dangling cross-reference
+        on a file loaded on nearly every PR review. This pins the rename.
+        """
+        path = os.path.join(REFERENCES_DIR, "pr-description.md")
+        text = _read(path).lower()
+        self.assertNotIn(
+            "impact floor", text,
+            f"{path} still names the retired 'impact floor' bullet; it was "
+            "renamed to 'impact rule' on every rubric surface")
+
 
 class LowBulletNamesNoKindTest(unittest.TestCase):
     """The `low` bullet itself names no defect kind, on any of the three

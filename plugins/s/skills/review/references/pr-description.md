@@ -8,7 +8,7 @@ Treat the title and description as claims, not as ground truth, and check them a
 
 **Direction 2 — the diff against the claims.** Walk the diff's substantial content and ask what the description never mentions. This is a separate pass, not a by-product of direction 1: an unmentioned feature has no claim to check, so iterating claims can never surface it. Scope the pass to substance — a new feature path, a new dependency, a new migration, a new public surface, a behavioral change to an existing one — not to every file the diff touches.
 
-Report a mismatch from either direction as its own finding: category `description-drift`, severity by the normal high/medium/low rubric and its impact floor, judged on what the mismatch implies for correctness or completeness. A description that is merely terse or informal is not a finding.
+Report a mismatch from either direction as its own finding: category `description-drift`, severity by the normal high/medium/low rubric and its impact rule, judged on what the mismatch implies for correctness or completeness. A description that is merely terse or informal is not a finding.
 
 **Anchor a description-level finding at one location only.** Where the drift is a property of the description rather than of any particular line, give the finding its primary anchor and stop. Add a second location only where that site *independently* shows the drift on its own terms — a claim contradicted at three call sites is three sites; a description that undersells the PR's scope is one finding about the description, however many files the unmentioned scope spans.
 
