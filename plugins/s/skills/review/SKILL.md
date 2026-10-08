@@ -21,8 +21,11 @@ user's **local, unpushed changes** against a base ref — *before* they open a
 PR, so problems are caught while they are cheap to fix.
 
 `semdiff` does the mechanical work and emits compact JSON. **You** supply the
-judgement. Never read whole files into context when the structural diff and
-targeted lookups will do — that is the entire point.
+judgement. The structural diff and targeted lookups come first: read a file
+only when `related` names it for a check that needs cross-file context — a
+file it did not name stays unread, whatever your own judgement makes of it.
+Never a raw file dump or model-chosen exploration — that is still the point;
+what widens is the engine's own bounded, named set.
 
 Invoke the engine as (it is a plugin script, not a PATH binary):
 
@@ -30,7 +33,7 @@ Invoke the engine as (it is a plugin script, not a PATH binary):
 python3 "$CLAUDE_PLUGIN_ROOT/skills/review/scripts/semdiff.py" <subcommand> ...
 ```
 
-Subcommands: `diff`, `files`, `lint`, `context`, `change`, `doctor`. All review
+Subcommands: `diff`, `files`, `lint`, `context`, `related`, `change`, `doctor`. All review
 subcommands are read-only and never touch the network; only `doctor --fix`
 installs software or reaches the network, and the single place this skill runs
 it is the review-start difftastic repair (see Degradation).
@@ -102,7 +105,20 @@ ambiguous. Each file entry carries an `engine` field (`difft` = syntax-aware;
 `text` = the degradation engine); the summary carries `signature_changes`, a
 best-effort count you refine.
 
-### 3. Check downstream impact
+### 3. Pull related file context
+Run `related <base> [<head>]` (default `--mode balanced`: 8 related files per
+changed file, 40 across the review; `--mode max` raises both to 20 and 120)
+to get each changed file's importers and importees — ripgrep/`git
+grep`-backed, best-effort, never a complete call graph, with every truncation
+reported as a count rather than applied silently. Read a file this names when
+a check below needs context the diff alone does not carry: the
+downstream-impact and call-site checks (steps 4 and 5), and the lenses that
+compare a change against unchanged code (sibling-consistency in step 4, and
+the new-code checks in step 6). A file `related` did not name stays unread —
+the engine's named set is what widens this skill's context economy, never
+your own judgement about what else might be interesting.
+
+### 4. Check downstream impact
 For any changed function/type/message signature, run `context <symbol>` to find
 references. Use `--lang` / `--path` to cut noise on common names. Read
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/call-site-tracing.md` for guidance:
@@ -112,25 +128,25 @@ references. Use `--lang` / `--path` to cut noise on common names. Read
 - **Changed constants are contract changes** — chase every consumer of the constant.
 - **Uneven sibling sites** — compare parallel implementations against each other.
 
-### 3b. Read the linter output
+### 4b. Read the linter output
 Run `lint <base> [<head>]` over the same endpoints as the diff. Read
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/linters.md` to interpret each
 linter's state and findings. A linter finding is corroboration you weigh,
 reported only where it bears on the change — never promoted to a review
 finding automatically.
 
-### 4. Trace call-site values — reachability and comment accuracy
+### 5. Trace call-site values — reachability and comment accuracy
 Do not judge a new branch, guard, or helper in isolation — follow the actual
-argument each call site passes in (same reference as step 3):
+argument each call site passes in (same reference as step 4):
 - **Unreachable guard / dead branch** — a defensive branch the real call never hits.
 - **Comment / intent vs. actual behaviour** — a comment the real call sites contradict.
 
 Either alone often looks small, but together they compound. Send both to step
-6's rubric to rate by what they do — this step never rates on its own. Whenever
+7's rubric to rate by what they do — this step never rates on its own. Whenever
 you quote a mechanism in the walkthrough, confirm the path that reaches it
 actually runs with the values the call sites supply.
 
-### 5. Judge new code on its own terms
+### 6. Judge new code on its own terms
 Judge every new function, class, guard, or helper in the diff against its stated
 purpose — never wave it through. Read
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/new-code-checks.md` for guidance:
@@ -140,7 +156,7 @@ purpose — never wave it through. Read
 - **Boundary agreement** — documented boundary matches the actual code.
 - **Doc comment versus code** — documented behavior matches the actual code.
 
-### 5b. Risk lenses
+### 6b. Risk lenses
 Check every diff, in every cohort, against six fixed triggers, always — never
 gated on cohort or file type. Read
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/risk-lenses.md` for the full
@@ -160,16 +176,16 @@ guidance and worked examples once one fires:
 - **Packaging and dependency manifests** — a manifest or lockfile that disagrees with the
   code, with each other, or omits a new file from what it publishes.
 
-### 5c. Breadth sweep
+### 6c. Breadth sweep
 Revisit each changed file end to end for a remaining defect the structural
 diff and signature-chasing steps above do not catch on their own: a swallowed
 or silently-dropped error, a resource or file leak on a rare or cleanup path,
 dead or duplicated code, a field or variable declared but never read, an
 unstable or incorrect identity such as a list key derived from an array
 index, or a blocking call in an async context. Send what the sweep finds back
-to step 6's rubric to rate — this step never rates on its own.
+to step 7's rubric to rate — this step never rates on its own.
 
-### 5d. Check the PR description against the diff
+### 6d. Check the PR description against the diff
 When a pull request's title and description are available, read
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/pr-description.md` and check
 them against the diff in both directions — every claim against the diff, and
@@ -177,7 +193,7 @@ the diff's substantial content against what the description never mentions.
 An unmentioned feature has no claim to check, so only the second direction
 finds it.
 
-### 6. Report by cohort
+### 7. Report by cohort
 Group findings under cohort headings, most severe first. For each finding: a
 **location** (the fix site — the line your own fix would change, never a
 symptom site in place of it), **what**, **why**, **fix**, and **severity**. A
@@ -214,7 +230,7 @@ about severity is never grounds for omitting a finding: where you cannot
 place one, report it at your best estimate and say the estimate is
 uncertain — a defect you can describe is a defect you report.
 
-### 7. Check test coverage, rolled up per cohort
+### 8. Check test coverage, rolled up per cohort
 Ask of **every** finding you write, at **every** severity: would an existing
 test fail if this defect regressed? Then roll the answers up — raise **one**
 `test-coverage` finding per cohort that has uncovered findings (see

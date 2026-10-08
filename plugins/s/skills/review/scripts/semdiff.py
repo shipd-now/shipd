@@ -14,6 +14,8 @@ Subcommands:
   lint <base> [<head>]     run detected linters (ruff, flake8, pylint,
                            eslint) over changed paths only
   context <symbol>         best-effort reference lookup (rg, else git grep)
+  related <base> [<head>]  bounded importer/importee context per changed
+                           file (--mode balanced|max), rg/git-grep backed
   change <name>            aggregate a shipd change's review context, from
                            planned/ or the newest completed/ archive
   doctor [--fix]           dependency check with a tiered difft installer
@@ -1121,18 +1123,26 @@ CONTEXT_NOTE = ("best-effort candidate references; NOT a complete call graph. "
                 "Unmatched files are not proven safe. Verify before trusting.")
 
 
-def cmd_context(args):
-    if not have("rg") and not have("git"):
-        die("need ripgrep (rg) or git for lookups.", code=127)
-
+def _grep_matches(pattern, path=None, word=True, lang=None, fixed=False):
+    """Best-effort search for `pattern` across the repo (or `path`), via
+    ripgrep when present and `git grep` otherwise — the one tool ladder both
+    `context` and `related` run. `word` requests a whole-word match; `fixed`
+    requests a literal (non-regex) match, for a term such as a path that may
+    carry regex metacharacters. Returns a list of {"file", "line", "text"}
+    dicts."""
     matches = []
-    scope = args.path or "."
+    scope = path or "."
     if have("rg"):
-        cmd = ["rg", "--json", "-w", args.symbol, scope]
-        if args.lang:
-            glob = LANG_GLOB.get(args.lang.lower())
+        cmd = ["rg", "--json"]
+        if word:
+            cmd.append("-w")
+        if fixed:
+            cmd.append("-F")
+        if lang:
+            glob = LANG_GLOB.get(lang.lower())
             if glob:
-                cmd[3:3] = ["-g", glob]
+                cmd += ["-g", glob]
+        cmd += [pattern, scope]
         r = run(cmd)
         for line in r.stdout.splitlines():
             try:
@@ -1148,18 +1158,333 @@ def cmd_context(args):
                 "text": data["lines"]["text"].rstrip("\n"),
             })
     else:
-        cmd = ["git", "grep", "-n", "-w", args.symbol]
-        if args.path:
-            cmd += ["--", args.path]
+        cmd = ["git", "grep", "-n"]
+        if word:
+            cmd.append("-w")
+        if fixed:
+            cmd.append("-F")
+        cmd.append(pattern)
+        if path:
+            cmd += ["--", path]
         r = run(cmd)
         for line in r.stdout.splitlines():
             parts = line.split(":", 2)
             if len(parts) == 3:
                 matches.append({"file": parts[0], "line": int(parts[1]),
                                 "text": parts[2]})
+    return matches
+
+
+def cmd_context(args):
+    if not have("rg") and not have("git"):
+        die("need ripgrep (rg) or git for lookups.", code=127)
+
+    matches = _grep_matches(args.symbol, path=args.path, lang=args.lang)
 
     json.dump({"symbol": args.symbol, "note": CONTEXT_NOTE, "matches": matches},
               sys.stdout, indent=2)
+    print()
+    return 0
+
+
+# --- related (bounded importer/importee context) ----------------------------
+
+# balanced is the default: a per-file cap of 8 and a per-review cap of 40.
+# max raises both for a review where recall matters more than cost. These
+# numbers are deliberate and recorded in the spec (related-context) rather
+# than left as an unstated tuning knob, so a later change can move them
+# against evidence rather than by feel.
+RELATED_CAPS = {
+    "balanced": {"per_file": 8, "per_review": 40},
+    "max": {"per_file": 20, "per_review": 120},
+}
+
+# Source extensions `related` tries when resolving an extensionless import
+# token to a file on disk.
+IMPORT_EXTENSIONS = (".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+                     ".go", ".rs", ".rb", ".java", ".proto", ".h", ".hpp",
+                     ".c", ".cc", ".cpp")
+
+# Lines that name another module: Python import/from, JS/TS import-from and
+# require(), Rust use, and C/C++ #include. Each pattern's one capture group is
+# the raw module/path token(s) (comma-separated for Python's `import a, b`).
+_IMPORT_LINE_PATTERNS = (
+    re.compile(r'^\s*from\s+([.\w]+)\s+import\b'),
+    re.compile(r'^\s*import\s+([.\w]+(?:\s*,\s*[.\w]+)*)'),
+    re.compile(r'''\bfrom\s+['"]([^'"]+)['"]'''),
+    re.compile(r'''^\s*import\s+['"]([^'"]+)['"]'''),
+    re.compile(r'''\brequire\(\s*['"]([^'"]+)['"]\s*\)'''),
+    re.compile(r'^\s*use\s+([\w:]+)'),
+    re.compile(r'^\s*#\s*include\s+["<]([^">]+)[">]'),
+)
+
+# Go's grouped import form, `import (\n\t"path"\n\t...\n)`, names each path
+# on its own line with no keyword beside it — none of the per-line patterns
+# above can match it, since they all require a keyword on the same line as
+# the quoted path. Matched separately, across the whole text.
+_GO_IMPORT_BLOCK_RE = re.compile(r'(?m)^\s*import\s*\((.*?)^\s*\)', re.DOTALL)
+_GO_IMPORT_PATH_RE = re.compile(r'"([^"]+)"')
+
+
+def _module_terms(path):
+    """The search terms for `path`'s importers: its basename without
+    extension (what an import statement typically names), plus its own
+    extensionless repo path for languages that import by path, when that
+    differs from the bare basename."""
+    base = os.path.splitext(os.path.basename(path))[0]
+    extensionless = os.path.splitext(path)[0]
+    terms = [base]
+    if extensionless != base:
+        terms.append(extensionless)
+    return terms
+
+
+def _find_importers(changed_file, root):
+    """Files that *import* `changed_file` — matched by import syntax, never
+    by a bare occurrence of its name. Grep finds candidate files mentioning
+    `changed_file`'s module terms (cheap, best-effort, and restricted to
+    source files before this even runs); each candidate's own full text is
+    then parsed for import/require/use/include lines the same way an
+    importee is — never just the single grep-matched line, because a
+    grouped import (Go's parenthesized block; a multi-line JS/TS or Python
+    import) puts the keyword and the quoted path on different lines — and
+    the candidate is kept only when one of its extracted tokens resolves to
+    `changed_file` itself. A documentation or spec file that merely
+    discusses the module in prose never parses as import syntax, so it is
+    never reported as an importer."""
+    found = set()
+    checked = set()
+    for term in _module_terms(changed_file):
+        if not term:
+            continue
+        for m in _grep_matches(term, word=True, fixed=True):
+            candidate = m["file"]
+            if candidate == changed_file or candidate in checked:
+                continue
+            checked.add(candidate)
+            if os.path.splitext(candidate)[1].lower() not in IMPORT_EXTENSIONS:
+                continue
+            text = _file_text_at(None, candidate, root)
+            for token in _importee_tokens(text):
+                if _resolve_importee(token, candidate, root) == changed_file:
+                    found.add(candidate)
+                    break
+    return found
+
+
+def _importee_tokens(text):
+    """Raw module/path tokens named by `text`'s own import/require/use/
+    include lines, plus any Go grouped-import block."""
+    tokens = []
+    for line in text.splitlines():
+        for pat in _IMPORT_LINE_PATTERNS:
+            m = pat.search(line)
+            if not m:
+                continue
+            for piece in m.group(1).split(","):
+                piece = re.sub(r'\s+as\s+\w+\s*$', "", piece.strip())
+                if piece:
+                    tokens.append(piece)
+    for block in _GO_IMPORT_BLOCK_RE.findall(text):
+        tokens.extend(_GO_IMPORT_PATH_RE.findall(block))
+    return tokens
+
+
+def _exists_with_extension(rel_path, root):
+    """`rel_path`, or `rel_path` plus a common source extension or index
+    file, resolved against `root` — the first that names a real file.
+    Returns the matching repo-relative path (forward slashes), or None."""
+    rel_path = os.path.normpath(rel_path)
+    if rel_path in (".", "", ".."):
+        return None
+    if os.path.splitext(rel_path)[1]:
+        candidates = [rel_path]
+    else:
+        candidates = [rel_path + ext for ext in IMPORT_EXTENSIONS] + [
+            os.path.join(rel_path, "__init__.py"),
+            os.path.join(rel_path, "index.ts"),
+            os.path.join(rel_path, "index.js"),
+            os.path.join(rel_path, "mod.rs"),
+        ]
+    for cand in candidates:
+        if os.path.isfile(os.path.join(root, cand)):
+            return cand.replace(os.sep, "/")
+    return None
+
+
+def _find_unique_source_file(basename, root):
+    """Last-resort fallback for a bare import name that resolves neither
+    relative to the importing file nor to the repo root — the
+    cross-skill-import convention this repo's own scripts use, which adds a
+    sibling `scripts/` directory to `sys.path` at runtime rather than
+    importing by a path the text alone names. A single file named
+    `basename.<ext>`, for a recognized source extension, anywhere in the
+    repository is accepted; more than one is ambiguous and dropped rather
+    than guessed at, the same as a name that resolves to nothing at all."""
+    matches = set()
+    for ext in IMPORT_EXTENSIONS:
+        for hit in glob.glob(
+                os.path.join(root, "**", basename + ext), recursive=True):
+            matches.add(os.path.relpath(hit, root).replace(os.sep, "/"))
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _resolve_importee(token, changed_file, root):
+    """Resolve one import token named by `changed_file` to an existing
+    repo-relative path, or None when it names nothing in the repository —
+    dropped rather than guessed at, per the spec."""
+    token = token.strip()
+    if not token:
+        return None
+    file_dir = os.path.dirname(changed_file)
+
+    if token.startswith("../") or token.startswith("./"):
+        # JS/TS/Go/C-style relative path: resolved directly against the
+        # importing file's own directory. Checked before the bare-dot
+        # Python branch below, because a token here always carries a "/"
+        # right after its leading dots — and `os.path.join` treats a
+        # component starting with "/" as an absolute path, silently
+        # discarding everything before it, so routing this shape through
+        # the dots-as-package-levels math corrupts the join instead of
+        # resolving it.
+        return _exists_with_extension(os.path.join(file_dir, token), root)
+
+    if token.startswith("."):
+        # Python-style relative import: leading dots count package levels up.
+        dots = len(token) - len(token.lstrip("."))
+        rest = token[dots:].replace(".", "/")
+        base_dir = file_dir
+        for _ in range(dots - 1):
+            base_dir = os.path.dirname(base_dir)
+        joined = os.path.join(base_dir, rest) if rest else base_dir
+        return _exists_with_extension(joined, root)
+
+    if "/" in token:
+        return (_exists_with_extension(token, root)
+                or _exists_with_extension(os.path.join(file_dir, token), root))
+
+    dotted = token.replace(".", "/") if "." in token else token
+    resolved = (_exists_with_extension(os.path.join(file_dir, dotted), root)
+                or _exists_with_extension(dotted, root))
+    if resolved or "/" in dotted:
+        return resolved
+    return _find_unique_source_file(dotted, root)
+
+
+def _find_importees(changed_file, text, root):
+    """Files `changed_file` itself imports, resolved against the repo and
+    deduplicated, in first-seen order."""
+    found, seen = [], set()
+    for token in _importee_tokens(text):
+        resolved = _resolve_importee(token, changed_file, root)
+        if resolved and resolved != changed_file and resolved not in seen:
+            seen.add(resolved)
+            found.append(resolved)
+    return found
+
+
+def _file_text_at(new_ref, path, root):
+    """Contents of `path` on the after side: the working tree when reviewing
+    local changes (`new_ref` is None), else the blob at `new_ref`."""
+    if new_ref is None:
+        abs_path = os.path.join(root, path)
+        if not os.path.isfile(abs_path):
+            return ""
+        try:
+            with open(abs_path, "r", errors="replace") as fh:
+                return fh.read()
+        except OSError:
+            return ""
+    return blob_at(new_ref, path) or ""
+
+
+def _proximity_key(changed_file, candidate):
+    """Sort key ranking `candidate` by proximity to `changed_file`: same
+    directory first, then by the depth of their nearest common ancestor
+    (deeper shared prefix sorts earlier), so the per-file cap keeps the files
+    most likely to matter."""
+    cdirs = changed_file.split("/")[:-1]
+    kdirs = candidate.split("/")[:-1]
+    if cdirs == kdirs:
+        return (0, 0, candidate)
+    common = 0
+    for a, b in zip(cdirs, kdirs):
+        if a != b:
+            break
+        common += 1
+    return (1, -common, candidate)
+
+
+def cmd_related(args):
+    if not have("rg") and not have("git"):
+        die("need ripgrep (rg) or git for lookups.", code=127)
+    if not in_git_repo():
+        die("not inside a git repository.")
+
+    caps = RELATED_CAPS[args.mode]
+    per_file_cap, per_review_cap = caps["per_file"], caps["per_review"]
+
+    # Resolve the changed-file list the same way `files` does, so the two
+    # subcommands never disagree about what changed.
+    _, new_ref, diff_spec, _meta = resolve_endpoints(
+        args.base, args.head, args.linear)
+    changed = changed_paths(new_ref, diff_spec)
+    root = repo_root()
+
+    entries = {}
+    remaining = per_review_cap
+    total_truncated = 0
+
+    for path in changed:
+        # Only a recognized source file has a module name worth searching
+        # for, or import/require/use/include lines worth scanning. A
+        # changed doc/spec/manifest file's basename is as likely to be an
+        # ordinary word ("plan", "tasks", "spec") as a module name — running
+        # the same search against one would return every unrelated file that
+        # happens to use that word, which is noise, not related context.
+        if os.path.splitext(path)[1].lower() in IMPORT_EXTENSIONS:
+            importer_files = _find_importers(path, root)
+            text = _file_text_at(new_ref, path, root)
+            importee_files = _find_importees(path, text, root)
+        else:
+            importer_files, importee_files = set(), []
+
+        tag = {}
+        for f in importer_files:
+            tag[f] = "importer"
+        for f in importee_files:
+            tag.setdefault(f, "importee")
+        ranked = sorted(tag, key=lambda f: _proximity_key(path, f))
+
+        kept = ranked[:per_file_cap]
+        file_truncated = len(ranked) - len(kept)
+
+        if len(kept) > remaining:
+            budget = max(remaining, 0)
+            file_truncated += len(kept) - budget
+            kept = kept[:budget]
+        remaining -= len(kept)
+        total_truncated += file_truncated
+
+        entries[path] = {
+            "importers": sorted(f for f in kept if tag[f] == "importer"),
+            "importees": sorted(f for f in kept if tag[f] == "importee"),
+            "truncated": file_truncated,
+        }
+
+    json.dump({
+        "mode": args.mode,
+        "note": CONTEXT_NOTE,
+        "caps": {"per_file": per_file_cap, "per_review": per_review_cap},
+        "files": entries,
+        "summary": {
+            "changed_files": len(changed),
+            "related_files": sum(
+                len(e["importers"]) + len(e["importees"])
+                for e in entries.values()),
+            "truncated": total_truncated,
+        },
+    }, sys.stdout, indent=2)
     print()
     return 0
 
@@ -1357,6 +1682,16 @@ def main():
     c.add_argument("--path", help="restrict lookup to a path")
     c.add_argument("--lang", help="restrict to a language (go/ts/py/proto/...)")
     c.set_defaults(func=cmd_context)
+
+    rel = sub.add_parser(
+        "related",
+        help="bounded, per-changed-file importer/importee context")
+    _add_endpoint_args(rel)
+    rel.add_argument(
+        "--mode", choices=sorted(RELATED_CAPS), default="balanced",
+        help="balanced (default): 8 related files per changed file, 40 "
+             "per review. max: 20 per changed file, 120 per review.")
+    rel.set_defaults(func=cmd_related)
 
     ch = sub.add_parser(
         "change",
