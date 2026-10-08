@@ -592,5 +592,279 @@ class CrossLanguageImporterTest(unittest.TestCase):
         self.assertNotIn("src/mentions.c", entry["importers"])
 
 
+class FairShareInvariantTest(unittest.TestCase):
+    """`semdiff related`'s fair-share allocation: no changed file holds a
+    second related file while another candidate-bearing file holds none.
+
+    Fixture: 21 changed files (`lib/s01.py` .. `lib/s21.py`), each importing
+    two distinct, otherwise-unshared modules (`lib/sNN_a.py`, `lib/sNN_b.py`),
+    so every file carries exactly 2 real candidates and the 42 modules never
+    overlap between files. 21 files times 2 is 42 — more than the balanced
+    per-review cap of 40 can satisfy twice over, so the budget cannot give
+    every file a second pick, but 21 is comfortably under 40 so every file
+    can get its *first*. That is exactly the scenario the invariant governs:
+    some files are denied a second pick, none is denied a first.
+
+    Under the old single running-budget allocation, processing these 21
+    files in order would instead give the first 20 their full 2 each (40,
+    exhausting the cap) and leave the 21st with zero — the still exact
+    defect this change fixes.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-fairshare-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+
+        self.names = [f"s{i:02d}" for i in range(1, 22)]
+        for name in self.names:
+            self._write(f"lib/{name}_a.py", "VALUE = 1\n")
+            self._write(f"lib/{name}_b.py", "VALUE = 2\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+        git(self.repo, "branch", "-M", "main")
+
+        for name in self.names:
+            self._write(f"lib/{name}.py",
+                        f"import {name}_a, {name}_b\n")
+        git(self.repo, "add", "-A")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        path = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(text)
+
+    def test_no_file_holds_second_while_another_has_none(self):
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        files = out["files"]
+        self.assertEqual(len(files), 21)
+        counts = {
+            path: len(e["importers"]) + len(e["importees"])
+            for path, e in files.items()
+        }
+        # Every one of the 21 candidate-bearing files holds at least one
+        # related file — the budget was spent on second picks, never on
+        # leaving a file at zero while candidates existed for it.
+        self.assertTrue(all(c >= 1 for c in counts.values()), counts)
+        self.assertEqual(out["summary"]["files_starved"], 0)
+        self.assertEqual(out["summary"]["files_without_candidates"], 0)
+        # The 42-candidate demand exceeds the 40 cap, so the cap is indeed
+        # exhausted — this isn't a vacuous pass where nobody was denied
+        # anything at all.
+        self.assertEqual(out["summary"]["related_files"], 40)
+        self.assertTrue(any(c == 1 for c in counts.values()), counts)
+
+    def test_allocation_is_deterministic_across_runs(self):
+        rc1, out1, err1 = run_semdiff(self.repo, "related", "main")
+        rc2, out2, err2 = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc1, 0, err1)
+        self.assertEqual(rc2, 0, err2)
+        self.assertEqual(out1["files"], out2["files"])
+        self.assertEqual(out1["summary"], out2["summary"])
+
+
+class FairShareOrderingTest(unittest.TestCase):
+    """Scarce-first ordering within a pass: a file with few candidates is
+    served before a hub with many, so when the budget is finally contested
+    it is the hub's later picks that are sacrificed, never a scarce file's
+    first or second.
+
+    Fixture: the same 21 two-candidate files as `FairShareInvariantTest`,
+    plus one hub file, `lib/hub.py`, importing 8 distinct modules of its
+    own (hitting the balanced per-file cap exactly). Combined demand is
+    21*2 + 8 = 50 against the 40 cap, so the budget runs out mid-allocation
+    — the condition under which visiting order actually matters.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-fairshare-order-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+
+        self.names = [f"s{i:02d}" for i in range(1, 22)]
+        for name in self.names:
+            self._write(f"lib/{name}_a.py", "VALUE = 1\n")
+            self._write(f"lib/{name}_b.py", "VALUE = 2\n")
+        for j in range(8):
+            self._write(f"lib/hubmod{j}.py", "VALUE = 3\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+        git(self.repo, "branch", "-M", "main")
+
+        for name in self.names:
+            self._write(f"lib/{name}.py",
+                        f"import {name}_a, {name}_b\n")
+        hub_imports = ", ".join(f"hubmod{j}" for j in range(8))
+        self._write("lib/hub.py", f"import {hub_imports}\n")
+        git(self.repo, "add", "-A")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        path = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(text)
+
+    def test_scarce_file_outranks_hub_within_a_pass(self):
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        files = out["files"]
+        hub = files["lib/hub.py"]
+        hub_count = len(hub["importers"]) + len(hub["importees"])
+        scarce_counts = {
+            path: len(e["importers"]) + len(e["importees"])
+            for path, e in files.items() if path != "lib/hub.py"
+        }
+        # No file — scarce or hub — is left at zero.
+        self.assertTrue(hub_count >= 1, files)
+        self.assertTrue(all(c >= 1 for c in scarce_counts.values()),
+                        scarce_counts)
+        # The hub has 8 real candidates but is the one whose picks are
+        # sacrificed once the budget is contested: it ends with fewer than
+        # its 8, while at least one scarce file (visited first every pass)
+        # reaches its full 2.
+        self.assertLess(hub_count, 8)
+        self.assertTrue(any(c == 2 for c in scarce_counts.values()),
+                        scarce_counts)
+        # The hub's own truncation is at least as large as the worst-off
+        # scarce file's — the hub, not a scarce file, absorbs the shortfall.
+        self.assertGreaterEqual(hub["truncated"],
+                                max(2 - c for c in scarce_counts.values()))
+
+
+class StarvationCountsTest(unittest.TestCase):
+    """The two zero reasons stay separate: `files_without_candidates` (the
+    search found nothing to relate) and `files_starved` (candidates existed
+    and the budget denied them all).
+
+    Fixture: 41 changed files (`lib/f00.py` .. `lib/f40.py`), each importing
+    exactly one distinct, unshared module — 41 candidate-bearing files is
+    one more than the balanced per-review cap of 40 can give even a single
+    pick each, so exactly one of them (the last visited, `lib/f40.py`) ends
+    with real candidates and zero kept. A 42nd changed file, `docs/notes.md`,
+    is not a source file at all, so it never had a candidate to deny.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-starvation-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+
+        self.names = [f"f{i:02d}" for i in range(41)]
+        for name in self.names:
+            self._write(f"lib/{name}_mod.py", "VALUE = 1\n")
+        self._write("docs/notes.md", "Pre-existing notes.\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+        git(self.repo, "branch", "-M", "main")
+
+        for name in self.names:
+            self._write(f"lib/{name}.py", f"import {name}_mod\n")
+        self._write("docs/notes.md", "Pre-existing notes, now edited.\n")
+        git(self.repo, "add", "-A")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        path = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(text)
+
+    def test_starved_file_is_distinguished_from_one_with_nothing_to_relate(
+            self):
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        summary = out["summary"]
+        self.assertEqual(summary["changed_files"], 42)
+        self.assertEqual(summary["files_without_candidates"], 1)
+        self.assertEqual(summary["files_starved"], 1)
+
+        notes = out["files"]["docs/notes.md"]
+        self.assertEqual(len(notes["importers"]) + len(notes["importees"]), 0)
+        self.assertEqual(notes["truncated"], 0)
+
+        starved_path = self.names[-1]  # "f40" — visited last, denied last
+        starved = out["files"][f"lib/{starved_path}.py"]
+        self.assertEqual(
+            len(starved["importers"]) + len(starved["importees"]), 0)
+        self.assertEqual(starved["truncated"], 1)
+
+
+class SharedRelatedFileTest(unittest.TestCase):
+    """A related file shared by several changed files is charged against
+    the per-review cap once, and still listed under every changed file
+    that relates to it.
+
+    Fixture: three changed files (`lib/a.py`, `lib/b.py`, `lib/c.py`) that
+    each import nothing but the same pre-existing module, `lib/shared.py`.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-shared-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+
+        self._write("lib/shared.py", "VALUE = 1\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+        git(self.repo, "branch", "-M", "main")
+
+        for letter in ("a", "b", "c"):
+            self._write(f"lib/{letter}.py", "import shared\n")
+        git(self.repo, "add", "-A")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        path = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(text)
+
+    def test_shared_related_file_is_charged_once(self):
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        for letter in ("a", "b", "c"):
+            self.assertEqual(
+                out["files"][f"lib/{letter}.py"]["importees"],
+                ["lib/shared.py"])
+        summary = out["summary"]
+        self.assertEqual(summary["related_files"], 1)
+        self.assertEqual(summary["related_edges"], 3)
+        self.assertGreater(summary["related_edges"], summary["related_files"])
+        self.assertEqual(summary["files_starved"], 0)
+        self.assertEqual(summary["files_without_candidates"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
