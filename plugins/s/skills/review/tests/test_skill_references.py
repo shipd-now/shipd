@@ -163,12 +163,26 @@ MOVED_HEADINGS = (
 # carried for `description-drift`'s further location so the location field's
 # "fix site, never a symptom" parenthetical and the permission read as one
 # rule rather than a contradiction a reviewer could read either reference or
-# the inline surface and land on. `[*_\s]+` guards every join against
-# markdown emphasis defeating the match.
+# the inline surface and land on. `review-runtime-location` requires the
+# permission to additionally cover the run-time shape — a site correct in
+# isolation where the defect surfaces at run time — rather than the
+# "independently shows the defect" wording that excluded it. `[*_\s]+`
+# guards every join against markdown emphasis defeating the match.
 _LOCATION_RULE_PATTERN = re.compile(
     r"(?is)fix[*_\s]+site.{0,40}(?:never|not)[*_\s]+(?:a[*_\s]+)?symptom"
-    r".{0,120}further[*_\s]+(?:location|site).{0,80}independently[*_\s]+"
-    r"shows[*_\s]+the[*_\s]+defect")
+    r".{0,140}further[*_\s]+(?:location|site).{0,220}run[*_\s]+time"
+    r".{0,60}correct[*_\s]+in[*_\s]+isolation")
+
+# The specific exclusive wording that caused the regression this change
+# fixes: a further location added *only* where the site independently shows
+# the defect "on its own terms" — a predicate a correct import can never
+# satisfy. Its absence is pinned directly (`test_skill_references.py`
+# §review-runtime-location) rather than inferred from the new text's
+# presence, because a reviewer could add the run-time shape alongside the
+# old exclusive sentence and leave the exclusion intact.
+_EXCLUSIVE_LOCATION_FORM_PATTERN = re.compile(
+    r"(?is)further[*_\s]+(?:location|site).{0,40}only[*_\s]+where"
+    r".{0,80}independently[*_\s]+shows[*_\s]+the[*_\s]+defect")
 
 # The three concrete impact instances (review-location-impact), one pattern
 # per instance, written loosely enough to match each surface's own wording
@@ -630,13 +644,44 @@ class LocationRuleGeneralisedTest(unittest.TestCase):
     """
 
     def test_both_reference_free_surfaces_state_the_generalised_rule(self):
+        """The permission must cover the run-time shape, not just symmetry.
+
+        v0.6.262's wording required a further location to "independently
+        show the defect on its own terms" — a predicate a correct import
+        never satisfies, since the import itself is not wrong. Measured by
+        benchy-cf over three rounds of the same three PRs, the pg-pool
+        file-not-shipped finding named its second location in 1 of 3 rounds
+        on v0.6.261 and 0 of 3 on v0.6.262: generalising the rule inline
+        fixed the drift between surfaces but, applied literally, excluded
+        the exact run-time site it was written to permit.
+        """
         for path in (SKILL_MD, HARNESS_REVIEW_BODY):
             with self.subTest(path=path):
                 self.assertRegex(
                     _read(path), _LOCATION_RULE_PATTERN,
                     f"{path} must state the fix-site prohibition on a "
                     "symptom together with the further-location permission, "
-                    "not as an unqualified ban")
+                    "not as an unqualified ban, and the permission must "
+                    "cover the run-time shape — a site correct in isolation "
+                    "where the defect surfaces at run time")
+
+    def test_neither_surface_states_the_exclusive_form(self):
+        """The regression's exact wording must not still be present.
+
+        The old sentence — a further location added *only* where the site
+        independently shows the defect on its own terms — is the specific
+        wording that excluded the run-time site. Pinning its absence
+        directly catches a rewording that adds the new shapes without
+        dropping the old exclusion.
+        """
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertNotRegex(
+                    _read(path), _EXCLUSIVE_LOCATION_FORM_PATTERN,
+                    f"{path} must not state that a further location is "
+                    "added only where the site independently shows the "
+                    "defect — that exclusive form is the wording that "
+                    "excluded the run-time site")
 
 
 class ImpactInstancesPresentTest(unittest.TestCase):

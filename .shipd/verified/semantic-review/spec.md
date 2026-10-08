@@ -244,10 +244,12 @@ with 🔴/🟠/🟡 severity dots, a collapsible walkthrough, and an explicit
 list of what could not be verified.
 
 A finding's primary location SHALL name the line its own fix would change —
-never a symptom site in place of it. A further location SHALL be added only
-where that site independently shows the defect on its own terms; this is the
-general permission the packaging and description-drift cases rely on, so no
-other requirement SHALL grant it separately. Where the same defect recurs at
+never a symptom site in place of it. A further location SHALL name a site at
+which the defect is visible: a line wrong in the same way, a line that shows
+the mismatch on its own terms, or the line at which the defect surfaces at run
+time even though that line is correct in isolation. This is the general
+permission the packaging and description-drift cases rely on, so no other
+requirement SHALL grant it separately. Where the same defect recurs at
 more than one call site, the skill SHALL report one finding whose locations
 name every recurring site, rather than one finding per site.
 
@@ -509,6 +511,12 @@ judgement passes as the skill, so the two surfaces do not drift.
 #### Scenario: A fully covered cohort raises no test-coverage finding
 - **WHEN** every finding in a cohort would already fail an existing test
 - **THEN** that cohort raises no `test-coverage` finding
+
+#### Scenario: A run-time failure site qualifies as a further location
+- **WHEN** a defect is the conjunction of two lines, neither wrong alone — a
+  manifest omitting a file and the import that names it
+- **THEN** the finding anchors at the fix site and names the importing line as
+  a further location, because that is where the defect surfaces at run time
 
 ### Requirement: Spec-aware verification
 id: spec-aware-review
@@ -1108,8 +1116,10 @@ SHALL rate on the existing high, medium and low rubric with no floor.
 A packaging finding that a file the diff adds is omitted from what the manifest
 publishes SHALL anchor at the manifest — the line a fix would change — and
 SHALL name the importing line as a further location under the general
-further-location permission the review skill states, because the import
-independently shows the omission: it is the line that fails at run time.
+further-location permission the review skill states, because the import is the
+line at which the omission surfaces at run time — the import itself is correct,
+and that is why it qualifies under the run-time shape rather than by being
+wrong on its own terms.
 
 The `--json` finding taxonomy SHALL accept the values `security`,
 `performance`, `stability`, and `data-integrity` in addition to those it

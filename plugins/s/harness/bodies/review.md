@@ -90,8 +90,10 @@ edits the repository.
     description-level finding at one location only, unless another site
     independently shows the drift.
 11. **Report by cohort, most severe first.** Give each finding a location (fix
-    site, not symptom; a further site only where it independently shows the
-    defect), what is wrong, why it matters, a fix, and severity:
+    site, not symptom; a further site where the defect is visible — wrong the
+    same way, showing the mismatch on its own terms, or the line where it
+    surfaces at run time though correct in isolation), what is wrong, why it
+    matters, a fix, and severity:
     - **high** — a correctness bug, a contract break with an un-updated
       consumer, or an unmet spec scenario;
     - **medium** — an unhandled edge case, a caller at genuine risk, or a
