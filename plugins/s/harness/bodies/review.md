@@ -105,17 +105,25 @@ edits the repository.
     description-level finding at one location only; a further location
     follows the same permission as step 13, never a separate rule.
 12. **Verify candidates.** Before reporting, spawn one fresh-context verifier
-    with the `Agent` tool — that exact name — to confirm or kill every
-    candidate finding steps 2–11 produced. It gets each candidate's location,
-    claim, and why it was suspected, plus the diff and file-read access —
-    never the reasoning that produced them; cold start is what keeps it from
-    rubber-stamping the hunt's own conviction. One verifier per review, not
-    one per candidate. For each it returns `confirmed` with a severity
-    (`high`/`medium`/`low`), overriding whatever an earlier step proposed, or
-    `killed` with a one-line reason. A killed candidate goes into the
-    payload's top-level `killed` array — `location`, `what`, `reason`, and
-    `candidate` (its zero-based position in the list the verifier received,
-    which MUST be deterministic for a given review) — and never into
+    with the `Agent` tool (that exact name), naming its agent type as
+    `general-purpose`, to confirm or kill every candidate finding steps 2–11
+    produced. The spawn message carries each candidate's zero-based index
+    (its position in the list), location, claim, and why it was suspected,
+    and the base/head to re-derive the diff from via `semdiff diff`, plus
+    file-read access — never the reasoning that produced them; cold start is
+    what keeps it from rubber-stamping the hunt's own conviction. One
+    verifier per review, not one per candidate. It answers one line per
+    candidate, in the order received, index-prefixed, nothing else —
+    `<index>` the same zero-based position named above, so one numbering
+    runs from the spawn message through the verdict to the payload:
+    ```
+    <index> confirmed <high|medium|low>
+    <index> killed <one-line reason>
+    ```
+    overriding whatever an earlier step proposed. A killed candidate goes into
+    the payload's top-level `killed` array — `location`, `what`, `reason`, and
+    `candidate` (that identical zero-based position in the list the verifier
+    received, which MUST be deterministic for a given review) — and never into
     `findings`, under any status: a consumer scoring the payload counts every
     `findings` entry as reported. When the `Agent` spawn is unavailable or
     fails, continue rather than abort: set the payload's top-level

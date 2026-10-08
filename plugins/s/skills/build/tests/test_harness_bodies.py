@@ -353,12 +353,57 @@ class ShippedRenderTest(unittest.TestCase):
         state, and the degradation path — has to be inline on a file that can
         read no reference. There was nothing left to compress without
         repeating this series' content-loss failure.
+
+        It rose a third time, 185 -> 200, in `review-verifier-handover`: the
+        review body carrying that change's subagent type and verdict shape
+        reached 183 of 185, leaving two lines — too little for the semantic
+        review of that very pull request to add a line to this file even if
+        it found one wanting. A later task in the same build then added the
+        zero-based index wording the verdict shape itself turned out to need,
+        three more lines, so the figure a reader measures today is **186** at
+        the full vocabulary, not 183: a count taken mid-build does not survive
+        a later task editing the same file, and this is that count, corrected
+        once the build finished rather than left stale at the value it had
+        when first written down.
+
+        What was checked and found false: the assumption that 186, measured
+        at the full feature vocabulary, is a worst case typical installs
+        undercut. It is not. Checked against every registered harness in
+        `harness_registry.HARNESSES` rather than only the full vocabulary:
+        fourteen of fifteen declare `file-references` and render 186 either
+        way, but `aider` declares no features at all and renders **189** —
+        three lines past what the full-vocabulary render here checks, and
+        past the old 185 ceiling, because an absent feature emits fallback
+        text longer than the gated version it replaces. The full-vocabulary
+        figure is not the ceiling's true worst case; the worst case belongs
+        to whichever registered harness declares the fewest features. This
+        test now asserts both: the full vocabulary (kept, since it is still
+        the case every change to this series has measured against) and every
+        registered harness's own declared features, so the minimal-vocabulary
+        case this review-verifier-handover build found is never again the
+        one the suite does not check.
+
+        This is the third raise in three versions — 140, then 160, then 185,
+        now 200. A file that can defer nothing to a reference has only two
+        options when it grows: reword its instructions to fit, which this
+        series has already shown drops content, or raise the ceiling, which
+        buys room without answering why the body keeps growing. A fourth
+        raise should be a conversation about decomposing the body instead of
+        a fourth trip through this docstring.
         """
         for command in hb.commands():
             lines = len(hb.render(command, hr.FEATURES,
                                   refs_dir=REFS).splitlines())
-            self.assertLess(lines, 185,
+            self.assertLess(lines, 200,
                             "%s renders %d lines" % (command, lines))
+        for command in hb.commands():
+            for harness in hr.HARNESSES:
+                lines = len(hb.render(command, harness["features"],
+                                      refs_dir=REFS).splitlines())
+                self.assertLess(
+                    lines, 200,
+                    "%s renders %d lines for harness %r"
+                    % (command, lines, harness["id"]))
 
     def test_a_fallback_pointer_appears_only_when_files_can_be_read(self):
         pointer = "%s/%%s.md" % REFS
