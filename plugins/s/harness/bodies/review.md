@@ -35,7 +35,8 @@ edits the repository.
    imports, from its own import/require/use/include lines, resolved against
    paths that actually exist in the repo; a name that resolves to nothing is
    dropped, not guessed at. Read only the files this names: at most 8 per
-   changed file and 40 across the review, ranked same-directory first then by
+   changed file and 40 across the review — raise both to 20 and 120 when
+   recall matters more than cost — ranked same-directory first then by
    nearest common ancestor, with every file the cap drops counted and
    reported, never dropped silently. This feeds the downstream-impact and
    call-site checks (steps 5 and 6) and the lenses that compare a change

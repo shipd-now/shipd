@@ -2,6 +2,7 @@
 """Unit tests for `semdiff files` (cohort grouping) and `semdiff context`
 (best-effort reference lookup). Fixtures are temp git repos; no network."""
 
+import argparse
 import json
 import os
 import shutil
@@ -9,9 +10,15 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.normpath(os.path.join(HERE, "..", "scripts", "semdiff.py"))
+SCRIPTS = os.path.dirname(SCRIPT)
+if SCRIPTS not in sys.path:
+    sys.path.insert(0, SCRIPTS)
+
+import semdiff  # noqa: E402 — the GrepFailure tests call module internals directly
 
 
 def git(repo, *args):
@@ -195,6 +202,82 @@ class ContextTest(unittest.TestCase):
                             for m in out["matches"]))
 
 
+class GrepFailureTest(unittest.TestCase):
+    """A genuine `rg`/`git grep` tool failure (a non-zero exit outside the
+    {0, 1} match/no-match pair both tools document) must surface as a hard
+    failure, in both `context` and `related` — never come back silently as
+    "no matches"/"no importers", which would be indistinguishable from the
+    search having actually run and found nothing. White-box: imports
+    `semdiff` directly so the failure can be injected below the subprocess
+    boundary, deterministically and without depending on either tool's
+    real-world exit codes for a crafted error."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-grepfail-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+        self._write("lib/mod.py", "def f():\n    return 1\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+        git(self.repo, "branch", "-M", "main")
+        self._write("lib/caller.py", "import lib.mod\n")
+        git(self.repo, "add", "-A")
+        self._cwd = os.getcwd()
+        os.chdir(self.repo)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        path = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(text)
+
+    def test_grep_matches_raises_on_a_real_tool_failure(self):
+        """A returncode outside {0, 1} must raise `GrepFailure`, not come
+        back as an empty, no-matches-indistinguishable list."""
+        fake = subprocess.CompletedProcess(
+            args=["git", "grep"], returncode=2, stdout="",
+            stderr="fatal: boom")
+        with mock.patch.object(semdiff, "run", return_value=fake):
+            with self.assertRaises(semdiff.GrepFailure):
+                semdiff._grep_matches("mod", word=True, fixed=True)
+
+    def test_grep_matches_treats_no_match_as_a_real_empty_result(self):
+        """Returncode 1 (git grep's documented "no match") must still come
+        back as an ordinary empty list, not raise — only a failure outside
+        the documented {0, 1} pair is a `GrepFailure`."""
+        fake = subprocess.CompletedProcess(
+            args=["git", "grep"], returncode=1, stdout="", stderr="")
+        with mock.patch.object(semdiff, "run", return_value=fake):
+            self.assertEqual(
+                semdiff._grep_matches("mod", word=True, fixed=True), [])
+
+    def test_context_dies_rather_than_reporting_an_empty_result(self):
+        args = argparse.Namespace(symbol="mod", path=None, lang=None)
+        with mock.patch.object(semdiff, "_grep_matches",
+                               side_effect=semdiff.GrepFailure("boom")):
+            with self.assertRaises(SystemExit) as ctx:
+                semdiff.cmd_context(args)
+        self.assertNotEqual(ctx.exception.code, 0)
+
+    def test_related_dies_rather_than_reporting_zero_importers(self):
+        args = argparse.Namespace(base="main", head=None, linear=False,
+                                  mode="balanced")
+        with mock.patch.object(semdiff, "_find_importers",
+                               side_effect=semdiff.GrepFailure("boom")):
+            with self.assertRaises(SystemExit) as ctx:
+                semdiff.cmd_related(args)
+        self.assertNotEqual(ctx.exception.code, 0)
+
+
 class RelatedTest(unittest.TestCase):
     """`semdiff related`: importers, importees, caps, and the modes.
 
@@ -317,6 +400,26 @@ class RelatedTest(unittest.TestCase):
         self.assertEqual(importees, ["lib/parser.py"])
         for bogus in ("somepkg/outside.py", "lib/util.py", "lib"):
             self.assertNotIn(bogus, importees)
+
+    def test_import_cannot_escape_the_repository_root(self):
+        """A relative import with enough `../` segments can normalize to a
+        path outside the repo root. `related` must never name it as an
+        importee even when a real file happens to sit there on disk — the
+        repository boundary is the limit, not merely the filesystem's. (A
+        regression guard: before the fix, `_exists_with_extension` accepted
+        any `os.path.isfile` hit regardless of where the join landed, so a
+        deeply-relative import in the diff could make `related` name — and
+        the review then read — a file outside the repository.)"""
+        outside = os.path.join(self.tmp, "escaped.py")
+        with open(outside, "w") as fh:
+            fh.write("SECRET = 1\n")
+        self._write("lib/escape.js",
+                    "const x = require('../../escaped');\n")
+        git(self.repo, "add", "-A")
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        entry = out["files"]["lib/escape.js"]
+        self.assertEqual(entry["importees"], [])
 
     def test_per_file_cap_reports_its_dropped_count(self):
         rc, out, err = run_semdiff(self.repo, "related", "main")

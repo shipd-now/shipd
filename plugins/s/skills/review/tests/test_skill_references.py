@@ -1401,6 +1401,14 @@ _RELATED_LENSES_PATTERN = re.compile(
 _UNNAMED_FILE_UNREAD_PATTERN = re.compile(
     r"(?is)did[*_\s]+not[*_\s]+name[*_\s]+stays[*_\s]+unread")
 
+# The wider-recall caps (20 per changed file, 120 per review) that `--mode
+# max` raises the balanced defaults to. Both surfaces must name them, so a
+# reviewer who only ever sees the harness body still knows a wider sweep
+# exists — the gap a crafted-import regression caught once (f4/f6 in the
+# review-related-file-context PR): the harness step named only the balanced
+# 8/40 pair, with no way to learn 20/120 was ever an option.
+_RELATED_WIDER_RECALL_PATTERN = re.compile(r"(?is)20[^\n]{0,40}120")
+
 
 class RelatedFileContextStepTest(unittest.TestCase):
     """Both reference-free surfaces — `SKILL.md` and the harness review
@@ -1436,6 +1444,18 @@ class RelatedFileContextStepTest(unittest.TestCase):
                     _read(path), _UNNAMED_FILE_UNREAD_PATTERN,
                     f"{path} must state that a file the related search did "
                     "not name stays unread")
+
+    def test_both_surfaces_name_the_wider_recall_caps(self):
+        """A reviewer on either surface must be able to learn that the
+        balanced 8/40 caps are not the only option — the harness body once
+        named only the balanced pair, with nothing telling a reviewer on
+        that surface alone that a 20/120 sweep existed at all."""
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _RELATED_WIDER_RECALL_PATTERN,
+                    f"{path} must name the wider-recall 20/120 caps "
+                    "alongside the balanced 8/40 pair")
 
 
 if __name__ == "__main__":

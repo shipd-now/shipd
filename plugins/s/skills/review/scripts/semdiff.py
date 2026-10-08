@@ -1123,13 +1123,25 @@ CONTEXT_NOTE = ("best-effort candidate references; NOT a complete call graph. "
                 "Unmatched files are not proven safe. Verify before trusting.")
 
 
+class GrepFailure(RuntimeError):
+    """Raised by `_grep_matches` when the underlying `rg`/`git grep`
+    subprocess exits with a status that is neither "matched" (0) nor the
+    tool's own documented "no matches" exit (1) — a real tool failure
+    (a bad pattern, a filesystem error, `git` refusing to run), which must
+    never be read as "no related files". Silently treating this the same as
+    an empty result would let a review proceed believing a search ran and
+    found nothing, when in fact the search never ran at all."""
+
+
 def _grep_matches(pattern, path=None, word=True, lang=None, fixed=False):
     """Best-effort search for `pattern` across the repo (or `path`), via
     ripgrep when present and `git grep` otherwise — the one tool ladder both
     `context` and `related` run. `word` requests a whole-word match; `fixed`
     requests a literal (non-regex) match, for a term such as a path that may
     carry regex metacharacters. Returns a list of {"file", "line", "text"}
-    dicts."""
+    dicts. Raises `GrepFailure` when the subprocess itself failed (see
+    `GrepFailure`) rather than returning an empty list indistinguishable from
+    a genuine no-match result."""
     matches = []
     scope = path or "."
     if have("rg"):
@@ -1144,6 +1156,9 @@ def _grep_matches(pattern, path=None, word=True, lang=None, fixed=False):
                 cmd += ["-g", glob]
         cmd += [pattern, scope]
         r = run(cmd)
+        if r.returncode not in (0, 1):
+            raise GrepFailure(
+                "rg exited %d: %s" % (r.returncode, (r.stderr or "").strip()))
         for line in r.stdout.splitlines():
             try:
                 ev = json.loads(line)
@@ -1167,6 +1182,10 @@ def _grep_matches(pattern, path=None, word=True, lang=None, fixed=False):
         if path:
             cmd += ["--", path]
         r = run(cmd)
+        if r.returncode not in (0, 1):
+            raise GrepFailure(
+                "git grep exited %d: %s"
+                % (r.returncode, (r.stderr or "").strip()))
         for line in r.stdout.splitlines():
             parts = line.split(":", 2)
             if len(parts) == 3:
@@ -1179,7 +1198,10 @@ def cmd_context(args):
     if not have("rg") and not have("git"):
         die("need ripgrep (rg) or git for lookups.", code=127)
 
-    matches = _grep_matches(args.symbol, path=args.path, lang=args.lang)
+    try:
+        matches = _grep_matches(args.symbol, path=args.path, lang=args.lang)
+    except GrepFailure as exc:
+        die("search failed: %s" % exc)
 
     json.dump({"symbol": args.symbol, "note": CONTEXT_NOTE, "matches": matches},
               sys.stdout, indent=2)
@@ -1292,8 +1314,19 @@ def _importee_tokens(text):
 
 def _exists_with_extension(rel_path, root):
     """`rel_path`, or `rel_path` plus a common source extension or index
-    file, resolved against `root` — the first that names a real file.
-    Returns the matching repo-relative path (forward slashes), or None."""
+    file, resolved against `root` — the first that names a real file inside
+    `root`. Returns the matching repo-relative path (forward slashes), or
+    None.
+
+    A token with enough `../` segments (or a leading-dot Python import
+    climbing past the package root) can normalize to a path outside `root`
+    entirely. `os.path.isfile` alone does not care — it happily stats
+    whatever the join produces, repo or not — so every candidate's real path
+    is checked against `root`'s real path before it is accepted. Without
+    this, a crafted or merely deep relative import in the diff could make
+    `related` name, and the review then read, a file outside the repository
+    (per the `related-context` spec: "An importee SHALL resolve to a path
+    that exists in the repository" — in the repository, not merely on disk)."""
     rel_path = os.path.normpath(rel_path)
     if rel_path in (".", "", ".."):
         return None
@@ -1306,9 +1339,15 @@ def _exists_with_extension(rel_path, root):
             os.path.join(rel_path, "index.js"),
             os.path.join(rel_path, "mod.rs"),
         ]
+    root_real = os.path.realpath(root)
     for cand in candidates:
-        if os.path.isfile(os.path.join(root, cand)):
-            return cand.replace(os.sep, "/")
+        abs_path = os.path.join(root, cand)
+        if not os.path.isfile(abs_path):
+            continue
+        real = os.path.realpath(abs_path)
+        if real != root_real and not real.startswith(root_real + os.sep):
+            continue  # escapes root — never named, same as "resolves to nothing"
+        return cand.replace(os.sep, "/")
     return None
 
 
@@ -1443,7 +1482,18 @@ def cmd_related(args):
         # the same search against one would return every unrelated file that
         # happens to use that word, which is noise, not related context.
         if os.path.splitext(path)[1].lower() in IMPORT_EXTENSIONS:
-            importer_files = _find_importers(path, root)
+            try:
+                importer_files = _find_importers(path, root)
+            except GrepFailure as exc:
+                # A failed search is not "no importers" — reporting it as an
+                # empty result would have the review proceed believing the
+                # diff carries no cross-file context when the search for it
+                # never actually ran. Fail the whole subcommand loudly,
+                # the same way "neither rg nor git" already does, so the
+                # review records this among what it could not verify rather
+                # than silently trusting an empty set.
+                die("search failed while resolving importers for %s: %s"
+                    % (path, exc))
             text = _file_text_at(new_ref, path, root)
             importee_files = _find_importees(path, text, root)
         else:
