@@ -2,6 +2,12 @@
 
 > Prepared by the shipd research skill (/s:research).
 
+**Status (9 Oct 2026):** written before the verify stage existed. Idea 2's
+verify half has since shipped as 0.6.268–0.6.271 (step 7 of `/s:review`); its
+permissive hunt half and ideas 1, 3 and 4 remain unbuilt. A free check on
+existing rounds later found no description suppression in this corpus, so idea
+3 stays only as robustness against adversarial descriptions.
+
 ## Summary
 
 This report reads the ReviewBench recall report
@@ -135,7 +141,7 @@ with five or more [1]. MCR-Bench reports that performance varies widely by
 defect type and severity [11].
 
 **Fit for Shipd.** apilix carries most of the never-matched golden findings
-and changes 22 files. Shipd's step 7 already groups files into cohorts.
+and changes 22 files. Shipd already groups files into cohorts (step 1).
 
 **Idea 4: review each cohort in its own pass.** Give each cohort a separate
 hunt with its own context, then merge. This applies the position effect [9]
