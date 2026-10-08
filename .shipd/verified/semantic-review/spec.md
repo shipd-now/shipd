@@ -246,8 +246,9 @@ list of what could not be verified.
 A finding's primary location SHALL name the line its own fix would change —
 never a symptom site in place of it. A further location SHALL name a site at
 which the defect is visible: a line wrong in the same way, a line that shows
-the mismatch on its own terms, or the line at which the defect surfaces at run
-time even though that line is correct in isolation. This is the general
+the mismatch on its own terms, or, where the defect is the conjunction of two
+lines neither wrong alone, the line at which it surfaces at run time even
+though that line is correct in isolation. This is the general
 permission the packaging and description-drift cases rely on, so no other
 requirement SHALL grant it separately. Where the same defect recurs at
 more than one call site, the skill SHALL report one finding whose locations
@@ -299,8 +300,8 @@ reference file runs neither pass believing the other sufficed.
 
 A `description-drift` finding whose drift is a property of the description
 rather than of any one line SHALL carry its primary anchor alone. A further
-location SHALL be added only where that site independently shows the drift on
-its own terms.
+location follows the general further-location permission stated above; this
+requirement grants no separate rule for it.
 
 Where a check applies to every diff that carries the thing it inspects and
 its detail lives in a conditionally-loaded reference file, the check's name
@@ -500,8 +501,9 @@ judgement passes as the skill, so the two surfaces do not drift.
 #### Scenario: A description-level finding does not fan out to code sites
 - **WHEN** a drift is a property of the description rather than of any
   particular line
-- **THEN** the finding carries its primary anchor alone, with a further
-  location only where that site independently shows the drift
+- **THEN** the finding carries its primary anchor alone, with any further
+  location governed by the general further-location permission rather than
+  a separate description-drift rule
 
 #### Scenario: Test-coverage findings roll up rather than multiplying
 - **WHEN** a review writes four uncovered findings across two cohorts
