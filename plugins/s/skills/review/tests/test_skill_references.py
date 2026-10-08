@@ -1665,5 +1665,102 @@ class VerdictIndexNumberingTest(unittest.TestCase):
                     "zero-based")
 
 
+# `review-verifier-rubric`: the spawn message also carries the severity
+# rubric itself, quoted verbatim from the rating step the composing session
+# has just read, so the agent that decides a severity has the rule in front
+# of it. The `[*_\s]+` class absorbs markdown emphasis a surface might wrap
+# the words in.
+_SEVERITY_RUBRIC_IN_SPAWN_PATTERN = re.compile(
+    r"(?is)spawn[\s\S]{0,40}severity[*_\s]+rubric")
+
+# The rubric travels quoted at runtime, never reproduced as a second copy --
+# the wording both surfaces use to say so. Either word can lead (prose puts
+# "verbatim" first here, "quoted" first there), so the window tolerates both
+# orders, same style as `_ZERO_BASED_INDEX_PATTERN` above.
+_RUBRIC_QUOTED_VERBATIM_PATTERN = re.compile(
+    r"(?is)(?:quoted[\s\S]{0,300}verbatim|verbatim[\s\S]{0,300}quoted)")
+
+# The exposure floor rides along with the rest of the rubric in the spawn,
+# not only the concrete instances.
+_EXPOSURE_FLOOR_TERM_PATTERN = re.compile(r"(?is)exposure[*_\s]+floor")
+
+
+class SeverityRubricInSpawnTest(unittest.TestCase):
+    """The verify stage's spawn message carries the severity rubric itself,
+    not only the candidate list -- `references/verification.md` and the
+    harness review body (which has no `SKILL.md` to quote from, so it
+    points at its own rubric step instead) both state that the rubric
+    travels, quoted verbatim from the rating step, including the exposure
+    floor.
+    """
+
+    def test_both_surfaces_require_the_rubric_in_the_spawn(self):
+        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                text = _read(path)
+                self.assertRegex(
+                    text, _SEVERITY_RUBRIC_IN_SPAWN_PATTERN,
+                    f"{path} must state that the spawn message carries "
+                    "the severity rubric")
+                self.assertRegex(
+                    text, _RUBRIC_QUOTED_VERBATIM_PATTERN,
+                    f"{path} must state the rubric is quoted verbatim, "
+                    "not reproduced")
+                self.assertRegex(
+                    text, _EXPOSURE_FLOOR_TERM_PATTERN,
+                    f"{path} must name the exposure floor as part of what "
+                    "travels in the spawn")
+
+
+# `review-verifier-rubric`'s non-goal: no second copy of the rubric's own
+# severity-definition wording in `verification.md`. These fragments are the
+# `high`/`medium`/`low` definitions, one impact-rule concrete instance, and
+# the exposure floor's defining clause, as `SKILL.md` step 8 states them --
+# distinctive enough that their presence here could only mean a checked-in
+# copy, not a coincidental phrase. A semantic review of this change (PR 280)
+# found the original two-fragment version checked only the `high`/`medium`
+# wording, so a copy that pasted just the `low` definition, the impact rule,
+# or the exposure floor -- or that paraphrased either checked fragment --
+# would have slipped through undetected; this widens the fragment set rather
+# than only the two most visible ones. `_EXPOSURE_FLOOR_DEFINITION_WORDING`
+# is the floor's lead clause only, deliberately excluding "whatever the
+# reviewer's confidence": that trailing phrase also appears, legitimately,
+# in this file's own paragraph explaining why the floor matters (not a copy
+# of the operative definition), so guarding on it would self-trip on this
+# file's own prose.
+_HIGH_DEFINITION_WORDING = "correctness bug, a contract break"
+_MEDIUM_DEFINITION_WORDING = "unhandled edge case, an untouched caller"
+_LOW_DEFINITION_WORDING = "nothing lost, corrupted, exposed, or promised and unmet"
+_IMPACT_RULE_INSTANCE_WORDING = "drops the record and leaves the data"
+_EXPOSURE_FLOOR_DEFINITION_WORDING = (
+    "authorization boundary reached without the caller's scope check")
+
+
+class NoRubricCopyInVerificationMdTest(unittest.TestCase):
+    """`verification.md` requires the rubric to be quoted into the spawn at
+    runtime (`SeverityRubricInSpawnTest`, above) rather than reproduced in
+    this file -- a second copy would be a second source that drifts the
+    first time the rubric changes. This pins the absence across the whole
+    rubric this change says travels (the `high`/`medium`/`low` definitions,
+    the impact rule, and the exposure floor), not only the `high`/`medium`
+    wording alone.
+    """
+
+    def test_verification_md_does_not_restate_the_definitions(self):
+        text = _read(VERIFICATION_MD)
+        for wording, label in (
+            (_HIGH_DEFINITION_WORDING, "`high`"),
+            (_MEDIUM_DEFINITION_WORDING, "`medium`"),
+            (_LOW_DEFINITION_WORDING, "`low`"),
+            (_IMPACT_RULE_INSTANCE_WORDING, "impact rule"),
+            (_EXPOSURE_FLOOR_DEFINITION_WORDING, "exposure floor"),
+        ):
+            with self.subTest(label=label):
+                self.assertNotIn(
+                    wording, text,
+                    f"verification.md must not carry its own copy of the "
+                    f"{label} definition wording")
+
+
 if __name__ == "__main__":
     unittest.main()

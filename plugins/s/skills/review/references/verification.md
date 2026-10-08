@@ -25,6 +25,24 @@ it goes in the message rather than being re-derived. The index is
 number the `killed` array's `candidate` field records below: one numbering
 runs from the spawn message through the verdict to the payload.
 
+**The spawn also carries the severity rubric.** The composing session quotes
+it **verbatim, as it appears in the rating step it has just read** —
+`SKILL.md` step 8's `high`, `medium` and `low` definitions, the impact rule
+with its concrete instances, and the exposure floor — into the spawn message,
+so the agent that decides a severity has the rule in front of it. That text is
+quoted at runtime, never reproduced here: the rubric has changed in four of
+the last ten versions, and a copy checked into this file would be a second
+source that drifts from the first change onward.
+
+The whole rubric travels, not only the concrete instances. The exposure
+floor is the rubric's one absolute — a credential exposure or an
+authorization boundary reached without a scope check is `high` whatever the
+reviewer's confidence — and a verifier that quietly downgraded one would be a
+worse failure than a low-versus-medium drift. None of the benchmark's
+severity targets is an exposure case, so that failure would never show up in
+the measurement; that is why the whole rubric goes, not only the fashionable
+part of it.
+
 The diff is **re-derived by the verifier**, which runs `semdiff diff` itself
 against the base and head the spawn message names, plus the ability to read
 files. The verifier reads the diff with its own eyes rather than through the
