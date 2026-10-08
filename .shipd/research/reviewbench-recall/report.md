@@ -6,7 +6,7 @@ We ran Shipd's `/s:review` locally against five PRs from the ReviewBench test
 set (80 valid golden findings), then used the benchmark to test a series of
 Shipd changes. Micro grounded recall rose from 28.7% on the 0.6.247 baseline
 to 40.0% on 0.6.260. Golden findings matched in at least 2 of 3 rounds rose
-from 23 to 32.
+from 25 on 0.6.249, the first version run for three rounds, to 32.
 
 Mechanical changes moved the numbers, and rewording didn't. Multi-location
 findings, the manifest check, the missing-test roll-up and the import-line
@@ -68,7 +68,7 @@ findings.
 
 | Version | Change | Rounds | Micro recall (range) | Macro recall | ≥2 of 3 |
 |---|---|---:|---:|---:|---:|
-| 0.6.247 | Baseline | 1×2 | 28.7% | 33.2% | 23 |
+| 0.6.247 | Baseline | 1×2 | 28.7% | 33.2% | n/a |
 | 0.6.249 | Multi-location findings | 3 | 35.0% (30.0–42.5) | 34.6% | 25 |
 | 0.6.251 | Low-severity rubric, weak wording | 3 | 33.3% (31.2–36.2) | 32.8% | 26 |
 | 0.6.252 | Low-severity rubric, reworded | 3 | 35.4% (27.5–41.2) | 35.9% | 26 |
@@ -77,7 +77,7 @@ findings.
 | **0.6.260 +desc** | **Roll-up, manifest check, more** | 3 | **40.0% (40.0–40.0)** | **42.1%** | **32** |
 
 The baseline row is one review run judged twice, so it shows judge noise
-only. Compare "+desc" rows only with each other, because the PR description
+only and has no ≥2-of-3 count. Compare "+desc" rows only with each other, because the PR description
 changes what the reviewer sees.
 
 ## What each change did

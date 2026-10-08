@@ -3,7 +3,7 @@
 > Prepared by the shipd research skill (/s:research).
 
 **Status (9 Oct 2026):** written before the verify stage existed. Idea 2's
-verify half has since shipped as 0.6.268–0.6.271 (step 7 of `/s:review`); its
+verify half has since shipped (0.6.270 on main; step 7 of `/s:review`); its
 permissive hunt half and ideas 1, 3 and 4 remain unbuilt. A free check on
 existing rounds later found no description suppression in this corpus, so idea
 3 stays only as robustness against adversarial descriptions.
