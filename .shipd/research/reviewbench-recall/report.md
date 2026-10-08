@@ -4,9 +4,11 @@
 
 We ran Shipd's `/s:review` locally against five PRs from the ReviewBench test
 set (80 valid golden findings), then used the benchmark to test a series of
-Shipd changes. Micro grounded recall rose from 28.7% on the 0.6.247 baseline
-to 40.0% on 0.6.260. Golden findings matched in at least 2 of 3 rounds rose
-from 25 on 0.6.249, the first version run for three rounds, to 32.
+Shipd changes. Without the PR description, micro grounded recall rose from
+28.7% on the 0.6.247 baseline to 35.4% on 0.6.252. With the description, it
+rose from 37.1% on 0.6.252 to 40.0% on 0.6.260, and golden findings matched in
+at least 2 of 3 rounds rose from 30 to 32. The 28.7% → 40.0% span mixes Shipd
+changes with the description, so it is not a measure of either alone.
 
 Mechanical changes moved the numbers, and rewording didn't. Multi-location
 findings, the manifest check, the missing-test roll-up and the import-line
