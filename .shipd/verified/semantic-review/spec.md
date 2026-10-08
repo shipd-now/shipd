@@ -547,7 +547,11 @@ type for a denied spawn. The verifier SHALL answer with one line per candidate,
 in the order received, carrying the candidate's index and either `confirmed`
 with a severity or `killed` with a one-line reason — and no justification
 beyond that, since prompts demanding explanations raise misjudgment in code
-verification. Candidates SHALL travel in the spawn message; the diff SHALL be
+verification. The spawn message SHALL also carry the severity rubric — the `high`, `medium`
+and `low` definitions, the impact rule with its concrete instances, and the
+exposure floor — quoted from the rating step, so the agent that decides a
+severity has the rule in front of it. No surface SHALL keep a second copy of
+that rubric text for the spawn to reproduce. Candidates SHALL travel in the spawn message; the diff SHALL be
 re-derived by the verifier from endpoints the message names, so it reads the
 change itself rather than the hunt's summary of it. The
 verifier SHALL receive the candidates, the diff, and the ability to read files,
@@ -601,6 +605,11 @@ not verify. It SHALL NOT report a review as verified when no verifier ran.
 - **WHEN** two reviews of the same diff each spawn a verifier
 - **THEN** both read verdicts in the one-line-per-candidate shape the skill
   specifies, rather than a convention each invented
+
+#### Scenario: The rater has the rule
+- **WHEN** the verifier is spawned to decide severities
+- **THEN** the spawn message carries the severity rubric, including the
+  exposure floor, quoted from the rating step rather than from a second copy
 
 ### Requirement: Spec-aware verification
 id: spec-aware-review

@@ -111,8 +111,13 @@ edits the repository.
     (its position in the list), location, claim, and why it was suspected,
     and the base/head to re-derive the diff from via `semdiff diff`, plus
     file-read access — never the reasoning that produced them; cold start is
-    what keeps it from rubber-stamping the hunt's own conviction. One
-    verifier per review, not one per candidate. It answers one line per
+    what keeps it from rubber-stamping the hunt's own conviction. The spawn
+    message also carries the severity rubric from step 13 below — the
+    `high`, `medium` and `low` definitions, the impact rule with its concrete
+    instances, and the exposure floor — quoted verbatim, so the agent that
+    decides a severity has the rule in front of it; a harness-installed
+    review has no `SKILL.md` to quote from, so this body's own rubric step is
+    what travels. One verifier per review, not one per candidate. It answers one line per
     candidate, in the order received, index-prefixed, nothing else —
     `<index>` the same zero-based position named above, so one numbering
     runs from the spawn message through the verdict to the payload:
