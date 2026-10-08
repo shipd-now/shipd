@@ -547,11 +547,30 @@ type for a denied spawn. The verifier SHALL answer with one line per candidate,
 in the order received, carrying the candidate's index and either `confirmed`
 with a severity or `killed` with a one-line reason — and no justification
 beyond that, since prompts demanding explanations raise misjudgment in code
-verification. The spawn message SHALL also carry the severity rubric — the `high`, `medium`
-and `low` definitions, the impact rule with its concrete instances, and the
-exposure floor — quoted from the rating step, so the agent that decides a
-severity has the rule in front of it. No surface SHALL keep a second copy of
-that rubric text for the spawn to reproduce. Candidates SHALL travel in the spawn message; the diff SHALL be
+verification. The skill SHALL carry **two** severity rubrics, one per stage, because
+reporting and rating are now separate stages with separate criteria. The
+**reporting rubric**, stated where findings are reported, SHALL define `low` as
+a real but minor defect and name the kinds it covers, without a containment
+test. The **rating rubric**, stated where the verify stage's detail lives, SHALL
+carry the impact rule with its concrete instances. The spawn message SHALL carry
+the **rating** rubric, quoted from where that rubric lives. Neither rubric is a
+copy of the other and no surface SHALL keep a second copy of either.
+
+The exposure floor SHALL appear in **both** rubrics. Where the verifier does not
+run, every finding keeps the severity the reporting stage proposed, so an
+absolute that lived only in the rating rubric could be lost on exactly the
+reviews that cannot verify.
+
+The spawn message SHALL NOT carry the pull request's title, description, or any
+summary of either, so a description cannot talk the verifier out of a finding
+that was already detected. A `description-drift` candidate cannot be judged
+without the description, so such candidates SHALL be verified in a separate
+spawn carrying the description and no diff.
+
+The candidate list SHALL be in **discovery order** — the order the passes
+produced candidates — so a reader can test whether kills cluster by position
+rather than by merit. Severity order would correlate position with proposed
+severity and confound that test permanently. Candidates SHALL travel in the spawn message; the diff SHALL be
 re-derived by the verifier from endpoints the message names, so it reads the
 change itself rather than the hunt's summary of it. The
 verifier SHALL receive the candidates, the diff, and the ability to read files,
@@ -610,6 +629,25 @@ not verify. It SHALL NOT report a review as verified when no verifier ran.
 - **WHEN** the verifier is spawned to decide severities
 - **THEN** the spawn message carries the severity rubric, including the
   exposure floor, quoted from the rating step rather than from a second copy
+
+#### Scenario: Reporting and rating use different rubrics
+- **WHEN** the reporting stage and the verify stage are both inspected
+- **THEN** the reporting rubric defines `low` without a containment test and
+  the rating rubric carries the impact rule's concrete instances
+
+#### Scenario: The exposure floor survives a skipped verifier
+- **WHEN** the verifier does not run and a finding is a credential exposure
+- **THEN** the reporting rubric's own exposure floor has already fixed it at
+  `high`
+
+#### Scenario: A description cannot kill a detected finding
+- **WHEN** a defect candidate is verified
+- **THEN** the spawn carries no title, description or summary of either
+
+#### Scenario: A drift candidate is verified against the description alone
+- **WHEN** a `description-drift` candidate is verified
+- **THEN** it is judged in a separate spawn carrying the description, not in
+  the blind defect spawn
 
 ### Requirement: Spec-aware verification
 id: spec-aware-review

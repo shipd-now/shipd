@@ -144,12 +144,17 @@ _BOTH_DIRECTIONS_PATTERNS = (
 # does, never the kind of defect it is — otherwise a data-loss bug arriving
 # as a "swallowed error" gets rated low, and low never blocks a merge. Each
 # surface must say both that rating follows impact rather than kind, and
-# that data loss reaches medium or high.
+# that data loss reaches medium or high. review-stage-rubrics recovered
+# v0.6.260's own phrasing of the first half ("not which kind it resembles")
+# for the reporting rubric's Impact floor bullet, verbatim per task 1.2, so
+# the pattern accepts either that phrasing or the later "not by the kind of
+# defect it is" phrasing the rating rubric still uses.
 _IMPACT_FLOOR_PATTERNS = (
     # `[*_\s]+` so markdown emphasis around a word does not defeat the match.
     re.compile(
-        r"(?is)what[*_\s]+the[*_\s]+defect[*_\s]+does,?[*_\s]+not[*_\s]+by"
-        r"[*_\s]+the[*_\s]+kind[*_\s]+of[*_\s]+defect"),
+        r"(?is)what[*_\s]+(?:the[*_\s]+defect[*_\s]+does|it[*_\s]+does)"
+        r"[,]?[*_\s]+not[*_\s]+(?:by[*_\s]+the[*_\s]+kind[*_\s]+of[*_\s]+"
+        r"defect|which[*_\s]+kind[*_\s]+it[*_\s]+resembles)"),
     re.compile(r"(?is)data loss.{0,200}\b(?:medium|high)\b"),
 )
 
@@ -443,7 +448,7 @@ class SkillMdStructureTest(unittest.TestCase):
                       self.text)
 
     def test_severity_rubric_stayed_inline(self):
-        self.assertIn("Severity rubric.", self.text)
+        self.assertIn("Reporting rubric.", self.text)
         self.assertIn("**high**", self.text)
         self.assertIn("**medium**", self.text)
         self.assertIn("**low**", self.text)
@@ -762,7 +767,8 @@ class LocationRuleGeneralisedTest(unittest.TestCase):
 
 
 class ImpactInstancesPresentTest(unittest.TestCase):
-    """All three rubric surfaces name the three concrete impact instances.
+    """All three rating-rubric surfaces name the three concrete impact
+    instances.
 
     The abstract impact rule (data loss, corruption, exposure, a broken
     guarantee) is four nouns a reviewer did not recognise in practice: on
@@ -773,10 +779,18 @@ class ImpactInstancesPresentTest(unittest.TestCase):
     `cleanup_media`, `move_file`), so the test asserts on a distinctive
     phrase per instance rather than a whole sentence — a later reword of the
     surrounding prose should not break this test spuriously.
+
+    review-stage-rubrics moved the concrete instances off `SKILL.md`'s
+    reporting rubric (step 8, which carries v0.6.260's `low` wording
+    instead) and onto the rating rubric, which now lives in
+    `references/verification.md` and (inline, since it has no reference to
+    defer to) the harness body's verify step. `COPILOT_SKILL_MD` is
+    untouched by this change and keeps its one combined rubric, so it still
+    carries the instances too.
     """
 
     def test_each_instance_appears_on_every_surface(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY, COPILOT_SKILL_MD):
+        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY, COPILOT_SKILL_MD):
             text = _read(path)
             for pattern in IMPACT_INSTANCE_PATTERNS:
                 with self.subTest(path=path, pattern=pattern.pattern):
@@ -857,8 +871,8 @@ class ImpactFloorParityTest(unittest.TestCase):
 
 
 class LowBulletNamesNoKindTest(unittest.TestCase):
-    """The `low` bullet itself names no defect kind, on any of the three
-    rubric surfaces.
+    """The rating rubric's `low` bullet names no defect kind, on any of its
+    three surfaces.
 
     Measured on a ReviewBench benchmark run (v0.6.260, 3 rounds): printing
     the defect kinds under the `low` heading is what made the impact floor
@@ -867,18 +881,29 @@ class LowBulletNamesNoKindTest(unittest.TestCase):
     swallowing a database error, rated `low` in all three rounds. The kinds
     now live in the breadth-sweep step, where they are a detection aid
     rather than a severity label; this test pins the other half of that
-    move — that the `low` bullet never lists them again.
+    move — that the rating rubric's `low` bullet never lists them again.
+
+    review-stage-rubrics reintroduced those same kind words under the
+    reporting rubric's `low` bullet deliberately (see
+    `ReportingRubricRecoversV0_260WordingTest`, below) — that bullet now
+    decides what to report, not the final severity, so the kind list is a
+    detection aid there too, the same job it always had. This test is
+    scoped to the rating rubric's own `low` bullet (`VERIFICATION_MD`,
+    `HARNESS_REVIEW_BODY`'s verify step — `_low_bullet_text` finds that one
+    first, since it precedes the report step in the file — and the
+    untouched `COPILOT_SKILL_MD`) rather than to `SKILL_MD`, whose only
+    `low` bullet is now the reporting rubric's.
     """
 
     def test_low_bullet_names_no_moved_defect_kind(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY, COPILOT_SKILL_MD):
+        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY, COPILOT_SKILL_MD):
             with self.subTest(path=path):
                 bullet = _low_bullet_text(_read(path)).lower()
                 found = [w for w in MOVED_KIND_WORDS if w in bullet]
                 self.assertFalse(
                     found,
-                    f"{path}'s low bullet still names defect kind(s) "
-                    f"{found}: {bullet!r}")
+                    f"{path}'s rating-rubric low bullet still names defect "
+                    f"kind(s) {found}: {bullet!r}")
 
     def test_copilot_low_bullet_drops_the_style_and_nits_wording(self):
         bullet = _low_bullet_text(_read(COPILOT_SKILL_MD)).lower()
@@ -1669,9 +1694,11 @@ class VerdictIndexNumberingTest(unittest.TestCase):
 # rubric itself, quoted verbatim from the rating step the composing session
 # has just read, so the agent that decides a severity has the rule in front
 # of it. The `[*_\s]+` class absorbs markdown emphasis a surface might wrap
-# the words in.
+# the words in. review-stage-rubrics named this rubric specifically the
+# "rating rubric" (as opposed to the reporting rubric step 8/13 now carry),
+# so the alternation accepts either term.
 _SEVERITY_RUBRIC_IN_SPAWN_PATTERN = re.compile(
-    r"(?is)spawn[\s\S]{0,40}severity[*_\s]+rubric")
+    r"(?is)spawn[\s\S]{0,40}(?:severity|rating)[*_\s]+rubric")
 
 # The rubric travels quoted at runtime, never reproduced as a second copy --
 # the wording both surfaces use to say so. Either word can lead (prose puts
@@ -1712,54 +1739,249 @@ class SeverityRubricInSpawnTest(unittest.TestCase):
                     "travels in the spawn")
 
 
-# `review-verifier-rubric`'s non-goal: no second copy of the rubric's own
-# severity-definition wording in `verification.md`. These fragments are the
-# `high`/`medium`/`low` definitions, one impact-rule concrete instance, and
-# the exposure floor's defining clause, as `SKILL.md` step 8 states them --
-# distinctive enough that their presence here could only mean a checked-in
-# copy, not a coincidental phrase. A semantic review of this change (PR 280)
-# found the original two-fragment version checked only the `high`/`medium`
-# wording, so a copy that pasted just the `low` definition, the impact rule,
-# or the exposure floor -- or that paraphrased either checked fragment --
-# would have slipped through undetected; this widens the fragment set rather
-# than only the two most visible ones. `_EXPOSURE_FLOOR_DEFINITION_WORDING`
-# is the floor's lead clause only, deliberately excluding "whatever the
-# reviewer's confidence": that trailing phrase also appears, legitimately,
-# in this file's own paragraph explaining why the floor matters (not a copy
-# of the operative definition), so guarding on it would self-trip on this
-# file's own prose.
-_HIGH_DEFINITION_WORDING = "correctness bug, a contract break"
-_MEDIUM_DEFINITION_WORDING = "unhandled edge case, an untouched caller"
-_LOW_DEFINITION_WORDING = "nothing lost, corrupted, exposed, or promised and unmet"
-_IMPACT_RULE_INSTANCE_WORDING = "drops the record and leaves the data"
-_EXPOSURE_FLOOR_DEFINITION_WORDING = (
-    "authorization boundary reached without the caller's scope check")
+def _harness_body_step_text(text, step_marker, next_marker):
+    """Slice the harness review body between one numbered step's marker
+    (e.g. ``"12. **Verify candidates"``) and the next (e.g. ``"13."``),
+    non-inclusive of the next marker. Raises if the start marker is absent,
+    since a silently empty slice would make every assertion against it
+    vacuously pass.
+    """
+    start = text.find(step_marker)
+    if start == -1:
+        raise AssertionError(f"step marker {step_marker!r} not found")
+    end = text.find(next_marker, start)
+    return text[start:end if end != -1 else None]
+
+
+# review-stage-rubrics: the two severity rubrics now live on different
+# surfaces for different jobs -- the reporting rubric, which decides what to
+# report and proposes a severity (`SKILL.md` step 8, the harness body's step
+# 13), and the rating rubric, which decides the final severity at the verify
+# stage (`references/verification.md`, the harness body's step 12, inline
+# since it has no reference to defer to). This class pins the properties
+# task 5.1 names: the reporting rubric defines `low` without a containment
+# test (recovered v0.6.260 wording, naming the moved kinds); both rubrics
+# carry the exposure floor; the spawn carries no PR title or description;
+# a `description-drift` candidate gets its own, separate spawn; and the
+# candidate list is in discovery order. `_impact_floor_stated` and the
+# concrete-instance/no-kind checks for the *rating* rubric are pinned above
+# by `ImpactFloorParityTest`, `ImpactInstancesPresentTest`, and
+# `LowBulletNamesNoKindTest` respectively, re-aimed for the split; this
+# class does not repeat them.
+_NO_CONTAINMENT_TEST_PATTERN = re.compile(
+    r"(?is)nothing[*_\s]+lost,?[*_\s]+corrupted,?[*_\s]+exposed,?[*_\s]+or"
+    r"[*_\s]+promised[*_\s]+and[*_\s]+unmet")
+
+_NO_DESCRIPTION_IN_SPAWN_PATTERN = re.compile(
+    r"(?is)(?:spawn|verifier)[\s\S]{0,400}(?:no|never)[*_\s]+(?:the[*_\s]+)?"
+    r"(?:pull[*_\s]+request'?s?[*_\s]+)?title,?[*_\s]+description")
+
+_DRIFT_SEPARATE_SPAWN_PATTERN = re.compile(
+    r"(?is)description-drift[\s\S]{0,400}separate[*_\s]+spawn")
+
+_DISCOVERY_ORDER_PATTERN = re.compile(r"(?is)discovery[*_\s]+order")
+
+
+class TwoStageRubricSeparationTest(unittest.TestCase):
+    """Pins the properties specific to the reporting/rating rubric split
+    that no other test class in this file covers.
+    """
+
+    def test_reporting_rubric_defines_low_without_containment_test(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                text = _read(path)
+                if path == HARNESS_REVIEW_BODY:
+                    text = _harness_body_step_text(
+                        text, "13. **Report by cohort", "14.")
+                bullet = _low_bullet_text(text).lower()
+                self.assertNotRegex(
+                    bullet, _NO_CONTAINMENT_TEST_PATTERN,
+                    f"{path}'s reporting-rubric low bullet still carries "
+                    "the contained-impact containment test; v0.6.260's "
+                    "wording names kinds instead")
+                found = [w for w in MOVED_KIND_WORDS if w in bullet]
+                self.assertTrue(
+                    found,
+                    f"{path}'s reporting-rubric low bullet must recover "
+                    "v0.6.260's kind-naming wording, found none of "
+                    f"{MOVED_KIND_WORDS}")
+
+    def test_both_rubrics_carry_the_exposure_floor(self):
+        reporting_text = _harness_body_step_text(
+            _read(HARNESS_REVIEW_BODY), "13. **Report by cohort", "14.")
+        rating_text = _harness_body_step_text(
+            _read(HARNESS_REVIEW_BODY), "12. **Verify candidates",
+            "13. **Report by cohort")
+        for label, text in (
+            ("SKILL.md reporting rubric", _read(SKILL_MD)),
+            ("verification.md rating rubric", _read(VERIFICATION_MD)),
+            ("harness body reporting rubric (step 13)", reporting_text),
+            ("harness body rating rubric (step 12)", rating_text),
+        ):
+            with self.subTest(label=label):
+                self.assertTrue(
+                    _exposure_floor_stated(text),
+                    f"{label} must state the exposure floor")
+
+    def test_spawn_carries_no_title_or_description(self):
+        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _NO_DESCRIPTION_IN_SPAWN_PATTERN,
+                    f"{path} must state that the spawn carries no pull "
+                    "request title or description")
+
+    def test_drift_candidates_get_a_separate_spawn(self):
+        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _DRIFT_SEPARATE_SPAWN_PATTERN,
+                    f"{path} must state that a description-drift candidate "
+                    "is verified in a separate spawn")
+
+    def test_candidate_list_is_in_discovery_order(self):
+        for path in (JSON_OUTPUT_MD, HARNESS_REVIEW_BODY, HARNESS_REVIEW_MD):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _DISCOVERY_ORDER_PATTERN,
+                    f"{path} must state the candidate list is in discovery "
+                    "order")
+                self.assertNotRegex(
+                    _read(path), re.compile(r"(?is)MUST[*_\s]+be[*_\s]+"
+                                             r"deterministic"),
+                    f"{path} must not still carry the bare 'deterministic' "
+                    "clause")
+
+
+# task 6.7's fix for task 6.6's finding: three of the five bullets on each
+# rubric are byte-identical, and the distinguishing bullet names ("Impact
+# floor" vs "Impact rule") differ by one word -- so a skimming reader could
+# read the pair as one rubric accidentally duplicated across two files
+# rather than two rubrics with different jobs. The orientation sentence
+# immediately under each heading now names the other rubric and says the
+# two differ at the `low` bullet. This pattern is intentionally narrow (the
+# literal "differs ... low ... bullet" shape) rather than a looser "mentions
+# the other rubric's name" check, because `SeverityRubricInSpawnTest` and
+# `VerifyStageStepTest` already establish that each surface names the other
+# rubric for unrelated reasons (quoting it into the spawn, cross-referencing
+# step numbers) -- a looser pattern would already have passed before task
+# 6.7's fix existed, which is exactly the vacuous-assertion failure mode
+# task 5.3 and this test's own proof-of-failure (below, in comments) guard
+# against.
+_DIFFERS_AT_LOW_BULLET_PATTERN = re.compile(
+    r"(?is)differs?[\s\S]{0,60}`?low`?[*_\s]+bullet")
+
+
+class OrientationSentenceNamesOtherRubricTest(unittest.TestCase):
+    """Each rubric's heading is immediately followed by a sentence naming
+    the other rubric and stating that the two differ at the `low` bullet,
+    on every surface that states a rubric heading: `SKILL.md` step 8 and
+    the harness body's step 13 (the reporting rubric), and
+    `verification.md` and the harness body's step 12 (the rating rubric).
+
+    Proved non-vacuous by hand before this test was written: run against
+    each surface's pre-task-6.7 wording (the `old_string` this build passed
+    to its edits), `_DIFFERS_AT_LOW_BULLET_PATTERN` does not match any of
+    the four -- each named the other rubric already (for the spawn-quoting
+    or step-cross-reference reasons noted above) but none yet said the two
+    differ at `low`. Only task 6.7's added clause makes it match.
+    """
+
+    def test_skill_md_reporting_heading_names_the_other_rubric(self):
+        text = _harness_body_step_text(
+            _read(SKILL_MD), "### 8. Report by cohort", "### 9.")
+        self.assertRegex(
+            text, _DIFFERS_AT_LOW_BULLET_PATTERN,
+            "SKILL.md's reporting-rubric heading must say the rating "
+            "rubric differs from it at the `low` bullet")
+
+    def test_verification_md_rating_heading_names_the_other_rubric(self):
+        self.assertRegex(
+            _read(VERIFICATION_MD), _DIFFERS_AT_LOW_BULLET_PATTERN,
+            "verification.md's rating-rubric heading must say the "
+            "reporting rubric differs from it at the `low` bullet")
+
+    def test_harness_body_step12_rating_heading_names_the_other_rubric(self):
+        text = _harness_body_step_text(
+            _read(HARNESS_REVIEW_BODY), "12. **Verify candidates", "13.")
+        self.assertRegex(
+            text, _DIFFERS_AT_LOW_BULLET_PATTERN,
+            "harness body step 12's rating-rubric heading must say the "
+            "reporting rubric differs from it at the `low` bullet")
+
+    def test_harness_body_step13_reporting_heading_names_the_other_rubric(
+            self):
+        text = _harness_body_step_text(
+            _read(HARNESS_REVIEW_BODY), "13. **Report by cohort", "14.")
+        self.assertRegex(
+            text, _DIFFERS_AT_LOW_BULLET_PATTERN,
+            "harness body step 13's reporting-rubric heading must say the "
+            "rating rubric differs from it at the `low` bullet")
+
+
+# review-stage-rubrics re-aims this class rather than deleting it (plan.md's
+# Implementation section is explicit: "The test pinning the absence of a
+# copy must be re-aimed accordingly, not deleted"). Its old premise --
+# that the severity rubric lived only in `SKILL.md` step 8 and was quoted
+# into `verification.md` at runtime, never reproduced there -- is no longer
+# true by design: `verification.md` now *is* the rating rubric's canonical
+# home, stating the `high`/`medium`/`low` definitions, the impact rule, its
+# concrete instances, and the exposure floor in full, exactly as
+# `SeverityRubricInSpawnTest` above expects it to, so the spawn has
+# something to quote from.
+#
+# What "no second copy" still means, post-split: the two rubrics -- the
+# reporting rubric (`SKILL.md` step 8, deciding what to report and
+# proposing a severity) and the rating rubric (`verification.md`, deciding
+# the final one) -- must not duplicate *each other's* distinctive content.
+# `_REPORTING_KIND_LIST_WORDING` is `SKILL.md`'s recovered v0.6.260 kind
+# list (task 1.2), distinctive to the reporting rubric; `_LOW_DEFINITION_WORDING`
+# and `_IMPACT_RULE_INSTANCE_WORDING` are distinctive to the rating rubric's
+# contained-impact `low` and its concrete instances. Each belongs on exactly
+# one surface.
+# `[\s]+` (rather than a literal space) so a line-wrapped rendering of the
+# same wording still matches -- plain substring checks on multi-word phrases
+# silently pass against a pre-change file that wraps the phrase across a
+# line, which would make the assertion vacuous rather than a real guard.
+_REPORTING_KIND_LIST_PATTERN = re.compile(
+    r"(?is)swallowed[\s]+errors,[\s]+resource[\s]+leaks[\s]+on[\s]+rare"
+    r"[\s]+paths,[\s]+dead[\s]+or[\s]+duplicated[\s]+code,[\s]+unread"
+    r"[\s]+variables,[\s]+unstable[\s]+ids")
+_LOW_DEFINITION_PATTERN = re.compile(
+    r"(?is)nothing[\s]+lost,[\s]+corrupted,[\s]+exposed,[\s]+or[\s]+"
+    r"promised[\s]+and[\s]+unmet")
+_IMPACT_RULE_INSTANCE_PATTERN = re.compile(
+    r"(?is)drops[\s]+the[\s]+record[\s]+and[\s]+leaves[\s]+the[\s]+data")
 
 
 class NoRubricCopyInVerificationMdTest(unittest.TestCase):
-    """`verification.md` requires the rubric to be quoted into the spawn at
-    runtime (`SeverityRubricInSpawnTest`, above) rather than reproduced in
-    this file -- a second copy would be a second source that drifts the
-    first time the rubric changes. This pins the absence across the whole
-    rubric this change says travels (the `high`/`medium`/`low` definitions,
-    the impact rule, and the exposure floor), not only the `high`/`medium`
-    wording alone.
+    """Neither rubric duplicates the other's distinctive content.
+
+    `verification.md` (the rating rubric's canonical home) must not carry
+    `SKILL.md`'s reporting-rubric kind list, and `SKILL.md`'s report step
+    (the reporting rubric) must not carry the rating rubric's contained
+    `low` definition or its concrete impact instances. Each rubric states
+    its own job's wording exactly once.
     """
 
-    def test_verification_md_does_not_restate_the_definitions(self):
-        text = _read(VERIFICATION_MD)
-        for wording, label in (
-            (_HIGH_DEFINITION_WORDING, "`high`"),
-            (_MEDIUM_DEFINITION_WORDING, "`medium`"),
-            (_LOW_DEFINITION_WORDING, "`low`"),
-            (_IMPACT_RULE_INSTANCE_WORDING, "impact rule"),
-            (_EXPOSURE_FLOOR_DEFINITION_WORDING, "exposure floor"),
+    def test_verification_md_does_not_restate_the_reporting_kind_list(self):
+        self.assertNotRegex(
+            _read(VERIFICATION_MD), _REPORTING_KIND_LIST_PATTERN,
+            "verification.md must not carry a copy of the reporting "
+            "rubric's recovered kind-list wording")
+
+    def test_skill_md_does_not_restate_the_rating_rubrics_instances(self):
+        text = _read(SKILL_MD)
+        for pattern, label in (
+            (_LOW_DEFINITION_PATTERN, "contained-impact `low`"),
+            (_IMPACT_RULE_INSTANCE_PATTERN, "impact rule concrete instance"),
         ):
             with self.subTest(label=label):
-                self.assertNotIn(
-                    wording, text,
-                    f"verification.md must not carry its own copy of the "
-                    f"{label} definition wording")
+                self.assertNotRegex(
+                    text, pattern,
+                    f"SKILL.md's report step must not carry a copy of the "
+                    f"rating rubric's {label} wording")
 
 
 if __name__ == "__main__":
