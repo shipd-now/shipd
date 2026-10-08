@@ -1776,7 +1776,9 @@ callers is the weakest context the subcommand can return.
 A related file shared by several changed files SHALL be charged against the
 per-review cap **once**, and SHALL still be listed under every changed file that
 relates to it. The cap bounds what the review must read, and a shared file is
-read once however many changed files point at it.
+read once however many changed files point at it. Charging nothing against the
+review budget SHALL NOT exempt a candidate from the per-file cap: that cap
+limits what one changed file lists, independently of what the candidate cost.
 
 The summary SHALL distinguish the two reasons a changed file carries no related
 file: `files_without_candidates`, where the search found nothing to relate, and
@@ -1842,3 +1844,9 @@ SHALL report them.
 #### Scenario: Neither search tool is present
 - **WHEN** `semdiff related` runs where both `rg` and `git` are absent
 - **THEN** it fails the way `semdiff context` does, naming the missing tools
+
+#### Scenario: The per-file cap bounds a file whose candidates are all free
+- **WHEN** a changed file's candidates are all already selected for other
+  changed files, and there are more of them than the per-file cap
+- **THEN** that file lists at most the per-file cap, because costing the review
+  budget nothing does not exempt a candidate from the per-file limit
