@@ -181,8 +181,11 @@ finds it.
 Group findings under cohort headings, most severe first. For each finding: a
 **location** (the fix site — the line your own fix would change, never a
 symptom site in place of it), **what**, **why**, **fix**, and **severity**. A
-further location is added only where that site independently shows the
-defect on its own terms. When a defect recurs at multiple sites, write one
+further location names a site where the defect is visible: a line wrong in
+the same way, a line that shows the mismatch on its own terms, or — where the
+defect is the conjunction of two lines neither wrong alone — the line at
+which it surfaces at run time even though that line is correct in isolation.
+When a defect recurs at multiple sites, write one
 finding whose `locations` array names every site.
 
 **Severity rubric.**

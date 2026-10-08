@@ -31,6 +31,7 @@ PLUGIN_S_ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
 SKILL_MD = os.path.join(REVIEW_SKILL_DIR, "SKILL.md")
 REFERENCES_DIR = os.path.join(REVIEW_SKILL_DIR, "references")
 JSON_OUTPUT_MD = os.path.join(REFERENCES_DIR, "json-output.md")
+PR_DESCRIPTION_MD = os.path.join(REFERENCES_DIR, "pr-description.md")
 COPILOT_SKILL_MD = os.path.join(
     PLUGIN_S_ROOT, "integrations", "copilot", "SKILL.md")
 HARNESS_REVIEW_BODY = os.path.join(
@@ -163,12 +164,40 @@ MOVED_HEADINGS = (
 # carried for `description-drift`'s further location so the location field's
 # "fix site, never a symptom" parenthetical and the permission read as one
 # rule rather than a contradiction a reviewer could read either reference or
-# the inline surface and land on. `[*_\s]+` guards every join against
-# markdown emphasis defeating the match.
+# the inline surface and land on. `review-runtime-location` requires the
+# permission to additionally cover the run-time shape — a site correct in
+# isolation where the defect surfaces at run time — rather than the
+# "independently shows the defect" wording that excluded it. The gap before
+# "run time" is widened to 260 (from 220) because the run-time shape is now
+# tied inline to the "conjunction of two lines neither wrong alone" clause
+# that scopes it, which lengthens the sentence on both surfaces. `[*_\s]+`
+# guards every join against markdown emphasis defeating the match.
 _LOCATION_RULE_PATTERN = re.compile(
     r"(?is)fix[*_\s]+site.{0,40}(?:never|not)[*_\s]+(?:a[*_\s]+)?symptom"
-    r".{0,120}further[*_\s]+(?:location|site).{0,80}independently[*_\s]+"
-    r"shows[*_\s]+the[*_\s]+defect")
+    r".{0,140}further[*_\s]+(?:location|site).{0,260}run[*_\s]+time"
+    r".{0,60}correct[*_\s]+in[*_\s]+isolation")
+
+# The run-time shape's scope: it applies only where the defect is the
+# conjunction of two lines, neither wrong alone (e.g. a manifest omission and
+# the import that names it) — never to an ordinary single-cause bug's
+# downstream symptom trace, which would otherwise satisfy "correct in
+# isolation" and "surfaces at run time" just as easily. Pinned directly so a
+# future edit cannot drop the scoping clause while leaving the run-time shape
+# itself in place.
+_RUNTIME_SHAPE_SCOPE_PATTERN = re.compile(
+    r"(?is)conjunction[*_\s]+of[*_\s]+two[*_\s]+lines.{0,40}neither"
+    r"[*_\s]+wrong[*_\s]+alone.{0,120}run[*_\s]+time")
+
+# The specific exclusive wording that caused the regression this change
+# fixes: a further location added *only* where the site independently shows
+# the defect "on its own terms" — a predicate a correct import can never
+# satisfy. Its absence is pinned directly (`test_skill_references.py`
+# §review-runtime-location) rather than inferred from the new text's
+# presence, because a reviewer could add the run-time shape alongside the
+# old exclusive sentence and leave the exclusion intact.
+_EXCLUSIVE_LOCATION_FORM_PATTERN = re.compile(
+    r"(?is)further[*_\s]+(?:location|site).{0,40}only[*_\s]+where"
+    r".{0,80}independently[*_\s]+shows[*_\s]+the[*_\s]+defect")
 
 # The three concrete impact instances (review-location-impact), one pattern
 # per instance, written loosely enough to match each surface's own wording
@@ -630,13 +659,91 @@ class LocationRuleGeneralisedTest(unittest.TestCase):
     """
 
     def test_both_reference_free_surfaces_state_the_generalised_rule(self):
+        """The permission must cover the run-time shape, not just symmetry.
+
+        v0.6.262's wording required a further location to "independently
+        show the defect on its own terms" — a predicate a correct import
+        never satisfies, since the import itself is not wrong. Measured by
+        benchy-cf over three rounds of the same three PRs, the pg-pool
+        file-not-shipped finding named its second location in 1 of 3 rounds
+        on v0.6.261 and 0 of 3 on v0.6.262: generalising the rule inline
+        fixed the drift between surfaces but, applied literally, excluded
+        the exact run-time site it was written to permit.
+        """
         for path in (SKILL_MD, HARNESS_REVIEW_BODY):
             with self.subTest(path=path):
                 self.assertRegex(
                     _read(path), _LOCATION_RULE_PATTERN,
                     f"{path} must state the fix-site prohibition on a "
                     "symptom together with the further-location permission, "
-                    "not as an unqualified ban")
+                    "not as an unqualified ban, and the permission must "
+                    "cover the run-time shape — a site correct in isolation "
+                    "where the defect surfaces at run time")
+
+    def test_neither_surface_states_the_exclusive_form(self):
+        """The regression's exact wording must not still be present.
+
+        The old sentence — a further location added *only* where the site
+        independently shows the defect on its own terms — is the specific
+        wording that excluded the run-time site. Pinning its absence
+        directly catches a rewording that adds the new shapes without
+        dropping the old exclusion.
+        """
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertNotRegex(
+                    _read(path), _EXCLUSIVE_LOCATION_FORM_PATTERN,
+                    f"{path} must not state that a further location is "
+                    "added only where the site independently shows the "
+                    "defect — that exclusive form is the wording that "
+                    "excluded the run-time site")
+
+    def test_description_drift_states_no_separate_exclusive_rule(self):
+        """The description-drift case must rely on the general permission.
+
+        The general further-location sentence says the packaging and
+        description-drift cases rely on it "so no other requirement SHALL
+        grant it separately" — but, until this test, three sites still
+        granted the description-drift case its own separate, exclusive
+        permission ("a further location added only where that site
+        independently shows the drift"), the same disproven exclusive shape
+        the general rule just dropped, just with "drift" in place of
+        "defect". `_EXCLUSIVE_LOCATION_FORM_PATTERN` does not catch this
+        variant, so it is pinned directly here across every surface that
+        states the description-drift rule.
+        """
+        exclusive_drift_pattern = re.compile(
+            r"(?is)only[*_\s]+where.{0,80}independently[*_\s]+shows"
+            r"[*_\s]+the[*_\s]+drift")
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY, PR_DESCRIPTION_MD):
+            with self.subTest(path=path):
+                self.assertNotRegex(
+                    _read(path), exclusive_drift_pattern,
+                    f"{path} must not grant description-drift's further "
+                    "location its own exclusive rule — it must rely on the "
+                    "general further-location permission instead")
+
+    def test_runtime_shape_is_scoped_to_the_conjunction_case(self):
+        """The run-time shape must not read as licence for symptom tracing.
+
+        Read alone, "the line at which the defect surfaces at run time even
+        though that line is correct in isolation" is satisfied by almost any
+        downstream crash site for an ordinary single-cause bug — any
+        intermediate call site is "correct in isolation" and is somewhere
+        the defect "surfaces at run time". The clause is only valid for a
+        defect that is the conjunction of two lines, neither wrong alone
+        (the pg-pool manifest/import case); pinning that scoping phrase next
+        to "run time" on both always-read surfaces stops a future edit from
+        widening the shape back into general symptom-anchoring licence.
+        """
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _RUNTIME_SHAPE_SCOPE_PATTERN,
+                    f"{path} must tie the run-time further-location shape "
+                    "to a defect that is the conjunction of two lines, "
+                    "neither wrong alone — not state it as an unscoped "
+                    "licence to anchor at any correct-in-isolation site")
 
 
 class ImpactInstancesPresentTest(unittest.TestCase):
