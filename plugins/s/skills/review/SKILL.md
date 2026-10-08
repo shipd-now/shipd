@@ -52,6 +52,7 @@ Each file below is read only when its condition fires — not by default.
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/new-code-checks.md` | a function, class, guard, or helper is new in the diff |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/pr-description.md` | a pull request's title and description are available |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/call-site-tracing.md` | a changed signature, constant, guard, or helper needs chasing to its call sites |
+| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/verification.md` | every review, to run the verify stage between judging and reporting |
 
 ## Determine what to review
 
@@ -142,7 +143,7 @@ argument each call site passes in (same reference as step 4):
 - **Comment / intent vs. actual behaviour** — a comment the real call sites contradict.
 
 Either alone often looks small, but together they compound. Send both to step
-7's rubric to rate by what they do — this step never rates on its own. Whenever
+8's rubric to rate by what they do — this step never rates on its own. Whenever
 you quote a mechanism in the walkthrough, confirm the path that reaches it
 actually runs with the values the call sites supply.
 
@@ -183,7 +184,7 @@ or silently-dropped error, a resource or file leak on a rare or cleanup path,
 dead or duplicated code, a field or variable declared but never read, an
 unstable or incorrect identity such as a list key derived from an array
 index, or a blocking call in an async context. Send what the sweep finds back
-to step 7's rubric to rate — this step never rates on its own.
+to step 8's rubric to rate — this step never rates on its own.
 
 ### 6d. Check the PR description against the diff
 When a pull request's title and description are available, read
@@ -193,7 +194,16 @@ the diff's substantial content against what the description never mentions.
 An unmentioned feature has no claim to check, so only the second direction
 finds it.
 
-### 7. Report by cohort
+### 7. Verify candidates
+Before reporting, spawn one fresh-context verifier with the `Agent` tool to confirm or
+kill every candidate finding steps 1–6d produced. The verifier gets the candidates, the
+diff, and file-read access — never the reasoning that produced them — and returns, per
+candidate, `confirmed` with a severity or `killed` with a one-line reason. Severity is
+the verifier's call, overriding whatever a pass proposed. See
+`${CLAUDE_PLUGIN_ROOT}/skills/review/references/verification.md` for what it is given
+and withheld, and the degradation path when the spawn is unavailable.
+
+### 8. Report by cohort
 Group findings under cohort headings, most severe first. For each finding: a
 **location** (the fix site — the line your own fix would change, never a
 symptom site in place of it), **what**, **why**, **fix**, and **severity**. A
@@ -230,7 +240,7 @@ about severity is never grounds for omitting a finding: where you cannot
 place one, report it at your best estimate and say the estimate is
 uncertain — a defect you can describe is a defect you report.
 
-### 8. Check test coverage, rolled up per cohort
+### 9. Check test coverage, rolled up per cohort
 Ask of **every** finding you write, at **every** severity: would an existing
 test fail if this defect regressed? Then roll the answers up — raise **one**
 `test-coverage` finding per cohort that has uncovered findings (see
@@ -267,7 +277,9 @@ sites, not a defect at each.
    edited in place rather than given a second summary comment.
 4. **Summary table** — one row per finding, most-severe first, columns
    `# | rating | details`; rating is 🔴 high / 🟠 med / 🟡 low (display label
-   `med`; the severity value stays `medium`). No findings → print
+   `med`; the severity value stays `medium`). Name the kill count beside it,
+   e.g. `N findings, K killed.`, so a reader sees what the verify stage
+   removed. No findings → print
    `## Findings: ✅ Ship it` and "No problems found." and omit the empty
    table. `review_gate.py post` closes the summary comment with one stat
    line, `Reviewed N files, +A -D lines.`, counted from the PR's own file
@@ -317,6 +329,11 @@ mode's "what you could not verify" list *and* in `--json`'s `could_not_verify`
 array — naming that file's text-engine fallback. `doctor` (without `--fix`)
 reports what is available and touches nothing. git and difft are the two hard
 requirements.
+
+**Verify-stage spawn.** When the `Agent` tool is unavailable or the spawn fails, continue
+rather than abort: record `verifier.state` as `skipped` with the reason, keep each finding's
+proposed severity, and add an entry to the could-not-verify list. A review whose verifier
+did not run is never reported as verified.
 
 ## Documentation standard
 

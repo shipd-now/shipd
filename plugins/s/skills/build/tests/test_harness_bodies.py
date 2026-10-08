@@ -345,11 +345,19 @@ class ShippedRenderTest(unittest.TestCase):
         orphaning the instance describes, the same content-loss failure mode
         this docstring already records twice over. `body-content` owns this
         number now, so a future raise belongs there, not restated here.
+
+        It rose again, 160 -> 185, in `review-verify-stage`: the review body
+        stood at 159 of 160 with no room left, and the new verify stage's
+        substance — the `Agent` spawn, fresh context, the per-candidate
+        verdict, severity ownership, the `killed` array, the `verifier`
+        state, and the degradation path — has to be inline on a file that can
+        read no reference. There was nothing left to compress without
+        repeating this series' content-loss failure.
         """
         for command in hb.commands():
             lines = len(hb.render(command, hr.FEATURES,
                                   refs_dir=REFS).splitlines())
-            self.assertLess(lines, 160,
+            self.assertLess(lines, 185,
                             "%s renders %d lines" % (command, lines))
 
     def test_a_fallback_pointer_appears_only_when_files_can_be_read(self):

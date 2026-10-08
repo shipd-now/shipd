@@ -82,7 +82,7 @@ edits the repository.
    dead or duplicated code, a field or variable declared but never read, an
    unstable or incorrect identity such as a list key derived from an array
    index, or a blocking call in an async context. Send what it finds back to
-   step 12's rubric to rate.
+   step 13's rubric to rate.
 10. **Verify the spec when a change is in scope** — the user named one,
     exactly one change sits under `.shipd/planned/`, or the diff adds or edits
     a change directory under `.shipd/planned/` or `.shipd/completed/` (its
@@ -103,8 +103,27 @@ edits the repository.
     finds it. Either mismatch is its own finding, category
     `description-drift`, severity by the normal rubric. Anchor a
     description-level finding at one location only; a further location
-    follows the same permission as step 12, never a separate rule.
-12. **Report by cohort, most severe first.** Give each finding a location (fix
+    follows the same permission as step 13, never a separate rule.
+12. **Verify candidates.** Before reporting, spawn one fresh-context verifier
+    with the `Agent` tool — that exact name — to confirm or kill every
+    candidate finding steps 2–11 produced. It gets each candidate's location,
+    claim, and why it was suspected, plus the diff and file-read access —
+    never the reasoning that produced them; cold start is what keeps it from
+    rubber-stamping the hunt's own conviction. One verifier per review, not
+    one per candidate. For each it returns `confirmed` with a severity
+    (`high`/`medium`/`low`), overriding whatever an earlier step proposed, or
+    `killed` with a one-line reason. A killed candidate goes into the
+    payload's top-level `killed` array — `location`, `what`, `reason`, and
+    `candidate` (its zero-based position in the list the verifier received,
+    which MUST be deterministic for a given review) — and never into
+    `findings`, under any status: a consumer scoring the payload counts every
+    `findings` entry as reported. When the `Agent` spawn is unavailable or
+    fails, continue rather than abort: set the payload's top-level
+    `verifier.state` to `skipped` with a `reason` and `candidates` (the
+    list's length), keep each finding's proposed severity, and add a
+    could-not-verify entry — never report a review as verified when no
+    verifier ran. Name the kill count alongside the findings when reporting.
+13. **Report by cohort, most severe first.** Give each finding a location (fix
     site, not symptom; a further site where the defect is visible — wrong the
     same way, showing the mismatch on its own terms, or — for a defect that
     is the conjunction of two lines neither wrong alone — the line where it
@@ -130,13 +149,13 @@ edits the repository.
     When unsure between two levels, state the doubt, not inflate it; never drop
     a finding for unclear severity — report your best estimate, flagged
     uncertain. Close with an explicit list of what you could not verify.
-13. **Check test coverage, rolled up per cohort.** For every finding you
+14. **Check test coverage, rolled up per cohort.** For every finding you
     write, at every severity, ask whether an existing test would fail if
     that defect regressed. Raise one `test-coverage` finding per cohort
     with uncovered findings, naming each defect it would guard and where
     the tests belong — never one per finding, which multiplies with the
     findings and buries them. Anchor it once, where the tests belong.
-14. **Hand off.** Fix-required findings go back through `/s:build`'s
+15. **Hand off.** Fix-required findings go back through `/s:build`'s
     implementation loop while the branch is still open, or — once it has
     merged — become a new change through `/s:plan`. Never open a second pull
     request on an already-merged branch.
