@@ -383,25 +383,40 @@ class ShippedRenderTest(unittest.TestCase):
         case this review-verifier-handover build found is never again the
         one the suite does not check.
 
-        This is the third raise in three versions — 140, then 160, then 185,
-        now 200. A file that can defer nothing to a reference has only two
-        options when it grows: reword its instructions to fit, which this
-        series has already shown drops content, or raise the ceiling, which
-        buys room without answering why the body keeps growing. A fourth
-        raise should be a conversation about decomposing the body instead of
-        a fourth trip through this docstring.
+        This was the third raise in three versions — 140, then 160, then
+        185, then 200. A file that can defer nothing to a reference has only
+        two options when it grows: reword its instructions to fit, which
+        this series has already shown drops content, or raise the ceiling,
+        which buys room without answering why the body keeps growing. That
+        docstring said a fourth raise should be a conversation about
+        decomposing the body instead of a fourth trip through this
+        docstring.
+
+        That conversation happened, in `harness-body-ceiling`, and the user
+        decided to raise again rather than decompose: 200 -> 250. This is
+        that fourth raise, and it is recorded here as a decision asked for
+        and chosen, not as drift repeating the first three — the difference
+        this docstring exists to preserve. The structural reason the file
+        keeps growing is unchanged: `plugins/s/harness/bodies/review.md`
+        ships standalone into other repositories, can read no reference
+        file, and so every rule the review skill gains has to be repeated
+        here in full, with no `SKILL.md` and no `references/` directory to
+        defer to. The measured worst case at the time of this raise was
+        **194** lines, for `review` on `aider` — up from the 189 the prior
+        raise measured, so a later reader can see how fast this number
+        moves, not only where it last landed.
         """
         for command in hb.commands():
             lines = len(hb.render(command, hr.FEATURES,
                                   refs_dir=REFS).splitlines())
-            self.assertLess(lines, 200,
+            self.assertLess(lines, 250,
                             "%s renders %d lines" % (command, lines))
         for command in hb.commands():
             for harness in hr.HARNESSES:
                 lines = len(hb.render(command, harness["features"],
                                       refs_dir=REFS).splitlines())
                 self.assertLess(
-                    lines, 200,
+                    lines, 250,
                     "%s renders %d lines for harness %r"
                     % (command, lines, harness["id"]))
 
