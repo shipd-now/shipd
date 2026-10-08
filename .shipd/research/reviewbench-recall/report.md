@@ -5,7 +5,8 @@
 We ran Shipd's `/s:review` locally against five PRs from the ReviewBench test
 set (80 valid golden findings), then used the benchmark to test a series of
 Shipd changes. Without the PR description, micro grounded recall rose from
-28.7% on the 0.6.247 baseline to 35.4% on 0.6.252. With the description, it
+28.7% on the 0.6.247 baseline (a single review run, so a weak anchor) to
+35.4% on 0.6.252. With the description, it
 rose from 37.1% on 0.6.252 to 40.0% on 0.6.260, and golden findings matched in
 at least 2 of 3 rounds rose from 30 to 32. The 28.7% → 40.0% span mixes Shipd
 changes with the description, so it is not a measure of either alone.
@@ -17,9 +18,10 @@ and two of three severity rewrites failed.
 
 Most misses are systematic. 24 of the 80 golden findings have never matched
 in any of 19 five-PR rounds across all versions. Supplying neighbouring files
-(`semdiff related`, 0.6.266) did not reach any of them. In one apilix round
-the reviewer read all of `WorkspaceManagerModal.tsx` and still reported none
-of its three golden defects. The gap is selection, not context.
+(`semdiff related`, 0.6.266) did not reach any of the 5 reachable ones in
+the 2 PRs tested. In one apilix round the reviewer read all of
+`WorkspaceManagerModal.tsx` and still reported none of its three golden
+defects. The evidence points to selection rather than context.
 
 The scores are unofficial. They come from 5 of the 25 test-set PRs and a
 judge that runs through the `claude` CLI. Use them to compare Shipd versions
@@ -30,8 +32,9 @@ with each other, not with the public leaderboard.
 A local runner (`benchy/run-shipd.sh`) checks out each PR's head commit,
 removes the remotes, and runs `/s:review <base> <head> --json` in a headless
 `claude -p` session. The runner never passes a PR number, because a named PR
-makes Shipd post to GitHub. Runs from 0.6.252 onward also pass the PR title
-and description (`--pr-context`), as the benchmark mounts them.
+makes Shipd post to GitHub. Rounds marked "+desc" also pass the PR title and
+description (`--pr-context`), as the benchmark mounts them; 0.6.252 ran both
+ways, and every later version ran with it.
 `shipd_to_rb.py` writes one ReviewBench finding per entry in `locations`.
 
 ReviewBench's judge normally calls a model API. A `claude-cli` provider in the
@@ -139,7 +142,10 @@ whether supplying those files helps, with 3 rounds on apilix and node-postgres:
 | Reachable never-matched findings reached | – | 0 of 5 |
 | Reviews that called `related` | – | 3 of 6 |
 
-By the pre-registered rule, the context hypothesis is refuted. Golden labels
+By the pre-registered rule, the context hypothesis failed. The test was
+small: 2 PRs, 5 reachable findings, and only 3 of 6 reviews called `related`.
+So it shows that supplying context did not help here, not that context never
+matters. Golden labels
 name the files a person needs to see a defect. They don't show what Shipd
 lacks, because Shipd already reads those files.
 
