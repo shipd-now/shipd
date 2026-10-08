@@ -1714,32 +1714,52 @@ class SeverityRubricInSpawnTest(unittest.TestCase):
 
 # `review-verifier-rubric`'s non-goal: no second copy of the rubric's own
 # severity-definition wording in `verification.md`. These fragments are the
-# `high`/`medium` definitions as `SKILL.md` step 8 states them -- distinctive
-# enough that their presence here could only mean a checked-in copy, not a
-# coincidental phrase.
+# `high`/`medium`/`low` definitions, one impact-rule concrete instance, and
+# the exposure floor's defining clause, as `SKILL.md` step 8 states them --
+# distinctive enough that their presence here could only mean a checked-in
+# copy, not a coincidental phrase. A semantic review of this change (PR 280)
+# found the original two-fragment version checked only the `high`/`medium`
+# wording, so a copy that pasted just the `low` definition, the impact rule,
+# or the exposure floor -- or that paraphrased either checked fragment --
+# would have slipped through undetected; this widens the fragment set rather
+# than only the two most visible ones. `_EXPOSURE_FLOOR_DEFINITION_WORDING`
+# is the floor's lead clause only, deliberately excluding "whatever the
+# reviewer's confidence": that trailing phrase also appears, legitimately,
+# in this file's own paragraph explaining why the floor matters (not a copy
+# of the operative definition), so guarding on it would self-trip on this
+# file's own prose.
 _HIGH_DEFINITION_WORDING = "correctness bug, a contract break"
 _MEDIUM_DEFINITION_WORDING = "unhandled edge case, an untouched caller"
+_LOW_DEFINITION_WORDING = "nothing lost, corrupted, exposed, or promised and unmet"
+_IMPACT_RULE_INSTANCE_WORDING = "drops the record and leaves the data"
+_EXPOSURE_FLOOR_DEFINITION_WORDING = (
+    "authorization boundary reached without the caller's scope check")
 
 
 class NoRubricCopyInVerificationMdTest(unittest.TestCase):
     """`verification.md` requires the rubric to be quoted into the spawn at
     runtime (`SeverityRubricInSpawnTest`, above) rather than reproduced in
     this file -- a second copy would be a second source that drifts the
-    first time the rubric changes. This pins the absence: the file names
-    that the rubric exists and must be quoted, but never restates the
-    `high`/`medium` definition wording itself.
+    first time the rubric changes. This pins the absence across the whole
+    rubric this change says travels (the `high`/`medium`/`low` definitions,
+    the impact rule, and the exposure floor), not only the `high`/`medium`
+    wording alone.
     """
 
     def test_verification_md_does_not_restate_the_definitions(self):
         text = _read(VERIFICATION_MD)
-        self.assertNotIn(
-            _HIGH_DEFINITION_WORDING, text,
-            "verification.md must not carry its own copy of the `high` "
-            "definition wording")
-        self.assertNotIn(
-            _MEDIUM_DEFINITION_WORDING, text,
-            "verification.md must not carry its own copy of the `medium` "
-            "definition wording")
+        for wording, label in (
+            (_HIGH_DEFINITION_WORDING, "`high`"),
+            (_MEDIUM_DEFINITION_WORDING, "`medium`"),
+            (_LOW_DEFINITION_WORDING, "`low`"),
+            (_IMPACT_RULE_INSTANCE_WORDING, "impact rule"),
+            (_EXPOSURE_FLOOR_DEFINITION_WORDING, "exposure floor"),
+        ):
+            with self.subTest(label=label):
+                self.assertNotIn(
+                    wording, text,
+                    f"verification.md must not carry its own copy of the "
+                    f"{label} definition wording")
 
 
 if __name__ == "__main__":
