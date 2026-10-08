@@ -866,5 +866,79 @@ class SharedRelatedFileTest(unittest.TestCase):
         self.assertEqual(summary["files_without_candidates"], 0)
 
 
+class PerFileCapBoundsFreeCandidatesTest(unittest.TestCase):
+    """The per-file cap is a hard limit on what a file's entry *lists*,
+    never only on what it *pays for* — it still applies to a file whose
+    every candidate is free because another changed file already selected
+    it.
+
+    Fixture: ten pre-existing modules `lib/s0.py` .. `lib/s9.py`. Ten
+    "selector" changed files, `lib/sel0.py` .. `lib/sel9.py`, each import
+    exactly one of them (`seli.py` imports `si`), so each selector has a
+    single candidate and is visited — and pays for its one module — before
+    the eleventh changed file. That eleventh file, `lib/big.py`, imports
+    all ten modules: by the time it is visited (it has 10 candidates, every
+    selector has 1, so it sorts last), every one of its candidates is
+    already `selected` and therefore free. The balanced per-file cap is 8,
+    so `big.py` must still stop at 8 even though picking all 10 would cost
+    the per-review budget nothing further.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-capfree-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+
+        for i in range(10):
+            self._write(f"lib/s{i}.py", "VALUE = 1\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+        git(self.repo, "branch", "-M", "main")
+
+        for i in range(10):
+            self._write(f"lib/sel{i}.py", f"import s{i}\n")
+        big_imports = ", ".join(f"s{i}" for i in range(10))
+        self._write("lib/big.py", f"import {big_imports}\n")
+        git(self.repo, "add", "-A")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        path = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(text)
+
+    def test_per_file_cap_holds_even_when_every_candidate_is_free(self):
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+
+        # Every selector got its one, paid, candidate.
+        for i in range(10):
+            self.assertEqual(
+                out["files"][f"lib/sel{i}.py"]["importees"], [f"lib/s{i}.py"])
+
+        big = out["files"]["lib/big.py"]
+        big_count = len(big["importers"]) + len(big["importees"])
+        # All 10 of big.py's candidates were already selected by the
+        # selectors, so none of them cost the per-review budget anything —
+        # yet the per-file cap (8) still bounds what big.py's entry lists.
+        self.assertEqual(big_count, 8)
+        self.assertEqual(big["truncated"], 2)
+
+        summary = out["summary"]
+        # The ten selectors' picks are the only ones charged against the
+        # cap; big.py's entirely-free picks add nothing further.
+        self.assertEqual(summary["related_files"], 10)
+        self.assertEqual(summary["files_starved"], 0)
+        self.assertEqual(summary["files_without_candidates"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
