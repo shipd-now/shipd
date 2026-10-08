@@ -195,10 +195,13 @@ An unmentioned feature has no claim to check, so only the second direction
 finds it.
 
 ### 7. Verify candidates
-Before reporting, spawn one fresh-context verifier with the `Agent` tool to confirm or
-kill every candidate finding steps 1–6d produced. The verifier gets the candidates, the
+Before reporting, spawn one fresh-context verifier with the `Agent` tool,
+`subagent_type: general-purpose`, to confirm or kill every candidate finding
+steps 1–6d produced. The verifier gets the candidates, the
 diff, and file-read access — never the reasoning that produced them — and returns, per
-candidate, `confirmed` with a severity or `killed` with a one-line reason. Severity is
+candidate, `confirmed` with a severity or `killed` with a one-line reason, indexed
+zero-based and identical to the candidate's position in the list it received — one
+numbering end to end. Severity is
 the verifier's call, overriding whatever a pass proposed. See
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/verification.md` for what it is given
 and withheld, and the degradation path when the spawn is unavailable.

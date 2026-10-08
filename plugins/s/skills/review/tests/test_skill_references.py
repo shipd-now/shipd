@@ -32,6 +32,7 @@ SKILL_MD = os.path.join(REVIEW_SKILL_DIR, "SKILL.md")
 REFERENCES_DIR = os.path.join(REVIEW_SKILL_DIR, "references")
 JSON_OUTPUT_MD = os.path.join(REFERENCES_DIR, "json-output.md")
 PR_DESCRIPTION_MD = os.path.join(REFERENCES_DIR, "pr-description.md")
+VERIFICATION_MD = os.path.join(REFERENCES_DIR, "verification.md")
 COPILOT_SKILL_MD = os.path.join(
     PLUGIN_S_ROOT, "integrations", "copilot", "SKILL.md")
 HARNESS_REVIEW_BODY = os.path.join(
@@ -1580,6 +1581,88 @@ class KilledNeverInFindingsTest(unittest.TestCase):
                     _read(path), _KILLED_NEVER_IN_FINDINGS_PATTERN,
                     f"{path} must state that a killed candidate never "
                     "appears among `findings`, under any status")
+
+
+# The verify stage's `subagent_type` -- stated as the concrete value
+# `general-purpose`, a built-in that resolves in a headless session whether
+# or not the plugin's own agent definitions load there. An unresolvable type
+# is indistinguishable from a denied spawn, so every surface that states the
+# verify stage names it rather than leaving it to judgement. The wording
+# differs per surface (`subagent_type: general-purpose`, "naming its agent
+# type as `general-purpose`", ...), so the pattern anchors on "type" near
+# the concrete value rather than one fixed phrase.
+_SUBAGENT_TYPE_PATTERN = re.compile(r"(?is)type[\s\S]{0,30}general-purpose")
+
+# The per-candidate verdict shape: one line per candidate, index-prefixed,
+# in the order received, carrying `confirmed` with a severity or `killed`
+# with a reason and nothing else. `review-verifier-handover` gives this a
+# concrete, literal shape so two sessions parse it the same way; the `[*_\s]+`
+# class absorbs markdown emphasis a surface might wrap the words in.
+_VERDICT_SHAPE_PATTERN = re.compile(
+    r"(?is)<index>[*_\s]+confirmed[*_\s]+<high\|medium\|low>[\s\S]{0,40}"
+    r"<index>[*_\s]+killed[*_\s]+<one-line reason>")
+
+
+class VerifierHandoverTest(unittest.TestCase):
+    """`review-verifier-handover` closes three gaps the verify stage left
+    open: no named `subagent_type`, no concrete verdict shape, and no stated
+    handover of candidates and the diff. This class pins the first two --
+    every surface that states the verify stage names a concrete
+    `subagent_type`, and the reference plus the harness body (SKILL.md
+    defers the shape's detail to the reference) both carry the
+    one-line-per-candidate verdict shape.
+    """
+
+    def test_every_surface_names_a_concrete_subagent_type(self):
+        for path in (SKILL_MD, VERIFICATION_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _SUBAGENT_TYPE_PATTERN,
+                    f"{path} must name a concrete subagent_type "
+                    "(general-purpose)")
+
+    def test_reference_and_harness_body_carry_the_verdict_shape(self):
+        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _VERDICT_SHAPE_PATTERN,
+                    f"{path} must carry the one-line-per-candidate verdict "
+                    "shape, index-prefixed, in the order received")
+
+
+# `review-verifier-handover`'s own task 4.6 found the verdict line's
+# `<index>` never pinned to a numbering convention, so two sessions could
+# emit `0 confirmed high` and `1 confirmed high` for the same first
+# candidate and a single parser would read them differently -- precisely
+# the invented-convention drift this version exists to remove. Task 4.8
+# closed it: the index is zero-based and identical to the payload's
+# `candidate` field, stated for the spawn message's candidate list as well
+# as the verdict line, since the ambiguity entered at the handover and not
+# only at the verdict. The window tolerates either order ("zero-based
+# index" or "index ... zero-based") and does not match a file that merely
+# mentions `zero-based` near an unrelated noun (`verification.md`'s own
+# `candidate` field description, pre-4.8, sits 0 "index" mentions away from
+# its "zero-based" -- this pattern requires the two words co-occur).
+_ZERO_BASED_INDEX_PATTERN = re.compile(
+    r"(?is)(?:index[\s\S]{0,60}zero[*_\s-]*based"
+    r"|zero[*_\s-]*based[\s\S]{0,60}index)")
+
+
+class VerdictIndexNumberingTest(unittest.TestCase):
+    """All three surfaces that mention the verify stage's candidate index --
+    `SKILL.md`, the reference, and the harness body -- state that it is
+    zero-based and identical to the payload's `candidate` field, so one
+    numbering convention runs from the spawn message's candidate list
+    through the verdict line to the payload.
+    """
+
+    def test_every_surface_states_the_index_is_zero_based(self):
+        for path in (SKILL_MD, VERIFICATION_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _ZERO_BASED_INDEX_PATTERN,
+                    f"{path} must state that the candidate index is "
+                    "zero-based")
 
 
 if __name__ == "__main__":

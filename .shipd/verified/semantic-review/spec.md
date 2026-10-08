@@ -541,6 +541,15 @@ widens, never the reviewer's discretion.
 
 Between judging the diff and reporting, the skill SHALL verify every candidate
 finding through a **fresh-context verifier** spawned with the `Agent` tool. The
+spawn SHALL name a `subagent_type` that resolves without plugin-provided agent
+definitions, so a restricted headless session cannot mistake an unresolvable
+type for a denied spawn. The verifier SHALL answer with one line per candidate,
+in the order received, carrying the candidate's index and either `confirmed`
+with a severity or `killed` with a one-line reason — and no justification
+beyond that, since prompts demanding explanations raise misjudgment in code
+verification. Candidates SHALL travel in the spawn message; the diff SHALL be
+re-derived by the verifier from endpoints the message names, so it reads the
+change itself rather than the hunt's summary of it. The
 verifier SHALL receive the candidates, the diff, and the ability to read files,
 and SHALL NOT receive the reasoning that produced the candidates. For each
 candidate it SHALL return `confirmed` with a severity, or `killed` with a
@@ -582,6 +591,16 @@ not verify. It SHALL NOT report a review as verified when no verifier ran.
 - **WHEN** the verifier is spawned
 - **THEN** its input carries the candidates, the diff and file access, and not
   the reasoning that produced them
+
+#### Scenario: The spawn names a type that resolves headless
+- **WHEN** the verify stage is inspected on any surface that states it
+- **THEN** it names a concrete `subagent_type` that needs no plugin-provided
+  agent definition
+
+#### Scenario: Two sessions parse the same verdicts the same way
+- **WHEN** two reviews of the same diff each spawn a verifier
+- **THEN** both read verdicts in the one-line-per-candidate shape the skill
+  specifies, rather than a convention each invented
 
 ### Requirement: Spec-aware verification
 id: spec-aware-review
