@@ -2,6 +2,7 @@
 """Unit tests for `semdiff files` (cohort grouping) and `semdiff context`
 (best-effort reference lookup). Fixtures are temp git repos; no network."""
 
+import argparse
 import json
 import os
 import shutil
@@ -9,9 +10,15 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.normpath(os.path.join(HERE, "..", "scripts", "semdiff.py"))
+SCRIPTS = os.path.dirname(SCRIPT)
+if SCRIPTS not in sys.path:
+    sys.path.insert(0, SCRIPTS)
+
+import semdiff  # noqa: E402 — the GrepFailure tests call module internals directly
 
 
 def git(repo, *args):
@@ -193,6 +200,396 @@ class ContextTest(unittest.TestCase):
             self.assertIn("text", m)
         self.assertTrue(any(m["file"].endswith("parser.py")
                             for m in out["matches"]))
+
+
+class GrepFailureTest(unittest.TestCase):
+    """A genuine `rg`/`git grep` tool failure (a non-zero exit outside the
+    {0, 1} match/no-match pair both tools document) must surface as a hard
+    failure, in both `context` and `related` — never come back silently as
+    "no matches"/"no importers", which would be indistinguishable from the
+    search having actually run and found nothing. White-box: imports
+    `semdiff` directly so the failure can be injected below the subprocess
+    boundary, deterministically and without depending on either tool's
+    real-world exit codes for a crafted error."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-grepfail-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+        self._write("lib/mod.py", "def f():\n    return 1\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+        git(self.repo, "branch", "-M", "main")
+        self._write("lib/caller.py", "import lib.mod\n")
+        git(self.repo, "add", "-A")
+        self._cwd = os.getcwd()
+        os.chdir(self.repo)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        path = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(text)
+
+    def test_grep_matches_raises_on_a_real_tool_failure(self):
+        """A returncode outside {0, 1} must raise `GrepFailure`, not come
+        back as an empty, no-matches-indistinguishable list."""
+        fake = subprocess.CompletedProcess(
+            args=["git", "grep"], returncode=2, stdout="",
+            stderr="fatal: boom")
+        with mock.patch.object(semdiff, "run", return_value=fake):
+            with self.assertRaises(semdiff.GrepFailure):
+                semdiff._grep_matches("mod", word=True, fixed=True)
+
+    def test_grep_matches_treats_no_match_as_a_real_empty_result(self):
+        """Returncode 1 (git grep's documented "no match") must still come
+        back as an ordinary empty list, not raise — only a failure outside
+        the documented {0, 1} pair is a `GrepFailure`."""
+        fake = subprocess.CompletedProcess(
+            args=["git", "grep"], returncode=1, stdout="", stderr="")
+        with mock.patch.object(semdiff, "run", return_value=fake):
+            self.assertEqual(
+                semdiff._grep_matches("mod", word=True, fixed=True), [])
+
+    def test_context_dies_rather_than_reporting_an_empty_result(self):
+        args = argparse.Namespace(symbol="mod", path=None, lang=None)
+        with mock.patch.object(semdiff, "_grep_matches",
+                               side_effect=semdiff.GrepFailure("boom")):
+            with self.assertRaises(SystemExit) as ctx:
+                semdiff.cmd_context(args)
+        self.assertNotEqual(ctx.exception.code, 0)
+
+    def test_related_dies_rather_than_reporting_zero_importers(self):
+        args = argparse.Namespace(base="main", head=None, linear=False,
+                                  mode="balanced")
+        with mock.patch.object(semdiff, "_find_importers",
+                               side_effect=semdiff.GrepFailure("boom")):
+            with self.assertRaises(SystemExit) as ctx:
+                semdiff.cmd_related(args)
+        self.assertNotEqual(ctx.exception.code, 0)
+
+
+class RelatedTest(unittest.TestCase):
+    """`semdiff related`: importers, importees, caps, and the modes.
+
+    Its own fixture, not `FilesCohortTest`'s shared one — that fixture's file
+    count is asserted by `test_cohort_grouping`, so growing it for these
+    cases would make that count a lie.
+
+    Base commit: `lib/parser.py` (defines `parse_spec`), `lib/util.py`, and
+    ten pre-existing stub modules (`other1/mod1.py` .. `other10/mod10.py`)
+    that each `import lib.parser` — real, committed importers, so both the
+    ripgrep and the `git grep` fallback can find them. The working tree then
+    adds two *changed* files on top of that base: `lib/caller.py` (new,
+    importing `lib.parser` by name, `from . import util` which resolves to
+    nothing concrete, and `somepkg.outside`, a package outside the repo) and
+    an appended `lib/parser.py` (now also `import lib.util`). That gives
+    `lib/parser.py` 11 real importers (the ten stubs plus `caller.py`) and
+    one real importee (`lib/util.py`) — 12 related files combined, enough on
+    its own to exceed the balanced per-file cap of 8 (importers and
+    importees share one per-file budget, ranked together by proximity) — so
+    a single entry exercises both directions and the cap at once.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-related-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+
+        self._write("lib/parser.py",
+                    "def parse_spec(text):\n    return text\n")
+        self._write("lib/util.py", "def helper():\n    return 1\n")
+        for i in range(1, 11):
+            self._write(f"other{i}/mod{i}.py", "import lib.parser\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+        git(self.repo, "branch", "-M", "main")
+
+        # Working-tree-only changes: lib/parser.py gains an importee, and
+        # lib/caller.py is a new file naming one real importee (lib.parser)
+        # and two names that resolve to nothing in the repo.
+        self._write(
+            "lib/parser.py",
+            "def parse_spec(text):\n    return text\n\n\n"
+            "import lib.util\n\n\n"
+            "def extra():\n    return lib.util.helper()\n")
+        self._write(
+            "lib/caller.py",
+            "from lib.parser import parse_spec\n"
+            "from . import util\n"
+            "import somepkg.outside\n\n\n"
+            "def run():\n    return parse_spec('x')\n")
+        # Staged but uncommitted: `related main` still reviews them as
+        # working-tree changes against `main`, and staging (rather than
+        # leaving `lib/caller.py` untracked) keeps the fixture deterministic
+        # across the `git grep` fallback, which — like `context`'s — only
+        # searches tracked paths.
+        git(self.repo, "add", "-A")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        path = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(text)
+
+    def test_importers_and_importees_both_appear(self):
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(out["mode"], "balanced")
+        self.assertIn("best-effort", out["note"])
+        files = out["files"]
+        self.assertIn("lib/parser.py", files)
+        self.assertIn("lib/caller.py", files)
+        parser_entry = files["lib/parser.py"]
+        self.assertIn("lib/util.py", parser_entry["importees"])
+        self.assertTrue(parser_entry["importers"])
+        caller_entry = files["lib/caller.py"]
+        self.assertEqual(caller_entry["importees"], ["lib/parser.py"])
+
+    def test_prose_mention_does_not_outrank_a_real_importer(self):
+        """A doc file naming the module in prose, in the *same* directory as
+        the changed file (so it would rank first by proximity if it were a
+        candidate at all), must never appear as an importer, and must never
+        displace a genuine importer sitting farther away in a different
+        directory — because the matching importer search excludes it from
+        the candidate set before ranking runs, not merely by losing a
+        proximity tiebreak.
+        """
+        self._write(
+            "lib/README.md",
+            "See lib/parser.py and lib.parser for the parse_spec API.\n")
+        git(self.repo, "add", "-A")
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        entry = out["files"]["lib/parser.py"]
+        self.assertNotIn("lib/README.md", entry["importers"])
+        self.assertNotIn("lib/README.md", entry["importees"])
+        # Unchanged from the no-decoy case (test_per_file_cap_reports_its_
+        # dropped_count): the prose file consumed no cap slot at all.
+        self.assertEqual(len(entry["importers"]) + len(entry["importees"]), 8)
+        self.assertEqual(entry["truncated"], 4)
+        self.assertIn("other1/mod1.py", entry["importers"])
+
+    def test_changed_file_never_in_its_own_importer_list(self):
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("lib/parser.py", out["files"]["lib/parser.py"]
+                         ["importers"])
+
+    def test_unresolvable_import_is_dropped_not_guessed(self):
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        importees = out["files"]["lib/caller.py"]["importees"]
+        self.assertEqual(importees, ["lib/parser.py"])
+        for bogus in ("somepkg/outside.py", "lib/util.py", "lib"):
+            self.assertNotIn(bogus, importees)
+
+    def test_import_cannot_escape_the_repository_root(self):
+        """A relative import with enough `../` segments can normalize to a
+        path outside the repo root. `related` must never name it as an
+        importee even when a real file happens to sit there on disk — the
+        repository boundary is the limit, not merely the filesystem's. (A
+        regression guard: before the fix, `_exists_with_extension` accepted
+        any `os.path.isfile` hit regardless of where the join landed, so a
+        deeply-relative import in the diff could make `related` name — and
+        the review then read — a file outside the repository.)"""
+        outside = os.path.join(self.tmp, "escaped.py")
+        with open(outside, "w") as fh:
+            fh.write("SECRET = 1\n")
+        self._write("lib/escape.js",
+                    "const x = require('../../escaped');\n")
+        git(self.repo, "add", "-A")
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        entry = out["files"]["lib/escape.js"]
+        self.assertEqual(entry["importees"], [])
+
+    def test_per_file_cap_reports_its_dropped_count(self):
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        entry = out["files"]["lib/parser.py"]
+        # 11 importers + 1 importee = 12 found, sharing the balanced
+        # per-file cap of 8, so 4 are dropped and reported, never silently.
+        self.assertEqual(len(entry["importers"]) + len(entry["importees"]), 8)
+        self.assertEqual(entry["truncated"], 4)
+
+    def test_max_mode_raises_both_caps_and_names_the_mode(self):
+        rc, out, err = run_semdiff(self.repo, "related", "main",
+                                   "--mode", "max")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(out["mode"], "max")
+        self.assertEqual(out["caps"], {"per_file": 20, "per_review": 120})
+        entry = out["files"]["lib/parser.py"]
+        self.assertEqual(len(entry["importers"]) + len(entry["importees"]), 12)
+        self.assertEqual(entry["truncated"], 0)
+
+    def test_git_grep_fallback_finds_the_same_importers(self):
+        rc, out, err = run_semdiff(self.repo, "related", "main",
+                                   mask_rg=True, home=self.tmp)
+        self.assertEqual(rc, 0, err)
+        entry = out["files"]["lib/parser.py"]
+        self.assertEqual(len(entry["importers"]) + len(entry["importees"]), 8)
+        self.assertEqual(entry["truncated"], 4)
+
+    def test_neither_search_tool_present_fails_like_context(self):
+        bindir = os.path.join(self.tmp, "pyonly")
+        os.makedirs(bindir, exist_ok=True)
+        os.symlink(sys.executable, os.path.join(bindir, "python3"))
+        env = dict(os.environ)
+        env["PATH"] = bindir
+        env["HOME"] = self.tmp
+        r = subprocess.run(
+            [sys.executable, SCRIPT, "related", "main"],
+            cwd=self.repo, capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 127, r.stderr)
+        self.assertIn("rg", r.stderr)
+        self.assertIn("git", r.stderr)
+
+
+class ImporteeEngineImportFallbackTest(unittest.TestCase):
+    """Importee resolution for the cross-skill `sys.path`-injection pattern
+    this repo's own scripts use (see `semdiff.py`'s own `_import_engine`): a
+    bare `import foo` whose target lives in a directory reached only by
+    mutating `sys.path` at runtime, not one resolvable relative to the
+    importing file's own directory or the repo root.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-engineimport-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+        self._write("other/scripts/engine_helper.py",
+                    "def helper():\n    return 1\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+        git(self.repo, "branch", "-M", "main")
+        self._write(
+            "tools/runner.py",
+            "import sys, os\n"
+            "sys.path.insert(0, os.path.join('other', 'scripts'))\n"
+            "import engine_helper\n\n\n"
+            "def run():\n    return engine_helper.helper()\n")
+        git(self.repo, "add", "-A")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        path = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(text)
+
+    def test_bare_import_resolves_via_unique_repo_wide_fallback(self):
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        entry = out["files"]["tools/runner.py"]
+        self.assertEqual(
+            entry["importees"], ["other/scripts/engine_helper.py"])
+
+    def test_ambiguous_bare_name_is_dropped_not_guessed(self):
+        # A second file sharing the basename makes the fallback ambiguous;
+        # the importee must be dropped, not guessed at, same as a name that
+        # resolves to nothing at all.
+        self._write("another/engine_helper.py",
+                    "def helper():\n    return 2\n")
+        git(self.repo, "add", "-A")
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        entry = out["files"]["tools/runner.py"]
+        self.assertEqual(entry["importees"], [])
+
+
+class CrossLanguageImporterTest(unittest.TestCase):
+    """`semdiff related` outside Python: a JS/TS-style relative `require()`
+    and a C-style relative `#include`, each against a file in the same repo
+    that only *mentions* the module's name in a comment.
+
+    Regression coverage for a real bug this change's own verification
+    caught: `./foo`-shaped tokens (common to JS/TS/Go/C) were being routed
+    into the Python dots-as-package-levels branch because both start with
+    `.`, and `os.path.join` silently discards everything before a component
+    that starts with `/` — so `./util` resolved to nothing at all, every
+    time, regardless of language.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="semdiff-crosslang-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q",
+                        self.repo], check=True, capture_output=True)
+        git(self.repo, "config", "user.email", "t@example.com")
+        git(self.repo, "config", "user.name", "Test")
+        git(self.repo, "config", "commit.gpgsign", "false")
+        self._write("src/util.js", "function helper() { return 1; }\n"
+                                    "module.exports = { helper };\n")
+        self._write("src/helper.h", "int helper(void);\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "init")
+        git(self.repo, "branch", "-M", "main")
+        self._write("src/consumer.js",
+                    "const { helper } = require('./util');\n"
+                    "console.log(helper());\n")
+        self._write("src/mention.js",
+                    "// This file just talks about util.js in a comment.\n"
+                    "function other() { return 2; }\n")
+        self._write("src/main.c",
+                    '#include "./helper.h"\n'
+                    "int main(void) { return helper(); }\n")
+        self._write("src/mentions.c",
+                    "/* helper.h is discussed here but never included. */\n"
+                    "int other(void) { return 2; }\n")
+        git(self.repo, "add", "-A")
+        self._write("src/util.js", "function helper() { return 1; }\n"
+                                    "module.exports = { helper };\n// touch\n")
+        self._write("src/helper.h", "int helper(void);\n// touch\n")
+        git(self.repo, "add", "-A")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, rel, text):
+        path = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(text)
+
+    def test_js_relative_require_is_found_and_the_mention_is_not(self):
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        entry = out["files"]["src/util.js"]
+        self.assertEqual(entry["importers"], ["src/consumer.js"])
+        self.assertNotIn("src/mention.js", entry["importers"])
+
+    def test_c_relative_include_is_found_and_the_mention_is_not(self):
+        rc, out, err = run_semdiff(self.repo, "related", "main")
+        self.assertEqual(rc, 0, err)
+        entry = out["files"]["src/helper.h"]
+        self.assertEqual(entry["importers"], ["src/main.c"])
+        self.assertNotIn("src/mentions.c", entry["importers"])
 
 
 if __name__ == "__main__":

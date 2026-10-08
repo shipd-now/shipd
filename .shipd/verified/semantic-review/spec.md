@@ -520,6 +520,25 @@ judgement passes as the skill, so the two surfaces do not drift.
 - **THEN** the finding anchors at the fix site and names the importing line as
   a further location, because that is where the defect surfaces at run time
 
+The skill SHALL run `semdiff related` after the structural diff and before its
+judgement passes, and SHALL read the files that subcommand names where a check
+needs context beyond the diff. The step SHALL name which checks the context
+serves — the downstream-impact and call-site checks, and the lenses that
+compare a change against unchanged code — so a reviewer given files is also
+given the reason to read them. Reading a file the subcommand did not name
+SHALL remain outside the skill's context economy: the engine's set is what
+widens, never the reviewer's discretion.
+
+#### Scenario: Related files are read when a check needs them
+- **WHEN** a changed function's callers sit in files the diff does not touch
+- **THEN** the review reads those files from `semdiff related`'s output rather
+  than reasoning about the callers from the diff alone
+
+#### Scenario: A file the engine did not name stays unread
+- **WHEN** a reviewer judges some other file might be interesting
+- **THEN** it is not read, because only the engine's named set widens the
+  skill's context economy
+
 ### Requirement: Spec-aware verification
 id: spec-aware-review
 
@@ -1052,7 +1071,7 @@ that flow rather than restating it.
 Guidance that runs on every review SHALL stay inline in `SKILL.md`: the
 workflow steps, the severity rubric, the presentation shape, the review-start
 difftastic probe and its degradation ladder, the base-freshness block, and the
-guardrails. `SKILL.md` SHALL stay under 350 lines; this requirement owns that
+guardrails. `SKILL.md` SHALL stay under 370 lines; this requirement owns that
 ceiling, and no other requirement SHALL restate the figure.
 
 Each reference file SHALL open with a level-1 title and state its own load
@@ -1084,7 +1103,7 @@ into a reference SHALL NOT change that guidance's substance.
 
 #### Scenario: The skill body fits the ceiling
 - **WHEN** `plugins/s/skills/review/SKILL.md` is measured
-- **THEN** it is under 350 lines
+- **THEN** it is under 370 lines
 
 #### Scenario: A reference states its own trigger
 - **WHEN** a file under `plugins/s/skills/review/references/` is read on its own
@@ -1724,3 +1743,61 @@ it already posted — a refused merge arming never costs the verdict.
 #### Scenario: A refused arming keeps the verdict
 - **WHEN** the merge arming call exits non-zero after the status was posted
 - **THEN** `post` reports the arming failure and the posted status stands
+
+### Requirement: Related-file context subcommand
+id: related-context
+
+The system SHALL provide `semdiff related <base> [<head>] [--mode
+balanced|max]` emitting, per changed file, the files that import it and the
+files it imports, as JSON carrying the same best-effort note
+`semdiff context` carries — the candidates come from ripgrep when present and
+`git grep` otherwise, and are never a complete call graph.
+
+The set SHALL be bounded, and the bound SHALL be part of the contract rather
+than a tuning detail: at most 8 related files per changed file and 40 across
+the review in `balanced` mode, and at most 20 and 120 in `max` mode.
+Candidates SHALL be ranked by proximity — same directory first, then nearest
+common ancestor — so the cap keeps the files most likely to matter. Every
+truncation SHALL be reported in the output as a count, never applied silently,
+so a review can name withheld context among what it could not verify.
+
+`--mode` SHALL default to `balanced`, and the output SHALL state the mode it
+ran in.
+
+A candidate SHALL be an **import**, not a mention. An importer SHALL be matched
+by the importing syntax of a language — the import, require, use, or include
+form that names the module — never by a bare occurrence of the file's name, so
+prose that merely discusses a module is not reported as depending on it. The
+candidate set SHALL be restricted to files a language could import: a
+documentation file, a specification artifact, or any other non-source file
+SHALL NOT appear as an importer. An importee SHALL resolve to a path that
+exists in the repository, and a changed file that imports in-repository modules
+SHALL report them.
+
+#### Scenario: Prose that names a module is not an importer
+- **WHEN** a markdown file discusses `semdiff.py` by name and no source file
+  imports it
+- **THEN** that markdown file does not appear among the importers
+
+#### Scenario: A real importer outranks a cap
+- **WHEN** more candidates exist than the per-file cap allows
+- **THEN** the surviving entries are importers matched by import syntax, not
+  whichever paths sorted first
+
+#### Scenario: Importers and importees both appear
+- **WHEN** `semdiff related main` runs over a diff changing one module
+- **THEN** each changed file's entry names the files that import it and the
+  files it imports, with the best-effort note present
+
+#### Scenario: The bound is reported, not hidden
+- **WHEN** a changed file has more related files than the mode's per-file cap
+- **THEN** the entry carries the capped list and a count of what was dropped
+
+#### Scenario: Max mode raises the caps
+- **WHEN** the same diff is run with `--mode max`
+- **THEN** the per-file and per-review caps are the higher pair, and the
+  output names the mode
+
+#### Scenario: Neither search tool is present
+- **WHEN** `semdiff related` runs where both `rg` and `git` are absent
+- **THEN** it fails the way `semdiff context` does, naming the missing tools

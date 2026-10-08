@@ -395,7 +395,7 @@ class SkillMdStructureTest(unittest.TestCase):
         cls.lines = cls.text.splitlines()
 
     def test_under_line_ceiling(self):
-        """SKILL.md's ceiling rose from 330 to 350.
+        """SKILL.md's ceiling rose from 330 to 350, and now 350 to 370.
 
         Everything review-location-impact adds is a rule applied on every
         review, and the detail that could be extracted already has been —
@@ -409,10 +409,17 @@ class SkillMdStructureTest(unittest.TestCase):
         is not a budget to compress real instructions into... A body that
         legitimately grows a step belongs under a raised ceiling, not under
         reworded instructions."
+
+        review-related-file-context raises the ceiling again, from 350 to
+        370: the new `related` workflow step is guidance that runs on every
+        review, so it cannot be deferred to a conditionally-loaded reference,
+        and SKILL.md sat at 340 of 350 before this change landed — too little
+        headroom for the new step's own instructions. `review-skill-references`
+        owns this figure; it is not restated anywhere else.
         """
         self.assertLess(
-            len(self.lines), 350,
-            "SKILL.md must stay under 350 lines once the references split "
+            len(self.lines), 370,
+            "SKILL.md must stay under 370 lines once the references split "
             "out the condition-gated sections")
 
     def test_no_moved_headings_remain(self):
@@ -424,7 +431,7 @@ class SkillMdStructureTest(unittest.TestCase):
     def test_workflow_steps_stayed_inline(self):
         self.assertIn("## Workflow", self.text)
         self.assertIn("### 1. Map the change", self.text)
-        self.assertIn("### 7. Check test coverage, rolled up per cohort",
+        self.assertIn("### 8. Check test coverage, rolled up per cohort",
                       self.text)
 
     def test_severity_rubric_stayed_inline(self):
@@ -518,9 +525,9 @@ class SkillMdStructureTest(unittest.TestCase):
         dropped "end to end" from this step, so that phrasing is still
         pinned here too.
         """
-        match = re.search(r"^### 5c\. [^\n]*\n(.*?)(?=\n### |\Z)", self.text,
+        match = re.search(r"^### 6c\. [^\n]*\n(.*?)(?=\n### |\Z)", self.text,
                           re.DOTALL | re.MULTILINE)
-        self.assertIsNotNone(match, "no '### 5c.' breadth-sweep step found")
+        self.assertIsNotNone(match, "no '### 6c.' breadth-sweep step found")
         section = match.group(1).lower()
         self.assertIn("end to end", section)
         for kind in ("swallowed", "leak", "dead or duplicated",
@@ -1370,6 +1377,85 @@ class SeverityDotParityTest(unittest.TestCase):
                     expected_bracket, joined,
                     "workflow folded finding is missing %r: %r"
                     % (expected_bracket, joined))
+
+
+# The `related` step's own heading, independent of its step number (which
+# SkillMdStructureTest's renumbering tests pin elsewhere) — matches
+# "### N. Pull related file context" wherever N lands after a renumber.
+_RELATED_STEP_HEADING_RE = re.compile(
+    r"^###\s+\d+\.\s*Pull[*_\s]+related[*_\s]+file[*_\s]*context[^\n]*\n"
+    r"(.*?)(?=\n### |\Z)", re.DOTALL | re.MULTILINE)
+
+# The checks the related-file context feeds — named identically (modulo
+# whitespace/emphasis) on both surfaces that carry the step inline, so a
+# reviewer handed files always has the reason to read them.
+_RELATED_CHECKS_SERVED_PATTERN = re.compile(
+    r"(?is)downstream-impact[*_\s]+and[*_\s]+call-site[*_\s]+checks")
+_RELATED_LENSES_PATTERN = re.compile(
+    r"(?is)lenses[*_\s]+that[*_\s]+compare[*_\s]+a[*_\s]+change[*_\s]+against"
+    r"[*_\s]+unchanged[*_\s]+code")
+
+# The limit stated beside the permission: a file `related` did not name
+# stays unread, whatever else looks interesting — the engine's named set is
+# what widens context, never the reviewer's own discretion.
+_UNNAMED_FILE_UNREAD_PATTERN = re.compile(
+    r"(?is)did[*_\s]+not[*_\s]+name[*_\s]+stays[*_\s]+unread")
+
+# The wider-recall caps (20 per changed file, 120 per review) that `--mode
+# max` raises the balanced defaults to. Both surfaces must name them, so a
+# reviewer who only ever sees the harness body still knows a wider sweep
+# exists — the gap a crafted-import regression caught once (f4/f6 in the
+# review-related-file-context PR): the harness step named only the balanced
+# 8/40 pair, with no way to learn 20/120 was ever an option.
+_RELATED_WIDER_RECALL_PATTERN = re.compile(r"(?is)20[^\n]{0,40}120")
+
+
+class RelatedFileContextStepTest(unittest.TestCase):
+    """Both reference-free surfaces — `SKILL.md` and the harness review
+    body, neither of which can defer this always-applies guidance to a
+    conditionally-loaded reference — carry the `related` step inline: the
+    step itself, the checks it feeds, and the limit that a file the
+    subcommand did not name stays unread.
+    """
+
+    def test_skill_md_names_the_related_step_section(self):
+        match = _RELATED_STEP_HEADING_RE.search(_read(SKILL_MD))
+        self.assertIsNotNone(
+            match, "no 'Pull related file context' step heading found in "
+            "SKILL.md")
+
+    def test_both_surfaces_name_the_checks_it_serves(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                text = _read(path)
+                self.assertRegex(
+                    text, _RELATED_CHECKS_SERVED_PATTERN,
+                    f"{path} must name the downstream-impact and call-site "
+                    "checks the related-file context feeds")
+                self.assertRegex(
+                    text, _RELATED_LENSES_PATTERN,
+                    f"{path} must name the lenses that compare a change "
+                    "against unchanged code")
+
+    def test_both_surfaces_state_the_unnamed_file_stays_unread_limit(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _UNNAMED_FILE_UNREAD_PATTERN,
+                    f"{path} must state that a file the related search did "
+                    "not name stays unread")
+
+    def test_both_surfaces_name_the_wider_recall_caps(self):
+        """A reviewer on either surface must be able to learn that the
+        balanced 8/40 caps are not the only option — the harness body once
+        named only the balanced pair, with nothing telling a reviewer on
+        that surface alone that a 20/120 sweep existed at all."""
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _RELATED_WIDER_RECALL_PATTERN,
+                    f"{path} must name the wider-recall 20/120 caps "
+                    "alongside the balanced 8/40 pair")
 
 
 if __name__ == "__main__":
