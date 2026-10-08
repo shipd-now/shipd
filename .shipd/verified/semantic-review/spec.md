@@ -1764,6 +1764,47 @@ so a review can name withheld context among what it could not verify.
 `--mode` SHALL default to `balanced`, and the output SHALL state the mode it
 ran in.
 
+The per-review budget SHALL be allocated **fairly across changed files**, never
+in arrival order. Allocation SHALL proceed in passes: on each pass every changed
+file with an unallocated candidate takes its next one, so no changed file
+receives a second related file while another with candidates has none. Within a
+pass, files SHALL be visited in ascending order of candidate count, so a file
+with few candidates is served before a hub with many. Within a changed file,
+importees SHALL rank above importers, since an arbitrary sample of a hub's
+callers is the weakest context the subcommand can return.
+
+A related file shared by several changed files SHALL be charged against the
+per-review cap **once**, and SHALL still be listed under every changed file that
+relates to it. The cap bounds what the review must read, and a shared file is
+read once however many changed files point at it.
+
+The summary SHALL distinguish the two reasons a changed file carries no related
+file: `files_without_candidates`, where the search found nothing to relate, and
+`files_starved`, where candidates existed and the budget denied them all. It
+SHALL also report `related_files`, the distinct count charged against the cap,
+alongside `related_edges`, the number of file-to-related pairs listed.
+
+#### Scenario: No file takes a second while another has none
+- **WHEN** more changed files carry candidates than the per-review cap can
+  satisfy twice over
+- **THEN** every candidate-bearing file holds at least one related file before
+  any holds two
+
+#### Scenario: A starved file is distinguished from a file with nothing to relate
+- **WHEN** one changed file has no candidates at all and the budget is
+  exhausted before another candidate-bearing file is reached
+- **THEN** the summary counts the first under `files_without_candidates` and
+  the second under `files_starved`
+
+#### Scenario: A shared related file is charged once
+- **WHEN** several changed files all relate to the same module
+- **THEN** that module counts once against the per-review cap, appears under
+  each of those changed files, and `related_edges` exceeds `related_files`
+
+#### Scenario: A scarce file outranks a hub within a pass
+- **WHEN** one changed file has two candidates and another has twenty
+- **THEN** the file with two is served first in each pass
+
 A candidate SHALL be an **import**, not a mention. An importer SHALL be matched
 by the importing syntax of a language — the import, require, use, or include
 form that names the module — never by a bare occurrence of the file's name, so

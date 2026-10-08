@@ -1470,10 +1470,14 @@ def cmd_related(args):
     changed = changed_paths(new_ref, diff_spec)
     root = repo_root()
 
-    entries = {}
-    remaining = per_review_cap
-    total_truncated = 0
-
+    # Phase 1: collect every changed file's full ranked candidate list, with
+    # no budget applied. The per-file cap bounds what is *listed*, not what
+    # is collected — the allocator below needs each file's total candidate
+    # count (for scarce-first ordering across files) and its truncation
+    # count has to reflect everything dropped, whether by the per-file cap
+    # or by the per-review budget.
+    tags = {}
+    ranked = {}
     for path in changed:
         # Only a recognized source file has a module name worth searching
         # for, or import/require/use/include lines worth scanning. A
@@ -1504,23 +1508,77 @@ def cmd_related(args):
             tag[f] = "importer"
         for f in importee_files:
             tag.setdefault(f, "importee")
-        ranked = sorted(tag, key=lambda f: _proximity_key(path, f))
+        tags[path] = tag
 
-        kept = ranked[:per_file_cap]
-        file_truncated = len(ranked) - len(kept)
+        # Importees rank above importers — what a changed file calls is more
+        # directly relevant than an arbitrary sample of its callers — each
+        # group ordered by the existing proximity key, unchanged.
+        importees = sorted((f for f in tag if tag[f] == "importee"),
+                            key=lambda f: _proximity_key(path, f))
+        importers = sorted((f for f in tag if tag[f] == "importer"),
+                            key=lambda f: _proximity_key(path, f))
+        ranked[path] = importees + importers
 
-        if len(kept) > remaining:
-            budget = max(remaining, 0)
-            file_truncated += len(kept) - budget
-            kept = kept[:budget]
-        remaining -= len(kept)
+    # Phase 2: allocate the per-review budget in fair-share passes. On each
+    # pass, every changed file with an unallocated candidate takes its next
+    # one, subject to the per-file cap, so no changed file receives a second
+    # related file while another candidate-bearing file has none. Within a
+    # pass, files are visited in ascending order of total candidate count
+    # (ties broken by path, for a deterministic allocation), so a file with
+    # few candidates is served before a hub with many. A related file
+    # already selected for another changed file costs nothing further —
+    # charged against the per-review cap once — so passes keep running past
+    # budget exhaustion as long as some file's next candidate is already
+    # selected, and stop only once no file has an unallocated candidate it
+    # can afford, free or otherwise.
+    kept = {path: [] for path in changed}
+    cursor = {path: 0 for path in changed}
+    selected = set()
+    remaining = per_review_cap
+    order = sorted(changed, key=lambda f: (len(ranked[f]), f))
+
+    progress = True
+    while progress:
+        progress = False
+        for path in order:
+            if cursor[path] >= len(ranked[path]):
+                continue
+            if len(kept[path]) >= per_file_cap:
+                continue
+            candidate = ranked[path][cursor[path]]
+            free = candidate in selected
+            if not free and remaining <= 0:
+                continue
+            cursor[path] += 1
+            kept[path].append(candidate)
+            if not free:
+                selected.add(candidate)
+                remaining -= 1
+            progress = True
+
+    entries = {}
+    total_truncated = 0
+    files_without_candidates = 0
+    files_starved = 0
+    for path in changed:
+        tag = tags[path]
+        kept_files = kept[path]
+        file_truncated = len(ranked[path]) - len(kept_files)
         total_truncated += file_truncated
 
         entries[path] = {
-            "importers": sorted(f for f in kept if tag[f] == "importer"),
-            "importees": sorted(f for f in kept if tag[f] == "importee"),
+            "importers": sorted(f for f in kept_files if tag[f] == "importer"),
+            "importees": sorted(f for f in kept_files if tag[f] == "importee"),
             "truncated": file_truncated,
         }
+
+        if not ranked[path]:
+            files_without_candidates += 1
+        elif not kept_files:
+            files_starved += 1
+
+    related_edges = sum(
+        len(e["importers"]) + len(e["importees"]) for e in entries.values())
 
     json.dump({
         "mode": args.mode,
@@ -1529,10 +1587,11 @@ def cmd_related(args):
         "files": entries,
         "summary": {
             "changed_files": len(changed),
-            "related_files": sum(
-                len(e["importers"]) + len(e["importees"])
-                for e in entries.values()),
+            "related_files": len(selected),
+            "related_edges": related_edges,
             "truncated": total_truncated,
+            "files_without_candidates": files_without_candidates,
+            "files_starved": files_starved,
         },
     }, sys.stdout, indent=2)
     print()
