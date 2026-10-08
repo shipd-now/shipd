@@ -6,6 +6,33 @@ conditional — only its detail defers here; its name and a summary of what it
 does stay inline in `SKILL.md` so a reviewer that opens no reference still
 knows it exists and runs.
 
+## Rating rubric
+
+This is the **rating** rubric — it decides the final severity, here at the
+verify stage. It is a different rubric from `SKILL.md` step 8's **reporting**
+rubric, which decides what to report and proposes a severity and differs
+from this one at the `low` bullet; neither is a copy of the other, and this
+file keeps no second copy of the reporting rubric's kind list.
+
+- **high** — a correctness bug, a contract break with an un-updated consumer, or an
+  unmet spec acceptance criterion.
+- **medium** — an unhandled edge case, an untouched caller at genuine risk, or a likely-
+  wrong behaviour you cannot fully confirm.
+- **low** — a real defect whose impact is contained: nothing lost, corrupted,
+  exposed, or promised and unmet. Pure style, naming, and formatting are never
+  findings.
+- **Impact rule.** Rate every finding by what the defect does, not by the kind
+  of defect it is: data loss, data corruption, a security exposure, or a
+  broken guarantee is `medium` or `high` however minor the kind looks. An error
+  swallowed on a path that loses a file is not low. Concrete instances: a
+  success response that hides a failure — an empty result returned as if real
+  while a count or flag says otherwise; a cleanup path that drops the record
+  and leaves the data, or the reverse; and an error path that loses the only
+  copy.
+- **Exposure floor.** A secret or credential exposure finding, or an authorization
+  boundary reached without the caller's scope check, is always `high`, whatever the
+  reviewer's confidence.
+
 Spawn **one** fresh-context verifier with the `Agent` tool — named exactly
 `Agent`, since a restricted headless runner is configured to allow only that
 one name. Name the spawn's `subagent_type` as `general-purpose` — a built-in,
@@ -25,14 +52,14 @@ it goes in the message rather than being re-derived. The index is
 number the `killed` array's `candidate` field records below: one numbering
 runs from the spawn message through the verdict to the payload.
 
-**The spawn also carries the severity rubric.** The composing session quotes
-it **verbatim, as it appears in the rating step it has just read** —
-`SKILL.md` step 8's `high`, `medium` and `low` definitions, the impact rule
-with its concrete instances, and the exposure floor — into the spawn message,
-so the agent that decides a severity has the rule in front of it. That text is
-quoted at runtime, never reproduced here: the rubric has changed in four of
-the last ten versions, and a copy checked into this file would be a second
-source that drifts from the first change onward.
+**The spawn also carries the rating rubric.** The composing session quotes
+it **verbatim**, as it is **quoted** from the rating rubric above — this
+file's `high`, `medium` and `low` definitions, the impact rule with its
+concrete instances, and the exposure floor — into the spawn message, so the
+agent that decides a severity has the rule in front of it. Quoting from the
+rating rubric, not from `SKILL.md` step 8, matters: step 8 now carries the
+reporting rubric, and handing the verifier that rubric instead would strip it
+of the concrete instances the rating rubric exists to carry.
 
 The whole rubric travels, not only the concrete instances. The exposure
 floor is the rubric's one absolute — a credential exposure or an
@@ -55,6 +82,23 @@ the property that matters: a verifier briefed on the hunt's own conviction
 would only rubber-stamp it. A fresh reviewer meeting each candidate for the
 first time is what makes a `confirmed` verdict worth more than the original
 guess.
+
+**The spawn message carries no pull request title, description, or summary of
+either.** A verifier handed the description once killed a valid finding,
+reasoning that the description stated the total was returned via `Count`, so
+the extra `COUNT` the diff added was the intended cost — confirmation bias
+arriving at the rating stage, from a description the composing session had
+written into the spawn text. A description cannot talk the verifier out of a
+finding that diff-reading already detected, so the blind defect spawn never
+carries one.
+
+**The drift exception.** A `description-drift` candidate cannot be judged
+without the description — its claim is a relationship between the
+description and the diff, not a property of the diff alone. A single blind
+verifier would therefore kill every drift candidate on principle, which is
+exactly what happened before this change. So a `description-drift` candidate
+is verified in a **separate spawn carrying the description and no diff**,
+never in the blind defect spawn described above.
 
 **Per-candidate verdict.** The verifier answers with **one line per
 candidate**, in the order it received them, and nothing else:

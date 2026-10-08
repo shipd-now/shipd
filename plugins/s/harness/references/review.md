@@ -89,8 +89,10 @@ the same contract.
 verifier confirms becomes an ordinary `findings` entry, at the severity the
 verifier assigned. A candidate the verifier kills becomes an entry in
 `killed` instead — `location`, `what`, `reason`, and `candidate` (its
-zero-based position in the list the verifier received, which MUST be
-deterministic for a given review) — and **never** appears among `findings`,
+zero-based position in the list the verifier received, which MUST be in
+**discovery order** — the order the passes produced the candidates, never
+severity order, so a reader can test whether kills cluster by position
+rather than by merit) — and **never** appears among `findings`,
 under any status: a consumer scoring the payload counts every `findings`
 entry as reported, so a kill placed there would erase the precision the
 stage exists to produce. `verifier` names `state` (`ran` or `skipped`) and

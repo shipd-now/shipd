@@ -108,9 +108,12 @@ candidate sat in the list rather than by its merits — surviving findings and
 kills are reported in two separate arrays, so without both numbers there is
 no way to tell. That distinction decides whether one verifier per review
 stays sufficient or whether candidates anchor on each other inside a single
-pass. The candidate list's order MUST be deterministic for a given review —
-a position is meaningless against an order that varies between runs over the
-same diff.
+pass. The candidate list's order MUST be **discovery order** — the order the
+passes produced the candidates — so a reader can test whether kills cluster
+by position rather than by merit. Severity order is excluded deliberately: it
+would correlate position with proposed severity and confound that test
+permanently, since a cluster of kills at one end could then be read as either
+an ordering artifact or a severity artifact with no way to tell which.
 
 Where the `Agent` spawn is unavailable — a restricted tool list denies it, or
 it fails — record `state: "skipped"` with the `reason`, leave `killed` empty,

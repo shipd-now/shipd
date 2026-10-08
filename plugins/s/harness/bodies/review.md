@@ -108,16 +108,47 @@ edits the repository.
     with the `Agent` tool (that exact name), naming its agent type as
     `general-purpose`, to confirm or kill every candidate finding steps 2–11
     produced. The spawn message carries each candidate's zero-based index
-    (its position in the list), location, claim, and why it was suspected,
-    and the base/head to re-derive the diff from via `semdiff diff`, plus
-    file-read access — never the reasoning that produced them; cold start is
-    what keeps it from rubber-stamping the hunt's own conviction. The spawn
-    message also carries the severity rubric from step 13 below — the
-    `high`, `medium` and `low` definitions, the impact rule with its concrete
-    instances, and the exposure floor — quoted verbatim, so the agent that
-    decides a severity has the rule in front of it; a harness-installed
-    review has no `SKILL.md` to quote from, so this body's own rubric step is
-    what travels. One verifier per review, not one per candidate. It answers one line per
+    (its position in the list, in **discovery order** — the order the steps
+    produced them, never severity order), location, claim, and why it was
+    suspected, and the base/head to re-derive the diff from via `semdiff
+    diff`, plus file-read access — never the reasoning that produced them,
+    and never the pull request's title, description, or a summary of either:
+    a verifier handed the description once killed a valid finding by
+    reasoning that the description made the diff's extra cost intended —
+    confirmation bias arriving at the rating stage — so the blind defect
+    spawn never carries one. A `description-drift` candidate cannot be
+    judged without the description, and a blind verifier would kill every
+    one of them on principle, so verify a drift candidate instead in a
+    **separate spawn carrying the description and no diff** — never in this
+    blind defect spawn. Cold start on the defect spawn is what keeps it from
+    rubber-stamping the hunt's own conviction.
+
+    The spawn message also carries the **rating rubric** below, quoted
+    verbatim, so the agent that decides a severity has the rule in front of
+    it. This is a different rubric from step 13's **reporting** rubric —
+    reporting decides what to report and proposes a severity, rating decides
+    the final one, and the two differ at the `low` bullet — and this body
+    states both in full since it has no reference file to point to:
+    - **high** — a correctness bug, a contract break with an un-updated
+      consumer, or an unmet spec acceptance criterion.
+    - **medium** — an unhandled edge case, an untouched caller at genuine
+      risk, or a likely-wrong behaviour you cannot fully confirm.
+    - **low** — a real defect whose impact is contained: nothing lost,
+      corrupted, exposed, or promised and unmet. Pure style, naming, and
+      formatting are never findings.
+    - **Impact rule.** Rate every finding by what the defect does, not by the
+      kind of defect it is: data loss, data corruption, a security exposure,
+      or a broken guarantee is `medium` or `high` however minor the kind
+      looks. An error swallowed on a path that loses a file is not low.
+      Concrete instances: a success response that hides a failure — an empty
+      result returned as if real while a count or flag says otherwise; a
+      cleanup path that drops the record and leaves the data, or the
+      reverse; and an error path that loses the only copy.
+    - **Exposure floor.** A secret or credential exposure finding, or an
+      authorization boundary reached without the caller's scope check, is
+      always `high`, whatever the reviewer's confidence.
+
+    One verifier per review, not one per candidate. It answers one line per
     candidate, in the order received, index-prefixed, nothing else —
     `<index>` the same zero-based position named above, so one numbering
     runs from the spawn message through the verdict to the payload:
@@ -128,7 +159,9 @@ edits the repository.
     overriding whatever an earlier step proposed. A killed candidate goes into
     the payload's top-level `killed` array — `location`, `what`, `reason`, and
     `candidate` (that identical zero-based position in the list the verifier
-    received, which MUST be deterministic for a given review) — and never into
+    received, which MUST be in **discovery order** — the order the steps
+    produced the candidates, never severity order, so a reader can test
+    whether kills cluster by position rather than merit) — and never into
     `findings`, under any status: a consumer scoring the payload counts every
     `findings` entry as reported. When the `Agent` spawn is unavailable or
     fails, continue rather than abort: set the payload's top-level
@@ -141,22 +174,28 @@ edits the repository.
     same way, showing the mismatch on its own terms, or — for a defect that
     is the conjunction of two lines neither wrong alone — the line where it
     surfaces at run time though correct in isolation), what is wrong, why it
-    matters, a fix, and severity:
+    matters, a fix, and severity. This is the **reporting rubric** — it
+    decides what to report and proposes a severity, and differs from step
+    12's **rating** rubric at the `low` bullet; step 12's verify stage owns
+    the final severity, with its own rating rubric:
     - **high** — a correctness bug, a contract break with an un-updated
       consumer, or an unmet spec scenario;
     - **medium** — an unhandled edge case, a caller at genuine risk, or a
       likely-wrong behaviour you cannot fully confirm;
-    - **low** — a real defect whose impact is contained: nothing lost,
-      corrupted, exposed, or promised and unmet. Pure style, naming, and
-      formatting are never findings.
-    Rate every finding by what the defect does, not by the kind of defect it
-    is: data loss, data corruption, a security exposure, or a broken guarantee
-    is medium or high however minor the kind looks — a success response that
-    hides a failure, returning an empty result as if real while a count or
-    flag says otherwise; a cleanup path that drops the record but leaves the
-    data, or the reverse; and an error path that loses the only copy. A secret
-    or credential exposure finding, or an authorization boundary reached
-    without a scope check, is always **high** regardless of your confidence.
+    - **low** — a real but minor defect: swallowed errors, resource leaks on
+      rare paths, dead or duplicated code, unread variables, unstable ids, or
+      blocking calls in async contexts. Pure style, naming, and formatting are
+      never findings.
+    - **Impact floor.** That low list names kinds of defect, not severities.
+      Rate every finding by what it does, not which kind it resembles: data
+      loss, data corruption, a security exposure, or a broken guarantee is
+      `medium` or `high` even when it arrives as one of those kinds. A
+      swallowed error that loses a file is not low.
+    - **Exposure floor.** A secret or credential exposure finding, or an
+      authorization boundary reached without a scope check, is always
+      **high** regardless of your confidence — this absolute holds here too,
+      since when step 12's verifier does not run, this stage's proposed
+      severity is what ships.
     Open with an effort score of 1–5 justified by the counts, then the verdict:
     **Fix required** when any finding is high or medium, **Ship it** otherwise.
     When unsure between two levels, state the doubt, not inflate it; never drop

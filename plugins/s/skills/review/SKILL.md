@@ -217,25 +217,26 @@ which it surfaces at run time even though that line is correct in isolation.
 When a defect recurs at multiple sites, write one
 finding whose `locations` array names every site.
 
-**Severity rubric.**
+**Reporting rubric.** This decides what to report and proposes a severity; it
+is not the final severity — the verify stage owns that, with its own
+**rating** rubric, a different rubric that differs from this one at the
+`low` bullet (see `${CLAUDE_PLUGIN_ROOT}/skills/review/references/verification.md`).
 - **high** — a correctness bug, a contract break with an un-updated consumer, or an
   unmet spec acceptance criterion.
 - **medium** — an unhandled edge case, an untouched caller at genuine risk, or a likely-
   wrong behaviour you cannot fully confirm.
-- **low** — a real defect whose impact is contained: nothing lost, corrupted,
-  exposed, or promised and unmet. Pure style, naming, and formatting are never
-  findings.
-- **Impact rule.** Rate every finding by what the defect does, not by the kind
-  of defect it is: data loss, data corruption, a security exposure, or a
-  broken guarantee is `medium` or `high` however minor the kind looks. An error
-  swallowed on a path that loses a file is not low. Concrete instances: a
-  success response that hides a failure — an empty result returned as if real
-  while a count or flag says otherwise; a cleanup path that drops the record
-  and leaves the data, or the reverse; and an error path that loses the only
-  copy.
+- **low** — a real but minor defect: swallowed errors, resource leaks on rare paths,
+  dead or duplicated code, unread variables, unstable ids, or blocking calls in async
+  contexts. Pure style, naming, and formatting are never findings.
+- **Impact floor.** That low list names *kinds* of defect, not severities. Rate every
+  finding by what it does, not which kind it resembles: data loss, data corruption, a
+  security exposure, or a broken guarantee is `medium` or `high` even when it arrives
+  as one of those kinds. A swallowed error that loses a file is not low.
 - **Exposure floor.** A secret or credential exposure finding, or an authorization
   boundary reached without the caller's scope check, is always `high`, whatever the
-  reviewer's confidence.
+  reviewer's confidence. This holds here too: when the verifier does not run, every
+  finding keeps the severity this stage proposed, so this absolute has to hold on
+  this surface as well.
 
 Any high **or** medium finding blocks (Fix required); low never blocks. When
 unsure between two levels, state the doubt rather than inflating. Uncertainty
