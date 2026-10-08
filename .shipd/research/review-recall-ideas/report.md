@@ -112,9 +112,12 @@ step needs the description. The defect hunt doesn't.
 **Idea 3: hunt blind, compare later.** Run the defect hunt without the PR
 description. Feed the description only to the drift step and the verifier.
 
-**Free check first.** Rounds of 0.6.252 with and without the description
-already exist. A per-golden comparison shows whether any finding is matched
-only without it.
+**Free check (done 9 Oct 2026).** Across 10 rounds without the description
+and 18 with it, the per-golden hit rate was 0.340 without and 0.355 with. Six
+findings matched only with the description, several reliably; four matched
+only without it, each in at most 2 of 10 rounds. The later rounds also ran
+newer versions, so the comparison is confounded, but it shows no suppression
+in this corpus.
 
 ## Criterion dispatch: structure helps, verbosity hurts
 
@@ -154,7 +157,7 @@ and the issue-count effect [1] together.
 | 2 | Hunt/verify split | Never-matched, read-but-unreported defects | [2][3][4] | 3 rounds on apilix; count `WorkspaceManagerModal.tsx` hits |
 | 1 | Multi-pass, shuffled order | The ~12 random misses | [1][2][9] | Full-judge one merged 3-round union for precision |
 | 4 | Per-cohort passes | Recall collapse on large PRs | [1][9] | apilix only, 3 rounds |
-| 3 | Description-blind hunt | Confirmation bias | [6] | Free: compare 0.6.252 with and without description |
+| 3 | Description-blind hunt | Confirmation bias | [6] | Done: no suppression found in this corpus |
 | — | Short dispatch verdicts | Dispatch false positives | [7][8] | Fold into the dispatch release |
 
 Ideas 2 and 1 compose: several shuffled hunts feed one verifier. Build the

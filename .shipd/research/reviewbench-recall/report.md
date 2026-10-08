@@ -52,7 +52,7 @@ findings.
 - **Grounded recall** is the share of valid golden findings that a Shipd
   finding matched at the same file and lines. Micro recall pools all 80
   findings; macro recall averages per PR.
-- **Noise.** Single 5-PR rounds of one version ranged from 29% to 45% recall,
+- **Noise.** Single 5-PR rounds of 0.6.249 ranged from 29% to 45% macro recall,
   so one round cannot detect a change smaller than about 10 points. Every
   verdict uses the mean of 3 rounds.
 - **Matched in ≥2 of 3 rounds** counts golden findings Shipd catches
