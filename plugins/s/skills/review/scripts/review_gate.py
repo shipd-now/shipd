@@ -356,15 +356,44 @@ def review_footer(files):
     return line + "."
 
 
+def _verifier_line(review):
+    """The one line naming what the verify stage did, read from the posted
+    JSON's top-level ``verifier``/``killed`` fields: ``Verifier: ran — N
+    candidates, K killed.`` when it ran, or ``Verifier: skipped (<reason>).``
+    when it did not. ``None`` when the payload carries no ``verifier``
+    object at all (a review posted before this stage existed), so an older
+    payload renders exactly as it always did. This is the only place the
+    posted summary comment — the durable artifact a human re-reads after the
+    chat session ends — discloses that the stage ran, so a silent verifier
+    is never indistinguishable from a verified review on the PR itself."""
+    verifier = review.get("verifier")
+    if not isinstance(verifier, dict):
+        return None
+    state = verifier.get("state")
+    if state == "skipped":
+        reason = verifier.get("reason")
+        return "Verifier: skipped (%s)." % reason if reason else "Verifier: skipped."
+    if state == "ran":
+        killed = review.get("killed") or []
+        total = verifier.get("candidates")
+        if isinstance(total, int):
+            return "Verifier: ran — %d candidate%s, %d killed." % (
+                total, "" if total == 1 else "s", len(killed))
+        return "Verifier: ran — %d killed." % len(killed)
+    return None
+
+
 def render_summary(review, unanchored, disposition="all", model=None,
                    files=None, fast_pass_outcome=None):
     """Render the marker-tagged summary comment body: the ☕ brand line, the
     verdict header, effort, the policy provenance lines, the
     ``# | rating | details`` findings table (or ``NO_PROBLEMS`` in its
-    place), an "Additional findings" section carrying the ``unanchored``
-    findings in full (they get no inline comment), and — given the PR's
-    ``files`` list — the ``review_footer`` stat line as the last line. When
-    ``fast_pass_outcome`` is provided, append a one-line fast-pass footer.
+    place), the verify-stage line naming the kill count or the skip reason
+    (see ``_verifier_line``), an "Additional findings" section carrying the
+    ``unanchored`` findings in full (they get no inline comment), and — given
+    the PR's ``files`` list — the ``review_footer`` stat line as the last
+    line. When ``fast_pass_outcome`` is provided, append a one-line
+    fast-pass footer.
 
     The brand line opens the visible body — the hidden ``MARKER`` stays line 1
     and byte-identical, so upsert matching is unmoved.
@@ -391,6 +420,9 @@ def render_summary(review, unanchored, disposition="all", model=None,
             out.append("| %d | %s | %s |" % (i, rating.strip(), _detail_cell(f)))
     else:
         out.append(NO_PROBLEMS)
+    verifier_line = _verifier_line(review)
+    if verifier_line:
+        out.append(verifier_line)
     if unanchored:
         out += ["", "### Additional findings",
                 "", "_Findings not anchored to a line in the PR diff:_", ""]

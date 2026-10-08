@@ -465,6 +465,52 @@ class SummaryFooterTest(unittest.TestCase):
                          "Reviewed 2 files, +112 -3 lines.")
 
 
+class VerifierLineTest(unittest.TestCase):
+    """The posted summary is the one durable artifact a human re-reads after
+    the chat session ends, so it names what the verify stage did: the kill
+    count when it ran, or the skip reason when it did not. A payload with no
+    `verifier` object at all (posted before this stage existed) renders no
+    such line."""
+
+    def test_ran_names_the_kill_count(self):
+        body = review_gate.render_summary(
+            _review(verdict="pass", verifier={"state": "ran", "candidates": 4},
+                    killed=[{"candidate": 0, "location": "a.py:1",
+                              "what": "x", "reason": "y"}]),
+            [])
+        self.assertIn("Verifier: ran — 4 candidates, 1 killed.", body)
+
+    def test_ran_with_no_kills(self):
+        body = review_gate.render_summary(
+            _review(verdict="pass", verifier={"state": "ran", "candidates": 2}),
+            [])
+        self.assertIn("Verifier: ran — 2 candidates, 0 killed.", body)
+
+    def test_skipped_names_the_reason(self):
+        body = review_gate.render_summary(
+            _review(verdict="pass",
+                    verifier={"state": "skipped", "reason": "Agent tool denied"}),
+            [])
+        self.assertIn("Verifier: skipped (Agent tool denied).", body)
+
+    def test_skipped_with_no_reason(self):
+        body = review_gate.render_summary(
+            _review(verdict="pass", verifier={"state": "skipped"}), [])
+        self.assertIn("Verifier: skipped.", body)
+
+    def test_absent_verifier_renders_no_line(self):
+        body = review_gate.render_summary(_review(verdict="pass"), [])
+        self.assertNotIn("Verifier:", body)
+
+    def test_post_carries_the_verifier_line(self):
+        gh = FakeGh()
+        review_gate.post(
+            "7",
+            _review(verdict="pass", verifier={"state": "ran", "candidates": 1}),
+            gh)
+        self.assertIn("Verifier: ran — 1 candidate, 0 killed.", gh.summary_body())
+
+
 class SummaryBrandTest(unittest.TestCase):
     """The summary body opens its visible content with the ☕ brand line, while
     the hidden marker line stays byte-identical so upsert matching is unmoved."""

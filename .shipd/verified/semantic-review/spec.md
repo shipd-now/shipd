@@ -539,6 +539,50 @@ widens, never the reviewer's discretion.
 - **THEN** it is not read, because only the engine's named set widens the
   skill's context economy
 
+Between judging the diff and reporting, the skill SHALL verify every candidate
+finding through a **fresh-context verifier** spawned with the `Agent` tool. The
+verifier SHALL receive the candidates, the diff, and the ability to read files,
+and SHALL NOT receive the reasoning that produced the candidates. For each
+candidate it SHALL return `confirmed` with a severity, or `killed` with a
+reason. Severity SHALL be the verifier's: an earlier pass may propose one and
+the verifier overrides it.
+
+A killed candidate SHALL appear in the machine-readable payload in its own
+top-level `killed` array carrying its location, claim, reason, and the
+zero-based position it held in the candidate list the verifier received, and
+SHALL NOT appear among `findings` under any status. The payload SHALL carry a
+`verifier` field naming a `state` of `ran` or `skipped`, the total
+`candidates` count the verifier was given, and a `reason` when skipped. Every
+surface that specifies the machine payload SHALL carry both fields, so a review
+told to emit them is never given a payload shape that omits them. The
+position and the total together let a reader test whether kills cluster by
+order rather than by merit, which surviving findings and kills reported
+separately cannot show.
+
+Where the spawn is unavailable — a restricted tool list denies it, or it
+fails — the skill SHALL continue, record `skipped` with the reason, keep each
+finding's proposed severity, and name the unverified review among what it could
+not verify. It SHALL NOT report a review as verified when no verifier ran.
+
+#### Scenario: A candidate the verifier kills leaves the findings
+- **WHEN** the verifier returns `killed` for a candidate
+- **THEN** that candidate appears in `killed` with its reason and appears
+  nowhere in `findings`
+
+#### Scenario: The verifier sets the severity
+- **WHEN** a pass proposes `low` and the verifier judges the defect loses data
+- **THEN** the reported severity is the verifier's, not the proposal
+
+#### Scenario: A denied spawn is recorded, never hidden
+- **WHEN** the `Agent` tool is unavailable to the review
+- **THEN** `verifier.state` reads `skipped` with a reason, the findings keep
+  their proposed severities, and the report names the review as unverified
+
+#### Scenario: The verifier never sees the hunt's reasoning
+- **WHEN** the verifier is spawned
+- **THEN** its input carries the candidates, the diff and file access, and not
+  the reasoning that produced them
+
 ### Requirement: Spec-aware verification
 id: spec-aware-review
 
@@ -1071,8 +1115,13 @@ that flow rather than restating it.
 Guidance that runs on every review SHALL stay inline in `SKILL.md`: the
 workflow steps, the severity rubric, the presentation shape, the review-start
 difftastic probe and its degradation ladder, the base-freshness block, and the
-guardrails. `SKILL.md` SHALL stay under 370 lines; this requirement owns that
+guardrails. `SKILL.md` SHALL stay under 400 lines; this requirement owns that
 ceiling, and no other requirement SHALL restate the figure.
+
+The verify stage's detail SHALL live in
+`plugins/s/skills/review/references/verification.md`, with the stage's name and
+a summary of what it does inline in `SKILL.md`, so a reviewer that opens no
+reference still knows the stage exists and runs it.
 
 Each reference file SHALL open with a level-1 title and state its own load
 condition, so a file read on its own explains why it was read. Moving guidance
@@ -1103,7 +1152,7 @@ into a reference SHALL NOT change that guidance's substance.
 
 #### Scenario: The skill body fits the ceiling
 - **WHEN** `plugins/s/skills/review/SKILL.md` is measured
-- **THEN** it is under 370 lines
+- **THEN** it is under 400 lines
 
 #### Scenario: A reference states its own trigger
 - **WHEN** a file under `plugins/s/skills/review/references/` is read on its own

@@ -416,10 +416,17 @@ class SkillMdStructureTest(unittest.TestCase):
         and SKILL.md sat at 340 of 350 before this change landed — too little
         headroom for the new step's own instructions. `review-skill-references`
         owns this figure; it is not restated anywhere else.
+
+        review-verify-stage raises it again, from 370 to 400: the verify
+        stage's own addition brought the file to 369 of 370, leaving one
+        line of headroom. A ceiling that blocks its own change's semantic
+        review from adding a line it found wanting is a trap, not a
+        guardrail — the raise is headroom for the review and for the next
+        change, not budget to spend.
         """
         self.assertLess(
-            len(self.lines), 370,
-            "SKILL.md must stay under 370 lines once the references split "
+            len(self.lines), 400,
+            "SKILL.md must stay under 400 lines once the references split "
             "out the condition-gated sections")
 
     def test_no_moved_headings_remain(self):
@@ -431,7 +438,7 @@ class SkillMdStructureTest(unittest.TestCase):
     def test_workflow_steps_stayed_inline(self):
         self.assertIn("## Workflow", self.text)
         self.assertIn("### 1. Map the change", self.text)
-        self.assertIn("### 8. Check test coverage, rolled up per cohort",
+        self.assertIn("### 9. Check test coverage, rolled up per cohort",
                       self.text)
 
     def test_severity_rubric_stayed_inline(self):
@@ -1456,6 +1463,123 @@ class RelatedFileContextStepTest(unittest.TestCase):
                     _read(path), _RELATED_WIDER_RECALL_PATTERN,
                     f"{path} must name the wider-recall 20/120 caps "
                     "alongside the balanced 8/40 pair")
+
+
+# The verify stage's own heading on SKILL.md, independent of its step number
+# (which the renumbering tests elsewhere pin) -- matches "### N. Verify
+# candidates" wherever N lands after a renumber.
+_VERIFY_STEP_HEADING_RE = re.compile(
+    r"^###\s+\d+\.\s*Verify[*_\s]+candidates[^\n]*\n"
+    r"(.*?)(?=\n### |\Z)", re.DOTALL | re.MULTILINE)
+
+# The verifier is spawned with the `Agent` tool, by that exact name -- a
+# restricted headless runner is configured to allow only that one name.
+_AGENT_TOOL_PATTERN = re.compile(r"(?is)`Agent`[*_\s]+tool")
+
+# Fresh context: the verifier must not inherit the hunt's own reasoning.
+_FRESH_CONTEXT_PATTERN = re.compile(r"(?is)fresh[*_\s-]*context")
+
+# The `killed` verdict a candidate can receive, as opposed to `confirmed`.
+_KILLED_TERM_PATTERN = re.compile(r"(?is)`killed`")
+
+# The payload's own verifier-state field.
+_VERIFIER_STATE_PATTERN = re.compile(r"(?is)`verifier\.state`")
+
+# Degradation: an unavailable or failing spawn continues the review rather
+# than aborting it.
+_SPAWN_DEGRADES_PATTERN = re.compile(
+    r"(?is)unavailable[\s\S]{0,80}(?:continue|abort)")
+
+# A review whose verifier did not run is never reported as verified -- the
+# whole reason the state field exists: a restricted runner must be told
+# apart from a verified one, not pass silently as though it were.
+_NEVER_REPORTED_VERIFIED_PATTERN = re.compile(
+    r"(?is)never[*_\s]*\**[\s\S]{0,30}report(?:ed)?[\s\S]{0,30}verified")
+
+# A killed candidate must never land among `findings`, under any status --
+# the invariant a consumer scoring the payload depends on, since it counts
+# every `findings` entry as reported.
+_KILLED_NEVER_IN_FINDINGS_PATTERN = re.compile(
+    r"(?is)never[*_\s]*\**[^`]{0,30}`findings`[^\n]{0,30}under[*_\s]+any"
+    r"[*_\s]+status")
+
+
+class VerifyStageStepTest(unittest.TestCase):
+    """Both reference-free surfaces -- `SKILL.md` and the harness review
+    body, neither of which can defer this always-applies guidance to a
+    conditionally-loaded reference -- name the verify stage inline: the
+    `Agent` spawn, fresh context, the per-candidate verdict, the verifier's
+    own state field, and the degradation path when the spawn is denied.
+    """
+
+    def test_skill_md_names_the_verify_step_section(self):
+        match = _VERIFY_STEP_HEADING_RE.search(_read(SKILL_MD))
+        self.assertIsNotNone(
+            match, "no 'Verify candidates' step heading found in SKILL.md")
+
+    def test_both_surfaces_name_the_agent_tool(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _AGENT_TOOL_PATTERN,
+                    f"{path} must spawn the verifier with the `Agent` "
+                    "tool, by that exact name")
+
+    def test_both_surfaces_name_fresh_context(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _FRESH_CONTEXT_PATTERN,
+                    f"{path} must state that the verifier gets fresh "
+                    "context")
+
+    def test_both_surfaces_name_the_killed_verdict(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _KILLED_TERM_PATTERN,
+                    f"{path} must name the `killed` verdict")
+
+    def test_both_surfaces_name_the_verifier_state_field(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _VERIFIER_STATE_PATTERN,
+                    f"{path} must name the payload's `verifier.state` "
+                    "field")
+
+    def test_both_surfaces_state_the_degradation_path(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                text = _read(path)
+                self.assertRegex(
+                    text, _SPAWN_DEGRADES_PATTERN,
+                    f"{path} must state that an unavailable or failing "
+                    "spawn continues the review rather than aborting it")
+                self.assertRegex(
+                    text, _NEVER_REPORTED_VERIFIED_PATTERN,
+                    f"{path} must state that a review whose verifier did "
+                    "not run is never reported as verified")
+
+
+class KilledNeverInFindingsTest(unittest.TestCase):
+    """The two surfaces that spell out the machine payload's shape -- the
+    plugin skill's `json-output.md` reference, and the harness command body,
+    which inlines the same contract since it can read no reference -- both
+    state the prohibition in prose: a killed candidate never lands among
+    `findings`. There is no schema to validate this against, so the
+    assertion is on the stated rule itself, per
+    `plugins/s/skills/review/references/json-output.md`'s own note that a
+    consumer scoring the payload counts every `findings` entry as reported.
+    """
+
+    def test_neither_surface_permits_a_killed_candidate_in_findings(self):
+        for path in (JSON_OUTPUT_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _KILLED_NEVER_IN_FINDINGS_PATTERN,
+                    f"{path} must state that a killed candidate never "
+                    "appears among `findings`, under any status")
 
 
 if __name__ == "__main__":

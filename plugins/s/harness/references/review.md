@@ -44,7 +44,20 @@ preamble, no fences, no commentary, and no emoji:
   ],
   "change": { "slug": "…", "location": "planned" | "completed", "dir": "…" },
   "spec_coverage": [ { "scenario": "WHEN … THEN …", "state": "met" | "unmet" | "cant-tell" } ],
-  "could_not_verify": [ "…" ]
+  "could_not_verify": [ "…" ],
+  "killed": [
+    {
+      "candidate": 0,
+      "location": "path/to/killed.ext:LINE",
+      "what": "one-line statement of the candidate's claim",
+      "reason": "why the verifier killed it"
+    }
+  ],
+  "verifier": {
+    "state": "ran" | "skipped",
+    "candidates": 4,
+    "reason": "why the spawn was skipped"
+  }
 }
 ```
 
@@ -71,6 +84,22 @@ carrying no `endpoints.merge_base` before writing anything to the pull
 request. `plugins/s/skills/review/references/json-output.md` specifies this
 same object identically, since it is a second machine-payload surface for
 the same contract.
+
+`killed` and `verifier` carry the verify stage's output. A candidate the
+verifier confirms becomes an ordinary `findings` entry, at the severity the
+verifier assigned. A candidate the verifier kills becomes an entry in
+`killed` instead — `location`, `what`, `reason`, and `candidate` (its
+zero-based position in the list the verifier received, which MUST be
+deterministic for a given review) — and **never** appears among `findings`,
+under any status: a consumer scoring the payload counts every `findings`
+entry as reported, so a kill placed there would erase the precision the
+stage exists to produce. `verifier` names `state` (`ran` or `skipped`) and
+`candidates` (the total length of the list the verifier was given), with a
+`reason` when skipped. Where the `Agent` spawn is unavailable or fails,
+record `state: "skipped"` with the `reason`, leave `killed` empty, keep every
+finding at the severity its proposing pass assigned, and add an entry to
+`could_not_verify` naming the review as unverified — never report
+`state: "ran"` when no verifier actually ran.
 
 ## The posting flow
 

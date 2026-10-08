@@ -40,7 +40,20 @@ rendering changes. Shape:
   ],
   "change": { "slug": "…", "location": "planned" | "completed", "dir": "…" },
   "spec_coverage": [ { "scenario": "WHEN … THEN …", "state": "met" | "unmet" | "cant-tell" } ],
-  "could_not_verify": [ "…" ]
+  "could_not_verify": [ "…" ],
+  "killed": [
+    {
+      "candidate": 0,
+      "location": "path/to/killed.ext:LINE",
+      "what": "one-line statement of the candidate's claim",
+      "reason": "why the verifier killed it"
+    }
+  ],
+  "verifier": {
+    "state": "ran" | "skipped",
+    "candidates": 4,
+    "reason": "why the spawn was skipped"
+  }
 }
 ```
 
@@ -73,6 +86,40 @@ for the same contract.
 resolved a change. Run `semdiff change <name>` to retrieve the change's
 `slug`, `location` (`planned` or `completed`), and `dir` (the change directory
 path relative to the repo root), then carry all three into the `change` member.
+
+## `killed` and `verifier`
+
+Every candidate finding is verified before it is reported (see
+`${CLAUDE_PLUGIN_ROOT}/skills/review/references/verification.md`). A
+candidate the verifier confirms becomes an ordinary entry in `findings`, at
+the severity the verifier assigned. A candidate the verifier kills becomes an
+entry in the top-level `killed` array instead — `location`, `what`, `reason`,
+and `candidate` (its zero-based position in the list the verifier received) —
+and **never** appears among `findings`, under any status or flag. A consumer
+scoring the payload counts every `findings` entry as reported, so a kill
+placed there, however flagged, would erase the precision this stage exists to
+produce.
+
+The top-level `verifier` object names `state` (`ran` or `skipped`) and
+`candidates` (the total length of the list the verifier was given), with a
+`reason` when skipped. The position on each killed entry and the total on
+`verifier` together let a reader test whether kills cluster by where a
+candidate sat in the list rather than by its merits — surviving findings and
+kills are reported in two separate arrays, so without both numbers there is
+no way to tell. That distinction decides whether one verifier per review
+stays sufficient or whether candidates anchor on each other inside a single
+pass. The candidate list's order MUST be deterministic for a given review —
+a position is meaningless against an order that varies between runs over the
+same diff.
+
+Where the `Agent` spawn is unavailable — a restricted tool list denies it, or
+it fails — record `state: "skipped"` with the `reason`, leave `killed` empty,
+keep every finding at the severity its proposing pass assigned, and add an
+entry to `could_not_verify` naming the review as unverified. Never report
+`state: "ran"` when no verifier actually ran; a skipped verifier that passed
+silently would be indistinguishable from a verified review. The rendered
+report (Presentation, in `SKILL.md`) names the kill count alongside the
+findings, so a human sees what the stage removed and not only what survived.
 
 ## The optional `suggestion` object
 

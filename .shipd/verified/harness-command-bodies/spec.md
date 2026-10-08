@@ -90,7 +90,7 @@ lifecycle mutations, the engine scripts through the preamble's
 snapshot-resolution snippet — and SHALL NOT reproduce its SKILL.md
 verbatim. The shared preamble SHALL define the engine-scripts resolution
 (newest plugin cache snapshot by dotted-version order). Each rendered body
-(any feature set) SHALL stay under 160 lines. This capability owns that
+(any feature set) SHALL stay under 185 lines. This capability owns that
 number: a surface that states a rendered-body size budget SHALL reference
 this requirement rather than restating the figure, so the budget has one
 source of truth. The ceiling guards against bloat and is not a budget to
@@ -104,7 +104,7 @@ the ceiling rises rather than its instructions being reworded to fit.
 
 #### Scenario: Bodies stay lean
 - **WHEN** every command is rendered with the full feature vocabulary
-- **THEN** every rendered body is under 160 lines
+- **THEN** every rendered body is under 185 lines
 
 #### Scenario: Bodies drive the CLI, not pasted skills
 - **WHEN** the plan command's rendered body is inspected
