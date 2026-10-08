@@ -12,8 +12,9 @@ at least 2 of 3 rounds rose from 30 to 32. The 28.7% → 40.0% span mixes Shipd
 changes with the description, so it is not a measure of either alone.
 
 Mechanical changes moved the numbers, and rewording didn't. Multi-location
-findings, the manifest check, the missing-test roll-up and the import-line
-location all produced repeatable gains. Rubric rewording stayed within noise,
+findings, the manifest check and the import-line location each produced an
+effect that held across rounds, and the missing-test roll-up cut noise. None
+of these effects is large next to round-to-round noise on its own. Rubric rewording stayed within noise,
 and two of three severity rewrites failed.
 
 Most misses are systematic. 24 of the 80 golden findings have never matched
@@ -94,7 +95,7 @@ changes what the reviewer sees.
 | 0.6.253 | Check the PR description against the diff | Partial | One more golden finding every round, no trivia. The understated-scope case (`WORKSPACES.md:1`) never matched. |
 | 0.6.257 | One missing-test finding per group of files | Works | Missing-test findings fell from 42 to 25; other findings held (98 vs 93). |
 | 0.6.258 | Package manifest check | Works | Caught the unpublished pg-pool file in 2 of 3 rounds and the apilix lockfile mismatch in 3 of 3. Never rated low. |
-| 0.6.260 | Cumulative release | Works | First gain clearly above noise: 40.0% in all three rounds, 32 reliable matches. |
+| 0.6.260 | Cumulative release | Works | Every round (40.0%) beat 0.6.253's best round (38.8%); 32 reliable matches. Three rounds per version is still a small sample. |
 | 0.6.255, 0.6.261 | Severity rules | Failed | Target issues stayed low. 0.6.261 also suppressed edge-case findings (8 → 2). |
 | 0.6.262 | Severity, with concrete examples at the point of rating | Works, with a cost | All three targets medium in 3 of 3 rounds. Recall on the test PRs stayed below 0.6.260. |
 | 0.6.263 | Allow the import line as a second location | Works | pg-pool finding named `index.js:3` in 3 of 3 rounds on 0.6.266, against 1 of 3 and 0 of 3 before. |
@@ -129,7 +130,8 @@ a 5-PR, 3-round test on a later version would settle it.
 | Never matched in 19 rounds | 24 (16 low, 8 medium, 0 high) |
 
 Running each review three times and merging the results would add about 12
-findings. The rest stay missed however often the review runs.
+findings. The other 36 were missed in all three 0.6.260 rounds; 12 of them
+matched under some other version, and 24 under none.
 
 17 of the 24 never-matched findings need files beyond the diff. 0.6.266 tested
 whether supplying those files helps, with 3 rounds on apilix and node-postgres:
@@ -147,7 +149,8 @@ small: 2 PRs, 5 reachable findings, and only 3 of 6 reviews called `related`.
 So it shows that supplying context did not help here, not that context never
 matters. Golden labels
 name the files a person needs to see a defect. They don't show what Shipd
-lacks, because Shipd already reads those files.
+lacks: in at least the apilix case, Shipd read the file and still didn't
+report its defects.
 
 ## Lessons
 

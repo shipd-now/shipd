@@ -14,8 +14,9 @@ This report reads the ReviewBench recall report
 ([reviewbench-recall](../reviewbench-recall/report.md)) and looks for
 published techniques that fit its findings. That report found three things.
 Repeated rounds catch different findings, so a 3-round union holds 44 golden
-findings against 32 per round. 24 golden findings are never caught. Shipd
-reads the files that hold those defects and still doesn't report them.
+findings against 32 per round. 24 golden findings are never caught. In at
+least one observed case, Shipd read the file holding three of them and still
+didn't report them.
 
 The literature backs four directions. Running several review passes and
 merging them raises recall sharply, with diminishing returns past about five
