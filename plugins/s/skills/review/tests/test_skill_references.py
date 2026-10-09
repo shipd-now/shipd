@@ -820,6 +820,43 @@ class CopilotLowBulletDropsStaleWordingTest(unittest.TestCase):
                 "the stale v0.6.260 wording task 1.5 was meant to replace")
 
 
+class HarnessBodyAsksForAConcreteFixTest(unittest.TestCase):
+    """The harness body's report step still asks for a *concrete* fix and an
+    *explicit* severity.
+
+    `SKILL.md` can state the per-finding fields as a labelled list —
+    **location**, **what**, **why**, **fix**, **severity** — because the bold
+    labels carry the demand. The harness body has no such list: it asks in
+    running prose, so the adjectives are the demand. "Give each finding a fix"
+    invites a gesture at one; "a concrete fix" asks for the edit.
+
+    This exists because those two words were lost twice. v0.6.262 compressed
+    "a concrete fix, and an explicit severity" to "a fix, and severity" to buy
+    one line against the then-140 ceiling, and the compression travelled inside
+    the same hunk as that change's location rule. `review-revert-to-260` then
+    carried the hunk forward as a keeper and restored the words only after a
+    reader compared the file against v0.6.260 by hand.
+
+    That is the fourth time compressing this file has silently dropped real
+    content; `test_harness_bodies.py`'s own ceiling docstring records the first
+    three. The file can defer nothing to a reference, so it is the one most
+    often squeezed — which is exactly why its instructions need pins rather
+    than vigilance.
+    """
+
+    def test_the_report_step_asks_for_both(self):
+        body = _read(HARNESS_REVIEW_BODY)
+        # Whitespace-normalised: the phrase wraps across lines at 76 columns
+        # in the shipped file, so a plain substring over the raw text would
+        # pass vacuously the moment the wrap position moved.
+        flat = re.sub(r"\s+", " ", body)
+        self.assertIn(
+            "a concrete fix, and an explicit severity", flat,
+            "the harness body's report step must ask for a concrete fix and "
+            "an explicit severity; it has no bold field labels to carry that "
+            "demand, and these two words have been compressed away before")
+
+
 class ReferenceFreeSurfacesCarryRiskLensesTest(unittest.TestCase):
     """The harness body and the copilot template carry the lenses inline.
 

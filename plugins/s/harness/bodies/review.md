@@ -89,7 +89,7 @@ edits the repository.
     same way, showing the mismatch on its own terms, or — for a defect that
     is the conjunction of two lines neither wrong alone — the line where it
     surfaces at run time though correct in isolation), what is wrong, why it
-    matters, a fix, and severity:
+    matters, a concrete fix, and an explicit severity:
     - **high** — a correctness bug, a contract break with an un-updated
       consumer, or an unmet spec scenario;
     - **medium** — an unhandled edge case, a caller at genuine risk, or a
