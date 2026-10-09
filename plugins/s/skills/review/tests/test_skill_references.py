@@ -151,6 +151,22 @@ _IMPACT_FLOOR_PATTERNS = (
     re.compile(r"(?is)data loss.{0,200}\b(?:medium|high)\b"),
 )
 
+# The rubric bullet's own label for the floor, as `pr-description.md` cites
+# it. Matched as the whole bullet opening rather than as a bare "impact floor"
+# substring over the file: step 5c independently says "the rubric's impact
+# floor", so the bare substring survives the rubric itself being renamed —
+# exactly the one-surface-renamed break `ImpactFloorParityTest` exists to
+# catch.
+IMPACT_FLOOR_LABEL = "- **impact floor.**"
+
+# Proxy for "step 5c points at the rubric's own category list". The step must
+# tie the kinds it hunts to the rubric inside one sentence; `[^.]` keeps the
+# match from spanning a sentence boundary. A bare "rubric" substring does not
+# work here, because step 5c's second sentence names the rubric for the
+# impact floor and so survives the pointer being trimmed away entirely —
+# which is the trim the test's docstring records as having already happened.
+_BREADTH_SWEEP_POINTER_PATTERN = re.compile(r"(?is)\bkinds?\b[^.]{0,60}\brubric\b")
+
 MOVED_HEADINGS = (
     "## Machine output mode",
     "## Posting to a PR",
@@ -480,13 +496,22 @@ class SkillMdStructureTest(unittest.TestCase):
         severity rubric's own category list from this step, leaving only a
         vague "revisit each file" instruction — the categories are what the
         sweep exists to find, so losing the pointer silently weakens it.
+
+        The pointer is pinned as "kinds … rubric" within one sentence, not as
+        a bare "rubric" substring: the step's second sentence names the rubric
+        for the impact floor, so a bare substring stays satisfied by that
+        sentence alone and the trim above passes undetected.
         """
         match = re.search(r"^### 5c\. [^\n]*\n(.*?)(?=\n### |\Z)", self.text,
                           re.DOTALL | re.MULTILINE)
         self.assertIsNotNone(match, "no '### 5c.' breadth-sweep step found")
         section = match.group(1).lower()
         self.assertIn("end to end", section)
-        self.assertIn("rubric", section)
+        self.assertRegex(
+            section, _BREADTH_SWEEP_POINTER_PATTERN,
+            "step 5c must point at the severity rubric's own kind list as "
+            "what the sweep hunts; naming the rubric only for the impact "
+            "floor leaves the sweep with no stated target")
 
     def test_every_reference_file_is_named(self):
         named = set(REFERENCE_PATH_RE.findall(self.text))
@@ -752,6 +777,12 @@ class ImpactFloorParityTest(unittest.TestCase):
         and never read this file, exactly as at v0.6.260. A test demanding
         the label on those two would be asserting a parity they have no
         reason to hold.
+
+        The `SKILL.md` half is pinned at the rubric bullet's own label, not
+        as a bare "impact floor" substring over the whole file: step 5c
+        independently says "the rubric's impact floor", so a bare substring
+        stays satisfied even when the rubric bullet itself is renamed — the
+        one-surface-renamed break this test exists to catch.
         """
         reference = _read(PR_DESCRIPTION_MD).lower()
         self.assertIn(
@@ -763,8 +794,10 @@ class ImpactFloorParityTest(unittest.TestCase):
             "pr-description.md still cites the floor by v0.6.261's retired "
             "name; SKILL.md's rubric says 'Impact floor'")
         self.assertIn(
-            "impact floor", _read(SKILL_MD).lower(),
-            "SKILL.md must carry the floor name its own reference cites")
+            IMPACT_FLOOR_LABEL, _read(SKILL_MD).lower(),
+            "SKILL.md's rubric must label the floor 'Impact floor.' — the "
+            "name its own reference cites; the phrase appearing elsewhere "
+            "in the file is not that label")
 
 
 class CopilotLowBulletDropsStaleWordingTest(unittest.TestCase):
