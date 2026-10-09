@@ -192,16 +192,15 @@ body remains the review, and the verdict marker below is what gates the merge.
   or an unmet acceptance criterion.
 - **medium** — an unhandled edge case, an untouched caller at genuine risk, or
   a likely-wrong behaviour you cannot fully confirm.
-- **low** — a real defect whose impact is contained. Pure style, naming, and
-  formatting are never findings, at any severity.
+- **low** — a real but minor defect: swallowed errors, resource leaks on rare
+  paths, dead or duplicated code, unread variables, unstable ids, or blocking
+  calls in async contexts. Pure style, naming, and formatting are never
+  findings, at any severity.
 
-Rate every finding by what the defect does, not by the kind of defect it is:
-data loss, data corruption, a security exposure, or a broken guarantee is
-**medium** or **high** however minor the kind looks. Concrete instances: a
-success response that hides a failure — an empty result returned as if real
-while a count or flag says otherwise; a cleanup path that drops the record
-and leaves the data, or the reverse; and an error path that loses the only
-copy.
+That low list names *kinds* of defect, not severities. Rate every finding by
+what it does, not which kind it resembles: data loss, data corruption, a
+security exposure, or a broken guarantee is **medium** or **high** even when it
+arrives as one of those kinds. A swallowed error that loses a file is not low.
 
 A secret/credential exposure finding, or an authorization boundary reached
 without a scope check, is always **high** regardless of your confidence.
@@ -209,9 +208,7 @@ without a scope check, is always **high** regardless of your confidence.
 **Verdict rule.** Any high **or** medium finding blocks: the verdict is
 **Fix required**. With no high and no medium finding, it is **Ship it**.
 Low findings never block. When unsure between two levels, state the doubt
-rather than inflating. Uncertainty about severity is never grounds for
-omitting a finding: where you cannot place one, report it at your best
-estimate and say the estimate is uncertain.
+rather than inflating.
 
 **Fast-pass marker (optional).** When the pull request carries a completed shipd
 change directory whose every delta scenario you judged met, emit the fast-pass

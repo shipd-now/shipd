@@ -254,35 +254,22 @@ requirement SHALL grant it separately. Where the same defect recurs at
 more than one call site, the skill SHALL report one finding whose locations
 name every recurring site, rather than one finding per site.
 
-The skill SHALL run a breadth sweep, after judging new code and applying the
-risk lenses, that revisits each changed file once more, end to end, for a
-remaining defect the targeted structural and signature-chasing passes above
-would not otherwise surface. That sweep SHALL name the kinds of defect it hunts
-— a swallowed or silently-dropped error, a resource or file leak on a rare or
-cleanup path, dead or duplicated code, a field or variable declared but never
-read, an unstable or incorrect identity such as a list/row key derived from
-array index instead of a stable id, and a blocking/synchronous call where the
-surrounding context is async or event-driven — and SHALL NOT describe them as
-minor, because the kind of a defect is a detection aid and not a severity
-class.
-
-The severity rubric SHALL NOT list those kinds under `low`. A `low`-severity
-finding SHALL be a real defect whose impact is contained — nothing lost,
-corrupted, exposed, or promised and unmet. Pure style, naming preference, and
-formatting SHALL NOT be reported as a finding at any severity. The skill SHALL
-rate every finding by what the defect does rather than by the kind of defect it
-is, so data loss, data corruption, a security exposure, or a broken guarantee
-is `medium` or `high` however minor its kind looks. Because those four are
-categories rather than situations, every surface stating the rating rule SHALL
-also name concrete instances a reviewer can recognise: a success response that
-hides a failure, a cleanup path that drops the record and leaves the data or
-the reverse, and an error path that loses the only copy. Every surface that
-states the low rubric SHALL state that rating rule beside it.
-
-Uncertainty about a finding's severity SHALL NOT be grounds for omitting the
-finding. Where the skill cannot place a severity, it SHALL report the finding
-at its best estimate and say the estimate is uncertain, rather than leaving it
-out — a defect it can describe is a defect it SHALL report.
+A `low`-severity finding SHALL be a real but minor defect — a swallowed or
+silently-dropped error, a resource or file leak on a rare or cleanup path,
+dead or duplicated code, a field or variable declared but never read, an
+unstable or incorrect identity such as a list/row key derived from array
+index instead of a stable id, or a blocking/synchronous call where the
+surrounding context is async or event-driven — never pure style, naming
+preference, or formatting, which SHALL NOT be reported as a finding at any
+severity. Those kinds SHALL NOT set the severity: the skill SHALL rate every
+finding by what the defect does, so data loss, data corruption, a security
+exposure, or a broken guarantee is `medium` or `high` even when it arrives as
+one of the minor kinds — a swallowed error that loses a file is not `low`.
+Every surface that states the low rubric SHALL state that floor beside it.
+The skill SHALL run a breadth sweep, after judging new code and
+applying the risk lenses, that revisits each changed file once more, end to
+end, for a remaining low-severity defect of those kinds that the targeted
+structural and signature-chasing passes above would not otherwise surface.
 
 Where a pull request's title and description are available, the skill SHALL
 check them against the diff in **both** directions and report a mismatch from
@@ -427,11 +414,11 @@ judgement passes as the skill, so the two surfaces do not drift.
 - **THEN** the review reports one finding whose locations name every
   recurring site, not one finding per site
 
-#### Scenario: A real defect of a minor kind is reported, not waved through
+#### Scenario: A real minor defect is rated low, not waved through
 - **WHEN** the diff carries a swallowed error, a dead or duplicated block, an
   unread field, or an index-derived list key
-- **THEN** the review reports it as a finding, rated by its own impact, rather
-  than omitting it as style
+- **THEN** the review reports it as a low-severity finding rather than
+  omitting it as style
 
 #### Scenario: Pure style stays out of the findings
 - **WHEN** a diff carries only a naming preference, a formatting choice, or
@@ -439,9 +426,9 @@ judgement passes as the skill, so the two surfaces do not drift.
 - **THEN** the review reports no finding for it, at any severity
 
 #### Scenario: The breadth sweep runs after the targeted passes
-- **WHEN** a changed file carries a defect that sits beside a hunk rather
-  than inside it — so the structural diff and signature-chasing passes would
-  not surface it on their own
+- **WHEN** a changed file carries a low-severity defect that sits beside a
+  hunk rather than inside it — so the structural diff and signature-chasing
+  passes would not surface it on their own
 - **THEN** the breadth sweep still reports it, after the new-code judgement
   and risk-lens passes have run
 
@@ -458,10 +445,9 @@ judgement passes as the skill, so the two surfaces do not drift.
   call-site-value check names appear inline too, so a reviewer that never
   opens `references/call-site-tracing.md` still knows every check exists
 
-#### Scenario: The breadth sweep names the kinds itself
+#### Scenario: The breadth sweep names its target categories
 - **WHEN** `plugins/s/skills/review/SKILL.md`'s breadth-sweep step is inspected
-- **THEN** it names the kinds of defect to look for in the step itself, and the
-  severity rubric's `low` bullet does not list those kinds
+- **THEN** it points at the severity rubric's low-severity categories as what to look for, not only at the structural passes it runs after
 
 #### Scenario: A description claim the diff contradicts is a finding
 - **WHEN** a pull request's description claims behavior the diff does not
@@ -474,17 +460,16 @@ judgement passes as the skill, so the two surfaces do not drift.
 - **THEN** no `description-drift` finding is reported
 
 #### Scenario: Impact overrides the kind that surfaced a defect
-- **WHEN** a defect arrives as one of the kinds the breadth sweep names — a
+- **WHEN** a defect arrives as one of the low rubric's minor kinds — a
   swallowed error — but loses a file when the error fires
 - **THEN** the review rates it `medium` or `high`, not `low`, so it blocks
   the merge
 
-#### Scenario: Both rubric surfaces state the rating rule
+#### Scenario: Both rubric surfaces state the impact floor
 - **WHEN** `plugins/s/skills/review/SKILL.md` and
   `plugins/s/harness/bodies/review.md` are inspected
-- **THEN** each states that severity follows what the defect does rather than
-  the kind of defect it is, and that data loss, corruption, exposure, or a
-  broken guarantee is `medium` or `high`
+- **THEN** each states that the low list names kinds of defect rather than
+  severities, and that impact floors a finding at `medium` or `high`
 
 #### Scenario: Unmentioned scope is found by the second direction
 - **WHEN** a pull request's description is accurate about what it claims but
@@ -519,154 +504,6 @@ judgement passes as the skill, so the two surfaces do not drift.
   manifest omitting a file and the import that names it
 - **THEN** the finding anchors at the fix site and names the importing line as
   a further location, because that is where the defect surfaces at run time
-
-The skill SHALL run `semdiff related` after the structural diff and before its
-judgement passes, and SHALL read the files that subcommand names where a check
-needs context beyond the diff. The step SHALL name which checks the context
-serves — the downstream-impact and call-site checks, and the lenses that
-compare a change against unchanged code — so a reviewer given files is also
-given the reason to read them. Reading a file the subcommand did not name
-SHALL remain outside the skill's context economy: the engine's set is what
-widens, never the reviewer's discretion.
-
-#### Scenario: Related files are read when a check needs them
-- **WHEN** a changed function's callers sit in files the diff does not touch
-- **THEN** the review reads those files from `semdiff related`'s output rather
-  than reasoning about the callers from the diff alone
-
-#### Scenario: A file the engine did not name stays unread
-- **WHEN** a reviewer judges some other file might be interesting
-- **THEN** it is not read, because only the engine's named set widens the
-  skill's context economy
-
-Between judging the diff and reporting, the skill SHALL verify every candidate
-finding through a **fresh-context verifier** spawned with the `Agent` tool. The
-spawn SHALL name a `subagent_type` that resolves without plugin-provided agent
-definitions, so a restricted headless session cannot mistake an unresolvable
-type for a denied spawn. The verifier SHALL answer with one line per candidate,
-in the order received, carrying the candidate's index and either `confirmed`
-with a severity or `killed` with a one-line reason — and no justification
-beyond that, since prompts demanding explanations raise misjudgment in code
-verification. The skill SHALL carry **two** severity rubrics, one per stage, because
-reporting and rating are now separate stages with separate criteria. The
-**reporting rubric**, stated where findings are reported, SHALL define `low` as
-a real but minor defect and name the kinds it covers, without a containment
-test. The **rating rubric**, stated where the verify stage's detail lives, SHALL
-carry the impact rule with its concrete instances. The spawn message SHALL carry
-the **rating** rubric, quoted from where that rubric lives. Neither rubric is a
-copy of the other and no surface SHALL keep a second copy of either.
-
-The exposure floor SHALL appear in **both** rubrics. Where the verifier does not
-run, every finding keeps the severity the reporting stage proposed, so an
-absolute that lived only in the rating rubric could be lost on exactly the
-reviews that cannot verify.
-
-The spawn message SHALL NOT carry the pull request's title, description, or any
-summary of either, so a description cannot talk the verifier out of a finding
-that was already detected. A `description-drift` candidate cannot be judged
-without the description, so such candidates SHALL be verified in a separate
-spawn carrying the description **and the diff** — the claim is a relationship
-between the two, so a verifier holding one of them cannot check it. The two
-spawns SHALL NOT be described as mirror images: the defect spawn carries the
-diff and not the description, the drift spawn carries both, and the asymmetry
-SHALL be stated wherever the spawns are, so nobody later restores a symmetry
-that never applied.
-
-Each `killed` entry SHALL carry the `category` the candidate held, so a
-consumer can tell a drift kill from a defect kill without parsing prose. The
-`verifier` block SHALL report a candidate count per spawn alongside its
-existing total, since positions are zero-based within their own spawn and a
-single total cannot say which spawn a position belongs to.
-
-The candidate list SHALL be in **discovery order** — the order the passes
-produced candidates — so a reader can test whether kills cluster by position
-rather than by merit. Severity order would correlate position with proposed
-severity and confound that test permanently. Candidates SHALL travel in the spawn message; the diff SHALL be
-re-derived by the verifier from endpoints the message names, so it reads the
-change itself rather than the hunt's summary of it. The
-verifier SHALL receive the candidates, the diff, and the ability to read files,
-and SHALL NOT receive the reasoning that produced the candidates. For each
-candidate it SHALL return `confirmed` with a severity, or `killed` with a
-reason. Severity SHALL be the verifier's: an earlier pass may propose one and
-the verifier overrides it.
-
-A killed candidate SHALL appear in the machine-readable payload in its own
-top-level `killed` array carrying its location, claim, reason, and the
-zero-based position it held in the candidate list the verifier received, and
-SHALL NOT appear among `findings` under any status. The payload SHALL carry a
-`verifier` field naming a `state` of `ran` or `skipped`, the total
-`candidates` count the verifier was given, and a `reason` when skipped. Every
-surface that specifies the machine payload SHALL carry both fields, so a review
-told to emit them is never given a payload shape that omits them. The
-position and the total together let a reader test whether kills cluster by
-order rather than by merit, which surviving findings and kills reported
-separately cannot show.
-
-Where the spawn is unavailable — a restricted tool list denies it, or it
-fails — the skill SHALL continue, record `skipped` with the reason, keep each
-finding's proposed severity, and name the unverified review among what it could
-not verify. It SHALL NOT report a review as verified when no verifier ran.
-
-#### Scenario: A candidate the verifier kills leaves the findings
-- **WHEN** the verifier returns `killed` for a candidate
-- **THEN** that candidate appears in `killed` with its reason and appears
-  nowhere in `findings`
-
-#### Scenario: The verifier sets the severity
-- **WHEN** a pass proposes `low` and the verifier judges the defect loses data
-- **THEN** the reported severity is the verifier's, not the proposal
-
-#### Scenario: A denied spawn is recorded, never hidden
-- **WHEN** the `Agent` tool is unavailable to the review
-- **THEN** `verifier.state` reads `skipped` with a reason, the findings keep
-  their proposed severities, and the report names the review as unverified
-
-#### Scenario: The verifier never sees the hunt's reasoning
-- **WHEN** the verifier is spawned
-- **THEN** its input carries the candidates, the diff and file access, and not
-  the reasoning that produced them
-
-#### Scenario: The spawn names a type that resolves headless
-- **WHEN** the verify stage is inspected on any surface that states it
-- **THEN** it names a concrete `subagent_type` that needs no plugin-provided
-  agent definition
-
-#### Scenario: Two sessions parse the same verdicts the same way
-- **WHEN** two reviews of the same diff each spawn a verifier
-- **THEN** both read verdicts in the one-line-per-candidate shape the skill
-  specifies, rather than a convention each invented
-
-#### Scenario: The rater has the rule
-- **WHEN** the verifier is spawned to decide severities
-- **THEN** the spawn message carries the severity rubric, including the
-  exposure floor, quoted from the rating step rather than from a second copy
-
-#### Scenario: Reporting and rating use different rubrics
-- **WHEN** the reporting stage and the verify stage are both inspected
-- **THEN** the reporting rubric defines `low` without a containment test and
-  the rating rubric carries the impact rule's concrete instances
-
-#### Scenario: The exposure floor survives a skipped verifier
-- **WHEN** the verifier does not run and a finding is a credential exposure
-- **THEN** the reporting rubric's own exposure floor has already fixed it at
-  `high`
-
-#### Scenario: A description cannot kill a detected finding
-- **WHEN** a defect candidate is verified
-- **THEN** the spawn carries no title, description or summary of either
-
-#### Scenario: A drift candidate can check its own claim
-- **WHEN** a `description-drift` candidate is verified
-- **THEN** its spawn carries both the description and the diff
-
-#### Scenario: A drift kill is identifiable without reading prose
-- **WHEN** a killed candidate is reported
-- **THEN** its entry carries the category the candidate held
-
-#### Scenario: The two spawns are not symmetrical
-- **WHEN** the spawns are described on any surface
-- **THEN** the defect spawn carries no description, the drift spawn carries
-  both, and the asymmetry is stated rather than left to be inferred
 
 ### Requirement: Spec-aware verification
 id: spec-aware-review
@@ -1200,13 +1037,8 @@ that flow rather than restating it.
 Guidance that runs on every review SHALL stay inline in `SKILL.md`: the
 workflow steps, the severity rubric, the presentation shape, the review-start
 difftastic probe and its degradation ladder, the base-freshness block, and the
-guardrails. `SKILL.md` SHALL stay under 400 lines; this requirement owns that
+guardrails. `SKILL.md` SHALL stay under 340 lines; this requirement owns that
 ceiling, and no other requirement SHALL restate the figure.
-
-The verify stage's detail SHALL live in
-`plugins/s/skills/review/references/verification.md`, with the stage's name and
-a summary of what it does inline in `SKILL.md`, so a reviewer that opens no
-reference still knows the stage exists and runs it.
 
 Each reference file SHALL open with a level-1 title and state its own load
 condition, so a file read on its own explains why it was read. Moving guidance
@@ -1237,7 +1069,7 @@ into a reference SHALL NOT change that guidance's substance.
 
 #### Scenario: The skill body fits the ceiling
 - **WHEN** `plugins/s/skills/review/SKILL.md` is measured
-- **THEN** it is under 400 lines
+- **THEN** it is under 340 lines
 
 #### Scenario: A reference states its own trigger
 - **WHEN** a file under `plugins/s/skills/review/references/` is read on its own
