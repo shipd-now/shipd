@@ -846,9 +846,13 @@ class HarnessBodyAsksForAConcreteFixTest(unittest.TestCase):
 
     def test_the_report_step_asks_for_both(self):
         body = _read(HARNESS_REVIEW_BODY)
-        # Whitespace-normalised: the phrase wraps across lines at 76 columns
-        # in the shipped file, so a plain substring over the raw text would
-        # pass vacuously the moment the wrap position moved.
+        # Whitespace-normalised for the same reason `_missing_triggers` does
+        # it: the body reflows its prose at ~76 columns, and the phrase sits
+        # at the tail of a sentence that already wraps, so a reflow could put
+        # a line break inside it. That would make a plain substring over the
+        # raw text stop matching and fail the test on a cosmetic rewrap —
+        # a false alarm, not a vacuous pass. The phrase is contiguous today;
+        # normalising keeps it matched whatever the wrap position becomes.
         flat = re.sub(r"\s+", " ", body)
         self.assertIn(
             "a concrete fix, and an explicit severity", flat,
