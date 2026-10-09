@@ -259,6 +259,34 @@ def _read(path):
         return fh.read()
 
 
+# The `copilot-review-skill` capability spec, reached from the plugin root via
+# the repository root. Two of its requirements used to carry their own copies
+# of wording other requirements own — the severity rubric's `low` definition
+# and the gate's verdict-reader semantics — and each copy went stale when its
+# owner changed, surviving two versions because nothing compared them.
+REPO_ROOT = os.path.normpath(os.path.join(PLUGIN_S_ROOT, "..", ".."))
+COPILOT_CAPABILITY_SPEC = os.path.join(
+    REPO_ROOT, ".shipd", "verified", "copilot-review-skill", "spec.md")
+
+
+def _requirement(spec_text, req_id):
+    """The one requirement block carrying ``id: <req_id>``, or None."""
+    for block in re.split(r"(?=^### Requirement: )", spec_text, flags=re.M):
+        if re.search(r"^id: %s$" % re.escape(req_id), block, re.M):
+            return block
+    return None
+
+
+def _flat(text):
+    """Whitespace-normalised, lowercased — so a reflow cannot change a match.
+
+    Every surface compared here wraps at a different width (`SKILL.md`
+    indents its rubric bullet, the copilot template runs flush left, the spec
+    wraps at 79), so any cross-surface comparison has to normalise first.
+    """
+    return re.sub(r"\s+", " ", text).lower()
+
+
 def _content_words(text):
     """Lowercased alphabetic tokens of length >= 4, minus STOPWORDS.
 
@@ -728,6 +756,187 @@ class LocationRuleGeneralisedTest(unittest.TestCase):
                     "to a defect that is the conjunction of two lines, "
                     "neither wrong alone — not state it as an unscoped "
                     "licence to anchor at any correct-in-isolation site")
+
+
+class CopilotCapabilityRestatesNoOwnedWordingTest(unittest.TestCase):
+    """`skill-template` restates neither the rubric nor the verdict reader.
+
+    This capability has twice carried its own copy of wording another
+    requirement owns, and both copies went stale when the owner changed:
+
+    - The severity rubric's `low` definition and impact floor, owned by
+      `semantic-review`'s `review-skill`. v0.6.275's revert rewrote the
+      copilot template to the kinds-list `low` without amending this
+      capability, so it demanded "a real defect whose impact is contained"
+      for two versions while the template said otherwise.
+    - The gate's verdict-reader semantics, owned by this same file's
+      `gate-workflow-template`. That requirement records why the
+      last-non-empty-line rule was abandoned — the Copilot CLI streamed
+      session narration after the report, so the gate fell open — yet
+      `skill-template` went on demanding the template state it.
+
+    Neither was caught by CI. Both were caught by a human reading two
+    requirements side by side, which is not a control. These assertions are
+    that control: a future copy fails here instead of surviving.
+    """
+
+    # Phrases each owner states and this requirement therefore must not. Kept
+    # short and single-clause so no wrap can split one, and matched against
+    # whitespace-normalised text as well.
+    OWNED_PHRASES = (
+        ("review-skill (the low definition)", "impact is contained"),
+        ("review-skill (the low kinds list)", "swallowed errors"),
+        ("review-skill (the style exclusion)", "pure style"),
+        ("review-skill (an impact instance)", "loses the only copy"),
+        ("gate-workflow-template (the reader)", "last non-empty line"),
+    )
+
+    def setUp(self):
+        self.block = _requirement(
+            _read(COPILOT_CAPABILITY_SPEC), "skill-template")
+        self.assertIsNotNone(
+            self.block,
+            "copilot-review-skill must still carry a skill-template "
+            "requirement; this test has nothing to check without it")
+        # The normative prose alone — the region before the first scenario.
+        # The owner-naming assertions read this rather than the whole block:
+        # two of this requirement's scenarios also name an owner, so a block
+        # -wide substring stays satisfied after the deferral sentence itself
+        # is deleted from the prose, which is the very loss it guards against.
+        self.prose = self.block.split("#### Scenario")[0]
+
+    def test_the_requirement_restates_no_owned_wording(self):
+        flat = _flat(self.block)
+        for owner, phrase in self.OWNED_PHRASES:
+            with self.subTest(phrase=phrase):
+                self.assertNotIn(
+                    phrase, flat,
+                    "skill-template restates %r, which %s owns. Defer to the "
+                    "owner instead — a second copy is what went stale twice."
+                    % (phrase, owner))
+
+    def test_the_requirement_names_both_owners(self):
+        flat = _flat(self.prose)
+        for owner in ("review-skill", "gate-workflow-template"):
+            with self.subTest(owner=owner):
+                self.assertIn(
+                    owner, flat,
+                    "skill-template defers to %s, so it must name it — a "
+                    "deferral that names no owner points at nothing" % owner)
+
+
+class CopilotTemplateRubricMatchesSkillTest(unittest.TestCase):
+    """The copilot template's rubric says what `SKILL.md`'s says.
+
+    The template is vendored byte-for-byte into a GitHub Actions runner and
+    can read no reference file, so it carries the rubric inline rather than by
+    pointer. That inline copy is deliberate — and it is exactly why it can
+    drift, as it did at v0.6.274: `SKILL.md` already carried the kinds-list
+    `low` while this template still read "a real defect whose impact is
+    contained", and the three impact instances sat on the template and not on
+    `SKILL.md`. v0.6.275's revert closed that divergence on both surfaces and
+    left the stale copy in the capability spec instead — which is
+    `CopilotCapabilityRestatesNoOwnedWordingTest`'s subject, not this one's.
+
+    Compared element by element rather than as one literal, because the two
+    surfaces legitimately differ in presentation: `SKILL.md` labels the floor
+    "**Impact floor.**" and the template states it unlabelled, and the
+    template adds ", at any severity" to its style exclusion.
+    """
+
+    RUBRIC_ELEMENTS = (
+        ("the low definition", "a real but minor defect"),
+        ("the kinds list", "swallowed errors"),
+        ("the style exclusion", "are never findings"),
+        ("the floor", "of defect, not severities"),
+        ("instance 1", "hides a failure"),
+        ("instance 2", "drops the record"),
+        ("instance 3", "loses the only copy"),
+    )
+
+    def test_both_surfaces_state_every_rubric_element(self):
+        skill, template = _flat(_read(SKILL_MD)), _flat(_read(COPILOT_SKILL_MD))
+        for name, fragment in self.RUBRIC_ELEMENTS:
+            with self.subTest(element=name):
+                self.assertIn(
+                    fragment, skill,
+                    "SKILL.md owns the rubric, so %s must be there" % name)
+                self.assertIn(
+                    fragment, template,
+                    "the copilot template mirrors SKILL.md's rubric and can "
+                    "read no reference, so %s must be inline there too" % name)
+
+
+class CopilotTemplateMarkerMatchesGateTest(unittest.TestCase):
+    """The template's verdict-reader prose says what `gate-workflow-template`
+    states, and never the rule that requirement records as abandoned.
+
+    `skill-template`'s scenario "The marker instruction matches the reader"
+    has two halves: the requirement restates the reader's semantics nowhere
+    (`CopilotCapabilityRestatesNoOwnedWordingTest`), and the template's own
+    instruction *agrees* with the owner. Only the first half had a control.
+    The second is the pair that actually went stale: the gate moved off the
+    last-non-empty-line rule, and the prose describing it to the reviewing
+    agent is a second copy that nothing compared.
+
+    Element by element on whitespace-normalised text, as the rubric parity
+    test is, because the two surfaces state the same reader in their own
+    register — the requirement in SHALL prose about the workflow, the
+    template as an instruction to the agent writing the body.
+    """
+
+    # The owner's statement of the reader, and the template's. Each fragment
+    # is single-clause and occurs exactly once on its own surface.
+    OWNER_ELEMENTS = (
+        ("the last-equal-line rule", "last line equal to a verdict marker"),
+        ("whole-line equality", "compare whole lines for equality"),
+    )
+    TEMPLATE_ELEMENTS = (
+        ("the last-equal-line rule", "last line equal to a marker"),
+        ("whole-line equality", "exact equality against the whole line"),
+        ("the backwards scan", "scanning the body backwards"),
+        ("the substring exclusion", "never by a substring match"),
+    )
+    # The rule `gate-workflow-template` records as abandoned. The owner states
+    # it to explain why it was dropped; the template must not state it at all.
+    ABANDONED = "last non-empty line"
+
+    def setUp(self):
+        self.owner = _requirement(
+            _read(COPILOT_CAPABILITY_SPEC), "gate-workflow-template")
+        self.assertIsNotNone(
+            self.owner,
+            "copilot-review-skill must still carry a gate-workflow-template "
+            "requirement; this test has nothing to compare without it")
+        self.template = _read(COPILOT_SKILL_MD)
+
+    def test_the_owner_still_states_the_reader(self):
+        flat = _flat(self.owner)
+        for name, fragment in self.OWNER_ELEMENTS:
+            with self.subTest(element=name):
+                self.assertIn(
+                    fragment, flat,
+                    "gate-workflow-template owns the reader's semantics, so "
+                    "%s must be stated there — the template defers to it and "
+                    "a deferral to nothing is what this guards" % name)
+
+    def test_the_template_states_the_same_reader(self):
+        flat = _flat(self.template)
+        for name, fragment in self.TEMPLATE_ELEMENTS:
+            with self.subTest(element=name):
+                self.assertIn(
+                    fragment, flat,
+                    "the copilot template describes the reader to the agent "
+                    "writing the body, so %s must agree with the one "
+                    "gate-workflow-template states" % name)
+
+    def test_the_template_drops_the_abandoned_rule(self):
+        self.assertNotIn(
+            self.ABANDONED, _flat(self.template),
+            "the copilot template states %r, the reader "
+            "gate-workflow-template records as abandoned — the Copilot CLI "
+            "streams session narration after the report, so that rule fell "
+            "open" % self.ABANDONED)
 
 
 class ImpactFloorNamesInstancesTest(unittest.TestCase):
