@@ -228,7 +228,9 @@ sequentially from `Q1` — followed by a dash list of fields:
   (decision, options, recommendation).
 - `- **Verdict:**` `ANSWER` or `INSUFFICIENT`.
 - `- **Answered by:**` `ORACLE` or `USER`, directly above the answer so who
-  settled the decision is clear at a glance.
+  settled the decision is clear at a glance. A deferring planner spawned by
+  `/s:epic-grill` writes the provisional `PLANNER` instead; it is rewritten to
+  `USER` once the human answers, and the gate rejects a plan still holding it.
 - `- **Answer:**` the oracle's position in full for an `ANSWER` entry, the
   user's typed resolution for an `INSUFFICIENT` one.
 - `- **Cited:**` the oracle's sources — on `ANSWER` entries.

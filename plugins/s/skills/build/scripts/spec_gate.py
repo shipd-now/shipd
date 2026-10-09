@@ -5,7 +5,7 @@
 The gate is the autonomous pipeline's decision point on whether a freshly
 planned change carries enough context to build against the codebase. It runs
 the structural linter plus four deterministic, repository-local context checks
-and settles the change's status:
+and a provisional-entry check, and settles the change's status:
 
   * every check passes  → any ``## Context insufficient`` section is removed
     from ``plan.md``, the plan is promoted ``draft`` → ``ready`` (a ``ready``
@@ -29,6 +29,11 @@ The four context checks (see the context-gate capability):
      case, e.g. a new skill or test tree).
   4. Delta targets — every MODIFIED/REMOVED/RENAMED delta operation must target
      a capability whose master spec exists; ADDED-only new capabilities pass.
+
+After the four context checks, a fifth check (context-gate
+provisional-entry-check) rejects any ``## Questions and answers`` entry in
+``plan.md`` whose ``**Answered by:**`` field holds ``PLANNER``: a provisional
+default still awaits a human answer.
 
 Status writes go through :mod:`spec_status`'s metadata-preserving writer, never
 ad-hoc edits, so the title, ``Status:`` line, and header metadata survive. The
@@ -323,14 +328,45 @@ def _check_task_paths(root, change):
     return findings
 
 
+# The bullet and backticks are optional: spec_lint accepts the field anywhere
+# in the entry body, so the gate must not let a format variant slip through.
+PROVISIONAL_RE = re.compile(
+    r"^\s*(?:-\s*)?\*\*Answered by:\*\*\s*`?PLANNER\b")
+
+
+def _check_provisional_entries(root, change):
+    """Check (5): every ``## Questions and answers`` entry whose
+    ``**Answered by:**`` field holds ``PLANNER`` is a finding naming the
+    entry."""
+    findings = []
+    plan_path = _plan_path(root, change)
+    if not os.path.isfile(plan_path):
+        return findings
+    section = sl._section_lines(_read(plan_path), sl.QA_SECTION)
+    if section is None:
+        return findings
+    label = None
+    for line in section:
+        if line.startswith("### "):
+            m = sl.QA_ENTRY_RE.match(line.rstrip())
+            label = "Q%s" % m.group(1) if m else None
+        elif label and PROVISIONAL_RE.match(line):
+            findings.append(
+                "ledger entry %s is provisional (**Answered by:** PLANNER) "
+                "and awaits a human answer" % label)
+            label = None
+    return findings
+
+
 def collect_findings(root, change):
-    """Run the structural linter plus the four context checks, returning the
-    ordered list of finding strings (empty when the change has sufficient
-    context)."""
+    """Run the structural linter, the four context checks, and the
+    provisional-entry check, returning the ordered list of finding strings
+    (empty when the change has sufficient context)."""
     findings = [str(e) for e in sl.lint_change(root, change)]
     findings += _check_delta_targets_and_base(root, change)
     findings += _check_placeholders(root, change)
     findings += _check_task_paths(root, change)
+    findings += _check_provisional_entries(root, change)
     return findings
 
 

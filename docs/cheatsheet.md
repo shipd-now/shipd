@@ -41,7 +41,7 @@ venn-beta
   s:doctor, s:duck, s:plan, s:fix, s:review, s:drive, s:gate, s:status,
   s:document, s:worktree-hooks
 - **Epics, driven** — orchestration across many changes: s:epic, s:prd,
-  s:initiative, s:workspace, s:explain
+  s:initiative, s:workspace, s:explain, s:epic-grill
 - **Decisions that stick** — memory that outlives a change: s:remember,
   s:memory, s:forget
 - **Unattended** — s:build, s:autopilot
@@ -61,6 +61,7 @@ venn-beta
 | `/s:drive` | Drive a real browser to operate an app, verify a change, and optionally record a branded demo. A `manual` auth recipe, or `login <target> --manual`, lets a person log in by hand. When a step fails, `handoff` gives the person the live browser and `resume` takes it back. `session start --headed` opens the window visible from the start. | `/s:drive Verify the checkout flow still works` |
 | `/s:duck` | Talk an idea through with an adversarial, read-only rubber-duck critic before planning it. | `/s:duck Should the queue be per-tenant?` |
 | `/s:epic` | Decompose a feature into an epic of member changes with shared decisions. | `/s:epic Add multi-tenant billing` |
+| `/s:epic-grill <epic>` | Plan every unplanned member of an epic, ask every open decision once, then gate the plans together. | `/s:epic-grill export-cli` |
 | `/s:explain <epic>` | Read a shipd epic through the engine and explain what it is for and where it stands. | `/s:explain autonomous-delivery` |
 | `/s:fix` | Debug a reported problem against the spec library, then fix the drifted code. | `/s:fix The export command crashes on empty input` |
 | `/s:forget` | Remove a captured preference from the personal memory store. | `/s:forget my vim preference` |

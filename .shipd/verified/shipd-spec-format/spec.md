@@ -154,10 +154,13 @@ answers` section is present, it SHALL hold one or more
 `### Q<n>: <one-line question summary>` entries numbered sequentially from
 `Q1`, each carrying a `**Question:**` field (the full compact question), a
 `**Verdict:**` field (`ANSWER` or `INSUFFICIENT`), an `**Answered by:**`
-field (`ORACLE` or `USER`) directly above the answer, and an `**Answer:**`
-field (the position or resolution in full); an `ANSWER` entry additionally
-carries a `**Cited:**` field and an `INSUFFICIENT` entry a `**Queued:**`
-field naming the filed `q-<slug>`.
+field (`ORACLE`, `USER`, or the provisional `PLANNER`) directly above the
+answer, and an `**Answer:**` field (the position or resolution in full); an
+`ANSWER` entry additionally carries a `**Cited:**` field and an
+`INSUFFICIENT` entry a `**Queued:**` field naming the filed `q-<slug>`. A
+`PLANNER` entry records a default a planner adopted in place of a deferred
+human answer; it SHALL be rewritten to `USER` once the human answers, and a
+plan still holding one SHALL NOT be promoted to `ready`.
 
 #### Scenario: Plan carries both sections
 - **WHEN** a change `dark-mode-toggle` is authored
@@ -195,6 +198,13 @@ field naming the filed `q-<slug>`.
 - **THEN** each still forbids an invented or guessed motivation, and the
   readiness checklist still directs a planner who cannot ground one to put it
   to the user rather than invent it
+
+#### Scenario: Provisional entry follows the grammar
+- **WHEN** a draft plan carries `### Q1: Which flag name?` with
+  `**Question:**`, `**Verdict:** INSUFFICIENT`, `**Answered by:** PLANNER`,
+  `**Answer:**`, and `**Queued:**` fields
+- **THEN** the plan remains structurally valid, and the context gate still
+  refuses to promote it until the entry reads `**Answered by:** USER`
 
 ### Requirement: EARS-recommended normative statements
 id: ears-recommended-statements

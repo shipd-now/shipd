@@ -271,6 +271,7 @@ Everything the plugin ships is invoked as `/s:<name>`.
 | Invocation | What it does |
 | --- | --- |
 | `/s:epic` | Decompose a feature into an epic: investigate the codebase, ask one batched round of what can't be inferred, record the epic's Decisions and Design, and emit the stub table of member changes with complexity ratings — then stop. Members are planned later, one at a time, via `/s:plan`. |
+| `/s:epic-grill` | Plan every unplanned member of an approved epic in one pass: order the members by dependency, plan each with its questions deferred, check the plans against each other, ask every open decision in one final round, then gate the plans and hand off to `/s:autopilot`. |
 | `/s:prd` | Interrogate a product idea into a lint-clean workspace PRD: investigate the codebase and the workspace's knowledge surfaces before asking anything, then grill the user round by round against the active tier, and install the result through the engine's staged `prd` emit. The discover phase's front door — it ends at the installed PRD and points at `/s:epic`. |
 | `/s:autopilot` | Drive an approved epic's unplanned members to shipped PRs unattended — plan → gate → build → auto-merging PR per member, in risk-ascending order, one worktree and branch each. Reports back with resume pointers for any parked member. |
 | `/s:research` | Turn a question into a cited research report: bounded sub-questions, web search and fetch, anchored findings, and a numbered `## Sources` list — installed through the spec engine so an epic can link it. |

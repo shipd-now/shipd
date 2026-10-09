@@ -183,8 +183,11 @@ Each entry is a level-3 header followed by a dash list of fields:
 - **`**Question:**`** — the full compact question as it was put to the oracle
   (decision, options, recommendation).
 - **`**Verdict:**`** — `ANSWER` or `INSUFFICIENT`.
-- **`**Answered by:**`** — `ORACLE` or `USER`, placed directly above the answer
-  so who settled the decision is clear at a glance.
+- **`**Answered by:**`** — `ORACLE`, `USER`, or the provisional `PLANNER`,
+  placed directly above the answer so who settled the decision is clear at a
+  glance. A `PLANNER` entry records a default a planner adopted in place of a
+  deferred human answer, is rewritten to `USER` once the human answers, and the
+  context gate rejects a plan still holding one.
 - **`**Answer:**`** — the oracle's position in full for an `ANSWER` entry, the
   user's typed resolution for an `INSUFFICIENT` one.
 - **`**Cited:**`** — the oracle's sources; on `ANSWER` entries.
