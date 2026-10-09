@@ -730,6 +730,47 @@ class LocationRuleGeneralisedTest(unittest.TestCase):
                     "licence to anchor at any correct-in-isolation site")
 
 
+class ImpactFloorNamesInstancesTest(unittest.TestCase):
+    """Every surface stating the impact floor names its three instances.
+
+    The floor names four *categories* — data loss, data corruption, a security
+    exposure, a broken guarantee. A category is harder to recognise in a diff
+    than a situation is, so the floor also names three situations a reviewer
+    meets: a success response that hides a failure, a cleanup path that drops
+    the record and leaves the data (or the reverse), and an error path that
+    loses the only copy.
+
+    This is measured, not stylistic. v0.6.262 added these instances and all
+    three of ReviewBench's severity targets moved to `medium` in 3 of 3 rounds,
+    holding until the v0.6.275 revert took them out as part of a bundle.
+
+    Matched on whitespace-normalised text, and by a short fragment per
+    instance rather than a long literal, because each of these sentences wraps
+    at a different column on each of the three surfaces — `SKILL.md` indents
+    its rubric bullet, the harness body indents four spaces inside a numbered
+    step, and the copilot template runs flush left.
+    """
+
+    # One short, distinctive fragment per instance. Each is well inside a
+    # single wrapped line on all three surfaces, so normalising whitespace is
+    # enough and no fragment can be split by a reflow.
+    INSTANCE_FRAGMENTS = (
+        "hides a failure",
+        "drops the record",
+        "loses the only copy",
+    )
+
+    def test_all_floor_surfaces_name_the_instances(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY, COPILOT_SKILL_MD):
+            flat = re.sub(r"\s+", " ", _read(path)).lower()
+            for fragment in self.INSTANCE_FRAGMENTS:
+                with self.subTest(path=path, fragment=fragment):
+                    self.assertIn(
+                        fragment, flat,
+                        "%s states the impact floor, so it must name the "
+                        "instance %r beside it" % (path, fragment))
+
+
 class ImpactFloorParityTest(unittest.TestCase):
     """All three rubric surfaces carrying the low bullet also carry its
     impact floor.

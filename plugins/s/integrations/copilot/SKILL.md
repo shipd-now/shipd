@@ -201,6 +201,10 @@ That low list names *kinds* of defect, not severities. Rate every finding by
 what it does, not which kind it resembles: data loss, data corruption, a
 security exposure, or a broken guarantee is **medium** or **high** even when it
 arrives as one of those kinds. A swallowed error that loses a file is not low.
+Concrete instances: a success response that hides a failure — an empty result
+returned as if real while a count or flag says otherwise; a cleanup path that
+drops the record and leaves the data, or the reverse; and an error path that
+loses the only copy.
 
 A secret/credential exposure finding, or an authorization boundary reached
 without a scope check, is always **high** regardless of your confidence.
