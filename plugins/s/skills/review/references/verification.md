@@ -96,9 +96,21 @@ carries one.
 without the description — its claim is a relationship between the
 description and the diff, not a property of the diff alone. A single blind
 verifier would therefore kill every drift candidate on principle, which is
-exactly what happened before this change. So a `description-drift` candidate
-is verified in a **separate spawn carrying the description and no diff**,
-never in the blind defect spawn described above.
+exactly what happened before this change. Because the claim is a
+relationship between the two, a verifier holding only one of them cannot
+check it: so a `description-drift` candidate is verified in a **separate
+spawn carrying both the description and the diff**, never in the blind
+defect spawn described above.
+
+**Not a mirror image.** The defect spawn carries the diff and not the
+description, so a description cannot talk it out of a finding that
+diff-reading already detected; the drift spawn carries both, because the
+comparison between them is the finding itself. That is an asymmetry, not a
+mirror image: the two spawns differ in what they carry because they differ
+in what they must check. The mirror reading — that a blind defect spawn
+implies a blind drift spawn — is exactly what produced this paragraph's
+earlier, wrong conclusion, so the asymmetry is stated here explicitly rather
+than left for a later edit to "restore" a symmetry that never held.
 
 **Per-candidate verdict.** The verifier answers with **one line per
 candidate**, in the order it received them, and nothing else:

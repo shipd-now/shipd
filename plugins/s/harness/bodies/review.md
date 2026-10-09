@@ -117,11 +117,17 @@ edits the repository.
     reasoning that the description made the diff's extra cost intended —
     confirmation bias arriving at the rating stage — so the blind defect
     spawn never carries one. A `description-drift` candidate cannot be
-    judged without the description, and a blind verifier would kill every
-    one of them on principle, so verify a drift candidate instead in a
-    **separate spawn carrying the description and no diff** — never in this
-    blind defect spawn. Cold start on the defect spawn is what keeps it from
-    rubber-stamping the hunt's own conviction.
+    judged without the description — its claim is a relationship between
+    the description and the diff, not a property of the diff alone — and a
+    blind verifier would kill every one of them on principle, so verify a
+    drift candidate instead in a **separate spawn carrying both the
+    description and the diff**, never in the blind defect spawn above. This
+    is not a mirror image of the defect spawn: the defect spawn carries the
+    diff and not the description, so a description cannot talk it out of a
+    finding diff-reading already detected; the drift spawn carries both,
+    because the comparison between them is the finding itself. Cold start
+    on the defect spawn is what keeps it from rubber-stamping the hunt's own
+    conviction.
 
     The spawn message also carries the **rating rubric** below, quoted
     verbatim, so the agent that decides a severity has the rule in front of
@@ -157,18 +163,24 @@ edits the repository.
     <index> killed <one-line reason>
     ```
     overriding whatever an earlier step proposed. A killed candidate goes into
-    the payload's top-level `killed` array — `location`, `what`, `reason`, and
-    `candidate` (that identical zero-based position in the list the verifier
-    received, which MUST be in **discovery order** — the order the steps
-    produced the candidates, never severity order, so a reader can test
-    whether kills cluster by position rather than merit) — and never into
-    `findings`, under any status: a consumer scoring the payload counts every
-    `findings` entry as reported. When the `Agent` spawn is unavailable or
-    fails, continue rather than abort: set the payload's top-level
-    `verifier.state` to `skipped` with a `reason` and `candidates` (the
-    list's length), keep each finding's proposed severity, and add a
-    could-not-verify entry — never report a review as verified when no
-    verifier ran. Name the kill count alongside the findings when reporting.
+    the payload's top-level `killed` array — `location`, `what`, `reason`,
+    `category` (the same taxonomy value the candidate held, so a drift kill
+    is identifiable without parsing `reason`'s prose), and `candidate` (that
+    identical zero-based position in the list the verifier received, which
+    MUST be in **discovery order** — the order the steps produced the
+    candidates, never severity order, so a reader can test whether kills
+    cluster by position rather than merit) — and never into
+    `findings`, under any status: a consumer scoring the payload counts
+    every `findings` entry as reported. When the `Agent` spawn is
+    unavailable or fails, continue rather than abort: set the payload's
+    top-level `verifier.state` to `skipped` with a `reason`, `candidates`
+    (the combined list's length) and `candidates_by_spawn` (that same
+    total as `defect` and `drift`, since a single total cannot say which
+    spawn a position belongs to — `candidates` itself keeps its name and
+    meaning as the total), keep each finding's proposed severity, and add
+    a could-not-verify entry — never report a review as verified when no
+    verifier ran. Name the kill count alongside the findings when
+    reporting.
 13. **Report by cohort, most severe first.** Give each finding a location (fix
     site, not symptom; a further site where the defect is visible — wrong the
     same way, showing the mismatch on its own terms, or — for a defect that
