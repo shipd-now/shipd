@@ -181,6 +181,40 @@ class PassPathTest(SpecGateTestBase):
         self.assertEqual(r.returncode, 0, self.out(r))
 
 
+class ProvisionalEntryCheckTest(SpecGateTestBase):
+    @staticmethod
+    def _entry(n, by):
+        return (
+            "### Q%d: Decision %d\n"
+            "- **Question:** Which option?\n"
+            "- **Verdict:** INSUFFICIENT\n"
+            "- **Answered by:** %s\n"
+            "- **Answer:** The first option.\n"
+            "- **Queued:** q-decision-%d\n\n" % (n, n, by, n))
+
+    def _plan_with(self, change, *entries):
+        self.make_clean_change(change, status="draft")
+        self.write_plan(
+            change,
+            CLEAN_PLAN % (change, "draft")
+            + "\n## Questions and answers\n\n" + "".join(entries))
+
+    def test_planner_entry_rejects_naming_only_that_entry(self):
+        self._plan_with("feat", self._entry(1, "USER"), self._entry(2, "PLANNER"))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        plan = self.read_plan("feat")
+        self.assertIn("ledger entry Q2 is provisional", plan)
+        self.assertNotIn("ledger entry Q1 is provisional", plan)
+        self.assertIn("Status: rejected", plan)
+
+    def test_settled_entries_pass(self):
+        self._plan_with("feat", self._entry(1, "ORACLE"), self._entry(2, "USER"))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 0, self.out(r))
+        self.assertIn("Status: ready", self.read_plan("feat"))
+
+
 class UnknownChangeTest(SpecGateTestBase):
     def test_unknown_change_is_general_error(self):
         r = self.cli("no-such-change")
