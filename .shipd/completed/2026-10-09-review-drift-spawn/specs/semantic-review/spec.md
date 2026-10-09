@@ -428,11 +428,6 @@ not verify. It SHALL NOT report a review as verified when no verifier ran.
 - **WHEN** a defect candidate is verified
 - **THEN** the spawn carries no title, description or summary of either
 
-#### Scenario: A drift candidate is verified against the description alone
-- **WHEN** a `description-drift` candidate is verified
-- **THEN** it is judged in a separate spawn carrying the description, not in
-  the blind defect spawn
-
 #### Scenario: A drift candidate can check its own claim
 - **WHEN** a `description-drift` candidate is verified
 - **THEN** its spawn carries both the description and the diff
