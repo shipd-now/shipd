@@ -31,16 +31,14 @@ carrying its severity, its file path and line range, its prose detail, and —
 only where the agent judges the fix confident and expressible as one or more
 contiguous whole lines — a replacement for those lines.
 
-The template's `low` severity SHALL be a real defect whose impact is contained,
-never pure style, naming preference, or formatting, which SHALL NOT be reported
-as a finding at any severity. The template SHALL state beside that rubric that
-severity follows what a defect does rather than the kind of defect it is, so
-data loss, data corruption, a security exposure, or a broken guarantee is
-`medium` or `high`, and SHALL name concrete instances beside those categories:
-a success response that hides a failure, a cleanup path that drops the record
-and leaves the data or the reverse, and an error path that loses the only copy.
-The template SHALL also state that uncertainty about a severity is not grounds
-for omitting a finding.
+The template's severity rubric SHALL state the same `low` definition and the
+same impact floor that `semantic-review`'s `review-skill` requirement states
+for `SKILL.md`, including the concrete instances that requirement names.
+`review-skill` owns that wording; this requirement SHALL NOT restate it, so
+the rubric has one source and the template cannot drift from the skill it
+mirrors. The template SHALL carry that wording **inline**, because it is
+vendored byte-for-byte into a GitHub Actions runner and can read no reference
+file.
 
 #### Scenario: Template exists with the placeholder marker
 - **WHEN** `plugins/s/integrations/copilot/SKILL.md` is read
@@ -69,18 +67,17 @@ for omitting a finding.
   severity, path, line range, and detail, and carry a replacement only for a
   fix the agent judges confident and expressible as contiguous whole lines
 
-#### Scenario: The template's low rubric excludes pure style
-- **WHEN** the template's severity rubric is read
-- **THEN** `low` names a real defect whose impact is contained, pure style is
-  excluded from findings at any severity, and the rule that impact outranks
-  the kind of defect appears beside it
+#### Scenario: The template's rubric matches the skill's
+- **WHEN** the template's severity rubric is compared with the `low` bullet and
+  impact floor in `plugins/s/skills/review/SKILL.md`
+- **THEN** the template states the same `low` definition, the same floor, and
+  the same concrete instances, with pure style excluded from findings at any
+  severity
 
-#### Scenario: The template names concrete impact instances
-- **WHEN** the template's severity rubric is read
-- **THEN** the rating rule beside it names a success response that hides a
-  failure, a cleanup path that drops the record and leaves the data, and an
-  error path that loses the only copy, and states that an unplaceable severity
-  is reported at a best estimate rather than omitted
+#### Scenario: This requirement restates no rubric wording
+- **WHEN** this requirement's own text is read
+- **THEN** it names `review-skill` as the owner of the `low` definition and the
+  impact floor rather than reproducing either, so the two cannot disagree
 
 ### Requirement: Copilot review setup workflow template
 id: setup-workflow-template
