@@ -208,6 +208,14 @@ class ProvisionalEntryCheckTest(SpecGateTestBase):
         self.assertNotIn("ledger entry Q1 is provisional", plan)
         self.assertIn("Status: rejected", plan)
 
+    def test_unbulleted_backticked_planner_entry_rejects(self):
+        variant = self._entry(1, "PLANNER").replace(
+            "- **Answered by:** PLANNER", "**Answered by:** `PLANNER`")
+        self._plan_with("feat", variant)
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("ledger entry Q1 is provisional", self.read_plan("feat"))
+
     def test_settled_entries_pass(self):
         self._plan_with("feat", self._entry(1, "ORACLE"), self._entry(2, "USER"))
         r = self.cli("feat")

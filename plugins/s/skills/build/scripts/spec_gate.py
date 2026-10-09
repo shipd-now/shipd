@@ -328,7 +328,10 @@ def _check_task_paths(root, change):
     return findings
 
 
-PROVISIONAL_RE = re.compile(r"^\s*-\s*\*\*Answered by:\*\*\s*PLANNER\b")
+# The bullet and backticks are optional: spec_lint accepts the field anywhere
+# in the entry body, so the gate must not let a format variant slip through.
+PROVISIONAL_RE = re.compile(
+    r"^\s*(?:-\s*)?\*\*Answered by:\*\*\s*`?PLANNER\b")
 
 
 def _check_provisional_entries(root, change):

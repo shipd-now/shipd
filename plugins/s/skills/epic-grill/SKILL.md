@@ -72,6 +72,8 @@ planner can read the plans before it. Keep a running list of
   ```
   Run /s:plan for the change `<member>`, a member of the epic `<epic>`,
   planned by /s:epic-grill. No human is available during this run.
+  Work in its worktree `.worktrees/<member>` (already created) and install
+  the change there.
   Members already planned in this run (read each with
   `spec_status.py --root <root> cat change <slug>`; keep names, interfaces,
   and shared decisions consistent with them): <slug>: <root>, ...

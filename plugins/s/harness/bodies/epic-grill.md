@@ -27,7 +27,8 @@ slug (`/s:epic-grill <slug>`).
    question round. For every decision the oracle leaves open, adopt your
    recommended default and record a `## Questions and answers` entry with
    `**Answered by:** PLANNER`: the options in `**Question:**` with the default
-   first, the default in `**Answer:**`. Install the change through
+   first, the default in `**Answer:**`, and `**Queued:**` when the oracle
+   filed one. Install the change through
    `spec_emit.py` and stop at `Status: draft`; do not run `spec_gate.py`. For
    a `draft` member, find its root with `locate <member>` and do not re-plan
    it. Grade each member from disk: `--root <worktree> status <member>` prints
