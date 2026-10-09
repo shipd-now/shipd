@@ -32,7 +32,6 @@ SKILL_MD = os.path.join(REVIEW_SKILL_DIR, "SKILL.md")
 REFERENCES_DIR = os.path.join(REVIEW_SKILL_DIR, "references")
 JSON_OUTPUT_MD = os.path.join(REFERENCES_DIR, "json-output.md")
 PR_DESCRIPTION_MD = os.path.join(REFERENCES_DIR, "pr-description.md")
-VERIFICATION_MD = os.path.join(REFERENCES_DIR, "verification.md")
 COPILOT_SKILL_MD = os.path.join(
     PLUGIN_S_ROOT, "integrations", "copilot", "SKILL.md")
 HARNESS_REVIEW_BODY = os.path.join(
@@ -140,23 +139,33 @@ _BOTH_DIRECTIONS_PATTERNS = (
     re.compile(r"(?is)(?:never\s+mentions|does\s+not\s+mention|unmentioned)"),
 )
 
-# Proxies for "the rating rule is stated": severity follows what a defect
-# does, never the kind of defect it is — otherwise a data-loss bug arriving
-# as a "swallowed error" gets rated low, and low never blocks a merge. Each
-# surface must say both that rating follows impact rather than kind, and
-# that data loss reaches medium or high. review-stage-rubrics recovered
-# v0.6.260's own phrasing of the first half ("not which kind it resembles")
-# for the reporting rubric's Impact floor bullet, verbatim per task 1.2, so
-# the pattern accepts either that phrasing or the later "not by the kind of
-# defect it is" phrasing the rating rubric still uses.
+# Proxies for "the impact severity floor is stated": the low rubric lists
+# *kinds* of defect, and a surface carrying it must say the kind does not set
+# the severity — otherwise a data-loss bug arriving as a "swallowed error"
+# gets rated low, and low never blocks a merge. Each surface must say both
+# that the list is kinds-not-severities and that impact overrides it.
 _IMPACT_FLOOR_PATTERNS = (
-    # `[*_\s]+` so markdown emphasis around a word does not defeat the match.
-    re.compile(
-        r"(?is)what[*_\s]+(?:the[*_\s]+defect[*_\s]+does|it[*_\s]+does)"
-        r"[,]?[*_\s]+not[*_\s]+(?:by[*_\s]+the[*_\s]+kind[*_\s]+of[*_\s]+"
-        r"defect|which[*_\s]+kind[*_\s]+it[*_\s]+resembles)"),
+    # `[*_\s]*` so markdown emphasis around the word — "names *kinds* of
+    # defect" — does not defeat the match.
+    re.compile(r"(?is)kinds?[*_\s]+of[*_\s]+defect,?[*_\s]+not[*_\s]+severit"),
     re.compile(r"(?is)data loss.{0,200}\b(?:medium|high)\b"),
 )
+
+# The rubric bullet's own label for the floor, as `pr-description.md` cites
+# it. Matched as the whole bullet opening rather than as a bare "impact floor"
+# substring over the file: step 5c independently says "the rubric's impact
+# floor", so the bare substring survives the rubric itself being renamed —
+# exactly the one-surface-renamed break `ImpactFloorParityTest` exists to
+# catch.
+IMPACT_FLOOR_LABEL = "- **impact floor.**"
+
+# Proxy for "step 5c points at the rubric's own category list". The step must
+# tie the kinds it hunts to the rubric inside one sentence; `[^.]` keeps the
+# match from spanning a sentence boundary. A bare "rubric" substring does not
+# work here, because step 5c's second sentence names the rubric for the
+# impact floor and so survives the pointer being trimmed away entirely —
+# which is the trim the test's docstring records as having already happened.
+_BREADTH_SWEEP_POINTER_PATTERN = re.compile(r"(?is)\bkinds?\b[^.]{0,60}\brubric\b")
 
 MOVED_HEADINGS = (
     "## Machine output mode",
@@ -204,37 +213,6 @@ _RUNTIME_SHAPE_SCOPE_PATTERN = re.compile(
 _EXCLUSIVE_LOCATION_FORM_PATTERN = re.compile(
     r"(?is)further[*_\s]+(?:location|site).{0,40}only[*_\s]+where"
     r".{0,80}independently[*_\s]+shows[*_\s]+the[*_\s]+defect")
-
-# The three concrete impact instances (review-location-impact), one pattern
-# per instance, written loosely enough to match each surface's own wording
-# (SKILL.md and the copilot template share phrasing; the harness body
-# compresses it to fit its line ceiling) while still distinguishing the
-# three from each other, per plan.md's Implementation section.
-IMPACT_INSTANCE_PATTERNS = (
-    re.compile(r"(?is)success[*_\s]+response.{0,20}hid(?:es|ing)[*_\s]+"
-               r"(?:a[*_\s]+)?failure"),
-    re.compile(r"(?is)cleanup.{0,20}drop(?:s|ping)[*_\s]+the[*_\s]+record"),
-    re.compile(r"(?is)los(?:es|ing)[*_\s]+the[*_\s]+only[*_\s]+copy"),
-)
-
-# Proxy for "the no-drop rule is stated": uncertainty about severity is never
-# grounds to omit a finding; report the best estimate and flag it uncertain
-# instead. Measured on v0.6.261: edge-case findings fell 8 -> 2 over three
-# rounds while test-coverage findings stayed flat at 4/4/4, and because the
-# medium rubric already names an unhandled edge case, a re-rating would have
-# moved them *up*, not away — they were being dropped, not re-rated.
-_NO_DROP_RULE_PATTERN = re.compile(
-    r"(?is)never.{0,70}(?:grounds[*_\s]+for[*_\s]+omitting[*_\s]+a[*_\s]+"
-    r"finding|drop[*_\s]+a[*_\s]+finding).{0,100}best[*_\s]+estimate"
-    r".{0,40}uncertain")
-
-# The defect-kind words the old `low` bullet named on `SKILL.md` and the
-# harness body, before this change moved the kinds list into the
-# breadth-sweep step. A lowercased match of any of these inside the `low`
-# bullet's own text means the kind list drifted back under `low`.
-MOVED_KIND_WORDS = (
-    "swallowed", "leak", "duplicated", "unread", "unstable", "blocking call",
-)
 
 # Matches from the `- **low**` bullet marker through the first occurrence of
 # the word "findings" and the rest of that line — the bullet always ends
@@ -401,39 +379,22 @@ class SkillMdStructureTest(unittest.TestCase):
         cls.lines = cls.text.splitlines()
 
     def test_under_line_ceiling(self):
-        """SKILL.md's ceiling rose from 330 to 350, and now 350 to 370.
+        """SKILL.md's ceiling falls from 400 to 340.
 
-        Everything review-location-impact adds is a rule applied on every
-        review, and the detail that could be extracted already has been —
-        the new-code checks, the downstream checks, the call-site checks, the
-        risk lenses. A measured defect (the location rule's contradiction
-        between SKILL.md and a conditionally-read reference) showed an
-        always-applies rule loses to the inline surface when it is deferred
-        to a reference, so reflow and extraction cannot pay for this growth.
-        The precedent is exact: the harness body's ceiling went 120 -> 140 in
-        v0.6.254 for the same reason — "The ceiling guards against bloat; it
-        is not a budget to compress real instructions into... A body that
-        legitimately grows a step belongs under a raised ceiling, not under
-        reworded instructions."
-
-        review-related-file-context raises the ceiling again, from 350 to
-        370: the new `related` workflow step is guidance that runs on every
-        review, so it cannot be deferred to a conditionally-loaded reference,
-        and SKILL.md sat at 340 of 350 before this change landed — too little
-        headroom for the new step's own instructions. `review-skill-references`
+        review-revert-to-260 removes the related-file-context step, the
+        verify stage, the two-stage rubric split, and everything else that
+        raised the ceiling to 400 across v0.6.261-v0.6.274, keeping only the
+        further-location keeper from v0.6.263. The file lands at 332 lines —
+        v0.6.260's 327 plus the five lines the further-location sentence
+        adds — so 340 is the smallest round figure above the real count,
+        resuming the ceiling's job of guarding against bloat rather than
+        sitting dozens of lines clear of the file. `review-skill-references`
         owns this figure; it is not restated anywhere else.
-
-        review-verify-stage raises it again, from 370 to 400: the verify
-        stage's own addition brought the file to 369 of 370, leaving one
-        line of headroom. A ceiling that blocks its own change's semantic
-        review from adding a line it found wanting is a trap, not a
-        guardrail — the raise is headroom for the review and for the next
-        change, not budget to spend.
         """
         self.assertLess(
-            len(self.lines), 400,
-            "SKILL.md must stay under 400 lines once the references split "
-            "out the condition-gated sections")
+            len(self.lines), 340,
+            "SKILL.md must stay under 340 lines now that the verify stage "
+            "and the related-file-context step are gone")
 
     def test_no_moved_headings_remain(self):
         for heading in MOVED_HEADINGS:
@@ -444,11 +405,11 @@ class SkillMdStructureTest(unittest.TestCase):
     def test_workflow_steps_stayed_inline(self):
         self.assertIn("## Workflow", self.text)
         self.assertIn("### 1. Map the change", self.text)
-        self.assertIn("### 9. Check test coverage, rolled up per cohort",
+        self.assertIn("### 7. Check test coverage, rolled up per cohort",
                       self.text)
 
     def test_severity_rubric_stayed_inline(self):
-        self.assertIn("Reporting rubric.", self.text)
+        self.assertIn("Severity rubric.", self.text)
         self.assertIn("**high**", self.text)
         self.assertIn("**medium**", self.text)
         self.assertIn("**low**", self.text)
@@ -528,26 +489,29 @@ class SkillMdStructureTest(unittest.TestCase):
                     f"{label} check(s) not named inline in SKILL.md "
                     f"(outside the References table): {missing}")
 
-    def test_breadth_sweep_names_the_defect_kinds_itself(self):
+    def test_breadth_sweep_points_at_the_rubric_categories(self):
         """The breadth-sweep step tells the reviewer what to look for.
 
-        This change moves the kinds list out from under the severity
-        rubric's `low` bullet and into the breadth-sweep step itself, so the
-        step no longer points at the rubric for the list — it states a
-        representative set of the kinds directly. A line-budget trim once
-        dropped "end to end" from this step, so that phrasing is still
-        pinned here too.
+        A line-budget trim once dropped "end to end" and the pointer at the
+        severity rubric's own category list from this step, leaving only a
+        vague "revisit each file" instruction — the categories are what the
+        sweep exists to find, so losing the pointer silently weakens it.
+
+        The pointer is pinned as "kinds … rubric" within one sentence, not as
+        a bare "rubric" substring: the step's second sentence names the rubric
+        for the impact floor, so a bare substring stays satisfied by that
+        sentence alone and the trim above passes undetected.
         """
-        match = re.search(r"^### 6c\. [^\n]*\n(.*?)(?=\n### |\Z)", self.text,
+        match = re.search(r"^### 5c\. [^\n]*\n(.*?)(?=\n### |\Z)", self.text,
                           re.DOTALL | re.MULTILINE)
-        self.assertIsNotNone(match, "no '### 6c.' breadth-sweep step found")
+        self.assertIsNotNone(match, "no '### 5c.' breadth-sweep step found")
         section = match.group(1).lower()
         self.assertIn("end to end", section)
-        for kind in ("swallowed", "leak", "dead or duplicated",
-                     "never read", "unstable", "blocking call"):
-            self.assertIn(
-                kind, section,
-                f"breadth-sweep step is missing defect kind {kind!r}")
+        self.assertRegex(
+            section, _BREADTH_SWEEP_POINTER_PATTERN,
+            "step 5c must point at the severity rubric's own kind list as "
+            "what the sweep hunts; naming the rubric only for the impact "
+            "floor leaves the sweep with no stated target")
 
     def test_every_reference_file_is_named(self):
         named = set(REFERENCE_PATH_RE.findall(self.text))
@@ -766,144 +730,86 @@ class LocationRuleGeneralisedTest(unittest.TestCase):
                     "licence to anchor at any correct-in-isolation site")
 
 
-class ImpactInstancesPresentTest(unittest.TestCase):
-    """All three rating-rubric surfaces name the three concrete impact
-    instances.
-
-    The abstract impact rule (data loss, corruption, exposure, a broken
-    guarantee) is four nouns a reviewer did not recognise in practice: on
-    v0.6.261 `QuerySummaries` stayed `low` in all three rounds while its own
-    finding text described a 200 with an empty page, a non-zero total, and
-    `has_more` true — it never connected that to "a broken guarantee". Each
-    instance here is drawn from a measured defect (`QuerySummaries`,
-    `cleanup_media`, `move_file`), so the test asserts on a distinctive
-    phrase per instance rather than a whole sentence — a later reword of the
-    surrounding prose should not break this test spuriously.
-
-    review-stage-rubrics moved the concrete instances off `SKILL.md`'s
-    reporting rubric (step 8, which carries v0.6.260's `low` wording
-    instead) and onto the rating rubric, which now lives in
-    `references/verification.md` and (inline, since it has no reference to
-    defer to) the harness body's verify step. `COPILOT_SKILL_MD` is
-    untouched by this change and keeps its one combined rubric, so it still
-    carries the instances too.
-    """
-
-    def test_each_instance_appears_on_every_surface(self):
-        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY, COPILOT_SKILL_MD):
-            text = _read(path)
-            for pattern in IMPACT_INSTANCE_PATTERNS:
-                with self.subTest(path=path, pattern=pattern.pattern):
-                    self.assertRegex(
-                        text, pattern,
-                        f"{path} is missing a concrete impact instance "
-                        f"matching {pattern.pattern!r}")
-
-
-class NoDropRuleTest(unittest.TestCase):
-    """All three rubric surfaces state the no-drop rule.
-
-    Measured on v0.6.261 (3 PRs x 3 rounds): edge-case findings fell from
-    4/3/1 to 1/1/0 per round, 8 total down to 2, while test-coverage findings
-    stayed exactly flat at 4/4/4. The `low` bullet's "nothing lost, corrupted,
-    exposed, or promised and unmet" definition left those findings with
-    neither a kind to anchor on nor a severity they could prove, so the
-    reviewer reported nothing rather than rate them. That is a worse failure
-    mode than mis-rating: a mis-rated defect is at least countable. Because
-    the `medium` rubric already names "an unhandled edge case", a re-rating
-    would have moved these findings *up*, not away, which is the evidence
-    they were being dropped rather than re-rated. This pins the fix: never
-    omit a finding for an unclear severity, report the best estimate instead.
-    """
-
-    def test_all_rubric_surfaces_state_the_no_drop_rule(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY, COPILOT_SKILL_MD):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _NO_DROP_RULE_PATTERN,
-                    f"{path} must state that an unclear severity is never "
-                    "grounds to drop a finding, and that the finding is "
-                    "instead reported at a best estimate, flagged uncertain")
-
-
 class ImpactFloorParityTest(unittest.TestCase):
-    """All three rubric surfaces carrying the low bullet also carry the
-    rating rule beside it.
+    """All three rubric surfaces carrying the low bullet also carry its
+    impact floor.
 
-    The low bullet names no kind of defect any more — the kinds moved to the
-    breadth sweep — so without a stated rule that severity follows impact
-    rather than kind, a data-loss bug that arrives as a swallowed error could
-    still be rated `low`, and low never blocks a merge. A benchmarking run
-    found exactly that: a file lost when `chmod` failed after a rename, rated
-    low.
+    The low rubric lists kinds of defect — a swallowed error, a leak on a
+    rare path, dead code. Without a floor saying the kind does not set the
+    severity, a data-loss bug that arrives as a swallowed error gets rated
+    `low`, and low never blocks a merge. A benchmarking run found exactly
+    that: a file lost when `chmod` failed after a rename, rated low.
 
-    The copilot template used to be excluded here: it carried the older
-    style-and-nits rubric, a tracked inconsistency rather than a surface this
-    rule applied to. That rubric is now fixed to match the other two, so the
-    template joins the loop — the widened parity check is what stops the
-    drift recurring.
+    v0.6.262 moved the copilot template off this loop while it still carried
+    the older style-and-nits rubric. This revert's task 1.5 rewrote that
+    bullet to the same kinds-list wording the other two surfaces carry, so
+    the template rejoins the loop here.
     """
 
-    def test_all_rubric_surfaces_state_the_rating_rule(self):
+    def test_all_rubric_surfaces_state_the_impact_floor(self):
         for path in (SKILL_MD, HARNESS_REVIEW_BODY, COPILOT_SKILL_MD):
             with self.subTest(path=path):
                 self.assertTrue(
                     _impact_floor_stated(_read(path)),
-                    f"{path} must state that severity follows what the "
-                    "defect does rather than the kind of defect it is, and "
-                    "that impact (data loss, corruption, exposure, a broken "
-                    "guarantee) rates a finding medium or high")
+                    f"{path} must state that the low rubric names kinds of "
+                    "defect rather than severities, and that impact (data "
+                    "loss, corruption, exposure, a broken guarantee) floors "
+                    "a finding at medium or high")
 
-    def test_pr_description_reference_drops_the_retired_floor_name(self):
-        """`pr-description.md` names the rubric by reference, not by rubric
-        text of its own — but it used to name the retired "impact floor"
-        bullet by its old name. A semantic review of this change (PR 271)
-        found that stale reference still pointing at a bullet this change
-        renamed to "Impact rule" everywhere else, a dangling cross-reference
-        on a file loaded on nearly every PR review. This pins the rename.
+    def test_a_reference_citing_the_floor_calls_it_by_its_shipped_name(self):
+        """A reference that defers to the floor names it as the rubric does.
+
+        `references/pr-description.md` does not restate the rubric; it points
+        at it — "severity by the normal high/medium/low rubric and its impact
+        floor". That citation is a cross-surface name, so it breaks silently
+        when one surface is renamed and the other is not.
+
+        It broke exactly that way in this revert. v0.6.261 renamed the floor
+        to "impact rule", and the revert restored "Impact floor." in
+        `SKILL.md` while this reference was left pointing at the retired
+        name. Nothing failed, because no test compared the two. This one
+        does.
+
+        The pairing is `SKILL.md` alone, not every rubric surface. Only
+        `SKILL.md` gives the floor a label, and only `SKILL.md` has a
+        `references/` directory to defer to — the harness body and the
+        copilot template state the floor's substance as prose with no name
+        and never read this file, exactly as at v0.6.260. A test demanding
+        the label on those two would be asserting a parity they have no
+        reason to hold.
+
+        The `SKILL.md` half is pinned at the rubric bullet's own label, not
+        as a bare "impact floor" substring over the whole file: step 5c
+        independently says "the rubric's impact floor", so a bare substring
+        stays satisfied even when the rubric bullet itself is renamed — the
+        one-surface-renamed break this test exists to catch.
         """
-        path = os.path.join(REFERENCES_DIR, "pr-description.md")
-        text = _read(path).lower()
+        reference = _read(PR_DESCRIPTION_MD).lower()
+        self.assertIn(
+            "impact floor", reference,
+            "pr-description.md cites the rubric's floor by name, so it must "
+            "use the name SKILL.md's rubric actually carries")
         self.assertNotIn(
-            "impact floor", text,
-            f"{path} still names the retired 'impact floor' bullet; it was "
-            "renamed to 'impact rule' on every rubric surface")
+            "impact rule", reference,
+            "pr-description.md still cites the floor by v0.6.261's retired "
+            "name; SKILL.md's rubric says 'Impact floor'")
+        self.assertIn(
+            IMPACT_FLOOR_LABEL, _read(SKILL_MD).lower(),
+            "SKILL.md's rubric must label the floor 'Impact floor.' — the "
+            "name its own reference cites; the phrase appearing elsewhere "
+            "in the file is not that label")
 
 
-class LowBulletNamesNoKindTest(unittest.TestCase):
-    """The rating rubric's `low` bullet names no defect kind, on any of its
-    three surfaces.
+class CopilotLowBulletDropsStaleWordingTest(unittest.TestCase):
+    """The copilot template's `low` bullet does not carry its pre-revert
+    stale wording.
 
-    Measured on a ReviewBench benchmark run (v0.6.260, 3 rounds): printing
-    the defect kinds under the `low` heading is what made the impact floor
-    lose every time it mattered — `move_file` deleting the only copy, rated
-    `low` in one round and `medium` in another, and `QuerySummaries`
-    swallowing a database error, rated `low` in all three rounds. The kinds
-    now live in the breadth-sweep step, where they are a detection aid
-    rather than a severity label; this test pins the other half of that
-    move — that the rating rubric's `low` bullet never lists them again.
-
-    review-stage-rubrics reintroduced those same kind words under the
-    reporting rubric's `low` bullet deliberately (see
-    `ReportingRubricRecoversV0_260WordingTest`, below) — that bullet now
-    decides what to report, not the final severity, so the kind list is a
-    detection aid there too, the same job it always had. This test is
-    scoped to the rating rubric's own `low` bullet (`VERIFICATION_MD`,
-    `HARNESS_REVIEW_BODY`'s verify step — `_low_bullet_text` finds that one
-    first, since it precedes the report step in the file — and the
-    untouched `COPILOT_SKILL_MD`) rather than to `SKILL_MD`, whose only
-    `low` bullet is now the reporting rubric's.
+    At v0.6.260 this surface still read "style, naming, minor redundancy,
+    defensive nits" — wrong, and contradicting the rubric it mirrors. Task
+    1.5 rewrote it to the skill's kinds-list wording instead of restoring
+    that stale text verbatim, so this pins the one divergence from a literal
+    v0.6.260 restore on this file.
     """
-
-    def test_low_bullet_names_no_moved_defect_kind(self):
-        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY, COPILOT_SKILL_MD):
-            with self.subTest(path=path):
-                bullet = _low_bullet_text(_read(path)).lower()
-                found = [w for w in MOVED_KIND_WORDS if w in bullet]
-                self.assertFalse(
-                    found,
-                    f"{path}'s rating-rubric low bullet still names defect "
-                    f"kind(s) {found}: {bullet!r}")
 
     def test_copilot_low_bullet_drops_the_style_and_nits_wording(self):
         bullet = _low_bullet_text(_read(COPILOT_SKILL_MD)).lower()
@@ -911,7 +817,48 @@ class LowBulletNamesNoKindTest(unittest.TestCase):
             self.assertNotIn(
                 phrase, bullet,
                 f"copilot template's low bullet still carries {phrase!r}, "
-                "the contradiction task 5.1 was meant to remove")
+                "the stale v0.6.260 wording task 1.5 was meant to replace")
+
+
+class HarnessBodyAsksForAConcreteFixTest(unittest.TestCase):
+    """The harness body's report step still asks for a *concrete* fix and an
+    *explicit* severity.
+
+    `SKILL.md` can state the per-finding fields as a labelled list —
+    **location**, **what**, **why**, **fix**, **severity** — because the bold
+    labels carry the demand. The harness body has no such list: it asks in
+    running prose, so the adjectives are the demand. "Give each finding a fix"
+    invites a gesture at one; "a concrete fix" asks for the edit.
+
+    This exists because those two words were lost twice. v0.6.262 compressed
+    "a concrete fix, and an explicit severity" to "a fix, and severity" to buy
+    one line against the then-140 ceiling, and the compression travelled inside
+    the same hunk as that change's location rule. `review-revert-to-260` then
+    carried the hunk forward as a keeper and restored the words only after a
+    reader compared the file against v0.6.260 by hand.
+
+    That is the fourth time compressing this file has silently dropped real
+    content; `test_harness_bodies.py`'s own ceiling docstring records the first
+    three. The file can defer nothing to a reference, so it is the one most
+    often squeezed — which is exactly why its instructions need pins rather
+    than vigilance.
+    """
+
+    def test_the_report_step_asks_for_both(self):
+        body = _read(HARNESS_REVIEW_BODY)
+        # Whitespace-normalised for the same reason `_missing_triggers` does
+        # it: the body reflows its prose at ~76 columns, and the phrase sits
+        # at the tail of a sentence that already wraps, so a reflow could put
+        # a line break inside it. That would make a plain substring over the
+        # raw text stop matching and fail the test on a cosmetic rewrap —
+        # a false alarm, not a vacuous pass. The phrase is contiguous today;
+        # normalising keeps it matched whatever the wrap position becomes.
+        flat = re.sub(r"\s+", " ", body)
+        self.assertIn(
+            "a concrete fix, and an explicit severity", flat,
+            "the harness body's report step must ask for a concrete fix and "
+            "an explicit severity; it has no bold field labels to carry that "
+            "demand, and these two words have been compressed away before")
 
 
 class ReferenceFreeSurfacesCarryRiskLensesTest(unittest.TestCase):
@@ -1410,749 +1357,6 @@ class SeverityDotParityTest(unittest.TestCase):
                     expected_bracket, joined,
                     "workflow folded finding is missing %r: %r"
                     % (expected_bracket, joined))
-
-
-# The `related` step's own heading, independent of its step number (which
-# SkillMdStructureTest's renumbering tests pin elsewhere) — matches
-# "### N. Pull related file context" wherever N lands after a renumber.
-_RELATED_STEP_HEADING_RE = re.compile(
-    r"^###\s+\d+\.\s*Pull[*_\s]+related[*_\s]+file[*_\s]*context[^\n]*\n"
-    r"(.*?)(?=\n### |\Z)", re.DOTALL | re.MULTILINE)
-
-# The checks the related-file context feeds — named identically (modulo
-# whitespace/emphasis) on both surfaces that carry the step inline, so a
-# reviewer handed files always has the reason to read them.
-_RELATED_CHECKS_SERVED_PATTERN = re.compile(
-    r"(?is)downstream-impact[*_\s]+and[*_\s]+call-site[*_\s]+checks")
-_RELATED_LENSES_PATTERN = re.compile(
-    r"(?is)lenses[*_\s]+that[*_\s]+compare[*_\s]+a[*_\s]+change[*_\s]+against"
-    r"[*_\s]+unchanged[*_\s]+code")
-
-# The limit stated beside the permission: a file `related` did not name
-# stays unread, whatever else looks interesting — the engine's named set is
-# what widens context, never the reviewer's own discretion.
-_UNNAMED_FILE_UNREAD_PATTERN = re.compile(
-    r"(?is)did[*_\s]+not[*_\s]+name[*_\s]+stays[*_\s]+unread")
-
-# The wider-recall caps (20 per changed file, 120 per review) that `--mode
-# max` raises the balanced defaults to. Both surfaces must name them, so a
-# reviewer who only ever sees the harness body still knows a wider sweep
-# exists — the gap a crafted-import regression caught once (f4/f6 in the
-# review-related-file-context PR): the harness step named only the balanced
-# 8/40 pair, with no way to learn 20/120 was ever an option.
-_RELATED_WIDER_RECALL_PATTERN = re.compile(r"(?is)20[^\n]{0,40}120")
-
-
-class RelatedFileContextStepTest(unittest.TestCase):
-    """Both reference-free surfaces — `SKILL.md` and the harness review
-    body, neither of which can defer this always-applies guidance to a
-    conditionally-loaded reference — carry the `related` step inline: the
-    step itself, the checks it feeds, and the limit that a file the
-    subcommand did not name stays unread.
-    """
-
-    def test_skill_md_names_the_related_step_section(self):
-        match = _RELATED_STEP_HEADING_RE.search(_read(SKILL_MD))
-        self.assertIsNotNone(
-            match, "no 'Pull related file context' step heading found in "
-            "SKILL.md")
-
-    def test_both_surfaces_name_the_checks_it_serves(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                text = _read(path)
-                self.assertRegex(
-                    text, _RELATED_CHECKS_SERVED_PATTERN,
-                    f"{path} must name the downstream-impact and call-site "
-                    "checks the related-file context feeds")
-                self.assertRegex(
-                    text, _RELATED_LENSES_PATTERN,
-                    f"{path} must name the lenses that compare a change "
-                    "against unchanged code")
-
-    def test_both_surfaces_state_the_unnamed_file_stays_unread_limit(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _UNNAMED_FILE_UNREAD_PATTERN,
-                    f"{path} must state that a file the related search did "
-                    "not name stays unread")
-
-    def test_both_surfaces_name_the_wider_recall_caps(self):
-        """A reviewer on either surface must be able to learn that the
-        balanced 8/40 caps are not the only option — the harness body once
-        named only the balanced pair, with nothing telling a reviewer on
-        that surface alone that a 20/120 sweep existed at all."""
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _RELATED_WIDER_RECALL_PATTERN,
-                    f"{path} must name the wider-recall 20/120 caps "
-                    "alongside the balanced 8/40 pair")
-
-
-# The verify stage's own heading on SKILL.md, independent of its step number
-# (which the renumbering tests elsewhere pin) -- matches "### N. Verify
-# candidates" wherever N lands after a renumber.
-_VERIFY_STEP_HEADING_RE = re.compile(
-    r"^###\s+\d+\.\s*Verify[*_\s]+candidates[^\n]*\n"
-    r"(.*?)(?=\n### |\Z)", re.DOTALL | re.MULTILINE)
-
-# The verifier is spawned with the `Agent` tool, by that exact name -- a
-# restricted headless runner is configured to allow only that one name.
-_AGENT_TOOL_PATTERN = re.compile(r"(?is)`Agent`[*_\s]+tool")
-
-# Fresh context: the verifier must not inherit the hunt's own reasoning.
-_FRESH_CONTEXT_PATTERN = re.compile(r"(?is)fresh[*_\s-]*context")
-
-# The `killed` verdict a candidate can receive, as opposed to `confirmed`.
-_KILLED_TERM_PATTERN = re.compile(r"(?is)`killed`")
-
-# The payload's own verifier-state field.
-_VERIFIER_STATE_PATTERN = re.compile(r"(?is)`verifier\.state`")
-
-# Degradation: an unavailable or failing spawn continues the review rather
-# than aborting it.
-_SPAWN_DEGRADES_PATTERN = re.compile(
-    r"(?is)unavailable[\s\S]{0,80}(?:continue|abort)")
-
-# A review whose verifier did not run is never reported as verified -- the
-# whole reason the state field exists: a restricted runner must be told
-# apart from a verified one, not pass silently as though it were.
-_NEVER_REPORTED_VERIFIED_PATTERN = re.compile(
-    r"(?is)never[*_\s]*\**[\s\S]{0,30}report(?:ed)?[\s\S]{0,30}verified")
-
-# A killed candidate must never land among `findings`, under any status --
-# the invariant a consumer scoring the payload depends on, since it counts
-# every `findings` entry as reported.
-_KILLED_NEVER_IN_FINDINGS_PATTERN = re.compile(
-    r"(?is)never[*_\s]*\**[^`]{0,30}`findings`[^\n]{0,30}under[*_\s]+any"
-    r"[*_\s]+status")
-
-
-class VerifyStageStepTest(unittest.TestCase):
-    """Both reference-free surfaces -- `SKILL.md` and the harness review
-    body, neither of which can defer this always-applies guidance to a
-    conditionally-loaded reference -- name the verify stage inline: the
-    `Agent` spawn, fresh context, the per-candidate verdict, the verifier's
-    own state field, and the degradation path when the spawn is denied.
-    """
-
-    def test_skill_md_names_the_verify_step_section(self):
-        match = _VERIFY_STEP_HEADING_RE.search(_read(SKILL_MD))
-        self.assertIsNotNone(
-            match, "no 'Verify candidates' step heading found in SKILL.md")
-
-    def test_both_surfaces_name_the_agent_tool(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _AGENT_TOOL_PATTERN,
-                    f"{path} must spawn the verifier with the `Agent` "
-                    "tool, by that exact name")
-
-    def test_both_surfaces_name_fresh_context(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _FRESH_CONTEXT_PATTERN,
-                    f"{path} must state that the verifier gets fresh "
-                    "context")
-
-    def test_both_surfaces_name_the_killed_verdict(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _KILLED_TERM_PATTERN,
-                    f"{path} must name the `killed` verdict")
-
-    def test_both_surfaces_name_the_verifier_state_field(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _VERIFIER_STATE_PATTERN,
-                    f"{path} must name the payload's `verifier.state` "
-                    "field")
-
-    def test_both_surfaces_state_the_degradation_path(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                text = _read(path)
-                self.assertRegex(
-                    text, _SPAWN_DEGRADES_PATTERN,
-                    f"{path} must state that an unavailable or failing "
-                    "spawn continues the review rather than aborting it")
-                self.assertRegex(
-                    text, _NEVER_REPORTED_VERIFIED_PATTERN,
-                    f"{path} must state that a review whose verifier did "
-                    "not run is never reported as verified")
-
-
-class KilledNeverInFindingsTest(unittest.TestCase):
-    """The two surfaces that spell out the machine payload's shape -- the
-    plugin skill's `json-output.md` reference, and the harness command body,
-    which inlines the same contract since it can read no reference -- both
-    state the prohibition in prose: a killed candidate never lands among
-    `findings`. There is no schema to validate this against, so the
-    assertion is on the stated rule itself, per
-    `plugins/s/skills/review/references/json-output.md`'s own note that a
-    consumer scoring the payload counts every `findings` entry as reported.
-    """
-
-    def test_neither_surface_permits_a_killed_candidate_in_findings(self):
-        for path in (JSON_OUTPUT_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _KILLED_NEVER_IN_FINDINGS_PATTERN,
-                    f"{path} must state that a killed candidate never "
-                    "appears among `findings`, under any status")
-
-
-# The verify stage's `subagent_type` -- stated as the concrete value
-# `general-purpose`, a built-in that resolves in a headless session whether
-# or not the plugin's own agent definitions load there. An unresolvable type
-# is indistinguishable from a denied spawn, so every surface that states the
-# verify stage names it rather than leaving it to judgement. The wording
-# differs per surface (`subagent_type: general-purpose`, "naming its agent
-# type as `general-purpose`", ...), so the pattern anchors on "type" near
-# the concrete value rather than one fixed phrase.
-_SUBAGENT_TYPE_PATTERN = re.compile(r"(?is)type[\s\S]{0,30}general-purpose")
-
-# The per-candidate verdict shape: one line per candidate, index-prefixed,
-# in the order received, carrying `confirmed` with a severity or `killed`
-# with a reason and nothing else. `review-verifier-handover` gives this a
-# concrete, literal shape so two sessions parse it the same way; the `[*_\s]+`
-# class absorbs markdown emphasis a surface might wrap the words in.
-_VERDICT_SHAPE_PATTERN = re.compile(
-    r"(?is)<index>[*_\s]+confirmed[*_\s]+<high\|medium\|low>[\s\S]{0,40}"
-    r"<index>[*_\s]+killed[*_\s]+<one-line reason>")
-
-
-class VerifierHandoverTest(unittest.TestCase):
-    """`review-verifier-handover` closes three gaps the verify stage left
-    open: no named `subagent_type`, no concrete verdict shape, and no stated
-    handover of candidates and the diff. This class pins the first two --
-    every surface that states the verify stage names a concrete
-    `subagent_type`, and the reference plus the harness body (SKILL.md
-    defers the shape's detail to the reference) both carry the
-    one-line-per-candidate verdict shape.
-    """
-
-    def test_every_surface_names_a_concrete_subagent_type(self):
-        for path in (SKILL_MD, VERIFICATION_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _SUBAGENT_TYPE_PATTERN,
-                    f"{path} must name a concrete subagent_type "
-                    "(general-purpose)")
-
-    def test_reference_and_harness_body_carry_the_verdict_shape(self):
-        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _VERDICT_SHAPE_PATTERN,
-                    f"{path} must carry the one-line-per-candidate verdict "
-                    "shape, index-prefixed, in the order received")
-
-
-# `review-verifier-handover`'s own task 4.6 found the verdict line's
-# `<index>` never pinned to a numbering convention, so two sessions could
-# emit `0 confirmed high` and `1 confirmed high` for the same first
-# candidate and a single parser would read them differently -- precisely
-# the invented-convention drift this version exists to remove. Task 4.8
-# closed it: the index is zero-based and identical to the payload's
-# `candidate` field, stated for the spawn message's candidate list as well
-# as the verdict line, since the ambiguity entered at the handover and not
-# only at the verdict. The window tolerates either order ("zero-based
-# index" or "index ... zero-based") and does not match a file that merely
-# mentions `zero-based` near an unrelated noun (`verification.md`'s own
-# `candidate` field description, pre-4.8, sits 0 "index" mentions away from
-# its "zero-based" -- this pattern requires the two words co-occur).
-_ZERO_BASED_INDEX_PATTERN = re.compile(
-    r"(?is)(?:index[\s\S]{0,60}zero[*_\s-]*based"
-    r"|zero[*_\s-]*based[\s\S]{0,60}index)")
-
-
-class VerdictIndexNumberingTest(unittest.TestCase):
-    """All three surfaces that mention the verify stage's candidate index --
-    `SKILL.md`, the reference, and the harness body -- state that it is
-    zero-based and identical to the payload's `candidate` field, so one
-    numbering convention runs from the spawn message's candidate list
-    through the verdict line to the payload.
-    """
-
-    def test_every_surface_states_the_index_is_zero_based(self):
-        for path in (SKILL_MD, VERIFICATION_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _ZERO_BASED_INDEX_PATTERN,
-                    f"{path} must state that the candidate index is "
-                    "zero-based")
-
-
-# `review-verifier-rubric`: the spawn message also carries the severity
-# rubric itself, quoted verbatim from the rating step the composing session
-# has just read, so the agent that decides a severity has the rule in front
-# of it. The `[*_\s]+` class absorbs markdown emphasis a surface might wrap
-# the words in. review-stage-rubrics named this rubric specifically the
-# "rating rubric" (as opposed to the reporting rubric step 8/13 now carry),
-# so the alternation accepts either term.
-_SEVERITY_RUBRIC_IN_SPAWN_PATTERN = re.compile(
-    r"(?is)spawn[\s\S]{0,40}(?:severity|rating)[*_\s]+rubric")
-
-# The rubric travels quoted at runtime, never reproduced as a second copy --
-# the wording both surfaces use to say so. Either word can lead (prose puts
-# "verbatim" first here, "quoted" first there), so the window tolerates both
-# orders, same style as `_ZERO_BASED_INDEX_PATTERN` above.
-_RUBRIC_QUOTED_VERBATIM_PATTERN = re.compile(
-    r"(?is)(?:quoted[\s\S]{0,300}verbatim|verbatim[\s\S]{0,300}quoted)")
-
-# The exposure floor rides along with the rest of the rubric in the spawn,
-# not only the concrete instances.
-_EXPOSURE_FLOOR_TERM_PATTERN = re.compile(r"(?is)exposure[*_\s]+floor")
-
-
-class SeverityRubricInSpawnTest(unittest.TestCase):
-    """The verify stage's spawn message carries the severity rubric itself,
-    not only the candidate list -- `references/verification.md` and the
-    harness review body (which has no `SKILL.md` to quote from, so it
-    points at its own rubric step instead) both state that the rubric
-    travels, quoted verbatim from the rating step, including the exposure
-    floor.
-    """
-
-    def test_both_surfaces_require_the_rubric_in_the_spawn(self):
-        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                text = _read(path)
-                self.assertRegex(
-                    text, _SEVERITY_RUBRIC_IN_SPAWN_PATTERN,
-                    f"{path} must state that the spawn message carries "
-                    "the severity rubric")
-                self.assertRegex(
-                    text, _RUBRIC_QUOTED_VERBATIM_PATTERN,
-                    f"{path} must state the rubric is quoted verbatim, "
-                    "not reproduced")
-                self.assertRegex(
-                    text, _EXPOSURE_FLOOR_TERM_PATTERN,
-                    f"{path} must name the exposure floor as part of what "
-                    "travels in the spawn")
-
-
-def _harness_body_step_text(text, step_marker, next_marker):
-    """Slice the harness review body between one numbered step's marker
-    (e.g. ``"12. **Verify candidates"``) and the next (e.g. ``"13."``),
-    non-inclusive of the next marker. Raises if the start marker is absent,
-    since a silently empty slice would make every assertion against it
-    vacuously pass.
-    """
-    start = text.find(step_marker)
-    if start == -1:
-        raise AssertionError(f"step marker {step_marker!r} not found")
-    end = text.find(next_marker, start)
-    return text[start:end if end != -1 else None]
-
-
-# review-stage-rubrics: the two severity rubrics now live on different
-# surfaces for different jobs -- the reporting rubric, which decides what to
-# report and proposes a severity (`SKILL.md` step 8, the harness body's step
-# 13), and the rating rubric, which decides the final severity at the verify
-# stage (`references/verification.md`, the harness body's step 12, inline
-# since it has no reference to defer to). This class pins the properties
-# task 5.1 names: the reporting rubric defines `low` without a containment
-# test (recovered v0.6.260 wording, naming the moved kinds); both rubrics
-# carry the exposure floor; the spawn carries no PR title or description;
-# a `description-drift` candidate gets its own, separate spawn; and the
-# candidate list is in discovery order. `_impact_floor_stated` and the
-# concrete-instance/no-kind checks for the *rating* rubric are pinned above
-# by `ImpactFloorParityTest`, `ImpactInstancesPresentTest`, and
-# `LowBulletNamesNoKindTest` respectively, re-aimed for the split; this
-# class does not repeat them.
-_NO_CONTAINMENT_TEST_PATTERN = re.compile(
-    r"(?is)nothing[*_\s]+lost,?[*_\s]+corrupted,?[*_\s]+exposed,?[*_\s]+or"
-    r"[*_\s]+promised[*_\s]+and[*_\s]+unmet")
-
-_NO_DESCRIPTION_IN_SPAWN_PATTERN = re.compile(
-    r"(?is)(?:spawn|verifier)[\s\S]{0,400}(?:no|never)[*_\s]+(?:the[*_\s]+)?"
-    r"(?:pull[*_\s]+request'?s?[*_\s]+)?title,?[*_\s]+description")
-
-_DRIFT_SEPARATE_SPAWN_PATTERN = re.compile(
-    r"(?is)description-drift[\s\S]{0,400}separate[*_\s]+spawn")
-
-_DISCOVERY_ORDER_PATTERN = re.compile(r"(?is)discovery[*_\s]+order")
-
-
-class TwoStageRubricSeparationTest(unittest.TestCase):
-    """Pins the properties specific to the reporting/rating rubric split
-    that no other test class in this file covers.
-    """
-
-    def test_reporting_rubric_defines_low_without_containment_test(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                text = _read(path)
-                if path == HARNESS_REVIEW_BODY:
-                    text = _harness_body_step_text(
-                        text, "13. **Report by cohort", "14.")
-                bullet = _low_bullet_text(text).lower()
-                self.assertNotRegex(
-                    bullet, _NO_CONTAINMENT_TEST_PATTERN,
-                    f"{path}'s reporting-rubric low bullet still carries "
-                    "the contained-impact containment test; v0.6.260's "
-                    "wording names kinds instead")
-                found = [w for w in MOVED_KIND_WORDS if w in bullet]
-                self.assertTrue(
-                    found,
-                    f"{path}'s reporting-rubric low bullet must recover "
-                    "v0.6.260's kind-naming wording, found none of "
-                    f"{MOVED_KIND_WORDS}")
-
-    def test_both_rubrics_carry_the_exposure_floor(self):
-        reporting_text = _harness_body_step_text(
-            _read(HARNESS_REVIEW_BODY), "13. **Report by cohort", "14.")
-        rating_text = _harness_body_step_text(
-            _read(HARNESS_REVIEW_BODY), "12. **Verify candidates",
-            "13. **Report by cohort")
-        for label, text in (
-            ("SKILL.md reporting rubric", _read(SKILL_MD)),
-            ("verification.md rating rubric", _read(VERIFICATION_MD)),
-            ("harness body reporting rubric (step 13)", reporting_text),
-            ("harness body rating rubric (step 12)", rating_text),
-        ):
-            with self.subTest(label=label):
-                self.assertTrue(
-                    _exposure_floor_stated(text),
-                    f"{label} must state the exposure floor")
-
-    def test_spawn_carries_no_title_or_description(self):
-        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _NO_DESCRIPTION_IN_SPAWN_PATTERN,
-                    f"{path} must state that the spawn carries no pull "
-                    "request title or description")
-
-    def test_drift_candidates_get_a_separate_spawn(self):
-        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _DRIFT_SEPARATE_SPAWN_PATTERN,
-                    f"{path} must state that a description-drift candidate "
-                    "is verified in a separate spawn")
-
-    def test_candidate_list_is_in_discovery_order(self):
-        for path in (JSON_OUTPUT_MD, HARNESS_REVIEW_BODY, HARNESS_REVIEW_MD):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _DISCOVERY_ORDER_PATTERN,
-                    f"{path} must state the candidate list is in discovery "
-                    "order")
-                self.assertNotRegex(
-                    _read(path), re.compile(r"(?is)MUST[*_\s]+be[*_\s]+"
-                                             r"deterministic"),
-                    f"{path} must not still carry the bare 'deterministic' "
-                    "clause")
-
-
-# task 6.7's fix for task 6.6's finding: three of the five bullets on each
-# rubric are byte-identical, and the distinguishing bullet names ("Impact
-# floor" vs "Impact rule") differ by one word -- so a skimming reader could
-# read the pair as one rubric accidentally duplicated across two files
-# rather than two rubrics with different jobs. The orientation sentence
-# immediately under each heading now names the other rubric and says the
-# two differ at the `low` bullet. This pattern is intentionally narrow (the
-# literal "differs ... low ... bullet" shape) rather than a looser "mentions
-# the other rubric's name" check, because `SeverityRubricInSpawnTest` and
-# `VerifyStageStepTest` already establish that each surface names the other
-# rubric for unrelated reasons (quoting it into the spawn, cross-referencing
-# step numbers) -- a looser pattern would already have passed before task
-# 6.7's fix existed, which is exactly the vacuous-assertion failure mode
-# task 5.3 and this test's own proof-of-failure (below, in comments) guard
-# against.
-_DIFFERS_AT_LOW_BULLET_PATTERN = re.compile(
-    r"(?is)differs?[\s\S]{0,60}`?low`?[*_\s]+bullet")
-
-
-class OrientationSentenceNamesOtherRubricTest(unittest.TestCase):
-    """Each rubric's heading is immediately followed by a sentence naming
-    the other rubric and stating that the two differ at the `low` bullet,
-    on every surface that states a rubric heading: `SKILL.md` step 8 and
-    the harness body's step 13 (the reporting rubric), and
-    `verification.md` and the harness body's step 12 (the rating rubric).
-
-    Proved non-vacuous by hand before this test was written: run against
-    each surface's pre-task-6.7 wording (the `old_string` this build passed
-    to its edits), `_DIFFERS_AT_LOW_BULLET_PATTERN` does not match any of
-    the four -- each named the other rubric already (for the spawn-quoting
-    or step-cross-reference reasons noted above) but none yet said the two
-    differ at `low`. Only task 6.7's added clause makes it match.
-    """
-
-    def test_skill_md_reporting_heading_names_the_other_rubric(self):
-        text = _harness_body_step_text(
-            _read(SKILL_MD), "### 8. Report by cohort", "### 9.")
-        self.assertRegex(
-            text, _DIFFERS_AT_LOW_BULLET_PATTERN,
-            "SKILL.md's reporting-rubric heading must say the rating "
-            "rubric differs from it at the `low` bullet")
-
-    def test_verification_md_rating_heading_names_the_other_rubric(self):
-        self.assertRegex(
-            _read(VERIFICATION_MD), _DIFFERS_AT_LOW_BULLET_PATTERN,
-            "verification.md's rating-rubric heading must say the "
-            "reporting rubric differs from it at the `low` bullet")
-
-    def test_harness_body_step12_rating_heading_names_the_other_rubric(self):
-        text = _harness_body_step_text(
-            _read(HARNESS_REVIEW_BODY), "12. **Verify candidates", "13.")
-        self.assertRegex(
-            text, _DIFFERS_AT_LOW_BULLET_PATTERN,
-            "harness body step 12's rating-rubric heading must say the "
-            "reporting rubric differs from it at the `low` bullet")
-
-    def test_harness_body_step13_reporting_heading_names_the_other_rubric(
-            self):
-        text = _harness_body_step_text(
-            _read(HARNESS_REVIEW_BODY), "13. **Report by cohort", "14.")
-        self.assertRegex(
-            text, _DIFFERS_AT_LOW_BULLET_PATTERN,
-            "harness body step 13's reporting-rubric heading must say the "
-            "rating rubric differs from it at the `low` bullet")
-
-
-# review-stage-rubrics re-aims this class rather than deleting it (plan.md's
-# Implementation section is explicit: "The test pinning the absence of a
-# copy must be re-aimed accordingly, not deleted"). Its old premise --
-# that the severity rubric lived only in `SKILL.md` step 8 and was quoted
-# into `verification.md` at runtime, never reproduced there -- is no longer
-# true by design: `verification.md` now *is* the rating rubric's canonical
-# home, stating the `high`/`medium`/`low` definitions, the impact rule, its
-# concrete instances, and the exposure floor in full, exactly as
-# `SeverityRubricInSpawnTest` above expects it to, so the spawn has
-# something to quote from.
-#
-# What "no second copy" still means, post-split: the two rubrics -- the
-# reporting rubric (`SKILL.md` step 8, deciding what to report and
-# proposing a severity) and the rating rubric (`verification.md`, deciding
-# the final one) -- must not duplicate *each other's* distinctive content.
-# `_REPORTING_KIND_LIST_WORDING` is `SKILL.md`'s recovered v0.6.260 kind
-# list (task 1.2), distinctive to the reporting rubric; `_LOW_DEFINITION_WORDING`
-# and `_IMPACT_RULE_INSTANCE_WORDING` are distinctive to the rating rubric's
-# contained-impact `low` and its concrete instances. Each belongs on exactly
-# one surface.
-# `[\s]+` (rather than a literal space) so a line-wrapped rendering of the
-# same wording still matches -- plain substring checks on multi-word phrases
-# silently pass against a pre-change file that wraps the phrase across a
-# line, which would make the assertion vacuous rather than a real guard.
-_REPORTING_KIND_LIST_PATTERN = re.compile(
-    r"(?is)swallowed[\s]+errors,[\s]+resource[\s]+leaks[\s]+on[\s]+rare"
-    r"[\s]+paths,[\s]+dead[\s]+or[\s]+duplicated[\s]+code,[\s]+unread"
-    r"[\s]+variables,[\s]+unstable[\s]+ids")
-_LOW_DEFINITION_PATTERN = re.compile(
-    r"(?is)nothing[\s]+lost,[\s]+corrupted,[\s]+exposed,[\s]+or[\s]+"
-    r"promised[\s]+and[\s]+unmet")
-_IMPACT_RULE_INSTANCE_PATTERN = re.compile(
-    r"(?is)drops[\s]+the[\s]+record[\s]+and[\s]+leaves[\s]+the[\s]+data")
-
-
-class NoRubricCopyInVerificationMdTest(unittest.TestCase):
-    """Neither rubric duplicates the other's distinctive content.
-
-    `verification.md` (the rating rubric's canonical home) must not carry
-    `SKILL.md`'s reporting-rubric kind list, and `SKILL.md`'s report step
-    (the reporting rubric) must not carry the rating rubric's contained
-    `low` definition or its concrete impact instances. Each rubric states
-    its own job's wording exactly once.
-    """
-
-    def test_verification_md_does_not_restate_the_reporting_kind_list(self):
-        self.assertNotRegex(
-            _read(VERIFICATION_MD), _REPORTING_KIND_LIST_PATTERN,
-            "verification.md must not carry a copy of the reporting "
-            "rubric's recovered kind-list wording")
-
-    def test_skill_md_does_not_restate_the_rating_rubrics_instances(self):
-        text = _read(SKILL_MD)
-        for pattern, label in (
-            (_LOW_DEFINITION_PATTERN, "contained-impact `low`"),
-            (_IMPACT_RULE_INSTANCE_PATTERN, "impact rule concrete instance"),
-        ):
-            with self.subTest(label=label):
-                self.assertNotRegex(
-                    text, pattern,
-                    f"SKILL.md's report step must not carry a copy of the "
-                    f"rating rubric's {label} wording")
-
-
-# review-drift-spawn: the drift spawn now carries both the description and
-# the diff, instead of the description alone -- a `description-drift`
-# candidate's claim is a relationship between the two, so a verifier holding
-# only one of them cannot check it. Whitespace-tolerant (`[*_\s]+`) because
-# this repo hard-wraps prose at 88 columns, so a plain substring spanning a
-# line break would silently pass against text that lacks it just as easily
-# as against text that has it -- a prior build found exactly that failure
-# mode. Each pattern below is proved to fail against the pre-change text
-# before being trusted (task 5.3).
-_DRIFT_SPAWN_BOTH_PATTERN = re.compile(
-    r"(?is)separate[*_\s]+spawn[*_\s]+carrying[*_\s]+both[*_\s]+the[*_\s]+"
-    r"description[*_\s]+and[*_\s]+the[*_\s]+diff")
-
-# The pre-change wording this build replaced, used only to prove the
-# pattern above is non-vacuous against it.
-_DRIFT_SPAWN_NO_DIFF_PATTERN = re.compile(
-    r"(?is)separate[*_\s]+spawn[*_\s]+carrying[*_\s]+the[*_\s]+description"
-    r"[*_\s]+and[*_\s]+no[*_\s]+diff")
-
-# The asymmetry is now stated explicitly, in these words, on every surface
-# that describes the two spawns -- the guard against a later edit "restoring
-# symmetry" by removing the diff again.
-_NOT_MIRROR_IMAGE_PATTERN = re.compile(
-    r"(?is)not[*_\s]+a[*_\s]+mirror[*_\s]+image")
-
-
-class DriftSpawnCarriesBothTest(unittest.TestCase):
-    """The drift spawn carries both the description and the diff
-    (review-drift-spawn), pinned on both surfaces that describe the spawn:
-    `verification.md` (the canonical home) and the harness body's step 12,
-    which inlines the same contract since it has no reference to defer to.
-    """
-
-    def test_drift_spawn_carries_both_description_and_diff(self):
-        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _DRIFT_SPAWN_BOTH_PATTERN,
-                    f"{path} must state that the drift spawn carries both "
-                    "the description and the diff")
-
-    def test_pattern_is_proved_against_the_pre_change_wording(self):
-        # Non-vacuousness proof (task 5.3): the paragraph this build
-        # replaced matches the old "no diff" pattern and must NOT match
-        # the new "carries both" pattern above.
-        old_text = (
-            "So a `description-drift` candidate\nis verified in a "
-            "**separate spawn carrying the description and no diff**,\n"
-            "never in the blind defect spawn described above.")
-        self.assertRegex(old_text, _DRIFT_SPAWN_NO_DIFF_PATTERN)
-        self.assertNotRegex(old_text, _DRIFT_SPAWN_BOTH_PATTERN)
-
-
-class AsymmetryStatedTest(unittest.TestCase):
-    """The two spawns are explicitly described as asymmetrical, never as
-    mirror images (review-drift-spawn) -- the mirror reading is what
-    produced the error this change fixes, so the guard against it lives in
-    the prose itself, on both surfaces.
-    """
-
-    def test_both_surfaces_state_the_asymmetry_explicitly(self):
-        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _NOT_MIRROR_IMAGE_PATTERN,
-                    f"{path} must state explicitly that the two spawns "
-                    "are not mirror images")
-
-    def test_pattern_is_proved_against_the_pre_change_wording(self):
-        # Non-vacuousness proof (task 5.3): the pre-change drift-exception
-        # paragraph never said "mirror image" anywhere.
-        old_text = (
-            "A single blind verifier would therefore kill every drift "
-            "candidate on principle, which is\nexactly what happened "
-            "before this change.")
-        self.assertNotRegex(old_text, _NOT_MIRROR_IMAGE_PATTERN)
-
-
-def _killed_block_text(text):
-    """The JSON payload's `"killed": [ ... ]` block, between its opening
-    `[` and the matching `]` -- scoped so a `category` search below cannot
-    accidentally match the unrelated `findings` entry earlier in the file.
-    """
-    start = text.find('"killed"')
-    if start == -1:
-        raise AssertionError('no "killed" field found')
-    open_bracket = text.find("[", start)
-    close_bracket = text.find("]", open_bracket)
-    if open_bracket == -1 or close_bracket == -1:
-        raise AssertionError('"killed" field has no [ ... ] block')
-    return text[open_bracket:close_bracket]
-
-
-class KilledEntryCategoryTest(unittest.TestCase):
-    """Each `killed` entry carries `category`, the same taxonomy value the
-    candidate held (review-drift-spawn) -- otherwise a consumer cannot tell
-    a drift kill from a defect kill without parsing `reason`'s prose.
-    Pinned on both machine-payload surfaces.
-    """
-
-    def test_killed_schema_carries_category_on_both_surfaces(self):
-        for path in (JSON_OUTPUT_MD, HARNESS_REVIEW_MD):
-            with self.subTest(path=path):
-                block = _killed_block_text(_read(path))
-                self.assertIn(
-                    '"category"', block,
-                    f"{path}'s killed entry schema must carry a "
-                    "`category` field")
-
-    def test_pre_change_killed_schema_had_no_category(self):
-        # Non-vacuousness proof (task 5.3): the schema this build replaced
-        # had exactly four fields and no `category`.
-        old_block = (
-            '[\n    {\n      "candidate": 0,\n      "location": '
-            '"path/to/killed.ext:LINE",\n      "what": "one-line '
-            "statement of the candidate's claim\",\n      \"reason\": "
-            '"why the verifier killed it"\n    }\n  ]')
-        self.assertNotIn('"category"', old_block)
-
-
-# The per-spawn candidate count field this build adds alongside the
-# existing `candidates` total. No quote-style requirement: the two JSON
-# payload surfaces spell it `"candidates_by_spawn"` inside a code block,
-# while the harness body (prose only, no JSON block for this field) names
-# it in backticks instead.
-_CANDIDATES_BY_SPAWN_PATTERN = re.compile(r"candidates_by_spawn")
-
-
-class PerSpawnCandidateCountTest(unittest.TestCase):
-    """`verifier` reports a candidate count per spawn alongside its
-    existing `candidates` total (review-drift-spawn) -- positions are
-    zero-based within their own spawn, so a single total cannot say which
-    spawn a position belongs to. `candidates` itself keeps its existing
-    name and meaning as the total; it is not repurposed to one spawn's
-    count under an unchanged name.
-    """
-
-    def test_both_payload_surfaces_name_a_per_spawn_count(self):
-        for path in (JSON_OUTPUT_MD, HARNESS_REVIEW_MD):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _CANDIDATES_BY_SPAWN_PATTERN,
-                    f"{path} must carry a per-spawn candidate count "
-                    "alongside the existing `candidates` total")
-
-    def test_harness_body_states_the_per_spawn_count_too(self):
-        # The harness body ships standalone with no reference to defer to,
-        # so it inlines the same contract (task 4.1).
-        self.assertRegex(
-            _read(HARNESS_REVIEW_BODY), _CANDIDATES_BY_SPAWN_PATTERN,
-            f"{HARNESS_REVIEW_BODY} must carry a per-spawn candidate "
-            "count alongside the existing `candidates` total")
-
-    def test_candidates_field_keeps_its_name_and_total_meaning(self):
-        for path in (JSON_OUTPUT_MD, HARNESS_REVIEW_MD):
-            with self.subTest(path=path):
-                self.assertIn(
-                    '"candidates"', _read(path),
-                    f"{path} must keep the existing `candidates` field "
-                    "naming the total")
-
-    def test_pre_change_payload_named_no_per_spawn_count(self):
-        # Non-vacuousness proof (task 5.3): the `verifier` object this
-        # build extends had no `candidates_by_spawn` field.
-        old_text = (
-            '"verifier": {\n    "state": "ran" | "skipped",\n    '
-            '"candidates": 4,\n    "reason": "why the spawn was skipped"\n'
-            "  }")
-        self.assertNotRegex(old_text, _CANDIDATES_BY_SPAWN_PATTERN)
 
 
 if __name__ == "__main__":

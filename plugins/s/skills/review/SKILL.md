@@ -21,11 +21,8 @@ user's **local, unpushed changes** against a base ref — *before* they open a
 PR, so problems are caught while they are cheap to fix.
 
 `semdiff` does the mechanical work and emits compact JSON. **You** supply the
-judgement. The structural diff and targeted lookups come first: read a file
-only when `related` names it for a check that needs cross-file context — a
-file it did not name stays unread, whatever your own judgement makes of it.
-Never a raw file dump or model-chosen exploration — that is still the point;
-what widens is the engine's own bounded, named set.
+judgement. Never read whole files into context when the structural diff and
+targeted lookups will do — that is the entire point.
 
 Invoke the engine as (it is a plugin script, not a PATH binary):
 
@@ -33,7 +30,7 @@ Invoke the engine as (it is a plugin script, not a PATH binary):
 python3 "$CLAUDE_PLUGIN_ROOT/skills/review/scripts/semdiff.py" <subcommand> ...
 ```
 
-Subcommands: `diff`, `files`, `lint`, `context`, `related`, `change`, `doctor`. All review
+Subcommands: `diff`, `files`, `lint`, `context`, `change`, `doctor`. All review
 subcommands are read-only and never touch the network; only `doctor --fix`
 installs software or reaches the network, and the single place this skill runs
 it is the review-start difftastic repair (see Degradation).
@@ -52,7 +49,6 @@ Each file below is read only when its condition fires — not by default.
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/new-code-checks.md` | a function, class, guard, or helper is new in the diff |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/pr-description.md` | a pull request's title and description are available |
 | `${CLAUDE_PLUGIN_ROOT}/skills/review/references/call-site-tracing.md` | a changed signature, constant, guard, or helper needs chasing to its call sites |
-| `${CLAUDE_PLUGIN_ROOT}/skills/review/references/verification.md` | every review, to run the verify stage between judging and reporting |
 
 ## Determine what to review
 
@@ -66,13 +62,15 @@ git fetch origin <base>
 Name the base's own remote where it tracks another one — read it from
 `git config branch.<base>.remote` rather than assuming `origin`.
 
-The fetch writes remote-tracking refs only — never the working tree, index, or a local
-branch — so the skill's no-modification guarantee holds; it never pulls, rebases, or
-checks anything out. The engine resolves a short branch to its remote-tracking commit
-once fetched, with no manual staleness check needed. A failed fetch continues the review
-with a could-not-verify entry naming the unchecked base, rather than ending it; a
-two-ref `lint` run similarly notes that the linters read the checkout, not the reviewed
-head, since `lint` passes changed paths to linter binaries that read them from disk.
+The fetch writes remote-tracking refs only — never the working tree, index,
+or a local branch — so the skill's no-modification guarantee holds; it
+never pulls, rebases, or checks anything out. The engine resolves a short
+branch to its remote-tracking commit once fetched, with no manual
+staleness check needed. A failed fetch continues the review with a
+could-not-verify entry naming the unchecked base, rather than ending it; a
+two-ref `lint` run similarly notes that the linters read the checkout, not
+the reviewed head, since `lint` passes changed paths to linter binaries
+that read them from disk.
 
 - **Local changes before pushing** (the default): `diff <base>` compares
   `<base>` against the working tree, defaulting to `main` (or `master`).
@@ -106,20 +104,7 @@ ambiguous. Each file entry carries an `engine` field (`difft` = syntax-aware;
 `text` = the degradation engine); the summary carries `signature_changes`, a
 best-effort count you refine.
 
-### 3. Pull related file context
-Run `related <base> [<head>]` (default `--mode balanced`: 8 related files per
-changed file, 40 across the review; `--mode max` raises both to 20 and 120)
-to get each changed file's importers and importees — ripgrep/`git
-grep`-backed, best-effort, never a complete call graph, with every truncation
-reported as a count rather than applied silently. Read a file this names when
-a check below needs context the diff alone does not carry: the
-downstream-impact and call-site checks (steps 4 and 5), and the lenses that
-compare a change against unchanged code (sibling-consistency in step 4, and
-the new-code checks in step 6). A file `related` did not name stays unread —
-the engine's named set is what widens this skill's context economy, never
-your own judgement about what else might be interesting.
-
-### 4. Check downstream impact
+### 3. Check downstream impact
 For any changed function/type/message signature, run `context <symbol>` to find
 references. Use `--lang` / `--path` to cut noise on common names. Read
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/call-site-tracing.md` for guidance:
@@ -129,25 +114,24 @@ references. Use `--lang` / `--path` to cut noise on common names. Read
 - **Changed constants are contract changes** — chase every consumer of the constant.
 - **Uneven sibling sites** — compare parallel implementations against each other.
 
-### 4b. Read the linter output
+### 3b. Read the linter output
 Run `lint <base> [<head>]` over the same endpoints as the diff. Read
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/linters.md` to interpret each
 linter's state and findings. A linter finding is corroboration you weigh,
 reported only where it bears on the change — never promoted to a review
 finding automatically.
 
-### 5. Trace call-site values — reachability and comment accuracy
+### 4. Trace call-site values — reachability and comment accuracy
 Do not judge a new branch, guard, or helper in isolation — follow the actual
-argument each call site passes in (same reference as step 4):
+argument each call site passes in (same reference as step 3):
 - **Unreachable guard / dead branch** — a defensive branch the real call never hits.
 - **Comment / intent vs. actual behaviour** — a comment the real call sites contradict.
 
-Either alone often looks small, but together they compound. Send both to step
-8's rubric to rate by what they do — this step never rates on its own. Whenever
-you quote a mechanism in the walkthrough, confirm the path that reaches it
-actually runs with the values the call sites supply.
+Both are usually low severity alone, but they compound. Whenever you quote a
+mechanism in the walkthrough, confirm the path that reaches it actually runs
+with the values the call sites supply.
 
-### 6. Judge new code on its own terms
+### 5. Judge new code on its own terms
 Judge every new function, class, guard, or helper in the diff against its stated
 purpose — never wave it through. Read
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/new-code-checks.md` for guidance:
@@ -157,7 +141,7 @@ purpose — never wave it through. Read
 - **Boundary agreement** — documented boundary matches the actual code.
 - **Doc comment versus code** — documented behavior matches the actual code.
 
-### 6b. Risk lenses
+### 5b. Risk lenses
 Check every diff, in every cohort, against six fixed triggers, always — never
 gated on cohort or file type. Read
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/risk-lenses.md` for the full
@@ -177,16 +161,13 @@ guidance and worked examples once one fires:
 - **Packaging and dependency manifests** — a manifest or lockfile that disagrees with the
   code, with each other, or omits a new file from what it publishes.
 
-### 6c. Breadth sweep
-Revisit each changed file end to end for a remaining defect the structural
-diff and signature-chasing steps above do not catch on their own: a swallowed
-or silently-dropped error, a resource or file leak on a rare or cleanup path,
-dead or duplicated code, a field or variable declared but never read, an
-unstable or incorrect identity such as a list key derived from an array
-index, or a blocking call in an async context. Send what the sweep finds back
-to step 8's rubric to rate — this step never rates on its own.
+### 5c. Breadth sweep for minor defects
+Revisit each changed file end to end for a remaining defect of the minor kinds
+named in the rubric below — a pass the structural diff and signature-chasing
+steps do not catch. Rate what the sweep finds by the rubric's impact floor, not
+by the kind that surfaced it.
 
-### 6d. Check the PR description against the diff
+### 5d. Check the PR description against the diff
 When a pull request's title and description are available, read
 `${CLAUDE_PLUGIN_ROOT}/skills/review/references/pr-description.md` and check
 them against the diff in both directions — every claim against the diff, and
@@ -194,19 +175,7 @@ the diff's substantial content against what the description never mentions.
 An unmentioned feature has no claim to check, so only the second direction
 finds it.
 
-### 7. Verify candidates
-Before reporting, spawn one fresh-context verifier with the `Agent` tool,
-`subagent_type: general-purpose`, to confirm or kill every candidate finding
-steps 1–6d produced. The verifier gets the candidates, the
-diff, and file-read access — never the reasoning that produced them — and returns, per
-candidate, `confirmed` with a severity or `killed` with a one-line reason, indexed
-zero-based and identical to the candidate's position in the list it received — one
-numbering end to end. Severity is
-the verifier's call, overriding whatever a pass proposed. See
-`${CLAUDE_PLUGIN_ROOT}/skills/review/references/verification.md` for what it is given
-and withheld, and the degradation path when the spawn is unavailable.
-
-### 8. Report by cohort
+### 6. Report by cohort
 Group findings under cohort headings, most severe first. For each finding: a
 **location** (the fix site — the line your own fix would change, never a
 symptom site in place of it), **what**, **why**, **fix**, and **severity**. A
@@ -214,13 +183,10 @@ further location names a site where the defect is visible: a line wrong in
 the same way, a line that shows the mismatch on its own terms, or — where the
 defect is the conjunction of two lines neither wrong alone — the line at
 which it surfaces at run time even though that line is correct in isolation.
-When a defect recurs at multiple sites, write one
-finding whose `locations` array names every site.
+When a defect recurs at multiple sites, write one finding whose `locations`
+array names every site.
 
-**Reporting rubric.** This decides what to report and proposes a severity; it
-is not the final severity — the verify stage owns that, with its own
-**rating** rubric, a different rubric that differs from this one at the
-`low` bullet (see `${CLAUDE_PLUGIN_ROOT}/skills/review/references/verification.md`).
+**Severity rubric.**
 - **high** — a correctness bug, a contract break with an un-updated consumer, or an
   unmet spec acceptance criterion.
 - **medium** — an unhandled edge case, an untouched caller at genuine risk, or a likely-
@@ -234,17 +200,12 @@ is not the final severity — the verify stage owns that, with its own
   as one of those kinds. A swallowed error that loses a file is not low.
 - **Exposure floor.** A secret or credential exposure finding, or an authorization
   boundary reached without the caller's scope check, is always `high`, whatever the
-  reviewer's confidence. This holds here too: when the verifier does not run, every
-  finding keeps the severity this stage proposed, so this absolute has to hold on
-  this surface as well.
+  reviewer's confidence.
 
 Any high **or** medium finding blocks (Fix required); low never blocks. When
-unsure between two levels, state the doubt rather than inflating. Uncertainty
-about severity is never grounds for omitting a finding: where you cannot
-place one, report it at your best estimate and say the estimate is
-uncertain — a defect you can describe is a defect you report.
+unsure between two levels, state the doubt rather than inflating.
 
-### 9. Check test coverage, rolled up per cohort
+### 7. Check test coverage, rolled up per cohort
 Ask of **every** finding you write, at **every** severity: would an existing
 test fail if this defect regressed? Then roll the answers up — raise **one**
 `test-coverage` finding per cohort that has uncovered findings (see
@@ -281,9 +242,7 @@ sites, not a defect at each.
    edited in place rather than given a second summary comment.
 4. **Summary table** — one row per finding, most-severe first, columns
    `# | rating | details`; rating is 🔴 high / 🟠 med / 🟡 low (display label
-   `med`; the severity value stays `medium`). Name the kill count beside it,
-   e.g. `N findings, K killed.`, so a reader sees what the verify stage
-   removed. No findings → print
+   `med`; the severity value stays `medium`). No findings → print
    `## Findings: ✅ Ship it` and "No problems found." and omit the empty
    table. `review_gate.py post` closes the summary comment with one stat
    line, `Reviewed N files, +A -D lines.`, counted from the PR's own file
@@ -333,11 +292,6 @@ mode's "what you could not verify" list *and* in `--json`'s `could_not_verify`
 array — naming that file's text-engine fallback. `doctor` (without `--fix`)
 reports what is available and touches nothing. git and difft are the two hard
 requirements.
-
-**Verify-stage spawn.** When the `Agent` tool is unavailable or the spawn fails, continue
-rather than abort: record `verifier.state` as `skipped` with the reason, keep each finding's
-proposed severity, and add an entry to the could-not-verify list. A review whose verifier
-did not run is never reported as verified.
 
 ## Documentation standard
 

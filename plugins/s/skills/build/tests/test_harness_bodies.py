@@ -405,18 +405,35 @@ class ShippedRenderTest(unittest.TestCase):
         **194** lines, for `review` on `aider` — up from the 189 the prior
         raise measured, so a later reader can see how fast this number
         moves, not only where it last landed.
+
+        Then it fell, 250 -> 150, in `review-revert-to-260` — the first
+        lowering in the series. That change reverted the review path to
+        v0.6.260 because eleven versions of recall work measured worse than
+        the version they started from, so the review body shed every rule
+        added after v0.6.260 and the headroom those raises bought was no
+        longer holding anything up. A ceiling left at 250 over a body
+        rendering 141 guards nothing.
+
+        150 rather than v0.6.260's own 140, and the difference is the point:
+        arithmetic on the source file predicted 138 and so predicted 140
+        would hold, but rendering every registered harness put `review` on
+        `aider` at **141**. v0.6.260's 140 was therefore never valid against
+        `aider` — its test rendered only the full feature vocabulary, and the
+        every-harness loop above arrived later, in `review-verifier-handover`.
+        A reverted ceiling still has to clear a case the version it reverts to
+        never measured.
         """
         for command in hb.commands():
             lines = len(hb.render(command, hr.FEATURES,
                                   refs_dir=REFS).splitlines())
-            self.assertLess(lines, 250,
+            self.assertLess(lines, 150,
                             "%s renders %d lines" % (command, lines))
         for command in hb.commands():
             for harness in hr.HARNESSES:
                 lines = len(hb.render(command, harness["features"],
                                       refs_dir=REFS).splitlines())
                 self.assertLess(
-                    lines, 250,
+                    lines, 150,
                     "%s renders %d lines for harness %r"
                     % (command, lines, harness["id"]))
 
