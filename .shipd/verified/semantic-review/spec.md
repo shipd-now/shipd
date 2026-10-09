@@ -265,7 +265,12 @@ severity. Those kinds SHALL NOT set the severity: the skill SHALL rate every
 finding by what the defect does, so data loss, data corruption, a security
 exposure, or a broken guarantee is `medium` or `high` even when it arrives as
 one of the minor kinds — a swallowed error that loses a file is not `low`.
-Every surface that states the low rubric SHALL state that floor beside it.
+Because those four are categories rather than situations, every surface stating
+the floor SHALL also name concrete instances a reviewer can recognise: a
+success response that hides a failure, a cleanup path that drops the record and
+leaves the data or the reverse, and an error path that loses the only copy.
+Every surface that states the low rubric SHALL state that floor, and those
+instances, beside it.
 The skill SHALL run a breadth sweep, after judging new code and
 applying the risk lenses, that revisits each changed file once more, end to
 end, for a remaining low-severity defect of those kinds that the targeted
@@ -464,6 +469,12 @@ judgement passes as the skill, so the two surfaces do not drift.
   swallowed error — but loses a file when the error fires
 - **THEN** the review rates it `medium` or `high`, not `low`, so it blocks
   the merge
+
+#### Scenario: The floor names recognisable instances
+- **WHEN** any surface stating the impact floor is inspected
+- **THEN** it names the success response that hides a failure, the cleanup path
+  that drops the record and leaves the data or the reverse, and the error path
+  that loses the only copy
 
 #### Scenario: Both rubric surfaces state the impact floor
 - **WHEN** `plugins/s/skills/review/SKILL.md` and

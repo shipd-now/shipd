@@ -102,7 +102,11 @@ edits the repository.
     what it does, not which kind it resembles: data loss, data corruption, a
     security exposure, or a broken guarantee is medium or high even when it
     arrives as one of those kinds — a swallowed error that loses a file is not
-    low. A secret or credential exposure finding, or an authorization boundary
+    low. Concrete instances: a success response that hides a failure, an empty
+    result returned as if real while a count or flag says otherwise; a cleanup
+    path that drops the record and leaves the data, or the reverse; and an
+    error path that loses the only copy. A secret or credential exposure
+    finding, or an authorization boundary
     reached without a scope check, is always **high** regardless of your
     confidence.
     Open with an effort score of 1–5 justified by the counts, then the verdict:
