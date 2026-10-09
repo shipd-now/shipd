@@ -1984,5 +1984,176 @@ class NoRubricCopyInVerificationMdTest(unittest.TestCase):
                     f"rating rubric's {label} wording")
 
 
+# review-drift-spawn: the drift spawn now carries both the description and
+# the diff, instead of the description alone -- a `description-drift`
+# candidate's claim is a relationship between the two, so a verifier holding
+# only one of them cannot check it. Whitespace-tolerant (`[*_\s]+`) because
+# this repo hard-wraps prose at 88 columns, so a plain substring spanning a
+# line break would silently pass against text that lacks it just as easily
+# as against text that has it -- a prior build found exactly that failure
+# mode. Each pattern below is proved to fail against the pre-change text
+# before being trusted (task 5.3).
+_DRIFT_SPAWN_BOTH_PATTERN = re.compile(
+    r"(?is)separate[*_\s]+spawn[*_\s]+carrying[*_\s]+both[*_\s]+the[*_\s]+"
+    r"description[*_\s]+and[*_\s]+the[*_\s]+diff")
+
+# The pre-change wording this build replaced, used only to prove the
+# pattern above is non-vacuous against it.
+_DRIFT_SPAWN_NO_DIFF_PATTERN = re.compile(
+    r"(?is)separate[*_\s]+spawn[*_\s]+carrying[*_\s]+the[*_\s]+description"
+    r"[*_\s]+and[*_\s]+no[*_\s]+diff")
+
+# The asymmetry is now stated explicitly, in these words, on every surface
+# that describes the two spawns -- the guard against a later edit "restoring
+# symmetry" by removing the diff again.
+_NOT_MIRROR_IMAGE_PATTERN = re.compile(
+    r"(?is)not[*_\s]+a[*_\s]+mirror[*_\s]+image")
+
+
+class DriftSpawnCarriesBothTest(unittest.TestCase):
+    """The drift spawn carries both the description and the diff
+    (review-drift-spawn), pinned on both surfaces that describe the spawn:
+    `verification.md` (the canonical home) and the harness body's step 12,
+    which inlines the same contract since it has no reference to defer to.
+    """
+
+    def test_drift_spawn_carries_both_description_and_diff(self):
+        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _DRIFT_SPAWN_BOTH_PATTERN,
+                    f"{path} must state that the drift spawn carries both "
+                    "the description and the diff")
+
+    def test_pattern_is_proved_against_the_pre_change_wording(self):
+        # Non-vacuousness proof (task 5.3): the paragraph this build
+        # replaced matches the old "no diff" pattern and must NOT match
+        # the new "carries both" pattern above.
+        old_text = (
+            "So a `description-drift` candidate\nis verified in a "
+            "**separate spawn carrying the description and no diff**,\n"
+            "never in the blind defect spawn described above.")
+        self.assertRegex(old_text, _DRIFT_SPAWN_NO_DIFF_PATTERN)
+        self.assertNotRegex(old_text, _DRIFT_SPAWN_BOTH_PATTERN)
+
+
+class AsymmetryStatedTest(unittest.TestCase):
+    """The two spawns are explicitly described as asymmetrical, never as
+    mirror images (review-drift-spawn) -- the mirror reading is what
+    produced the error this change fixes, so the guard against it lives in
+    the prose itself, on both surfaces.
+    """
+
+    def test_both_surfaces_state_the_asymmetry_explicitly(self):
+        for path in (VERIFICATION_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _NOT_MIRROR_IMAGE_PATTERN,
+                    f"{path} must state explicitly that the two spawns "
+                    "are not mirror images")
+
+    def test_pattern_is_proved_against_the_pre_change_wording(self):
+        # Non-vacuousness proof (task 5.3): the pre-change drift-exception
+        # paragraph never said "mirror image" anywhere.
+        old_text = (
+            "A single blind verifier would therefore kill every drift "
+            "candidate on principle, which is\nexactly what happened "
+            "before this change.")
+        self.assertNotRegex(old_text, _NOT_MIRROR_IMAGE_PATTERN)
+
+
+def _killed_block_text(text):
+    """The JSON payload's `"killed": [ ... ]` block, between its opening
+    `[` and the matching `]` -- scoped so a `category` search below cannot
+    accidentally match the unrelated `findings` entry earlier in the file.
+    """
+    start = text.find('"killed"')
+    if start == -1:
+        raise AssertionError('no "killed" field found')
+    open_bracket = text.find("[", start)
+    close_bracket = text.find("]", open_bracket)
+    if open_bracket == -1 or close_bracket == -1:
+        raise AssertionError('"killed" field has no [ ... ] block')
+    return text[open_bracket:close_bracket]
+
+
+class KilledEntryCategoryTest(unittest.TestCase):
+    """Each `killed` entry carries `category`, the same taxonomy value the
+    candidate held (review-drift-spawn) -- otherwise a consumer cannot tell
+    a drift kill from a defect kill without parsing `reason`'s prose.
+    Pinned on both machine-payload surfaces.
+    """
+
+    def test_killed_schema_carries_category_on_both_surfaces(self):
+        for path in (JSON_OUTPUT_MD, HARNESS_REVIEW_MD):
+            with self.subTest(path=path):
+                block = _killed_block_text(_read(path))
+                self.assertIn(
+                    '"category"', block,
+                    f"{path}'s killed entry schema must carry a "
+                    "`category` field")
+
+    def test_pre_change_killed_schema_had_no_category(self):
+        # Non-vacuousness proof (task 5.3): the schema this build replaced
+        # had exactly four fields and no `category`.
+        old_block = (
+            '[\n    {\n      "candidate": 0,\n      "location": '
+            '"path/to/killed.ext:LINE",\n      "what": "one-line '
+            "statement of the candidate's claim\",\n      \"reason\": "
+            '"why the verifier killed it"\n    }\n  ]')
+        self.assertNotIn('"category"', old_block)
+
+
+# The per-spawn candidate count field this build adds alongside the
+# existing `candidates` total. No quote-style requirement: the two JSON
+# payload surfaces spell it `"candidates_by_spawn"` inside a code block,
+# while the harness body (prose only, no JSON block for this field) names
+# it in backticks instead.
+_CANDIDATES_BY_SPAWN_PATTERN = re.compile(r"candidates_by_spawn")
+
+
+class PerSpawnCandidateCountTest(unittest.TestCase):
+    """`verifier` reports a candidate count per spawn alongside its
+    existing `candidates` total (review-drift-spawn) -- positions are
+    zero-based within their own spawn, so a single total cannot say which
+    spawn a position belongs to. `candidates` itself keeps its existing
+    name and meaning as the total; it is not repurposed to one spawn's
+    count under an unchanged name.
+    """
+
+    def test_both_payload_surfaces_name_a_per_spawn_count(self):
+        for path in (JSON_OUTPUT_MD, HARNESS_REVIEW_MD):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _CANDIDATES_BY_SPAWN_PATTERN,
+                    f"{path} must carry a per-spawn candidate count "
+                    "alongside the existing `candidates` total")
+
+    def test_harness_body_states_the_per_spawn_count_too(self):
+        # The harness body ships standalone with no reference to defer to,
+        # so it inlines the same contract (task 4.1).
+        self.assertRegex(
+            _read(HARNESS_REVIEW_BODY), _CANDIDATES_BY_SPAWN_PATTERN,
+            f"{HARNESS_REVIEW_BODY} must carry a per-spawn candidate "
+            "count alongside the existing `candidates` total")
+
+    def test_candidates_field_keeps_its_name_and_total_meaning(self):
+        for path in (JSON_OUTPUT_MD, HARNESS_REVIEW_MD):
+            with self.subTest(path=path):
+                self.assertIn(
+                    '"candidates"', _read(path),
+                    f"{path} must keep the existing `candidates` field "
+                    "naming the total")
+
+    def test_pre_change_payload_named_no_per_spawn_count(self):
+        # Non-vacuousness proof (task 5.3): the `verifier` object this
+        # build extends had no `candidates_by_spawn` field.
+        old_text = (
+            '"verifier": {\n    "state": "ran" | "skipped",\n    '
+            '"candidates": 4,\n    "reason": "why the spawn was skipped"\n'
+            "  }")
+        self.assertNotRegex(old_text, _CANDIDATES_BY_SPAWN_PATTERN)
+
+
 if __name__ == "__main__":
     unittest.main()

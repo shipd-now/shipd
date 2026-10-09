@@ -565,7 +565,18 @@ The spawn message SHALL NOT carry the pull request's title, description, or any
 summary of either, so a description cannot talk the verifier out of a finding
 that was already detected. A `description-drift` candidate cannot be judged
 without the description, so such candidates SHALL be verified in a separate
-spawn carrying the description and no diff.
+spawn carrying the description **and the diff** — the claim is a relationship
+between the two, so a verifier holding one of them cannot check it. The two
+spawns SHALL NOT be described as mirror images: the defect spawn carries the
+diff and not the description, the drift spawn carries both, and the asymmetry
+SHALL be stated wherever the spawns are, so nobody later restores a symmetry
+that never applied.
+
+Each `killed` entry SHALL carry the `category` the candidate held, so a
+consumer can tell a drift kill from a defect kill without parsing prose. The
+`verifier` block SHALL report a candidate count per spawn alongside its
+existing total, since positions are zero-based within their own spawn and a
+single total cannot say which spawn a position belongs to.
 
 The candidate list SHALL be in **discovery order** — the order the passes
 produced candidates — so a reader can test whether kills cluster by position
@@ -644,10 +655,18 @@ not verify. It SHALL NOT report a review as verified when no verifier ran.
 - **WHEN** a defect candidate is verified
 - **THEN** the spawn carries no title, description or summary of either
 
-#### Scenario: A drift candidate is verified against the description alone
+#### Scenario: A drift candidate can check its own claim
 - **WHEN** a `description-drift` candidate is verified
-- **THEN** it is judged in a separate spawn carrying the description, not in
-  the blind defect spawn
+- **THEN** its spawn carries both the description and the diff
+
+#### Scenario: A drift kill is identifiable without reading prose
+- **WHEN** a killed candidate is reported
+- **THEN** its entry carries the category the candidate held
+
+#### Scenario: The two spawns are not symmetrical
+- **WHEN** the spawns are described on any surface
+- **THEN** the defect spawn carries no description, the drift spawn carries
+  both, and the asymmetry is stated rather than left to be inferred
 
 ### Requirement: Spec-aware verification
 id: spec-aware-review

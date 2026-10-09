@@ -48,6 +48,7 @@ preamble, no fences, no commentary, and no emoji:
   "killed": [
     {
       "candidate": 0,
+      "category": "bug" | "contract" | "edge-case" | "untouched-caller" | "spec-coverage" | "test-coverage" | "security" | "performance" | "stability" | "data-integrity" | "description-drift",
       "location": "path/to/killed.ext:LINE",
       "what": "one-line statement of the candidate's claim",
       "reason": "why the verifier killed it"
@@ -56,6 +57,7 @@ preamble, no fences, no commentary, and no emoji:
   "verifier": {
     "state": "ran" | "skipped",
     "candidates": 4,
+    "candidates_by_spawn": { "defect": 3, "drift": 1 },
     "reason": "why the spawn was skipped"
   }
 }
@@ -88,7 +90,9 @@ the same contract.
 `killed` and `verifier` carry the verify stage's output. A candidate the
 verifier confirms becomes an ordinary `findings` entry, at the severity the
 verifier assigned. A candidate the verifier kills becomes an entry in
-`killed` instead — `location`, `what`, `reason`, and `candidate` (its
+`killed` instead — `location`, `what`, `reason`, `category` (the same
+taxonomy value the candidate held, so a consumer can tell a drift kill from
+a defect kill without parsing `reason`'s prose), and `candidate` (its
 zero-based position in the list the verifier received, which MUST be in
 **discovery order** — the order the passes produced the candidates, never
 severity order, so a reader can test whether kills cluster by position
@@ -96,8 +100,13 @@ rather than by merit) — and **never** appears among `findings`,
 under any status: a consumer scoring the payload counts every `findings`
 entry as reported, so a kill placed there would erase the precision the
 stage exists to produce. `verifier` names `state` (`ran` or `skipped`) and
-`candidates` (the total length of the list the verifier was given), with a
-`reason` when skipped. Where the `Agent` spawn is unavailable or fails,
+`candidates` (the total length of the list the verifier was given, across
+both spawns), with `candidates_by_spawn` (that same total broken out as
+`defect` and `drift`, since each spawn's candidates are indexed zero-based
+within their own list and the single total cannot say which spawn a
+position belongs to) and a `reason` when skipped. `candidates` keeps its
+existing name and meaning as the total — it is not repurposed to mean one
+spawn's count. Where the `Agent` spawn is unavailable or fails,
 record `state: "skipped"` with the `reason`, leave `killed` empty, keep every
 finding at the severity its proposing pass assigned, and add an entry to
 `could_not_verify` naming the review as unverified — never report

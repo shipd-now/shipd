@@ -44,6 +44,7 @@ rendering changes. Shape:
   "killed": [
     {
       "candidate": 0,
+      "category": "bug" | "contract" | "edge-case" | "untouched-caller" | "spec-coverage" | "test-coverage" | "security" | "performance" | "stability" | "data-integrity" | "description-drift",
       "location": "path/to/killed.ext:LINE",
       "what": "one-line statement of the candidate's claim",
       "reason": "why the verifier killed it"
@@ -52,6 +53,7 @@ rendering changes. Shape:
   "verifier": {
     "state": "ran" | "skipped",
     "candidates": 4,
+    "candidates_by_spawn": { "defect": 3, "drift": 1 },
     "reason": "why the spawn was skipped"
   }
 }
@@ -94,26 +96,36 @@ Every candidate finding is verified before it is reported (see
 candidate the verifier confirms becomes an ordinary entry in `findings`, at
 the severity the verifier assigned. A candidate the verifier kills becomes an
 entry in the top-level `killed` array instead — `location`, `what`, `reason`,
-and `candidate` (its zero-based position in the list the verifier received) —
-and **never** appears among `findings`, under any status or flag. A consumer
-scoring the payload counts every `findings` entry as reported, so a kill
-placed there, however flagged, would erase the precision this stage exists to
-produce.
+`category` (the same taxonomy value the candidate held), and `candidate` (its
+zero-based position in the list the verifier received) — and **never**
+appears among `findings`, under any status or flag. A consumer scoring the
+payload counts every `findings` entry as reported, so a kill placed there,
+however flagged, would erase the precision this stage exists to produce.
+Without `category`, a consumer could not tell a `description-drift` kill
+from a defect kill except by parsing `reason`'s prose.
 
 The top-level `verifier` object names `state` (`ran` or `skipped`) and
-`candidates` (the total length of the list the verifier was given), with a
-`reason` when skipped. The position on each killed entry and the total on
-`verifier` together let a reader test whether kills cluster by where a
-candidate sat in the list rather than by its merits — surviving findings and
-kills are reported in two separate arrays, so without both numbers there is
-no way to tell. That distinction decides whether one verifier per review
-stays sufficient or whether candidates anchor on each other inside a single
-pass. The candidate list's order MUST be **discovery order** — the order the
-passes produced the candidates — so a reader can test whether kills cluster
-by position rather than by merit. Severity order is excluded deliberately: it
-would correlate position with proposed severity and confound that test
-permanently, since a cluster of kills at one end could then be read as either
-an ordering artifact or a severity artifact with no way to tell which.
+`candidates` (the total length of the list the verifier was given, across
+both spawns), with a `reason` when skipped. `candidates_by_spawn` carries
+that same total broken out per spawn — `defect` and `drift` — since each
+spawn's candidates are indexed zero-based within their own list, so the
+single total cannot say which spawn a given position belongs to.
+`candidates` itself keeps its existing name and meaning as the total; it is
+not repurposed to mean one spawn's count, so a consumer reading only that
+field today is not silently handed a different number tomorrow. The
+position on each killed entry and the total on `verifier` together let a
+reader test whether kills cluster by where a candidate sat in the list
+rather than by its merits — surviving findings and kills are reported in two
+separate arrays, so without both numbers there is no way to tell. That
+distinction decides whether one verifier per review stays sufficient or
+whether candidates anchor on each other inside a single pass. The candidate
+list's order MUST be **discovery order** — the order the passes produced
+the candidates — so a reader can test whether kills cluster by position
+rather than by merit. Severity order is excluded deliberately: it would
+correlate position with proposed severity and confound that test
+permanently, since a cluster of kills at one end could then be read as
+either an ordering artifact or a severity artifact with no way to tell
+which.
 
 Where the `Agent` spawn is unavailable — a restricted tool list denies it, or
 it fails — record `state: "skipped"` with the `reason`, leave `killed` empty,
