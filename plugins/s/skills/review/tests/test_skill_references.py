@@ -214,6 +214,42 @@ _EXCLUSIVE_LOCATION_FORM_PATTERN = re.compile(
     r"(?is)further[*_\s]+(?:location|site).{0,40}only[*_\s]+where"
     r".{0,80}independently[*_\s]+shows[*_\s]+the[*_\s]+defect")
 
+# The distance condition, in the only form that binds: BOTH limbs required,
+# and the enclosure belongs to the *primary*. Pinned together because the
+# first attempt at this rule shipped the limbs disjunctively — "outside the
+# primary's function, **or** outside its hunk" — which either half satisfies
+# alone, and which a file with no functions satisfies vacuously, so the rule
+# never bound at all. The trailing "the primary sits in" is load-bearing on
+# its own: with the subject dropped to a bare "it", the nearest antecedent is
+# the further location, and "outside the function it sits in" is a condition
+# no line can ever meet, which would suppress every further location
+# including the cross-file anchors the rule is written to preserve.
+_DISTANCE_CONDITION_PATTERN = re.compile(
+    r"(?is)outside[*_\s]+(?:both[*_\s]+)?the[*_\s]+primary's[*_\s]+hunk"
+    r".{0,60}function,[*_\s]+block[*_\s]+or[*_\s]+table"
+    r"[*_\s]+the[*_\s]+primary[*_\s]+sits[*_\s]+in")
+
+# The disjunctive form's absence, pinned directly rather than inferred from
+# the conjunctive form's presence: an edit could add "and" in one place while
+# leaving an "or" limb standing elsewhere in the same sentence.
+_DISJUNCTIVE_DISTANCE_PATTERN = re.compile(
+    r"(?is)outside[*_\s]+(?:both[*_\s]+)?the[*_\s]+primary's"
+    r"[*_\s]+(?:function|hunk)[*_\s,]{0,8}(?:\*\*)?or(?:\*\*)?"
+    r"[*_\s]+outside")
+
+# The recurrence exemption and the discriminator that keeps it from
+# swallowing the rule. Without the second sentence the exemption is open to
+# any two-line mechanism — precisely the anchors the distance condition
+# exists to suppress, since the second half of a conjunction is always
+# "another site". "Each wrong on its own" is the test that separates them,
+# and it has to travel with the exemption on both surfaces.
+_RECURRENCE_EXEMPTION_PATTERN = re.compile(
+    r"(?is)recurring[*_\s]+site[*_\s]+is[*_\s]+exempt.{0,100}"
+    r"independently.{0,80}each[*_\s]+wrong[*_\s]+on[*_\s]+its[*_\s]+own"
+    r".{0,220}two[*_\s]+lines[*_\s]+that[*_\s]+together[*_\s]+make"
+    r"[*_\s]+a[*_\s]+single[*_\s]+defect.{0,60}not[*_\s]+a"
+    r"[*_\s]+recurrence")
+
 # Matches from the `- **low**` bullet marker through the first occurrence of
 # the word "findings" and the rest of that line — the bullet always ends
 # "... are never findings[.,]...", so this captures exactly the bullet's own
@@ -418,11 +454,25 @@ class SkillMdStructureTest(unittest.TestCase):
         resuming the ceiling's job of guarding against bloat rather than
         sitting dozens of lines clear of the file. `review-skill-references`
         owns this figure; it is not restated anywhere else.
+
+        It then rose, 340 to 350, in `review-further-location-distance`. The
+        further-location rule gained a distance condition whose first wording
+        was a disjunction — "outside the primary's function, **or** outside its
+        hunk" — which the review showed is satisfied by either half alone, and
+        is satisfied vacuously by any file with no functions, meaning most of
+        this repository. Stating it as a conjunction, naming the block or table
+        that encloses a manifest line, and exempting a genuinely recurring site
+        took the file to 343, measured. Not 341: the 332 above is what
+        `review-revert-to-260` landed, and v0.6.276's impact-floor instances
+        added four lines to this file afterwards without updating the figure,
+        so arithmetic from 332 undercounts by four. Measure this one rather
+        than adding to the last number recorded here. The raise buys
+        correctness, not volume.
         """
         self.assertLess(
-            len(self.lines), 340,
-            "SKILL.md must stay under 340 lines now that the verify stage "
-            "and the related-file-context step are gone")
+            len(self.lines), 350,
+            "SKILL.md must stay under 350 lines; the further-location "
+            "distance condition took it to 343")
 
     def test_no_moved_headings_remain(self):
         for heading in MOVED_HEADINGS:
@@ -756,6 +806,65 @@ class LocationRuleGeneralisedTest(unittest.TestCase):
                     "to a defect that is the conjunction of two lines, "
                     "neither wrong alone — not state it as an unscoped "
                     "licence to anchor at any correct-in-isolation site")
+
+
+class DistanceConditionParityTest(unittest.TestCase):
+    """The distance condition binds identically on both read-every-time surfaces.
+
+    `review-further-location-distance` adds the condition to `SKILL.md` and
+    mirrors it inline in the harness body, which ships standalone into other
+    repositories and can read no reference file. Nothing pinned the pair, and
+    the first round of the change shows why that matters: its wording reached
+    review as a disjunction, "outside the primary's function **or** outside
+    its hunk", which either half satisfies alone and which any file with no
+    functions satisfies vacuously — most of this repository. That round was
+    rewound, and a green suite was no obstacle to it, because no test read
+    the clause at all.
+
+    Three things are pinned here, each the failure mode of one earlier
+    attempt at this rule:
+
+    - **Conjunctive, on both surfaces.** Both limbs required, not either.
+    - **The enclosure belongs to the primary.** "The function, block or table
+      the primary sits in", never a bare "it" — whose nearest antecedent is
+      the further location, making the limb unsatisfiable and suppressing
+      every further location, cross-file anchors included.
+    - **The recurrence exemption travels with its discriminator.** A defect
+      recurring at genuinely independent sites is exempt from the distance;
+      two lines that together make one defect are not, or the exemption
+      swallows the rule it is an exception to.
+    """
+
+    def test_both_surfaces_state_the_condition_conjunctively(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _DISTANCE_CONDITION_PATTERN,
+                    f"{path} must require a further location to sit outside "
+                    "the primary's hunk AND outside the function, block or "
+                    "table the primary sits in — both limbs, with the "
+                    "primary named as the enclosure's owner")
+
+    def test_neither_surface_states_the_disjunctive_form(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertNotRegex(
+                    _read(path), _DISJUNCTIVE_DISTANCE_PATTERN,
+                    f"{path} must not join the distance limbs with 'or' — a "
+                    "disjunction is satisfied by either half alone, and "
+                    "vacuously by any file with no functions, so the rule "
+                    "never binds")
+
+    def test_both_surfaces_exempt_recurrence_and_bound_the_exemption(self):
+        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    _read(path), _RECURRENCE_EXEMPTION_PATTERN,
+                    f"{path} must exempt a site where the same defect "
+                    "recurs independently, each wrong on its own, and must "
+                    "state that two lines together making a single defect "
+                    "are not a recurrence — without that discriminator the "
+                    "exemption readmits the anchors the condition suppresses")
 
 
 class CopilotCapabilityRestatesNoOwnedWordingTest(unittest.TestCase):

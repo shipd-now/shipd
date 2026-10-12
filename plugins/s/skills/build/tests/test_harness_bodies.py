@@ -422,18 +422,42 @@ class ShippedRenderTest(unittest.TestCase):
         every-harness loop above arrived later, in `review-verifier-handover`.
         A reverted ceiling still has to clear a case the version it reverts to
         never measured.
+
+        It rose again, 150 -> 160, in `review-further-location-distance`. The
+        further-location rule gained a distance condition, and the first
+        wording of it was wrong in a way the review caught: it read "outside
+        the primary's function, **or** outside its hunk", a disjunction, so
+        satisfying either half satisfied it — and in a file with no functions
+        at all, which is most of this repository, the first half is vacuously
+        true and the rule never bound. Correcting it to a conjunction, naming
+        the block or table that encloses a manifest line, and exempting a
+        genuinely recurring site cost lines the 150 ceiling did not have.
+        Measured by rendering every registered harness, the correct wording
+        puts the worst body at **154**, still `review` on `aider`, up from
+        main's 145. So 153 is the smallest ceiling it required and 160 is the
+        round figure above it, chosen for the same reason 150 was — not a
+        figure the wording forced. The 141 recorded above was accurate at
+        `review-revert-to-260` and went stale when v0.6.276's impact-floor
+        instances added four lines, so arithmetic from it undercounts by
+        four; render the harnesses rather than adding to the last number
+        here.
+
+        That is a raise to say something true rather than to say more. The
+        structural reason stands unchanged — this file ships standalone to
+        harnesses that can read no reference, so every rule the review skill
+        gains is repeated here in full.
         """
         for command in hb.commands():
             lines = len(hb.render(command, hr.FEATURES,
                                   refs_dir=REFS).splitlines())
-            self.assertLess(lines, 150,
+            self.assertLess(lines, 160,
                             "%s renders %d lines" % (command, lines))
         for command in hb.commands():
             for harness in hr.HARNESSES:
                 lines = len(hb.render(command, harness["features"],
                                       refs_dir=REFS).splitlines())
                 self.assertLess(
-                    lines, 150,
+                    lines, 160,
                     "%s renders %d lines for harness %r"
                     % (command, lines, harness["id"]))
 
