@@ -128,6 +128,112 @@ class DeltaCheckTest(unittest.TestCase):
         self.assertTrue(has(errors, "not a valid kebab-case slug"))
 
 
+class ConflictMarkerTest(unittest.TestCase):
+    """A git conflict marker is rejected wherever the linter reads markdown.
+
+    `.shipd/verified/delivery-dashboard/spec.md` carried `<<<<<<< HEAD` and
+    `>>>>>>> origin/main` from 2026-08-14, bracketing six requirements, while
+    `spec_lint.py` printed `OK: master library is valid.` and exited 0 — it had
+    no check of this kind at all. Every lint-clean claim made in that window
+    was weaker than it read, and the `ci` gate reads the exit code.
+    """
+
+    MASTER = (
+        "### Requirement: A thing\n"
+        "id: a-thing\n\n"
+        "The system SHALL do a thing.\n\n"
+        "#### Scenario: It happens\n"
+        "- **WHEN** asked\n"
+        "- **THEN** it happens\n")
+
+    def _master_errors(self, text):
+        errors = []
+        sl.lint_master_spec(text, "<test>", errors)
+        return [str(e) for e in errors]
+
+    def test_a_master_spec_marker_is_rejected(self):
+        for marker in ("<<<<<<< HEAD", ">>>>>>> origin/main"):
+            with self.subTest(marker=marker):
+                errors = self._master_errors(
+                    self.MASTER + "\n" + marker + "\n")
+                self.assertTrue(
+                    has(errors, "git conflict marker"),
+                    "a master spec carrying %r must be rejected" % marker)
+
+    def test_the_marker_line_number_is_reported(self):
+        errors = self._master_errors("x\ny\n<<<<<<< HEAD\n" + self.MASTER)
+        self.assertTrue(
+            has(errors, "line 3"),
+            "the report must name the line, so a 1600-line spec is actionable")
+
+    def test_a_delta_spec_marker_is_rejected(self):
+        errors = lint_delta_text(
+            "## ADDED Requirements\n\n" + self.MASTER + "\n>>>>>>> theirs\n")
+        self.assertTrue(has(errors, "git conflict marker"))
+
+    def test_a_setext_heading_is_not_a_conflict_marker(self):
+        """The regression this check could itself introduce.
+
+        Markdown underlines a setext heading with repeated `=`, and an
+        underline of exactly seven characters is byte-identical to the
+        `=======` marker. This test is why `=======` is not matched at all:
+        it failed when the check matched that line, which is the only reason
+        the ambiguity was noticed before shipping.
+        """
+        for underline in ("=" * 7, "=" * 20, "==== "):
+            with self.subTest(underline=underline):
+                text = "A heading\n" + underline + "\n\n" + self.MASTER
+                errors = self._master_errors(text)
+                self.assertFalse(
+                    has(errors, "git conflict marker"),
+                    "%r underlines a heading and is not a marker" % underline)
+
+    def test_a_clean_spec_reports_nothing(self):
+        self.assertEqual([], [e for e in self._master_errors(self.MASTER)
+                              if "git conflict marker" in e])
+
+    def test_plan_and_tasks_markers_are_rejected(self):
+        """Both files are checked, with and without a delta specs directory.
+
+        The `deltas` dimension pins the wiring's placement, not just its
+        existence: `lint_change` returns early when the change has no
+        `specs/` directory, so a marker check wired below that return would
+        still satisfy a deltas-present fixture while silently covering
+        nothing for a change that has no deltas yet — the one shape where
+        this check is the only one that would fire. The assertion names the
+        marker-carrying file's own path, so it cannot be satisfied by an
+        error reported against the sibling file.
+        """
+        for name in ("plan.md", "tasks.md"):
+            for deltas in (True, False):
+                with self.subTest(name=name, deltas=deltas):
+                    root = tempfile.mkdtemp()
+                    self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+                    change = os.path.join(root, ".shipd", "planned", "c")
+                    os.makedirs(change)
+                    if deltas:
+                        os.makedirs(os.path.join(change, "specs", "auth"))
+                        with open(
+                                os.path.join(change, "specs", "auth",
+                                             "spec.md"),
+                                "w", encoding="utf-8") as fh:
+                            fh.write("## ADDED Requirements\n\n"
+                                     + self.MASTER)
+                    for fname in ("plan.md", "tasks.md"):
+                        body = "# c\nStatus: draft\n"
+                        if fname == name:
+                            body += "\n<<<<<<< HEAD\n"
+                        with open(os.path.join(change, fname), "w",
+                                  encoding="utf-8") as fh:
+                            fh.write(body)
+                    errors = [str(e) for e in sl.lint_change(root, "c")]
+                    marker = [e for e in errors if "git conflict marker" in e]
+                    self.assertTrue(
+                        any(os.path.join(change, name) in e for e in marker),
+                        "a marker in %s must be rejected (deltas=%s); got %r"
+                        % (name, deltas, marker))
+
+
 class ValidFixtureTest(unittest.TestCase):
     def test_valid_change_is_clean(self):
         self.assertEqual(sl.lint_change(SAMPLE_ROOT, "sample-change"), [])

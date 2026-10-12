@@ -1209,8 +1209,6 @@ individual.
 - **THEN** they succeed without importing `textual` and return their
   assembled dict and text rows
 
-<<<<<<< HEAD
-
 ### Requirement: Board filter strip
 id: board-filter-strip
 
@@ -1604,7 +1602,6 @@ scrollbar color SHALL derive from the theme's primary/accent color.
   `scrollbar-active` resolve `#55556A`, and `scrollbar-background`,
   `scrollbar-background-hover`, `scrollbar-background-active`, and
   `scrollbar-corner-color` resolve `#1C1C26`
->>>>>>> origin/main
 
 ### Requirement: Modal chrome containment
 id: modal-chrome-containment
