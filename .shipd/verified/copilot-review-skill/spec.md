@@ -15,8 +15,8 @@ the ship-it/fix-required verdict rule (any high or medium finding blocks); an
 instruction that the review body ends with a visible verdict line plus the
 matching machine-readable marker — `<!-- shipd-verdict: ship-it -->` or
 `<!-- shipd-verdict: fix-required -->` — on its own line as the body's last
-line, stating that the marker is read from the last non-empty line by exact
-equality; a statement that the skill is the review contract for both surfaces
+line, stating how the gate reads it; `gate-workflow-template` owns the
+reader's semantics and this requirement SHALL NOT restate them; a statement that the skill is the review contract for both surfaces
 that consume it; a statement that the engine is read-only and degrades to its
 text engine when `difft` is unavailable; and documentation that the Copilot
 code-review surface exposes no repository-side model selection and that the
@@ -51,10 +51,10 @@ file.
   bundled `semdiff.py`, the high/medium/low rubric, and the no-model-pin
   documentation
 
-#### Scenario: The marker instruction states last-line equality
-- **WHEN** the template's report instructions are read
-- **THEN** they require exactly one marker as the body's last line and state
-  it is read from the last non-empty line by exact equality
+#### Scenario: The marker instruction matches the reader
+- **WHEN** the template's marker instruction is compared with the reader
+  semantics `gate-workflow-template` states for the gate workflow
+- **THEN** they agree, and this requirement restates neither
 
 #### Scenario: The report shape is mandated
 - **WHEN** the template's report instructions are read
@@ -71,8 +71,7 @@ file.
 - **WHEN** the template's severity rubric is compared with the `low` bullet and
   impact floor in `plugins/s/skills/review/SKILL.md`
 - **THEN** the template states the same `low` definition, the same floor, and
-  the same concrete instances, with pure style excluded from findings at any
-  severity
+  the same concrete instances
 
 #### Scenario: This requirement restates no rubric wording
 - **WHEN** this requirement's own text is read
