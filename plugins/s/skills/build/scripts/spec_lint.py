@@ -186,6 +186,41 @@ def check_scenario_levels(req, errors, location):
                 location))
 
 
+_CONFLICT_PREFIXES = ("<<<<<<<", ">>>>>>>")
+
+
+def check_no_conflict_markers(text, location, errors):
+    """Reject a file carrying a git conflict marker at the start of a line.
+
+    A marker is never valid content in a spec, plan, or task file; a file
+    carrying one was committed mid-merge. This is an error rather than a
+    warning deliberately — a warning leaves the exit code clean, and the exit
+    code is what every gate reads.
+
+    `.shipd/verified/delivery-dashboard/spec.md` carried `<<<<<<< HEAD` and
+    `>>>>>>> origin/main` from 2026-08-14, bracketing six requirements, while
+    this linter reported the library valid, because it had no check of this
+    kind at all. Every lint-clean claim made in that window was weaker than it
+    read.
+
+    `=======` is deliberately **not** matched, in any form. A markdown setext
+    heading underlines with repeated `=`, and an underline of exactly seven
+    characters is byte-identical to the marker — so there is no match, prefix
+    or whole-line, that separates them. Matching it would reject valid
+    documents, which is the bug this check would otherwise introduce while
+    fixing another. Nothing is lost: a real conflict always writes all three
+    markers, so the unambiguous outer pair catches every one. The live defect
+    that prompted this check carried only the outer pair anyway, its
+    `=======` having been removed by a partial resolution.
+    """
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.startswith(_CONFLICT_PREFIXES):
+            errors.append(LintError(
+                "line %d is a git conflict marker (%r); the file was "
+                "committed mid-merge" % (number, line[:24]),
+                location))
+
+
 def check_unique_ids(reqs, errors, location):
     """Report ids that appear more than once among ``reqs``."""
     seen = set()
@@ -204,6 +239,7 @@ def check_unique_ids(reqs, errors, location):
 
 def lint_master_spec(text, location, errors):
     """Lint a master capability spec file."""
+    check_no_conflict_markers(text, location, errors)
     spec = sc.parse_spec(text)
     for req in spec.requirements:
         check_requirement_structural(req, errors, location)
@@ -220,6 +256,7 @@ def lint_delta_spec(text, location, errors):
     reference an existing requirement by id to delete it, so they are checked
     for an `id` only (their `base`/`Reason`/`Migration` metadata is validated
     by the delta-specific checks)."""
+    check_no_conflict_markers(text, location, errors)
     delta = sc.parse_delta(text)
 
     # Only the four known operation headers are allowed.
@@ -1732,6 +1769,12 @@ def lint_change(root, change, warnings=None):
     if os.path.isfile(plan_path):
         check_initiative_reference(
             root, sc.parse_plan_metadata(_read(plan_path)), errors)
+    # A conflict marker is as invalid in a plan or task list as in a spec, and
+    # these three files are the ones a mid-merge commit lands in.
+    for name in ("plan.md", "tasks.md"):
+        path = os.path.join(sc.specs_dir(root), "planned", change, name)
+        if os.path.isfile(path):
+            check_no_conflict_markers(_read(path), path, errors)
     check_task_traceability(root, change, errors)
     check_task_satisfiability(root, change, errors)
     check_artefact_references(root, change, errors)
