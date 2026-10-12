@@ -431,9 +431,16 @@ class ShippedRenderTest(unittest.TestCase):
         at all, which is most of this repository, the first half is vacuously
         true and the rule never bound. Correcting it to a conjunction, naming
         the block or table that encloses a manifest line, and exempting a
-        genuinely recurring site cost lines the 150 ceiling did not have: the
-        body rendered 149 of 150 with the broken wording and 160 would have
-        been needed for the correct one.
+        genuinely recurring site cost lines the 150 ceiling did not have.
+        Measured by rendering every registered harness, the correct wording
+        puts the worst body at **154**, still `review` on `aider`, up from
+        main's 145. So 153 is the smallest ceiling it required and 160 is the
+        round figure above it, chosen for the same reason 150 was — not a
+        figure the wording forced. The 141 recorded above was accurate at
+        `review-revert-to-260` and went stale when v0.6.276's impact-floor
+        instances added four lines, so arithmetic from it undercounts by
+        four; render the harnesses rather than adding to the last number
+        here.
 
         That is a raise to say something true rather than to say more. The
         structural reason stands unchanged — this file ships standalone to
