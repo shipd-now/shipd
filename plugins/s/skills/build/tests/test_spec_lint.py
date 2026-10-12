@@ -193,25 +193,45 @@ class ConflictMarkerTest(unittest.TestCase):
                               if "git conflict marker" in e])
 
     def test_plan_and_tasks_markers_are_rejected(self):
+        """Both files are checked, with and without a delta specs directory.
+
+        The `deltas` dimension pins the wiring's placement, not just its
+        existence: `lint_change` returns early when the change has no
+        `specs/` directory, so a marker check wired below that return would
+        still satisfy a deltas-present fixture while silently covering
+        nothing for a change that has no deltas yet — the one shape where
+        this check is the only one that would fire. The assertion names the
+        marker-carrying file's own path, so it cannot be satisfied by an
+        error reported against the sibling file.
+        """
         for name in ("plan.md", "tasks.md"):
-            with self.subTest(name=name):
-                root = tempfile.mkdtemp()
-                change = os.path.join(root, ".shipd", "planned", "c")
-                os.makedirs(os.path.join(change, "specs", "auth"))
-                with open(os.path.join(change, "specs", "auth", "spec.md"),
-                          "w", encoding="utf-8") as fh:
-                    fh.write("## ADDED Requirements\n\n" + self.MASTER)
-                for fname in ("plan.md", "tasks.md"):
-                    body = "# c\nStatus: draft\n"
-                    if fname == name:
-                        body += "\n<<<<<<< HEAD\n"
-                    with open(os.path.join(change, fname), "w",
-                              encoding="utf-8") as fh:
-                        fh.write(body)
-                errors = [str(e) for e in sl.lint_change(root, "c")]
-                self.assertTrue(
-                    has(errors, "git conflict marker"),
-                    "a marker in %s must be rejected" % name)
+            for deltas in (True, False):
+                with self.subTest(name=name, deltas=deltas):
+                    root = tempfile.mkdtemp()
+                    self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+                    change = os.path.join(root, ".shipd", "planned", "c")
+                    os.makedirs(change)
+                    if deltas:
+                        os.makedirs(os.path.join(change, "specs", "auth"))
+                        with open(
+                                os.path.join(change, "specs", "auth",
+                                             "spec.md"),
+                                "w", encoding="utf-8") as fh:
+                            fh.write("## ADDED Requirements\n\n"
+                                     + self.MASTER)
+                    for fname in ("plan.md", "tasks.md"):
+                        body = "# c\nStatus: draft\n"
+                        if fname == name:
+                            body += "\n<<<<<<< HEAD\n"
+                        with open(os.path.join(change, fname), "w",
+                                  encoding="utf-8") as fh:
+                            fh.write(body)
+                    errors = [str(e) for e in sl.lint_change(root, "c")]
+                    marker = [e for e in errors if "git conflict marker" in e]
+                    self.assertTrue(
+                        any(os.path.join(change, name) in e for e in marker),
+                        "a marker in %s must be rejected (deltas=%s); got %r"
+                        % (name, deltas, marker))
 
 
 class ValidFixtureTest(unittest.TestCase):
