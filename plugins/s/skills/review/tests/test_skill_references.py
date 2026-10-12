@@ -418,11 +418,20 @@ class SkillMdStructureTest(unittest.TestCase):
         resuming the ceiling's job of guarding against bloat rather than
         sitting dozens of lines clear of the file. `review-skill-references`
         owns this figure; it is not restated anywhere else.
+
+        It then rose, 340 to 350, in `review-further-location-distance`. The
+        further-location rule gained a distance condition whose first wording
+        was a disjunction — "outside the primary's function, **or** outside its
+        hunk" — which the review showed is satisfied by either half alone, and
+        is satisfied vacuously by any file with no functions, meaning most of
+        this repository. Stating it as a conjunction, naming the block or table
+        that encloses a manifest line, and exempting a genuinely recurring site
+        took the file to 341. The raise buys correctness, not volume.
         """
         self.assertLess(
-            len(self.lines), 340,
-            "SKILL.md must stay under 340 lines now that the verify stage "
-            "and the related-file-context step are gone")
+            len(self.lines), 350,
+            "SKILL.md must stay under 350 lines; the further-location "
+            "distance condition took it to 341")
 
     def test_no_moved_headings_remain(self):
         for heading in MOVED_HEADINGS:
