@@ -397,8 +397,10 @@ id: epic-header-metadata
 
 An epic's header metadata block SHALL recognize exactly three keys —
 `Theme:`, `Initiative:`, and `PRD:` — with kebab-case values; `Theme:` SHALL
-be validated against `valid_themes` when `.shipd/config.json` declares a
-non-empty vocabulary; `PRD:` SHALL resolve to an existing PRD across the
+be validated exactly as this capability's `theme-vocabulary-config`
+requirement specifies, which owns where the vocabulary is read from — this
+requirement SHALL NOT name a configuration path, since the one it used to name
+is the retired path that requirement forbids reading; `PRD:` SHALL resolve to an existing PRD across the
 workspace chain (the engine's PRD resolution) whenever a workspace root is
 discoverable, with an unresolvable value rejected naming the expected path,
 and SHALL be skipped silently when no workspace is discoverable (a bare CI

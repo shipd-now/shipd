@@ -301,6 +301,17 @@ def _read(path):
 # and the gate's verdict-reader semantics — and each copy went stale when its
 # owner changed, surviving two versions because nothing compared them.
 REPO_ROOT = os.path.normpath(os.path.join(PLUGIN_S_ROOT, "..", ".."))
+# The two `docs/` pages whose requirements demand the full trigger and
+# category enumerations. They are the only enumeration surfaces no test pinned,
+# and that gap shipped two requirements unmet: strengthening them from "all
+# five" and "all ten" to "every trigger the owner defines" and "every value the
+# surfaces accept" left both docs stale with lint, docs_lint and every test
+# green. A seventh trigger or twelfth category would do it again.
+DOCS_ROOT = os.path.join(REPO_ROOT, "docs")
+SEMANTIC_REVIEW_DOC = os.path.join(DOCS_ROOT, "semantic-review.md")
+SEMANTIC_REVIEW_REFERENCE_DOC = os.path.join(
+    DOCS_ROOT, "semantic-review-reference.md")
+
 COPILOT_CAPABILITY_SPEC = os.path.join(
     REPO_ROOT, ".shipd", "verified", "copilot-review-skill", "spec.md")
 
@@ -512,7 +523,7 @@ class SkillMdStructureTest(unittest.TestCase):
         self.assertIn("no verdict", section.lower())
 
     def test_risk_lens_triggers_stated_inline(self):
-        """All five triggers appear in the workflow, not only the table.
+        """Every trigger appears in the workflow, not only the table.
 
         `SKILL.md` can read a reference file, so a trigger named only in the
         `## References` table (and left implicit in the workflow) would let
@@ -865,6 +876,58 @@ class DistanceConditionParityTest(unittest.TestCase):
                     "state that two lines together making a single defect "
                     "are not a recurrence — without that discriminator the "
                     "exemption readmits the anchors the condition suppresses")
+class PublishedDocsCarryEveryEnumerationTest(unittest.TestCase):
+    """The two `docs/` pages name every trigger and every category value.
+
+    `project-readme`'s `semantic-review-doc` requires its guide to name every
+    trigger `review-risk-lenses` defines, and `semantic-review-reference-doc`
+    requires its reference to name every `category` value the payload surfaces
+    accept. Neither doc was pinned by any test, and that is exactly how both
+    requirements shipped **unmet**: the guide said "Five triggers" after a
+    sixth was added, and the reference said "one of the ten values below"
+    after `description-drift` made eleven — with the whole-library lint,
+    `docs_lint.py` and every test green.
+
+    The reference doc states its count in two independent places, a table cell
+    and a prose list, so both are asserted. A count word is checked as well as
+    the values, because a doc can list eleven values under a sentence that
+    still says ten.
+    """
+
+    def test_the_guide_names_every_trigger(self):
+        missing = _missing_triggers(_read(SEMANTIC_REVIEW_DOC))
+        self.assertEqual(
+            [], missing,
+            "docs/semantic-review.md must name every risk-lens trigger; "
+            "missing: %s" % ", ".join(missing))
+
+    def test_the_guide_states_no_stale_trigger_count(self):
+        flat = _flat(_read(SEMANTIC_REVIEW_DOC))
+        self.assertIn(
+            "six triggers", flat,
+            "the guide states a trigger count, so it must be the real one")
+        self.assertNotIn(
+            "five triggers", flat,
+            "the guide still states the pre-packaging count of five")
+
+    def test_the_reference_names_every_category_value(self):
+        flat = _flat(_read(SEMANTIC_REVIEW_REFERENCE_DOC))
+        missing = sorted(v for v in ALL_TAXONOMY_VALUES if v not in flat)
+        self.assertEqual(
+            [], missing,
+            "docs/semantic-review-reference.md must name every `category` "
+            "value both payload surfaces accept; missing: %s"
+            % ", ".join(missing))
+
+    def test_the_reference_states_no_stale_category_count(self):
+        flat = _flat(_read(SEMANTIC_REVIEW_REFERENCE_DOC))
+        self.assertIn(
+            "eleven values", flat,
+            "the reference's table cell names a count, so it must be the real "
+            "one — it said ten while listing ten, and both were stale")
+        self.assertNotIn(
+            "ten values", flat,
+            "the reference still states the pre-description-drift count")
 
 
 class CopilotCapabilityRestatesNoOwnedWordingTest(unittest.TestCase):
@@ -1226,7 +1289,7 @@ class ReferenceFreeSurfacesCarryRiskLensesTest(unittest.TestCase):
     Neither surface can read `references/risk-lenses.md` — the harness body
     ships into other repositories with no `${CLAUDE_PLUGIN_ROOT}`, and the
     copilot template is vendored byte-for-byte into a GitHub Actions runner —
-    so both must name all five triggers and the exposure floor in their own
+    so both must name every trigger and the exposure floor in their own
     body text.
     """
 
