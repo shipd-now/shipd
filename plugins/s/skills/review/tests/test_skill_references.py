@@ -72,7 +72,7 @@ ALL_TAXONOMY_VALUES = frozenset((
 TAXONOMY_FIELD_RE = re.compile(
     r'^\s*"(cohort|category|kind)":\s*(".*"),?\s*$')
 
-# The five risk-lens triggers, named exactly as plan.md's Implementation
+# The risk-lens triggers, named exactly as plan.md's Implementation
 # section orders them. Every surface that carries the lenses inline must
 # name each of these verbatim (case-insensitively) — this is deliberately a
 # literal match, not a loose keyword search, because the plan fixes this
@@ -876,6 +876,8 @@ class DistanceConditionParityTest(unittest.TestCase):
                     "state that two lines together making a single defect "
                     "are not a recurrence — without that discriminator the "
                     "exemption readmits the anchors the condition suppresses")
+
+
 class PublishedDocsCarryEveryEnumerationTest(unittest.TestCase):
     """The two `docs/` pages name every trigger and every category value.
 
@@ -888,10 +890,12 @@ class PublishedDocsCarryEveryEnumerationTest(unittest.TestCase):
     after `description-drift` made eleven — with the whole-library lint,
     `docs_lint.py` and every test green.
 
-    The reference doc states its count in two independent places, a table cell
-    and a prose list, so both are asserted. A count word is checked as well as
-    the values, because a doc can list eleven values under a sentence that
-    still says ten.
+    The reference doc carries two independent sites: a table cell that states
+    the count and a prose list that enumerates the values but names no count.
+    One assertion covers each, because a doc can list eleven values under a
+    sentence that still says ten — pinning the enumeration alone would leave
+    the count site free to go stale, and pinning the count alone would leave
+    the enumeration free to.
     """
 
     def test_the_guide_names_every_trigger(self):
