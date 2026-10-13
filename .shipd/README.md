@@ -193,6 +193,9 @@ Each entry is a level-3 header followed by a dash list of fields:
 - **`**Cited:**`** — the oracle's sources; on `ANSWER` entries.
 - **`**Queued:**`** — the `q-<slug>` the oracle filed in the wiki queue; on
   `INSUFFICIENT` entries.
+- **`**Relied on by:**`** — on a `PLANNER` entry only, its last field: the
+  later members whose plans built on its default, comma-separated, written by
+  those members' planners and kept when the entry becomes `USER`.
 
 The linter validates the section when it is present — at least one entry,
 `### Q<n>:` headers numbered sequentially from `Q1`, and a `**Question:**`,

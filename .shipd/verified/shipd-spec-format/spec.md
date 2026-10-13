@@ -160,7 +160,10 @@ answer, and an `**Answer:**` field (the position or resolution in full); an
 `INSUFFICIENT` entry a `**Queued:**` field naming the filed `q-<slug>`. A
 `PLANNER` entry records a default a planner adopted in place of a deferred
 human answer; it SHALL be rewritten to `USER` once the human answers, and a
-plan still holding one SHALL NOT be promoted to `ready`.
+plan still holding one SHALL NOT be promoted to `ready`. A `PLANNER` entry
+MAY carry a last `**Relied on by:**` field naming, comma-separated, the later
+members whose plans built on its default; the field SHALL be kept when the
+entry is rewritten to `USER`.
 
 #### Scenario: Plan carries both sections
 - **WHEN** a change `dark-mode-toggle` is authored
@@ -205,6 +208,11 @@ plan still holding one SHALL NOT be promoted to `ready`.
   `**Answer:**`, and `**Queued:**` fields
 - **THEN** the plan remains structurally valid, and the context gate still
   refuses to promote it until the entry reads `**Answered by:** USER`
+
+#### Scenario: Provisional entry names its dependents
+- **WHEN** a draft plan's `PLANNER` entry `### Q1: Which flag name?` ends
+  with `**Relied on by:** member-b, member-c`
+- **THEN** the plan remains structurally valid
 
 ### Requirement: EARS-recommended normative statements
 id: ears-recommended-statements

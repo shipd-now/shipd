@@ -28,7 +28,10 @@ slug (`/s:epic-grill <slug>`).
    recommended default and record a `## Questions and answers` entry with
    `**Answered by:** PLANNER`: the options in `**Question:**` with the default
    first, the default in `**Answer:**`, and `**Queued:**` when the oracle
-   filed one. Install the change through
+   filed one. Where a member's plan builds on an earlier member's `PLANNER` default,
+   append the later member's slug to that entry's `**Relied on by:**` field (adding it as
+   the entry's last line if absent) in that member's installed plan, edit
+   nothing else in it, and re-lint that member. Install the change through
    `spec_emit.py` and stop at `Status: draft`; do not run `spec_gate.py`. For
    a `draft` member, find its root with `locate <member>` and do not re-plan
    it. Grade each member from disk: `--root <worktree> status <member>` prints
@@ -50,7 +53,13 @@ slug (`/s:epic-grill <slug>`).
 6. **Amend and gate.** Edit each member's installed artifacts to match the
    answers, rewrite each answered entry to `**Answered by:** USER`, and flag an
    answer that binds every member for `/s:epic <slug> amend` instead of editing
-   the epic. Then run `spec_gate.py <member> --root <worktree>` on every
+   the epic. When an answer overturned a default, re-run the consistency pass on
+   that entry's member and on every member its `**Relied on by:**` field names
+   (every selected member when the field is absent), fix what the plans and
+   repository settle, and ask any conflict only a human can settle as one more
+   numbered typed round, then apply those answers the same way without
+   re-checking again. Keep the field when rewriting an entry to `USER`. Then
+   run `spec_gate.py <member> --root <worktree>` on every
    selected member. On exit 2, resolve what the repository answers, ask the
    user about the rest, and re-gate. Never set a status by any other path.
 7. **Hand off.** Print a why-first summary per member, any epic-wide answers

@@ -83,6 +83,10 @@ planner can read the plans before it. Keep a running list of
   a `## Questions and answers` entry with `**Answered by:** PLANNER`: the
   options in `**Question:**` with the default first, the default in
   `**Answer:**`, and `**Queued:**` when the oracle filed one.
+  Where your plan builds on a PLANNER default in an earlier member's
+  ledger, append your slug to that entry's `**Relied on by:**` field
+  (adding the field as the entry's last line if absent) in the earlier
+  member's installed plan.md. Edit nothing else in another member's plan.
   Install the change through spec_emit.py and stop at Status: draft. Do not
   run spec_gate.py; /s:epic-grill gates every member after its final round.
   End your turn with `DEFERRED:` and one line per PLANNER entry
@@ -105,6 +109,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_lint.py" <member> --roo
 The member passes only if `status` prints `draft` and the linter exits 0. A
 failed grade: **stop and ask the human** what to do (retry the planner, fix by
 hand, or drop the member); do not plan on past it.
+
+After each planner, also re-run `spec_lint.py <slug> --root <root>` on every
+member in the running list: a later planner may have edited an earlier
+member's `**Relied on by:**` field. A failed re-lint stops and asks the human
+like a failed grade.
 
 ## Consistency pass
 
@@ -165,9 +174,18 @@ For each answered decision:
    specs, `tasks.md`) in place so they state the chosen option. Never leave
    the default behind when the user chose another.
 2. Rewrite the ledger entry's `**Answered by:**` to `USER` and its
-   `**Answer:**` to the user's resolution.
+   `**Answer:**` to the user's resolution. Keep the entry's
+   `**Relied on by:**` field when you rewrite it.
 3. **Epic-wide answers.** Where an answer binds every member, do **not** edit
    the epic; flag it for the user to apply with `/s:epic <epic> amend`.
+4. **Re-check overturned defaults.** When any answer chose a non-default
+   option, re-run the consistency pass on each overturned entry's member and
+   on every member its `**Relied on by:**` field names; when the field is
+   absent (a draft from an older grill), re-run it on every selected member.
+   Fix what the repository settles and re-lint; ask any conflict only a human
+   can settle in one further round, under the Final round rules, then apply
+   those answers through steps 1-3 without re-checking again, before gating.
+   When every default was accepted, skip this step.
 
 Then gate every selected member:
 

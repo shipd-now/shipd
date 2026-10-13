@@ -235,6 +235,9 @@ sequentially from `Q1` — followed by a dash list of fields:
   user's typed resolution for an `INSUFFICIENT` one.
 - `- **Cited:**` the oracle's sources — on `ANSWER` entries.
 - `- **Queued:**` the filed `q-<slug>` — on `INSUFFICIENT` entries.
+- `- **Relied on by:**` — on a `PLANNER` entry only, its last field: the later
+  members whose plans built on its default, comma-separated, written by those
+  members' planners and kept when the entry becomes `USER`.
 
 The linter errors on a present section that holds no entries, on a header that
 is not `### Q<n>: <summary>`, on numbering that does not run sequentially from
