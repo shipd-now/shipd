@@ -243,7 +243,7 @@ flowchart TD
     N --> C
     O --> C
 
-    subgraph Other parties posting into the room
+    subgraph others["Other parties posting into the room"]
         P["Semantic-review gate (room-gate-adoption):<br/>each finding is a task, input-required, to none, skill review-finding"]
         Q["Another agent:<br/>shipd room message PR --new --to NAME"]
         R["Human reviewer: plain comment, no marker"]
@@ -252,7 +252,7 @@ flowchart TD
     Q -.-> D
     R -.-> D
 
-    subgraph CI wake (room-action-wake)
+    subgraph wake["CI wake (room-action-wake)"]
         S["room-wake.yml on issue_comment<br/>guard: input-required and to == SHIPD_ROOM_AGENT"]
         S --> T["Copilot CLI runs the task;<br/>reply posted via shipd room with the repo token"]
         T -.-> D
