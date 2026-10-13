@@ -859,8 +859,10 @@ The teams page SHALL document team-shared workspace repos: any number of
 engineers cloning the same workspace repo, per-machine member materialization
 through the sync ladder, and the shared knowledge (wiki, queue, initiatives)
 traveling through ordinary git pull and push. It SHALL state the concurrency
-expectations — the engine takes no locks and never pushes, pulls, or fetches;
-wiki writes auto-commit locally, scoped to the touched files; concurrent
+expectations — the git automation and locking exactly as this capability's
+`workspaces-doc-store-sync` requirement specifies, which owns that story and
+forbids the no-locks claim this requirement used to make; wiki writes
+auto-commit locally, scoped to the touched files; concurrent
 `queue.md` appends and `index.md` catalog rewrites merge as ordinary git
 conflicts while distinct per-page files merge cleanly; duplicate `q-<slug>`
 blocks after a merge leave the queue invalid until de-duplicated; two clones
@@ -924,8 +926,8 @@ or identity, and with no `~/.shipd-config.json` on the machine.
 - **WHEN** `docs/workspaces/teams.md` is inspected
 - **THEN** it documents several engineers cloning one workspace repo,
   per-machine member materialization, git pull/push as the knowledge
-  transport, the no-locks/no-networked-git concurrency expectations with
-  `queue.md` and `index.md` as conflict surfaces, duplicate `q-<slug>`
+  transport, the concurrency expectations `workspaces-doc-store-sync`
+  defines, with `queue.md` and `index.md` as conflict surfaces, duplicate `q-<slug>`
   invalidity, single-answer conflict resolution, and the inherited
   worktree-hooks warning with the consent gate and `hooks trust`
 

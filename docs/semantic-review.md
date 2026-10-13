@@ -35,9 +35,9 @@ passes look past the changed lines themselves:
   touched is the most valuable finding it produces.
 - **Call-site values.** The review follows the argument each caller passes. A
   guard the real call never reaches is dead code.
-- **Risk lenses.** Five triggers run over every diff: secret or credential
-  exposure, authorization boundary, unbounded work, resource release, and
-  migration reversibility.
+- **Risk lenses.** Six triggers run over every diff: secret or credential
+  exposure, authorization boundary, unbounded work, resource release,
+  migration reversibility, and packaging and dependency manifests.
 
 A linter finding is corroboration the reviewer weighs. It never becomes a
 review finding on its own.

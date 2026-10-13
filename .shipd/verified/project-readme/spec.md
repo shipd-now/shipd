@@ -158,8 +158,10 @@ managed files with each file's role; the merge gate's two reviewer modes —
 the CLI reviewer mode selected by the `COPILOT_GITHUB_TOKEN` secret, in which
 the gate posts `pending` first, runs headless GitHub Copilot CLI at a pinned
 version following instructions materialized from the base ref's installed
-SKILL.md, classifies the output's last non-empty line into the strict
-`semantic-review` status, posts the review text as a pull-request comment,
+SKILL.md, classifies the output into the strict `semantic-review` status by
+the reader semantics `copilot-review-skill`'s `gate-workflow-template`
+requirement states (that requirement owns the reading rule and this one SHALL
+NOT restate it), posts the review text as a pull-request comment,
 works on private repositories, consumes Copilot AI credits per review, and
 leaves `pending` on a failed or timed-out run; and the poll fallback mode
 used with no secret, including why its operative guarantee is fail-open and
@@ -175,15 +177,19 @@ high-assurance path; the strictness knob — the repository Actions variable
 `SHIPD_GATE_FAIL_OPEN`, default fail-open, `false` leaving every no-marker
 outcome `pending`, `gh variable set` as the enable path, the session flow as
 the strict repository's manual out, and pairing the knob with the reviewer
-token; the verdict classification shared by both modes (a `fix-required`
-last line posts `failure`, `ship-it` posts `success`, any other last line
-follows the knob, markers quoted elsewhere never count); that the session
+token; the verdict classification shared by both modes, as
+`gate-workflow-template` defines it, and — a property of the doc's content
+rather than of the reading rule — that markers quoted elsewhere never count; that the session
 review flow posts the same status context; the fork-PR read-only-token
 limit; the private-repository note scoped to the poll mode, including the
 setup workflow's fail-soft checkout; the `installed`/`stale`/`foreign`/
 `absent` report states with `--force` as the foreign-file override; and the
 integration's scope — no repository-side model selection, relevance-driven
-skill pickup, and optional difftastic/ripgrep with engine degradation.
+skill pickup, and the engine's tool requirements exactly as `semantic-review`
+states them: `difft-required-docs` owns `difft`'s documented status and forbids
+calling it optional or claiming a review degrades, while
+`doctor-provisioning` and `reference-context` own `ripgrep`'s optionality and
+its `git grep` fallback. This requirement SHALL NOT restate any of them.
 
 #### Scenario: How-to walks install, enable, token, and verify in task order
 - **WHEN** `docs/copilot-review.md` is inspected
@@ -219,8 +225,9 @@ skill pickup, and optional difftastic/ripgrep with engine degradation.
 
 #### Scenario: Verdict and strictness knob are documented
 - **WHEN** the reference's verdict and strictness material is read
-- **THEN** it states the last-non-empty-line classification with quoted
-  markers never counting, and names `SHIPD_GATE_FAIL_OPEN` with the
+- **THEN** it states the classification as `gate-workflow-template` defines
+  it, with quoted markers never counting, and names `SHIPD_GATE_FAIL_OPEN`
+  with the
   fail-open default, the `gh variable set` enable path, the session flow
   as the manual out, and the pair-with-token guidance
 
@@ -365,8 +372,11 @@ it.
 
 The file SHALL additionally carry exactly one mermaid diagram: a `venn-beta`
 fence, above the `/s:` table and under its own level-2 heading, whose three
-sets are the `README.md` **Skills** groups — the core loop, bigger than one
-change, and knowledge. Each of the fence's seven regions SHALL hold exactly
+sets are the `README.md` **Skills** groups, named exactly as this
+capability's `readme-catalogs-the-plugin-s-skills` requirement names them —
+that requirement owns the group names and this one SHALL NOT restate them.
+Enumerating them here is what left this requirement naming three groups the
+README had renamed. Each of the fence's seven regions SHALL hold exactly
 one `text` node naming what that region holds, in at most three words — and
 in at most two for the three pairwise regions and the centre, whose area does
 not carry more — and SHALL name no skill. The fence SHALL carry no `title` line and no `style`
@@ -515,7 +525,10 @@ reviewer supplies the judgement.
 
 The guide SHALL describe the three passes that look past the changed lines:
 downstream impact on a changed contract, the values each call site passes, and
-the five risk-lens triggers. It SHALL name all five triggers. It SHALL state
+the risk-lens triggers. It SHALL name every trigger `semantic-review`'s
+`review-risk-lenses` requirement defines, which owns how many there are —
+this requirement SHALL NOT fix a count, having previously fixed it at five
+after a sixth was added. It SHALL state
 that a linter finding is corroboration the reviewer weighs rather than a
 review finding in itself.
 
@@ -534,8 +547,9 @@ finding's identity excludes its line number.
 
 The guide SHALL carry exactly one mermaid diagram, of those two paths, showing
 the local path ending at the report, the posting path, and the opted-in
-disposition path looping back on a later push. It SHALL state that the review
-degrades rather than stops when a tool is missing.
+disposition path looping back on a later push. It SHALL state the missing-tool behaviour exactly as `semantic-review`'s
+`difft-required-docs` requirement states it — that requirement owns it and
+requires the guide say the review stops, so this one SHALL NOT restate it.
 
 `docs/copilot-review.md` SHALL link `/s:review` to this guide rather than to a
 README anchor.
@@ -557,10 +571,10 @@ README anchor.
   that an exposed secret and an unguarded authorization boundary always rate
   `high`
 
-#### Scenario: The five triggers are named
+#### Scenario: Every trigger is named
 - **WHEN** the guide is inspected
-- **THEN** it names secret or credential exposure, authorization boundary,
-  unbounded work, resource release, and migration reversibility
+- **THEN** it names every risk-lens trigger `review-risk-lenses` defines, and
+  this requirement fixes no count of its own
 
 #### Scenario: The posting default is stated
 - **WHEN** the guide is inspected
@@ -596,9 +610,11 @@ verb's output.
 
 The payload section SHALL list every field of a finding — `id`, `severity`,
 `category`, `location`, `what`, `why`, `fix`, `status`, `note` and the optional
-`suggestion` — and SHALL name all ten `category` values: `bug`, `contract`,
-`edge-case`, `untouched-caller`, `spec-coverage`, `test-coverage`, `security`,
-`performance`, `stability` and `data-integrity`. It SHALL state that `verdict`
+`suggestion` — and SHALL name every `category` value the two payload
+surfaces accept, those surfaces being the enumeration's source and
+`semantic-review`'s `review-taxonomy-parity` requirement being what holds
+them in agreement. This requirement SHALL NOT restate the enumeration or fix
+its size, having previously named ten after `description-drift` made eleven. It SHALL state that `verdict`
 is `changes-requested` when any finding is high or medium and `pass` otherwise,
 and SHALL state the conditions a `suggestion` must meet to be committed rather
 than degraded to prose.
@@ -624,7 +640,7 @@ as null, and that a null hash matches nothing.
 
 #### Scenario: Every category value is listed
 - **WHEN** the reference's payload section is inspected
-- **THEN** it names all ten `category` values
+- **THEN** it names every `category` value the payload surfaces accept
 
 #### Scenario: The verdict rule and the suggestion conditions are stated
 - **WHEN** the payload section is inspected

@@ -21,7 +21,7 @@ Each entry in `findings` carries these fields:
 |---|---|
 | `id` | a short label, unique within the payload |
 | `severity` | `high`, `medium`, or `low` |
-| `category` | one of the ten values below |
+| `category` | one of the eleven values below |
 | `location` | `path/to/file.ext:LINE` |
 | `what` | a one-line statement of the defect |
 | `why` | why it matters |
@@ -31,8 +31,8 @@ Each entry in `findings` carries these fields:
 | `suggestion` | optional; see below |
 
 `category` is one of: `bug`, `contract`, `edge-case`, `untouched-caller`,
-`spec-coverage`, `test-coverage`, `security`, `performance`, `stability`, or
-`data-integrity`.
+`spec-coverage`, `test-coverage`, `security`, `performance`, `stability`,
+`data-integrity`, or `description-drift`.
 
 ### The optional `suggestion` object
 
