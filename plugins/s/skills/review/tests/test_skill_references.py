@@ -466,24 +466,32 @@ class SkillMdStructureTest(unittest.TestCase):
         sitting dozens of lines clear of the file. `review-skill-references`
         owns this figure; it is not restated anywhere else.
 
-        It then rose, 340 to 350, in `review-further-location-distance`. The
-        further-location rule gained a distance condition whose first wording
-        was a disjunction — "outside the primary's function, **or** outside its
-        hunk" — which the review showed is satisfied by either half alone, and
-        is satisfied vacuously by any file with no functions, meaning most of
-        this repository. Stating it as a conjunction, naming the block or table
-        that encloses a manifest line, and exempting a genuinely recurring site
-        took the file to 343, measured. Not 341: the 332 above is what
-        `review-revert-to-260` landed, and v0.6.276's impact-floor instances
-        added four lines to this file afterwards without updating the figure,
-        so arithmetic from 332 undercounts by four. Measure this one rather
-        than adding to the last number recorded here. The raise buys
-        correctness, not volume.
+        It rose to 350 in `review-further-location-distance`, reaching 343,
+        and came back to 340 here in `review-revert-distance` when that change
+        was reverted and the file returned to 336.
+
+        The distance condition did exactly what it was built to do — near
+        further locations fell from 11 to 1 over three rounds — and bought
+        nothing: precision moved 0.283 to 0.278 while matches per round fell
+        8.7 to 5.7, past the measured noise floor.
+
+        The premise was arithmetically false, which is why the revert did not
+        wait on a second round set. Those near anchors matched the judge 10 of
+        11 times: they were *redundant*, covering nothing another candidate did
+        not already cover, but they were matched. ReviewBench scores each
+        location as its own candidate, so banning a subset that matches at 91%
+        when overall precision is 28% removes true positives three times faster
+        than false ones. It could only lower precision. No wording fixes that,
+        so the idea is closed rather than deferred.
+
+        Keep the measuring discipline the last raise recorded: measure this
+        figure, never add to the last number written here. The 332 two
+        paragraphs up went stale the moment v0.6.276 added four lines.
         """
         self.assertLess(
-            len(self.lines), 350,
-            "SKILL.md must stay under 350 lines; the further-location "
-            "distance condition took it to 343")
+            len(self.lines), 340,
+            "SKILL.md must stay under 340 lines now that the further-location "
+            "distance condition is reverted")
 
     def test_no_moved_headings_remain(self):
         for heading in MOVED_HEADINGS:
@@ -818,64 +826,6 @@ class LocationRuleGeneralisedTest(unittest.TestCase):
                     "neither wrong alone — not state it as an unscoped "
                     "licence to anchor at any correct-in-isolation site")
 
-
-class DistanceConditionParityTest(unittest.TestCase):
-    """The distance condition binds identically on both read-every-time surfaces.
-
-    `review-further-location-distance` adds the condition to `SKILL.md` and
-    mirrors it inline in the harness body, which ships standalone into other
-    repositories and can read no reference file. Nothing pinned the pair, and
-    the first round of the change shows why that matters: its wording reached
-    review as a disjunction, "outside the primary's function **or** outside
-    its hunk", which either half satisfies alone and which any file with no
-    functions satisfies vacuously — most of this repository. That round was
-    rewound, and a green suite was no obstacle to it, because no test read
-    the clause at all.
-
-    Three things are pinned here, each the failure mode of one earlier
-    attempt at this rule:
-
-    - **Conjunctive, on both surfaces.** Both limbs required, not either.
-    - **The enclosure belongs to the primary.** "The function, block or table
-      the primary sits in", never a bare "it" — whose nearest antecedent is
-      the further location, making the limb unsatisfiable and suppressing
-      every further location, cross-file anchors included.
-    - **The recurrence exemption travels with its discriminator.** A defect
-      recurring at genuinely independent sites is exempt from the distance;
-      two lines that together make one defect are not, or the exemption
-      swallows the rule it is an exception to.
-    """
-
-    def test_both_surfaces_state_the_condition_conjunctively(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _DISTANCE_CONDITION_PATTERN,
-                    f"{path} must require a further location to sit outside "
-                    "the primary's hunk AND outside the function, block or "
-                    "table the primary sits in — both limbs, with the "
-                    "primary named as the enclosure's owner")
-
-    def test_neither_surface_states_the_disjunctive_form(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertNotRegex(
-                    _read(path), _DISJUNCTIVE_DISTANCE_PATTERN,
-                    f"{path} must not join the distance limbs with 'or' — a "
-                    "disjunction is satisfied by either half alone, and "
-                    "vacuously by any file with no functions, so the rule "
-                    "never binds")
-
-    def test_both_surfaces_exempt_recurrence_and_bound_the_exemption(self):
-        for path in (SKILL_MD, HARNESS_REVIEW_BODY):
-            with self.subTest(path=path):
-                self.assertRegex(
-                    _read(path), _RECURRENCE_EXEMPTION_PATTERN,
-                    f"{path} must exempt a site where the same defect "
-                    "recurs independently, each wrong on its own, and must "
-                    "state that two lines together making a single defect "
-                    "are not a recurrence — without that discriminator the "
-                    "exemption readmits the anchors the condition suppresses")
 
 
 class PublishedDocsCarryEveryEnumerationTest(unittest.TestCase):

@@ -183,15 +183,8 @@ further location names a site where the defect is visible: a line wrong in
 the same way, a line that shows the mismatch on its own terms, or — where the
 defect is the conjunction of two lines neither wrong alone — the line at
 which it surfaces at run time even though that line is correct in isolation.
-It must also sit outside the primary's hunk **and** outside the function,
-block or table the primary sits in — an anchor that close restates the defect
-rather than naming a second site. Where the primary sits in neither a function
-nor a hunk — a manifest line in a file the diff never touched — the enclosing
-block or table decides. A recurring site is exempt: where the same defect
-appears independently at more than one site, each wrong on its own, write one
-finding whose `locations` array names every site however close they sit. Two
-lines that together make a single defect are not a recurrence — that is the
-conjunction shape above, and the distance condition applies to it.
+When a defect recurs at multiple sites, write one finding whose `locations`
+array names every site.
 
 **Severity rubric.**
 - **high** — a correctness bug, a contract break with an un-updated consumer, or an
