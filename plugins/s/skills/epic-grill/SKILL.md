@@ -183,8 +183,9 @@ For each answered decision:
    on every member its `**Relied on by:**` field names; when the field is
    absent (a draft from an older grill), re-run it on every selected member.
    Fix what the repository settles and re-lint; ask any conflict only a human
-   can settle in one further dialog, under the Final round rules, before
-   gating. When every default was accepted, skip this step.
+   can settle in one further round, under the Final round rules, then apply
+   those answers through steps 1-3 without re-checking again, before gating.
+   When every default was accepted, skip this step.
 
 Then gate every selected member:
 

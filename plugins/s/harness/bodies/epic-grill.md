@@ -57,7 +57,8 @@ slug (`/s:epic-grill <slug>`).
    that entry's member and on every member its `**Relied on by:**` field names
    (every selected member when the field is absent), fix what the plans and
    repository settle, and ask any conflict only a human can settle as one more
-   numbered typed round. Keep the field when rewriting an entry to `USER`. Then
+   numbered typed round, then apply those answers the same way without
+   re-checking again. Keep the field when rewriting an entry to `USER`. Then
    run `spec_gate.py <member> --root <worktree>` on every
    selected member. On exit 2, resolve what the repository answers, ask the
    user about the rest, and re-gate. Never set a status by any other path.

@@ -51,6 +51,8 @@ class EpicGrillContractTest(unittest.TestCase):
         body = _read("harness", "bodies", "epic-grill.md")
         self.assertIn("re-run the consistency pass", skill)
         self.assertIn("re-run the consistency pass", body)
+        self.assertIn("without re-checking again", skill)
+        self.assertIn("without re-checking again", " ".join(body.split()))
 
 
 if __name__ == "__main__":
