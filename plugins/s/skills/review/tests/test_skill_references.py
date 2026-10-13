@@ -214,42 +214,6 @@ _EXCLUSIVE_LOCATION_FORM_PATTERN = re.compile(
     r"(?is)further[*_\s]+(?:location|site).{0,40}only[*_\s]+where"
     r".{0,80}independently[*_\s]+shows[*_\s]+the[*_\s]+defect")
 
-# The distance condition, in the only form that binds: BOTH limbs required,
-# and the enclosure belongs to the *primary*. Pinned together because the
-# first attempt at this rule shipped the limbs disjunctively — "outside the
-# primary's function, **or** outside its hunk" — which either half satisfies
-# alone, and which a file with no functions satisfies vacuously, so the rule
-# never bound at all. The trailing "the primary sits in" is load-bearing on
-# its own: with the subject dropped to a bare "it", the nearest antecedent is
-# the further location, and "outside the function it sits in" is a condition
-# no line can ever meet, which would suppress every further location
-# including the cross-file anchors the rule is written to preserve.
-_DISTANCE_CONDITION_PATTERN = re.compile(
-    r"(?is)outside[*_\s]+(?:both[*_\s]+)?the[*_\s]+primary's[*_\s]+hunk"
-    r".{0,60}function,[*_\s]+block[*_\s]+or[*_\s]+table"
-    r"[*_\s]+the[*_\s]+primary[*_\s]+sits[*_\s]+in")
-
-# The disjunctive form's absence, pinned directly rather than inferred from
-# the conjunctive form's presence: an edit could add "and" in one place while
-# leaving an "or" limb standing elsewhere in the same sentence.
-_DISJUNCTIVE_DISTANCE_PATTERN = re.compile(
-    r"(?is)outside[*_\s]+(?:both[*_\s]+)?the[*_\s]+primary's"
-    r"[*_\s]+(?:function|hunk)[*_\s,]{0,8}(?:\*\*)?or(?:\*\*)?"
-    r"[*_\s]+outside")
-
-# The recurrence exemption and the discriminator that keeps it from
-# swallowing the rule. Without the second sentence the exemption is open to
-# any two-line mechanism — precisely the anchors the distance condition
-# exists to suppress, since the second half of a conjunction is always
-# "another site". "Each wrong on its own" is the test that separates them,
-# and it has to travel with the exemption on both surfaces.
-_RECURRENCE_EXEMPTION_PATTERN = re.compile(
-    r"(?is)recurring[*_\s]+site[*_\s]+is[*_\s]+exempt.{0,100}"
-    r"independently.{0,80}each[*_\s]+wrong[*_\s]+on[*_\s]+its[*_\s]+own"
-    r".{0,220}two[*_\s]+lines[*_\s]+that[*_\s]+together[*_\s]+make"
-    r"[*_\s]+a[*_\s]+single[*_\s]+defect.{0,60}not[*_\s]+a"
-    r"[*_\s]+recurrence")
-
 # Matches from the `- **low**` bullet marker through the first occurrence of
 # the word "findings" and the rest of that line — the bullet always ends
 # "... are never findings[.,]...", so this captures exactly the bullet's own
@@ -479,10 +443,31 @@ class SkillMdStructureTest(unittest.TestCase):
         wait on a second round set. Those near anchors matched the judge 10 of
         11 times: they were *redundant*, covering nothing another candidate did
         not already cover, but they were matched. ReviewBench scores each
-        location as its own candidate, so banning a subset that matches at 91%
-        when overall precision is 28% removes true positives three times faster
-        than false ones. It could only lower precision. No wording fixes that,
-        so the idea is closed rather than deferred.
+        location as its own candidate, and removing any subset whose own match
+        rate exceeds the overall precision necessarily lowers precision. These
+        matched at 91% against an overall 28%, so the ban stripped true
+        positives at more than three times the rate the average candidate
+        carries them: precision could only fall.
+
+        Note what that arithmetic does and does not close. It closes every
+        wording that *suppresses* these anchors, whatever the wording — 91%
+        beats 28% however the clause is phrased. It does not by itself close a
+        rule that *relocates* a near anchor instead, since a relocated
+        candidate is not a removed one. What closes those is the measured
+        behaviour in the next paragraph. The two together are why the idea is
+        closed rather than deferred.
+
+        Two results outlive the attempt, recorded here so they are not
+        re-derived. **Faced with a prohibition it cannot satisfy, the reviewer
+        drops the whole finding** rather than reporting it with fewer anchors:
+        `chronicle #12` was anchored at `files.rs:5→10` under v0.6.276 and
+        vanished entirely under v0.6.280. That is a general caution about
+        adding prohibitions to this prompt, and it is also what closes a
+        relocation wording. **The packaging risk lens went silent**: zero
+        rounds mentioned `npm pack` or tarballs against two of three at
+        v0.6.276, and the `package.json` files-allowlist finding disappeared
+        rather than losing an anchor. There is no grounded explanation for
+        that; it is recorded rather than theorised about.
 
         Keep the measuring discipline the last raise recorded: measure this
         figure, never add to the last number written here. The 332 two

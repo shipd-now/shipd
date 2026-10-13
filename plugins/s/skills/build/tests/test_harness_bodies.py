@@ -422,6 +422,23 @@ class ShippedRenderTest(unittest.TestCase):
         every-harness loop above arrived later, in `review-verifier-handover`.
         A reverted ceiling still has to clear a case the version it reverts to
         never measured.
+
+        It then rose 150 -> 160 in `review-further-location-distance` for the
+        further-location distance condition, and came back to 150 here in
+        `review-revert-distance` when that change was reverted. The idea
+        behind it is **closed, not parked**: the arithmetic is in
+        `test_skill_references.SkillMdStructureTest.test_under_line_ceiling`,
+        which owns the `SKILL.md` ceiling and records why no wording of that
+        rule could have worked. Do not read this round trip as headroom
+        waiting to be re-spent.
+
+        The 141 recorded above was accurate at `review-revert-to-260` and went
+        stale the moment v0.6.276's impact-floor instances added four lines;
+        the worst body now renders **145**, still `review` on `aider`. So
+        arithmetic from the 141 undercounts by four — which is the same
+        mistake that made v0.6.260's 140 invalid two paragraphs up. Render
+        every registered harness and read the number off; never add to the
+        last figure written here.
         """
         for command in hb.commands():
             lines = len(hb.render(command, hr.FEATURES,
