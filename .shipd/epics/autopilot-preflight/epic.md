@@ -61,12 +61,14 @@ Success criteria:
 - **The plan stamp.** `spec_gate.py` writes two header lines into
   `plan.md` on every pass: `Planned-at: <sha>` (the `main` commit the plan
   was gated against) and `Gated-hash: <hash>` (the plan's content hash,
-  excluding these two lines). A plan without a stamp falls back to the
-  last commit that touched its `plan.md`.
+  excluding these two lines and the `Status:` line, which lifecycle moves
+  rewrite). A plan without a stamp falls back to the last commit that
+  touched its `plan.md`.
 - **Cited files and symbols.** Cited files are the path-shaped backticked
-  tokens in `plan.md`, `tasks.md`, and the delta specs. The gate's task
-  file references check already extracts these tokens, and drift reuses
-  that extraction. A cited symbol is a backticked identifier or `--flag`.
+  tokens in `plan.md`, `tasks.md`, and the delta specs. Drift reuses the
+  path-token pattern of the gate's task file references check, which today
+  reads `tasks.md` alone, and widens it to `plan.md` and the delta specs.
+  A cited symbol is a backticked identifier or `--flag`.
   It counts as drifted only when `git grep` finds it at the stamp and not
   on `main`. That rule keeps symbols the plan itself introduces from
   being flagged.
