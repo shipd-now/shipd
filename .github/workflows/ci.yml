@@ -75,6 +75,9 @@ jobs:
       - name: Run workspace test suite
         run: python3 -m unittest discover -s plugins/s/skills/workspace/tests -v
 
+      - name: Run room test suite
+        run: python3 -m unittest discover -s plugins/s/skills/room/tests -v
+
       - name: Lint master spec library
         run: python3 plugins/s/skills/build/scripts/spec_lint.py
 
