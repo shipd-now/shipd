@@ -248,23 +248,9 @@ never a symptom site in place of it. A further location SHALL name a site at
 which the defect is visible: a line wrong in the same way, a line that shows
 the mismatch on its own terms, or, where the defect is the conjunction of two
 lines neither wrong alone, the line at which it surfaces at run time even
-though that line is correct in isolation. A further location SHALL also lie
-outside the primary's hunk **and** outside the function, block or table the
-primary sits in — the conditions are conjunctive, since an anchor only has to
-be near by one measure to be restating the defect rather than naming a second
-site. Where the primary sits in neither a function nor a hunk, as a manifest
-line in an untouched file does, the enclosing block or table SHALL decide. A
-recurring site SHALL be exempt from that distance, so a defect appearing
-independently at more than one site — each wrong on its own — still names
-every site however close they sit. Two lines that together make a single
-defect SHALL NOT count as a recurrence; that is the conjunction shape, to
-which the distance condition applies. Without that discriminator the
-exemption would swallow the rule, since the anchors the condition exists to
-suppress are precisely the second half of a two-line mechanism. This is the general
+though that line is correct in isolation. This is the general
 permission the packaging and description-drift cases rely on, so no other
-requirement SHALL grant it separately — both of those cases anchor in a
-different file from their primary, so the distance condition leaves them
-untouched. Where the same defect recurs at
+requirement SHALL grant it separately. Where the same defect recurs at
 more than one call site, the skill SHALL report one finding whose locations
 name every recurring site, rather than one finding per site.
 
@@ -529,35 +515,6 @@ judgement passes as the skill, so the two surfaces do not drift.
   manifest omitting a file and the import that names it
 - **THEN** the finding anchors at the fix site and names the importing line as
   a further location, because that is where the defect surfaces at run time
-
-#### Scenario: A line inside the primary's own function is not a further location
-- **WHEN** the defect's mechanism continues a few lines below the primary,
-  inside the same function and the same hunk
-- **THEN** the finding carries the primary alone, and those lines are described
-  in its prose rather than anchored
-
-#### Scenario: A primary with no function is still constrained
-- **WHEN** the primary is a line in a manifest or data file with no enclosing
-  function, so only a block or table encloses it
-- **THEN** the distance condition still applies through that block or table,
-  rather than being satisfied vacuously by the absent function
-
-#### Scenario: A recurring site is exempt from the distance condition
-- **WHEN** the same defect appears independently at two sites inside a single
-  function, each wrong on its own
-- **THEN** the finding names both sites, because recurrence outranks distance
-
-#### Scenario: Half a two-line mechanism is not a recurrence
-- **WHEN** a defect is the conjunction of two nearby lines, so the second line
-  is the other half of one mechanism rather than a second instance
-- **THEN** the distance condition applies and the second line is not anchored,
-  the recurrence exemption being unavailable to it
-
-#### Scenario: A cross-file anchor is unaffected by the distance condition
-- **WHEN** a packaging finding anchors at the manifest and names the importing
-  line in another file
-- **THEN** that further location still qualifies, lying outside the primary's
-  hunk and outside its block
 
 ### Requirement: Spec-aware verification
 id: spec-aware-review
@@ -1091,7 +1048,7 @@ that flow rather than restating it.
 Guidance that runs on every review SHALL stay inline in `SKILL.md`: the
 workflow steps, the severity rubric, the presentation shape, the review-start
 difftastic probe and its degradation ladder, the base-freshness block, and the
-guardrails. `SKILL.md` SHALL stay under 350 lines; this requirement owns that
+guardrails. `SKILL.md` SHALL stay under 340 lines; this requirement owns that
 ceiling, and no other requirement SHALL restate the figure.
 
 Each reference file SHALL open with a level-1 title and state its own load
@@ -1123,7 +1080,7 @@ into a reference SHALL NOT change that guidance's substance.
 
 #### Scenario: The skill body fits the ceiling
 - **WHEN** `plugins/s/skills/review/SKILL.md` is measured
-- **THEN** it is under 350 lines
+- **THEN** it is under 340 lines
 
 #### Scenario: A reference states its own trigger
 - **WHEN** a file under `plugins/s/skills/review/references/` is read on its own
