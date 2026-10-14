@@ -9,6 +9,7 @@ agent drives to take part in one:
   list <pr>      the room's cards and tasks
   message <pr>   open a task (``--new``) or advance one (``--task ID``)
   close <pr>     post a task's terminal message
+  watch <pr>     wait for a task that is this agent's turn (NDJSON)
 
 Every GitHub read and write goes through one injectable ``gh`` runner,
 ``gh(args, input=None) -> (rc, stdout, stderr)``, defaulting to the ``gh``
@@ -25,6 +26,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD_SCRIPTS = os.path.normpath(
@@ -109,23 +111,46 @@ def _list_comments(gh, path):
     return comments
 
 
-def _read_room(gh, repo, number):
-    """Read the room once: ``(cards, tasks, raw)``.
+ENDPOINT_KEY = "_room_endpoint"
 
-    The room is the union of the PR's issue comments (room traffic) and its
-    review comments (the semantic-review gate's finding tasks), ordered by
-    comment id. ``cards`` holds the last card per agent name, ``tasks`` the
-    ``build_tasks`` view, and ``raw`` maps a card name to the issue comment id
-    holding it, for the join upsert. A comment whose marker does not parse is
-    warned about and skipped."""
+
+def _endpoint(comment):
+    """``"issue"`` or ``"review"``: the endpoint ``_read_comments`` read
+    ``comment`` from."""
+    return comment.get(ENDPOINT_KEY, "issue")
+
+
+def _comment_order(comment):
+    """Sort key for the union: ``created_at`` (GitHub's ``Z``-suffixed
+    ISO-8601 stamps order lexicographically), then id."""
+    return (str(comment.get("created_at") or ""), comment.get("id") or 0)
+
+
+def _read_comments(gh, repo, number):
+    """Every room comment, read once: the union of the PR's issue comments
+    (room traffic) and its review comments (the semantic-review gate's
+    finding tasks), ordered by ``created_at`` and then comment id — the two
+    endpoints number their comments in separate sequences, so id order alone
+    could put a reply ahead of the opener it answers. Each dict is tagged
+    with the endpoint it came from (see ``_endpoint``)."""
     issue = _list_comments(gh, "repos/%s/issues/%d/comments" % (repo, number))
     review = _list_comments(gh, "repos/%s/pulls/%d/comments" % (repo, number))
-    tagged = [(c, True) for c in issue] + [(c, False) for c in review]
-    tagged.sort(key=lambda pair: pair[0].get("id") or 0)
+    for comment in issue:
+        comment[ENDPOINT_KEY] = "issue"
+    for comment in review:
+        comment[ENDPOINT_KEY] = "review"
+    comments = issue + review
+    comments.sort(key=_comment_order)
+    return comments
+
+
+def _parse_room(comments):
+    """``(cards, tasks, raw)`` from ``_read_comments`` output. A comment whose
+    marker does not parse is warned about and skipped."""
     cards = {}
     raw = {}
     entries = []
-    for comment, is_issue in tagged:
+    for comment in comments:
         comment_id = comment.get("id")
         author = (comment.get("user") or {}).get("login")
         try:
@@ -138,11 +163,47 @@ def _read_room(gh, repo, number):
             if isinstance(obj, room_schema.AgentCard):
                 cards.pop(obj.name, None)
                 cards[obj.name] = obj
-                if is_issue:
+                if _endpoint(comment) == "issue":
                     raw[obj.name] = comment_id
             else:
                 entries.append((comment_id, obj))
     return list(cards.values()), room_schema.build_tasks(entries), raw
+
+
+def _room_from_comments(comments):
+    """``(cards, tasks)`` from ``_read_comments`` output: ``cards`` holds the
+    last card per agent name, ``tasks`` the ``build_tasks`` view."""
+    cards, tasks, _raw = _parse_room(comments)
+    return cards, tasks
+
+
+def _read_room(gh, repo, number):
+    """Read the room once: ``(cards, tasks, raw)``.
+
+    ``cards`` and ``tasks`` are as ``_room_from_comments`` builds them, and
+    ``raw`` maps a card name to the issue comment id holding it, for the join
+    upsert."""
+    return _parse_room(_read_comments(gh, repo, number))
+
+
+def _last_comment(comments, task):
+    """The last comment of ``task``: the last one whose id is ``task.id`` or
+    whose Message marker names ``task.id`` as its ``taskId``."""
+    last = None
+    for comment in comments:
+        if comment.get("id") == task.id:
+            last = comment
+            continue
+        try:
+            parsed = room_schema.parse_comments(
+                comment.get("body") or "",
+                author=(comment.get("user") or {}).get("login"))
+        except room_schema.SchemaError:
+            continue
+        if any(isinstance(obj, room_schema.Message)
+               and obj.task_id == task.id for obj in parsed):
+            last = comment
+    return last
 
 
 def _post(gh, repo, number, body):
@@ -248,6 +309,31 @@ def _post_message(gh, repo, number, message):
     except room_schema.SchemaError as exc:
         raise RoomError(str(exc))
     return _post(gh, repo, number, body)
+
+
+# ---------------------------------------------------------------------------
+# The actionable-task predicate
+# ---------------------------------------------------------------------------
+
+def is_actionable(task, agent, skills=()):
+    """True when it is ``agent``'s turn on ``task``: the task waits at
+    ``input-required``, ``agent`` did not post its last message, and it is
+    addressed to ``agent`` — or unaddressed and asks for a skill in
+    ``skills``. Pure and I/O-free; ``watch`` and the CI wake
+    (``room-action-wake``) both import it."""
+    if task.state != "input-required":
+        return False
+    if task.last_agent == agent:
+        return False
+    if task.to == agent:
+        return True
+    return task.to is None and task.skill in tuple(skills or ())
+
+
+def actionable_tasks(tasks, agent, skills=()):
+    """The tasks ``is_actionable`` accepts for ``agent``, ordered by id."""
+    return sorted((t for t in tasks if is_actionable(t, agent, skills)),
+                  key=lambda t: t.id)
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +484,106 @@ def cmd_close(opts, parser, gh):
     return 0
 
 
+def _cursor_text(cursor):
+    return "%d:%d" % cursor
+
+
+def _advance(cursor, comments):
+    """``cursor`` with each component raised to the highest id read from
+    its endpoint."""
+    issue, review = cursor
+    for comment in comments:
+        cid = comment.get("id")
+        if not isinstance(cid, int):
+            continue
+        if _endpoint(comment) == "review":
+            review = max(review, cid)
+        else:
+            issue = max(issue, cid)
+    return issue, review
+
+
+def _is_new(comment, cursor):
+    """True when ``comment``'s id exceeds the cursor component for the
+    endpoint it was read from."""
+    component = cursor[1] if _endpoint(comment) == "review" else cursor[0]
+    cid = comment.get("id")
+    return isinstance(cid, int) and cid > component
+
+
+def _watch_line(task, comment, context, cursor):
+    """One NDJSON line for a surfaced task: the ``list --json`` task fields
+    plus ``task``, ``context``, ``comment``, ``text``, ``url``, ``cursor``."""
+    obj = _task_dict(task)
+    obj.update({
+        "task": task.id,
+        "context": context,
+        "comment": comment.get("id"),
+        "text": task.messages[-1].text if task.messages else "",
+        "url": comment.get("html_url"),
+        "cursor": _cursor_text(cursor),
+    })
+    return json.dumps(obj, sort_keys=True)
+
+
+def _cap_task(gh, repo, number, context, agent, card, task, max_rounds):
+    """Close a task at the round cap: post ``failed``/``round-cap`` on it
+    when ``agent`` has a card, else warn that someone must join to close
+    it. Either way the caller does not surface the task."""
+    if card is None:
+        cli_common.warn("task %s: round cap reached; join the room to close "
+                        "it" % task.id)
+        return
+    capped = _message(
+        context, agent, "round cap (%d) reached" % max_rounds, task.id,
+        {"state": "failed", "reason": "round-cap",
+         "round": room_schema.next_round(task, agent)})
+    _post_message(gh, repo, number, capped)
+    sys.stderr.write("task %s: round cap reached — posted failed "
+                     "(round-cap)\n" % task.id)
+
+
+def cmd_watch(opts, gh, sleep, clock, parser):
+    if not opts.interval > 0:
+        parser.error("--interval must be greater than 0, got %s"
+                     % opts.interval)
+    root = _root(opts)
+    agent = _agent_name(opts, parser, root)
+    max_rounds = _max_rounds(opts, root)
+    repo, number, context = _resolve_room(gh, opts.pr)
+    cursor = opts.since
+    start = clock()
+    while True:
+        comments = _read_comments(gh, repo, number)
+        cards, tasks = _room_from_comments(comments)
+        card = next((c for c in cards if c.name == agent), None)
+        skills = tuple(card.skills) if card is not None else ()
+        surfaced = []
+        for task in actionable_tasks(tasks, agent, skills):
+            if room_schema.at_round_cap(task, agent, max_rounds):
+                _cap_task(gh, repo, number, context, agent, card, task,
+                          max_rounds)
+                continue
+            comment = _last_comment(comments, task)
+            if comment is not None and _is_new(comment, cursor):
+                surfaced.append((task, comment))
+        cursor = _advance(cursor, comments)
+        if surfaced:
+            for task, comment in surfaced:
+                sys.stdout.write(
+                    _watch_line(task, comment, context, cursor) + "\n")
+            sys.stdout.flush()
+            return 0
+        if opts.once:
+            break
+        if opts.timeout is not None and clock() - start >= opts.timeout:
+            break
+        sleep(opts.interval)
+    sys.stderr.write("watch: no actionable task on %s (cursor %s)\n"
+                     % (context, _cursor_text(cursor)))
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Command line
 # ---------------------------------------------------------------------------
@@ -412,6 +598,25 @@ def _positive_int(value):
         raise argparse.ArgumentTypeError("must be at least 1, got %d"
                                          % number)
     return number
+
+
+def _cursor(value):
+    """``<issue>:<review>`` (or a bare ``<issue>``) as an int pair."""
+    parts = value.split(":")
+    if len(parts) > 2:
+        raise argparse.ArgumentTypeError(
+            "must be <issue>:<review> or <issue>, got %r" % value)
+    try:
+        ids = [int(p) for p in parts]
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "must be <issue>:<review> comment ids, got %r" % value)
+    if any(i < 0 for i in ids):
+        raise argparse.ArgumentTypeError(
+            "comment ids must not be negative, got %r" % value)
+    if len(ids) == 1:
+        ids.append(0)
+    return ids[0], ids[1]
 
 
 def build_parser():
@@ -480,18 +685,39 @@ def build_parser():
                    help="the message text (default: closed: <state>)")
     p.set_defaults(func=cmd_close)
 
+    p = sub.add_parser("watch", parents=[common],
+                       help="wait for a task that is this agent's turn")
+    p.add_argument("pr", help="pull request number, URL, or branch")
+    p.add_argument("--since", type=_cursor, default=(0, 0),
+                   metavar="CURSOR",
+                   help="surface only tasks whose last comment is newer "
+                        "than <issue>:<review> comment ids (a bare integer "
+                        "is the issue id; default: 0:0, the backlog)")
+    p.add_argument("--interval", type=float, default=30.0, metavar="S",
+                   help="seconds between polls (default: 30)")
+    p.add_argument("--timeout", type=float, default=None, metavar="S",
+                   help="stop after this many seconds with no task "
+                        "(default: no limit)")
+    p.add_argument("--once", action="store_true",
+                   help="poll once and stop")
+    p.set_defaults(func=None)
+
     return parser, sub.choices
 
 
-def main(argv=None, gh=None):
+def main(argv=None, gh=None, sleep=time.sleep, clock=time.monotonic):
     parser, verbs = build_parser()
     opts = parser.parse_args(argv)
     gh = gh or _default_gh
     try:
+        if opts.verb == "watch":
+            return cmd_watch(opts, gh, sleep, clock, verbs["watch"])
         return opts.func(opts, verbs[opts.verb], gh)
     except RoomError as exc:
         cli_common.err(str(exc))
         return 1
+    except KeyboardInterrupt:
+        return 130
 
 
 if __name__ == "__main__":

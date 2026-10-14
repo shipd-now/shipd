@@ -135,12 +135,14 @@ class FakeGh:
         raise AssertionError("unexpected gh api method: %r" % (args,))
 
 
-def _run(argv, gh, env=None):
-    """Run ``room.main(argv, gh=gh)`` and return ``(code, stdout, stderr)``.
+def _run(argv, gh, env=None, seams=None):
+    """Run ``room.main(argv, gh=gh, **seams)`` and return ``(code, stdout,
+    stderr)``.
 
     ``HOME`` is an empty temp directory and ``SHIPD_ROOM_AGENT`` is unset
     unless ``env`` supplies it; a ``SystemExit`` (argparse usage) is caught
-    and its code returned."""
+    and its code returned. ``seams`` holds the watch verb's ``sleep`` and
+    ``clock`` keyword arguments."""
     home = tempfile.mkdtemp(prefix="room-test-home-")
     try:
         environ = {k: v for k, v in os.environ.items()
@@ -151,7 +153,7 @@ def _run(argv, gh, env=None):
         with unittest.mock.patch.dict(os.environ, environ, clear=True), \
                 redirect_stdout(out), redirect_stderr(err):
             try:
-                code = room.main(list(argv), gh=gh)
+                code = room.main(list(argv), gh=gh, **(seams or {}))
             except SystemExit as exc:
                 code = exc.code if isinstance(exc.code, int) else 1
         return code, out.getvalue(), err.getvalue()
@@ -247,6 +249,26 @@ class GhSeamTest(RoomTestBase):
         self.assertEqual(task["messages"], 2)
         self.assertEqual(task["state"], "working")
         self.assertEqual(task["last_agent"], "claude-b")
+
+    def test_reply_follows_its_opener_across_endpoints(self):
+        # room-gh-seam: the union orders by created_at, then id — a lower-id
+        # issue-comment reply posted after a review-comment opener follows it.
+        opener = msg_comment(900, "gate", text="finding",
+                             state="input-required", round=1, to="claude-b")
+        opener["created_at"] = "2026-01-01T10:00:00Z"
+        reply = msg_comment(50, "claude-b", text="fixed", task_id=900,
+                            state="working", round=2)
+        reply["created_at"] = "2026-01-01T10:05:00Z"
+        gh = FakeGh(comments=[reply], review_comments=[opener])
+        code, out, err = self.room(gh, "list", "7", "--json",
+                                   "--agent", "codex-a")
+        self.assertEqual(code, 0, err)
+        tasks = json.loads(out)["tasks"]
+        self.assertEqual(len(tasks), 1, tasks)
+        self.assertEqual(tasks[0]["id"], 900)
+        self.assertEqual(tasks[0]["messages"], 2)
+        self.assertEqual(tasks[0]["last_agent"], "claude-b")
+        self.assertEqual(tasks[0]["state"], "working")
 
     def test_failed_pr_view_is_one_error_line(self):
         gh = FakeGh(fail=["pr", "view"])
@@ -681,3 +703,372 @@ class CloseTest(RoomTestBase):
         self.assertEqual(code, 1)
         self.assertEqual(gh.posts(), [])
         self.assertIn("has not joined", err)
+
+
+def _task(**kw):
+    """A ``room_schema.Task`` with defaults for every field ``kw`` omits: an
+    ``input-required`` task from ``codex-a`` to ``claude-b`` at round 1."""
+    fields = dict(id=10, context_id=CONTEXT, opener="codex-a", skill=None,
+                  messages=[], state="input-required", to="claude-b",
+                  round=1, reason=None, last_agent="codex-a")
+    fields.update(kw)
+    return room_schema.Task(**fields)
+
+
+class ActionableTest(unittest.TestCase):
+    """room-actionable-predicate: the pure is-it-my-turn rule."""
+
+    def test_addressed_task_is_actionable_for_its_addressee_only(self):
+        task = _task()
+        self.assertTrue(room.is_actionable(task, "claude-b"))
+        self.assertFalse(room.is_actionable(task, "codex-a"))
+        self.assertFalse(room.is_actionable(task, "other"))
+
+    def test_unaddressed_task_matches_by_skill(self):
+        task = _task(to=None, skill="review-finding")
+        self.assertTrue(room.is_actionable(task, "claude-b",
+                                           ("review-finding",)))
+        self.assertFalse(room.is_actionable(task, "claude-b", ()))
+        self.assertFalse(room.is_actionable(task, "claude-b"))
+
+    def test_own_last_message_is_never_actionable(self):
+        task = _task(last_agent="claude-b")
+        self.assertFalse(room.is_actionable(task, "claude-b"))
+
+    def test_terminal_and_working_tasks_are_skipped(self):
+        tasks = [_task(id=i, state=state) for i, state in enumerate(
+            ("completed", "failed", "canceled", "working", "submitted"),
+            start=10)]
+        self.assertEqual(room.actionable_tasks(tasks, "claude-b"), [])
+
+    def test_results_are_ordered_by_id(self):
+        tasks = [_task(id=30), _task(id=10, state="working"), _task(id=20),
+                 _task(id=5, to=None, skill="review-finding")]
+        got = room.actionable_tasks(tasks, "claude-b", ("review-finding",))
+        self.assertEqual([t.id for t in got], [5, 20, 30])
+
+
+class RoomReadSplitTest(unittest.TestCase):
+    """room-watch-verb: the one-fetch room read split into the paginated
+    fetch, the parse, and the last-comment lookup ``watch`` needs."""
+
+    def _gh(self):
+        return FakeGh(comments=[
+            card_comment(100, "codex-a", harness="codex"),
+            msg_comment(101, "codex-a", text="please check",
+                        state="input-required", round=1, to="claude-b"),
+            card_comment(102, "claude-b", harness="claude"),
+            msg_comment(103, "claude-b", text="on it", task_id=101,
+                        state="working", round=2),
+        ], review_comments=[
+            msg_comment(104, "gate", text="finding", state="input-required",
+                        round=1, to="claude-b"),
+        ], pages=2)
+
+    def test_read_comments_flattens_the_slurped_pages_in_order(self):
+        gh = self._gh()
+        comments = room._read_comments(gh, "o/r", 7)
+        self.assertEqual([c["id"] for c in comments],
+                         [100, 101, 102, 103, 104])
+        self.assertTrue(all(isinstance(c, dict) for c in comments))
+        self.assertEqual([room._endpoint(c) for c in comments],
+                         ["issue"] * 4 + ["review"])
+        reads = [args for args, _inp in gh.calls if args[0] == "api"]
+        self.assertEqual(len(reads), 2)
+
+    def test_room_from_comments_matches_read_room(self):
+        gh = self._gh()
+        cards, tasks, _raw = room._read_room(gh, "o/r", 7)
+        got_cards, got_tasks = room._room_from_comments(
+            room._read_comments(self._gh(), "o/r", 7))
+        self.assertEqual(got_cards, cards)
+        self.assertEqual(got_tasks, tasks)
+        self.assertEqual([t.id for t in got_tasks], [101, 104])
+
+    def test_last_comment_is_the_last_reply_or_the_opener(self):
+        comments = room._read_comments(self._gh(), "o/r", 7)
+        _cards, tasks = room._room_from_comments(comments)
+        by_id = {t.id: t for t in tasks}
+        self.assertEqual(room._last_comment(comments, by_id[101])["id"], 103)
+        self.assertEqual(room._last_comment(comments, by_id[104])["id"], 104)
+
+
+class FakeClock:
+    """A monotonic clock: each call returns the current time, then advances
+    it by ``step`` seconds."""
+
+    def __init__(self, step=0.0, start=0.0):
+        self.step = step
+        self.now = start
+        self.calls = 0
+
+    def __call__(self):
+        value = self.now
+        self.now += self.step
+        self.calls += 1
+        return value
+
+
+class FakeSleep:
+    """A ``sleep`` that never sleeps: it records each argument and runs
+    ``callback(call_number)`` (1-based) when one is given."""
+
+    def __init__(self, callback=None):
+        self.callback = callback
+        self.calls = []
+
+    def __call__(self, seconds):
+        self.calls.append(seconds)
+        if self.callback is not None:
+            self.callback(len(self.calls))
+
+
+def _watch(argv, gh, sleep=None, clock=None):
+    """Run ``room.main(["watch", ...], gh=gh, sleep=..., clock=...)``; returns
+    ``(code, stdout, stderr)``. The seams default to fakes, so no test ever
+    sleeps for real."""
+    seams = {"sleep": sleep if sleep is not None else FakeSleep(),
+             "clock": clock if clock is not None else FakeClock()}
+    return _run(["watch"] + list(argv), gh, seams=seams)
+
+
+def _reads(gh, endpoint="issues"):
+    """The recorded comment reads of one endpoint (``issues`` or ``pulls``)."""
+    return [args for args, _inp in gh.calls
+            if args[0] == "api" and "-X" not in args
+            and "/%s/" % endpoint in args[1]]
+
+
+class WatchTestBase(RoomTestBase):
+    def watch(self, gh, *argv, sleep=None, clock=None):
+        """Run ``watch 7`` with ``--root`` pinned to an empty temp dir."""
+        return _watch(["7"] + list(argv) + ["--root", self.root], gh,
+                      sleep=sleep, clock=clock)
+
+    def lines(self, out):
+        return [json.loads(line) for line in out.splitlines()]
+
+
+class WatchTest(WatchTestBase):
+    """room-watch-verb and room-watch-exit: the poll loop, the cursor, and
+    the exits."""
+
+    def _two_tasks(self):
+        return [
+            msg_comment(10, "codex-a", text="please check",
+                        state="input-required", round=1, to="claude-b"),
+            msg_comment(11, "claude-b", text="your turn",
+                        state="input-required", round=1, to="codex-a"),
+        ]
+
+    def test_first_poll_surfaces_the_backlog_and_exits(self):
+        gh = FakeGh(comments=self._two_tasks())
+        sleep = FakeSleep()
+        code, out, err = self.watch(gh, "--agent", "claude-b", sleep=sleep)
+        self.assertEqual(code, 0, err)
+        lines = self.lines(out)
+        self.assertEqual(len(lines), 1, out)
+        line = lines[0]
+        for key in ("task", "comment", "text", "url", "context", "cursor"):
+            self.assertIn(key, line)
+        for key in ("id", "state", "opener", "to", "round", "reason",
+                    "last_agent", "skill", "messages"):
+            self.assertIn(key, line)
+        self.assertEqual(line["task"], 10)
+        self.assertEqual(line["id"], 10)
+        self.assertEqual(line["comment"], 10)
+        self.assertEqual(line["text"], "please check")
+        self.assertEqual(line["url"], "https://example/10")
+        self.assertEqual(line["context"], CONTEXT)
+        self.assertEqual(line["cursor"], "11:0")
+        self.assertEqual(out.splitlines()[0],
+                         json.dumps(line, sort_keys=True))
+        self.assertEqual(len(_reads(gh, "issues")), 1)
+        self.assertEqual(len(_reads(gh, "pulls")), 1)
+        self.assertEqual(sleep.calls, [])
+
+    def test_reply_is_the_comment_and_text_of_the_line(self):
+        gh = FakeGh(comments=[
+            msg_comment(10, "codex-a", text="please check",
+                        state="input-required", round=1, to="codex-a"),
+            msg_comment(12, "codex-b", text="over to you", task_id=10,
+                        state="input-required", round=2, to="claude-b"),
+        ])
+        code, out, err = self.watch(gh, "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        line = self.lines(out)[0]
+        self.assertEqual((line["task"], line["comment"], line["text"]),
+                         (10, 12, "over to you"))
+        self.assertEqual(line["url"], "https://example/12")
+
+    def test_cursor_hides_what_was_already_seen(self):
+        for since in ("10:0", "10"):
+            with self.subTest(since=since):
+                gh = FakeGh(comments=self._two_tasks())
+                code, out, err = self.watch(gh, "--agent", "claude-b",
+                                            "--since", since, "--once")
+                self.assertEqual(code, 0, err)
+                self.assertEqual(out, "")
+
+    def test_review_task_is_judged_by_the_review_component(self):
+        gh = FakeGh(
+            comments=[human_comment(100, "a human note")],
+            review_comments=[msg_comment(40, "gate", text="finding",
+                                         state="input-required", round=1,
+                                         to="claude-b")])
+        code, out, err = self.watch(gh, "--agent", "claude-b",
+                                    "--since", "100:39", "--once")
+        self.assertEqual(code, 0, err)
+        lines = self.lines(out)
+        self.assertEqual([l["task"] for l in lines], [40])
+        self.assertEqual(lines[0]["cursor"], "100:40")
+        gh = FakeGh(comments=list(gh.comments),
+                    review_comments=list(gh.review_comments))
+        code, out, err = self.watch(gh, "--agent", "claude-b",
+                                    "--since", "100:40", "--once")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "")
+
+    def test_skill_match_without_a_card_is_empty(self):
+        gh = FakeGh(comments=[msg_comment(
+            10, "gate", text="finding", state="input-required", round=1,
+            skill="review-finding")])
+        code, out, err = self.watch(gh, "--agent", "claude-b", "--once")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "")
+        self.assertNotIn("Error:", err)
+
+    def test_skill_match_with_a_card_is_surfaced(self):
+        gh = FakeGh(comments=[
+            card_comment(1, "claude-b", skills=("review-finding",)),
+            msg_comment(10, "gate", text="finding", state="input-required",
+                        round=1, skill="review-finding")])
+        code, out, err = self.watch(gh, "--agent", "claude-b", "--once")
+        self.assertEqual(code, 0, err)
+        self.assertEqual([l["task"] for l in self.lines(out)], [10])
+
+    def test_a_task_becomes_actionable_on_a_later_poll(self):
+        gh = FakeGh(comments=[card_comment(1, "claude-b")])
+
+        def arrive(call):
+            if call == 2:
+                gh.comments.append(msg_comment(
+                    20, "codex-a", text="now you", state="input-required",
+                    round=1, to="claude-b"))
+
+        sleep = FakeSleep(arrive)
+        code, out, err = self.watch(gh, "--agent", "claude-b", sleep=sleep)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sleep.calls, [30.0, 30.0])
+        self.assertEqual(len(_reads(gh, "issues")), 3)
+        self.assertEqual([l["task"] for l in self.lines(out)], [20])
+
+    def test_once_with_nothing_exits_zero_and_empty(self):
+        gh = FakeGh(comments=self._two_tasks())
+        code, out, err = self.watch(gh, "--agent", "codex-b", "--once")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "")
+        self.assertEqual(err.splitlines()[-1],
+                         "watch: no actionable task on %s (cursor 11:0)"
+                         % CONTEXT)
+
+    def test_timeout_ends_the_watch(self):
+        gh = FakeGh(comments=self._two_tasks())
+        sleep = FakeSleep()
+        code, out, err = self.watch(gh, "--agent", "codex-b", "--timeout",
+                                    "60", "--interval", "20", sleep=sleep,
+                                    clock=FakeClock(step=25))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "")
+        # The clock reads 0 at the start, then 25, 50, 75 after each poll.
+        self.assertEqual(sleep.calls, [20.0, 20.0])
+        self.assertEqual(len(_reads(gh, "issues")), 3)
+        self.assertEqual(len(_reads(gh, "pulls")), 3)
+        self.assertIn("watch: no actionable task on %s" % CONTEXT, err)
+
+    def test_failed_read_is_fatal(self):
+        gh = FakeGh(comments=self._two_tasks(),
+                    fail=["api", "repos/o/r/issues/7/comments?per_page=100"])
+        sleep = FakeSleep()
+        code, out, err = self.watch(gh, "--agent", "claude-b", sleep=sleep)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        lines = err.splitlines()
+        self.assertEqual(len(lines), 1, err)
+        self.assertTrue(lines[0].startswith("Error: "), err)
+        self.assertEqual(sleep.calls, [])
+
+    def test_interval_must_be_positive(self):
+        for interval in ("0", "-5"):
+            with self.subTest(interval=interval):
+                gh = FakeGh()
+                code, _out, err = self.watch(gh, "--agent", "claude-b",
+                                             "--interval", interval)
+                self.assertEqual(code, 2)
+                self.assertIn("usage:", err)
+                self.assertEqual(gh.calls, [])
+
+    def test_bad_cursor_is_a_usage_error(self):
+        gh = FakeGh()
+        code, _out, err = self.watch(gh, "--agent", "claude-b",
+                                     "--since", "x:y")
+        self.assertEqual(code, 2)
+        self.assertIn("usage:", err)
+
+    def test_keyboard_interrupt_exits_130_without_a_traceback(self):
+        def interrupted(args, input=None):
+            raise KeyboardInterrupt
+
+        code, out, err = self.watch(interrupted, "--agent", "claude-b")
+        self.assertEqual(code, 130)
+        self.assertEqual(out, "")
+        self.assertEqual(err, "")
+
+
+class WatchRoundCapTest(WatchTestBase):
+    """room-watch-round-cap: a capped task is failed (with a card) or warned
+    about (without one), never surfaced, and the poll carries on."""
+
+    def _capped(self):
+        return msg_comment(10, "codex-a", text="again?",
+                           state="input-required", round=6, to="claude-b")
+
+    def test_cap_posts_failed_and_keeps_polling(self):
+        gh = FakeGh(comments=[card_comment(1, "claude-b"), self._capped()])
+        code, out, err = self.watch(gh, "--agent", "claude-b", "--once",
+                                    "--max-rounds", "6")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "")
+        posts = gh.posts()
+        self.assertEqual(len(posts), 1, posts)
+        msg = first_marker(posts[0])
+        self.assertEqual(msg.task_id, 10)
+        self.assertEqual(msg.agent, "claude-b")
+        self.assertEqual(msg.context_id, CONTEXT)
+        self.assertEqual(msg.metadata, {"reason": "round-cap", "round": 7,
+                                        "state": "failed"})
+        self.assertEqual(msg.text, "round cap (6) reached")
+        self.assertIn("task 10: round cap reached — posted failed "
+                      "(round-cap)", err)
+        self.assertIn("watch: no actionable task on %s" % CONTEXT, err)
+
+    def test_cap_without_a_card_is_a_warning(self):
+        gh = FakeGh(comments=[self._capped()])
+        code, out, err = self.watch(gh, "--agent", "claude-b", "--once",
+                                    "--max-rounds", "6")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "")
+        self.assertEqual(gh.posts(), [])
+        self.assertIn("WARNING: task 10: round cap reached; join the room "
+                      "to close it", err)
+
+    def test_task_below_the_cap_is_still_surfaced(self):
+        gh = FakeGh(comments=[
+            card_comment(1, "claude-b"), self._capped(),
+            msg_comment(11, "codex-a", text="fresh", state="input-required",
+                        round=1, to="claude-b")])
+        code, out, err = self.watch(gh, "--agent", "claude-b", "--once",
+                                    "--max-rounds", "6")
+        self.assertEqual(code, 0, err)
+        self.assertEqual([l["task"] for l in self.lines(out)], [11])
+        self.assertEqual(len(gh.posts()), 1)
