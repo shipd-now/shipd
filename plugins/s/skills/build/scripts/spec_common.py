@@ -105,6 +105,8 @@ EPIC_SECTIONS = ("## Introduction", "## Decisions", "## Design", "## Changes")
 EPIC_RATINGS = ("low", "medium", "high")
 EPIC_CHANGES_COLUMNS = ("Change", "Description", "Code", "Integration",
                         "Unknowns", "Risk")
+# Optional seventh column: comma-separated sibling slugs a member is planned after.
+EPIC_AFTER_COLUMN = "After"
 SECTION_HEADER_RE = re.compile(r"^##\s+(.*?)\s*$")
 TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-+:?$")
 
@@ -3006,6 +3008,21 @@ def _is_separator_row(cells):
         TABLE_SEPARATOR_CELL_RE.match(c) for c in cells)
 
 
+def _changes_section_lines(text):
+    """Lines of the ``## Changes`` section body (empty when absent)."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m = SECTION_HEADER_RE.match(line)
+        if m and m.group(1).strip() == "Changes":
+            out = []
+            for ln in lines[i + 1:]:
+                if SECTION_HEADER_RE.match(ln):
+                    break
+                out.append(ln)
+            return out
+    return []
+
+
 def parse_epic_changes(text):
     """Parse an epic's ``## Changes`` stub table.
 
@@ -3045,9 +3062,37 @@ def parse_epic_changes(text):
         cells = _split_table_row(ln)
         slug = cells[0] if len(cells) > 0 else ""
         description = cells[1] if len(cells) > 1 else ""
-        ratings = tuple(cells[2:])
+        ratings = tuple(cells[2:2 + len(EPIC_CHANGES_COLUMNS) - 2])
         rows.append((slug, description, ratings))
     return header, rows
+
+
+def parse_epic_after(text):
+    """Return ``{slug: [after, ...]}`` for every data row of an epic's
+    ``## Changes`` table, read from the optional ``After`` column (the seventh
+    cell, comma-separated, whitespace ignored). Every list is empty when the
+    header lacks the column. Validation is the linter's job."""
+    header, rows = parse_epic_changes(text)
+    has_after = bool(header) and len(header) > len(EPIC_CHANGES_COLUMNS) \
+        and header[len(EPIC_CHANGES_COLUMNS)] == EPIC_AFTER_COLUMN
+    result = {}
+    if header is None:
+        return result
+    table = [ln for ln in _changes_section_lines(text)
+             if ln.strip().startswith("|")]
+    data = table[1:]
+    if data and _is_separator_row(_split_table_row(data[0])):
+        data = data[1:]
+    for ln in data:
+        cells = _split_table_row(ln)
+        slug = cells[0] if cells else ""
+        after = []
+        if has_after and len(cells) > len(EPIC_CHANGES_COLUMNS):
+            after = [c.strip() for c in
+                     cells[len(EPIC_CHANGES_COLUMNS)].split(",")
+                     if c.strip()]
+        result[slug] = after
+    return result
 
 
 # ---------------------------------------------------------------------------

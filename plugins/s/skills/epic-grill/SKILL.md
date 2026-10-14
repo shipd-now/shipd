@@ -30,8 +30,9 @@ Paths (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 - Gate: `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_gate.py`
 - Worktree helper: `${CLAUDE_PLUGIN_ROOT}/bin/shipd`
 
-Run every command **from the repository root**. The epic slug is the sole
-argument to `/s:epic-grill <epic>`.
+Run every command **from the repository root**. The epic slug is the first
+argument to `/s:epic-grill <epic> [--parallel N]`; `N` caps how many members
+one plan wave holds (default 3).
 
 ---
 
@@ -49,25 +50,41 @@ argument to `/s:epic-grill <epic>`.
    member whose state is `draft` (a planned member an earlier, interrupted
    grill left unfinished). Report every other member with its state and leave
    it untouched. If nothing is selected, say so and stop.
-4. **Order the selection by dependency**, judged from the epic's Decisions,
-   Design, and member descriptions: a member whose output another consumes
-   comes first. Break ties by ascending risk, then table order.
-5. **Print the order** before planning the first member, one line per member
-   with the reason it sits there, then continue without asking.
+4. **Compute plan waves when the epic declares dependencies.** If the epic's
+   `## Changes` table carries an `After` column with at least one non-empty
+   cell, run
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> --waves --parallel N --json
+   ```
+   and keep the `plan` waves, restricted to the selected members. Print each
+   wave with its members' `after` lists before planning the first member, then
+   continue without asking.
+5. **Otherwise order the selection by dependency**, judged from the epic's
+   Decisions, Design, and member descriptions: a member whose output another
+   consumes comes first. Break ties by ascending risk, then table order. Print
+   the order before planning the first member, one line per member with the
+   reason it sits there, then continue without asking. Each member is its own
+   wave.
 
 ## Planning
 
-Plan the selected members **one at a time, in the printed order**, so each
-planner can read the plans before it. Keep a running list of
-`<slug>: <worktree root>` for every member planned or already `draft`.
+Plan the selected members **wave by wave, in the printed order**, so each
+planner can read the plans of every earlier wave. Keep a running list of
+`<slug>: <worktree root>` for every member planned or already `draft`. For a
+wave of several `unplanned` members, create each worktree, then spawn one
+planner per member **together in a single message** and wait for the whole
+wave before grading it and starting the next. A wave of one is the serial
+path. Computed waves hold only `unplanned` members, so add every selected
+`draft` member to the running list, as its bullet below says, before the
+first wave.
 
 - **`unplanned` member.** Create its worktree, then spawn the planner:
   ```
   "${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree <member>
   ```
   The worktree root is `.worktrees/<member>`. Spawn **one general-purpose
-  sub-agent** for the member and wait for it before starting the next. Give it
-  this instruction verbatim, filling the placeholders:
+  sub-agent** for the member. Give it this instruction verbatim, filling the
+  placeholders:
 
   ```
   Run /s:plan for the change `<member>`, a member of the epic `<epic>`,
@@ -87,11 +104,15 @@ planner can read the plans before it. Keep a running list of
   ledger, append your slug to that entry's `**Relied on by:**` field
   (adding the field as the entry's last line if absent) in the earlier
   member's installed plan.md. Edit nothing else in another member's plan.
+  List each such reliance in your DEFERRED: block as a line
+  `RELIED: <earlier member> Q<n>`.
   Install the change through spec_emit.py and stop at Status: draft. Do not
   run spec_gate.py; /s:epic-grill gates every member after its final round.
   End your turn with `DEFERRED:` and one line per PLANNER entry
   (`Q<n> | <summary> | <options, default first>`), or `DEFERRED: none`.
   ```
+
+  Name only members of earlier waves there, never a sibling of the same wave.
 - **`draft` member.** Do not re-plan it. Find its worktree root:
   ```
   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" locate <member>
@@ -110,10 +131,13 @@ The member passes only if `status` prints `draft` and the linter exits 0. A
 failed grade: **stop and ask the human** what to do (retry the planner, fix by
 hand, or drop the member); do not plan on past it.
 
-After each planner, also re-run `spec_lint.py <slug> --root <root>` on every
-member in the running list: a later planner may have edited an earlier
-member's `**Relied on by:**` field. A failed re-lint stops and asks the human
-like a failed grade.
+After each wave, grade every member of the wave. Then, for every
+`RELIED: <member> Q<n>` line a planner of the wave reported, check that
+entry's `**Relied on by:**` field and append the planner's slug where a
+concurrent edit dropped it. Then re-run
+`spec_lint.py <slug> --root <root>` on every member of the earlier waves: a
+later planner may have edited an earlier member's `**Relied on by:**` field.
+A failed re-lint stops and asks the human like a failed grade.
 
 ## Consistency pass
 

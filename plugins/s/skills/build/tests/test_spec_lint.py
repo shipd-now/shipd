@@ -1502,6 +1502,39 @@ class EpicLintTest(unittest.TestCase):
         self.assertTrue(has(self._epic_errors("reporting-overhaul"),
                             "Csv_Export"))
 
+    def _after_epic(self, cell_a="", cell_b="a", header_tail="After"):
+        head = self.VALID_EPIC.split("## Changes\n")[0]
+        return (
+            head + "## Changes\n\n"
+            "| Change | Description | Code | Integration | Unknowns | Risk "
+            "| %s |\n"
+            "| --- | --- | --- | --- | --- | --- | --- |\n"
+            "| a | A | low | low | low | low | %s |\n"
+            "| b | B | low | low | low | low | %s |\n"
+            % (header_tail, cell_a, cell_b))
+
+    def test_after_column_valid_lints_clean(self):
+        self._write_epic("reporting-overhaul", self._after_epic())
+        self.assertEqual(self._epic_errors("reporting-overhaul"), [])
+
+    def test_after_self_reference_and_unknown_slug_error(self):
+        self._write_epic("reporting-overhaul",
+                         self._after_epic(cell_b="b, zz"))
+        errors = self._epic_errors("reporting-overhaul")
+        self.assertTrue(has(errors, "itself"))
+        self.assertTrue(has(errors, "zz"))
+
+    def test_after_cycle_is_not_an_error(self):
+        self._write_epic("reporting-overhaul",
+                         self._after_epic(cell_a="b", cell_b="a"))
+        self.assertEqual(self._epic_errors("reporting-overhaul"), [])
+
+    def test_seventh_column_not_after_is_bad_header(self):
+        self._write_epic("reporting-overhaul",
+                         self._after_epic(header_tail="Later"))
+        self.assertTrue(has(self._epic_errors("reporting-overhaul"),
+                            "header"))
+
     def test_duplicate_stub_slug_errors(self):
         self._write_epic(
             "reporting-overhaul",

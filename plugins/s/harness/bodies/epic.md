@@ -85,11 +85,13 @@ matching the directory, `## Introduction` first (why first, closing with a
 `## Changes` table whose header row is exactly:
 
 ```
-| Change | Description | Code | Integration | Unknowns | Risk |
+| Change | Description | Code | Integration | Unknowns | Risk | After |
 ```
 
 One row per member: a unique kebab-case slug, then your honest `low`,
-`medium`, or `high` rating in each of the four complexity columns.
+`medium`, or `high` rating in each of the four complexity columns, then the
+`After` column's cell: the sibling slugs (comma-separated) this member must be planned
+after as the Design's seams dictate, empty when it depends on none.
 <!-- if:file-references -->
 Read `{refs}/epic.md` for the full contract the linter enforces — the metadata
 keys, the optional `## Research`, `## Video`, and `## References` link

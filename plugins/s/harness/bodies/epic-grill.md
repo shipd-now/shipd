@@ -17,13 +17,24 @@ slug (`/s:epic-grill <slug>`).
    nor `active`, report the status and stop. Select every member in the
    `unplanned` lane plus every member in state `draft`; report the rest
    untouched.
-2. **Order and print.** Order the selected members by dependency, judged from
-   the epic's Decisions, Design, and member descriptions; break ties by
-   ascending risk, then table order. Print the order with one reason per
-   member before planning the first.
-3. **Plan each member in turn, in this session.** For an `unplanned` member
+2. **Order and print.** The invocation may carry `--parallel N` (default 3).
+   If the epic's `## Changes` table carries an `After` column with at least
+   one non-empty cell, run
+   `python3 "$S/autopilot.py" <slug> --waves --parallel N --json`, keep the
+   `plan` waves restricted to the selected members, and print each wave with
+   its members' `after` lists before planning the first. Otherwise order the
+   selected members by dependency, judged from the epic's Decisions, Design,
+   and member descriptions; break ties by ascending risk, then table order;
+   print the order with one reason per member before planning the first, each
+   member being its own wave.
+3. **Plan wave by wave, in this session.** Run one planner per member of a
+   wave, reading the plans of every earlier wave first and never a sibling of
+   the same wave; grade the whole wave and re-lint every earlier member before
+   the next wave starts. Before the first wave, add every selected `draft`
+   member to the plans you read, since computed waves hold only `unplanned`
+   members. For an `unplanned` member
    run `shipd worktree <member>`, then follow the `/s:plan` workflow inside
-   `.worktrees/<member>`, reading the plans already made first. Open no
+   `.worktrees/<member>`. Open no
    question round. For every decision the oracle leaves open, adopt your
    recommended default and record a `## Questions and answers` entry with
    `**Answered by:** PLANNER`: the options in `**Question:**` with the default
@@ -31,7 +42,10 @@ slug (`/s:epic-grill <slug>`).
    filed one. Where a member's plan builds on an earlier member's `PLANNER` default,
    append the later member's slug to that entry's `**Relied on by:**` field (adding it as
    the entry's last line if absent) in that member's installed plan, edit
-   nothing else in it, and re-lint that member. Install the change through
+   nothing else in it, and list each such reliance as a `RELIED: <member> Q<n>`
+   line in its `DEFERRED:` block. After each wave, check each `RELIED:` line
+   against that entry's `**Relied on by:**` field and append a missing slug
+   before the re-lint of that member. Install the change through
    `spec_emit.py` and stop at `Status: draft`; do not run `spec_gate.py`. For
    a `draft` member, find its root with `locate <member>` and do not re-plan
    it. Grade each member from disk: `--root <worktree> status <member>` prints

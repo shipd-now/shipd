@@ -587,18 +587,20 @@ def _check_epic_metadata(root, path, text, errors):
 
 
 def _check_epic_changes(text, path, errors):
-    """Validate an epic's ``## Changes`` stub table: the exact six-column
-    header, at least one data row, kebab-case Change slugs unique within the
+    """Validate an epic's ``## Changes`` stub table: the six-column header
+    (optionally followed by ``After``, whose slugs must name other rows), at least one data row, kebab-case Change slugs unique within the
     table, and every rating cell one of ``low``/``medium``/``high``."""
     header, rows = sc.parse_epic_changes(text)
     if header is None:
         errors.append(LintError(
             "epic.md `## Changes` section has no stub table", path))
         return
-    if header != list(sc.EPIC_CHANGES_COLUMNS):
+    base_cols = list(sc.EPIC_CHANGES_COLUMNS)
+    with_after = base_cols + [sc.EPIC_AFTER_COLUMN]
+    if header != base_cols and header != with_after:
         errors.append(LintError(
-            "epic.md stub table header is %s, expected %s"
-            % (header, list(sc.EPIC_CHANGES_COLUMNS)), path))
+            "epic.md stub table header is %s, expected %s or %s"
+            % (header, base_cols, with_after), path))
     if not rows:
         errors.append(LintError(
             "epic.md stub table has no data rows (at least one required)",
@@ -624,6 +626,21 @@ def _check_epic_changes(text, path, errors):
                 errors.append(LintError(
                     "epic.md stub table rating '%s' is not one of: %s"
                     % (rating, ", ".join(sc.EPIC_RATINGS)), path))
+    if header == with_after:
+        for slug, after in sc.parse_epic_after(text).items():
+            for dep in after:
+                if not sc.KEBAB_RE.match(dep):
+                    errors.append(LintError(
+                        "epic.md stub table row '%s' After slug '%s' is not "
+                        "a kebab-case slug" % (slug, dep), path))
+                elif dep == slug:
+                    errors.append(LintError(
+                        "epic.md stub table row '%s' names itself in After"
+                        % slug, path))
+                elif dep not in seen:
+                    errors.append(LintError(
+                        "epic.md stub table row '%s' After slug '%s' names "
+                        "no other row of the table" % (slug, dep), path))
 
 
 def _is_within(path, parent):

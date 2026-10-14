@@ -364,9 +364,9 @@ decomposition follows.
 
 ## Changes
 
-| Change | Description | Code | Integration | Unknowns | Risk |
-| --- | --- | --- | --- | --- | --- |
-| <member-slug> | <one-line description> | low | medium | low | low |
+| Change | Description | Code | Integration | Unknowns | Risk | After |
+| --- | --- | --- | --- | --- | --- | --- |
+| <member-slug> | <one-line description> | low | medium | low | low | <sibling-slug, ...> |
 ```
 
 Rules the linter enforces (so get them right up front):
@@ -409,8 +409,11 @@ Rules the linter enforces (so get them right up front):
   outside all three folders is a lint error. List only documents you actually
   read — never invent entries. New authoring prefers `## References`, but
   `## Research` and `## Video` stay valid forever and are never migrated.
-- **Stub table.** The header row must be exactly the six columns in order. At
-  least one data row. Each `Change` cell is a kebab-case slug, unique within the
+- **Stub table.** The header row must be the six columns in order, or those
+  six followed by `After`; author every new epic with the `After` column. Each
+  `After` cell is empty or a comma-separated list of sibling slugs from the
+  same table that the member must be planned after, as the Design's seams
+  dictate; it never names the row itself. At least one data row. Each `Change` cell is a kebab-case slug, unique within the
   table. Each of the four rating cells (Code, Integration, Unknowns, Risk) is one
   of `low`, `medium`, `high` — your honest per-change complexity estimate.
 

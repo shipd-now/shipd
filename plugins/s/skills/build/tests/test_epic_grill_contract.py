@@ -54,6 +54,30 @@ class EpicGrillContractTest(unittest.TestCase):
         self.assertIn("without re-checking again", skill)
         self.assertIn("without re-checking again", " ".join(body.split()))
 
+    def test_grill_surfaces_plan_wave_by_wave(self):
+        skill = _read("skills", "epic-grill", "SKILL.md")
+        body = _read("harness", "bodies", "epic-grill.md")
+        for text in (skill, " ".join(body.split())):
+            self.assertIn("--waves --parallel", text)
+            self.assertIn("wave by wave", text)
+            self.assertIn(
+                "never a sibling of the same wave", text)
+
+    def test_epic_surfaces_name_the_after_column(self):
+        skill = _read("skills", "epic", "SKILL.md")
+        body = _read("harness", "bodies", "epic.md")
+        self.assertIn("| After |", skill)
+        self.assertIn("| After |", body)
+        self.assertIn("`After` column", skill)
+        self.assertIn("`After` column", " ".join(body.split()))
+
+    def test_relied_lines_reported_and_sibling_note_outside_block(self):
+        skill = _read("skills", "epic-grill", "SKILL.md")
+        body = _read("harness", "bodies", "epic-grill.md")
+        self.assertIn("`RELIED: <", skill)
+        self.assertIn("`RELIED: <", body)
+        self.assertNotIn("a sibling's name does not appear", skill)
+
 
 if __name__ == "__main__":
     unittest.main()
