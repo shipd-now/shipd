@@ -833,6 +833,17 @@ class RiskLensCountsAgreeTest(unittest.TestCase):
     survived. The count words are asserted, not just the section tally,
     because a file can document six sections under a sentence that still says
     five.
+
+    Four assertions, and the scope of the last two matters. The first two read
+    this file alone. The third compares `TRIGGER_PHRASES` against this file's
+    sections. The fourth reads `SKILL.md` step 5b and requires its trigger
+    bullets to be exactly that tuple — and it is the fourth that catches a
+    seventh trigger reaching the skill and not this file, since
+    `test_risk_lens_triggers_stated_inline` already pins every tuple entry
+    into the skill, so both containments close. An earlier version of this
+    class advertised that guarantee on the third assertion, which never opened
+    `SKILL.md` at all, so a seventh trigger in step 5b alone left every test
+    green. The name said one thing and the code did another.
     """
 
     def test_the_header_states_six_triggers_and_five_lenses(self):
@@ -862,6 +873,29 @@ class RiskLensCountsAgreeTest(unittest.TestCase):
                     any(phrase in s for s in sections),
                     "risk-lenses.md has no section for the %r trigger that "
                     "SKILL.md names" % phrase)
+
+    def test_the_skill_names_no_trigger_beyond_the_pinned_set(self):
+        """`SKILL.md` step 5b names exactly the pinned triggers.
+
+        This is the assertion that catches a seventh trigger added to the
+        skill and not to this file. Its sibling above compares the tuple
+        against the reference file and never reads the skill; without this
+        one, nothing did.
+        """
+        section = re.search(
+            r"^### 5b\. Risk lenses\n(.*?)(?=^### )",
+            _read(SKILL_MD), re.M | re.S)
+        self.assertIsNotNone(
+            section, "no '### 5b. Risk lenses' section found in SKILL.md")
+        named = {b.lower()
+                 for b in re.findall(r"^- \*\*(.+?)\*\*", section.group(1),
+                                     re.M)}
+        self.assertEqual(
+            set(TRIGGER_PHRASES), named,
+            "SKILL.md step 5b and TRIGGER_PHRASES must name the same "
+            "triggers; only in SKILL.md: %s; only in TRIGGER_PHRASES: %s"
+            % (sorted(named - set(TRIGGER_PHRASES)),
+               sorted(set(TRIGGER_PHRASES) - named)))
 
 
 class PublishedDocsCarryEveryEnumerationTest(unittest.TestCase):
