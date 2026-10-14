@@ -24,6 +24,11 @@ inside `.worktrees/research-<slug>`.
 A question specific enough to research goes straight to step 3. Ask only when
 you can infer no scope, audience, or success criterion at all — then one round
 of 2–3 questions, concrete options, recommended default first, and converge.
+
+**Brief every question.** Open each question with the brief that
+`skills/document/references/question-brief.md` defines, and follow its rule
+on dialogs and typed rounds.
+
 <!-- if:question-dialogs -->
 A single self-contained question may use a question dialog in a turn carrying
 no other prose; a round that needs a scope brief alongside it stays plain text.

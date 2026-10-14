@@ -39,6 +39,10 @@ dialog. This keeps `/s:drive` outside the nine-file `AskUserQuestion` roster
 `verified/shipd-interaction` (`dialog-prose-separation`) enumerates: no delta
 on that capability is needed because this skill never issues one.
 
+**Brief every question.** Open each question with the brief that
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+defines, and follow its rule on dialogs and typed rounds.
+
 Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 - Control CLI: `${CLAUDE_PLUGIN_ROOT}/skills/drive/scripts/drive.py`
   (`doctor`, `targets`, `login`, `session`, the driving verbs — including

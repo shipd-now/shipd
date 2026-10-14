@@ -13,6 +13,10 @@ v<version>` in your first status sentence.
 **No dialog, ever.** Every decision point ends its turn as plain text — a
 numbered list and a typed reply — never an interactive question tool.
 
+**Brief every question.** Open each question with the brief that
+`skills/document/references/question-brief.md` defines, and follow its rule
+on dialogs and typed rounds.
+
 `D="${CLAUDE_PLUGIN_ROOT}/skills/drive/scripts/drive.py"` — the stdlib-only
 control CLI; the only script this command invokes directly. Everything below
 runs as `python3 "$D" <verb> ...`.

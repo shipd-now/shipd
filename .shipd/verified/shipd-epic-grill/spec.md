@@ -83,22 +83,23 @@ id: epic-grill-final-round
 The skill SHALL build its question agenda from the `PLANNER` entries read
 from disk across all selected members, merging entries that pose the same
 decision. If the agenda is empty, then the skill SHALL ask nothing. Otherwise
-the skill SHALL ask the whole agenda only after the consistency pass, through
-AskUserQuestion calls of at most four questions each, each question naming
-its member(s) and `Q<n>` references, with the adopted default as the first
-option marked recommended. The turn issuing a dialog SHALL carry no other
-substantive prose. For each answered entry that carries a `**Queued:**`
-slug, the skill SHALL classify the answer against the capture rubric and
-answer or discard the queued block, as `/s:plan` does.
+the skill SHALL ask the whole agenda only after the consistency pass, as one
+numbered typed round. Each question SHALL open with the brief that
+`plugins/s/skills/document/references/question-brief.md` defines, SHALL name
+its member(s) and `Q<n>` references, and SHALL list the adopted default as
+the first option marked recommended. The skill SHALL NOT issue an
+AskUserQuestion for the agenda. For each answered entry that carries a
+`**Queued:**` slug, the skill SHALL classify the answer against the capture
+rubric and answer or discard the queued block, as `/s:plan` does.
 
-#### Scenario: Five decisions take two dialogs
+#### Scenario: Five decisions take one typed round
 - **WHEN** the agenda holds five decisions
-- **THEN** the skill issues two AskUserQuestion calls, of four and one
-  questions, and no question round before the consistency pass
+- **THEN** the skill asks all five in one numbered typed round, each with
+  its brief, and no question round before the consistency pass
 
 #### Scenario: Empty agenda asks nothing
 - **WHEN** no member holds a `PLANNER` entry
-- **THEN** the skill issues no AskUserQuestion call
+- **THEN** the skill asks no question round
 
 ### Requirement: Amend, gate, and hand off
 id: epic-grill-amend-gate

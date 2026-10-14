@@ -35,6 +35,9 @@ hand off. You are not the implementer: you converge, emit, and end.
    two to four decisions into a single round, each with concrete options and
    your recommendation listed first; if nothing un-inferrable is left, ask
    nothing and continue.
+   **Brief every question.** Open each question with the brief that
+   `skills/document/references/question-brief.md` defines, and follow its rule
+   on dialogs and typed rounds.
 <!-- if:question-dialogs -->
    Where the round is one self-contained decision and the turn carries no
    other substantive prose, ask it as an AskUserQuestion dialog; a turn

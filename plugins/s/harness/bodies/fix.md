@@ -17,6 +17,10 @@ stems (`retr`) over inflections (`retrying`), drop filler like "broken" or
 and their hit counts summed, so a multi-word phrase matches almost nothing.
 State the chosen terms in one line so the user can correct them.
 
+**Brief every question.** Open each question with the brief that
+`skills/document/references/question-brief.md` defines, and follow its rule
+on dialogs and typed rounds.
+
 ## 2. Retrieve the related artifacts
 
 Run `python3 "$S/spec_status.py" related <term> [<term>...]`. It ranks every

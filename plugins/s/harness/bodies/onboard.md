@@ -89,6 +89,11 @@ its `planned/`, and print the copy/paste block that opens a session in the
 sandbox and runs `/s:plan` on that enhancement. Then offer cleanup — delete
 the sandbox, or keep it and report its path — and never delete without the
 user choosing to.
+
+**Brief every question.** Open each question with the brief that
+`skills/document/references/question-brief.md` defines, and follow its rule
+on dialogs and typed rounds.
+
 <!-- if:question-dialogs -->
 That cleanup offer is the one prompt in the tour that may be a question
 dialog, because its turn carries no step content; every navigation line stays

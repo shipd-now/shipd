@@ -65,6 +65,11 @@ branch-protection settings rather than guessing a call.
 <!-- end -->
 
 ## 3. Take consent once
+
+**Brief every question.** Open each question with the brief that
+`skills/document/references/question-brief.md` defines, and follow its rule
+on dialogs and typed rounds.
+
 <!-- if:question-dialogs -->
 Ask in a single question dialog, in a turn carrying no other load-bearing
 prose: multi-select over the runnable remedies, one option per remedy carrying

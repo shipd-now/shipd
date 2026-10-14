@@ -43,6 +43,9 @@ rules — here, in a reply, or in a doc.** It carries three sections:
   policy, and the shipd glossary.
 - `## Voice digest` — the short form the session hook injects.
 
+The rule for questions put to the user lives beside it, in
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`.
+
 One file holds the rules so that a rule changes in one place. A copy in this
 file would drift from it within a change or two.
 

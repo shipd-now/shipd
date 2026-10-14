@@ -56,6 +56,9 @@ Every wiki verb below runs as `python3 "$S/spec_status.py" --root <repo-root>
      --recommendation "<lean>" --origin "ask"
    ```
    Then put the question to the user, once — never a multi-round interview.
+   **Brief every question.** Open each question with the brief that
+   `skills/document/references/question-brief.md` defines, and follow its rule
+   on dialogs and typed rounds.
 <!-- if:question-dialogs -->
    Ask it as a single self-contained AskUserQuestion dialog carrying the
    decision and enough context to stand on its own, with the recommendation

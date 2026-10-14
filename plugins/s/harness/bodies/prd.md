@@ -49,6 +49,11 @@ round in what you read, offer concrete options with the recommended default
 first, and press again on an answer too thin to write down — "faster" is not a
 success criterion. Never author filler for a section the user gave you nothing
 for.
+
+**Brief every question.** Open each question with the brief that
+`skills/document/references/question-brief.md` defines, and follow its rule
+on dialogs and typed rounds.
+
 <!-- if:question-dialogs -->
 Put each round in a single question dialog.
 <!-- else -->

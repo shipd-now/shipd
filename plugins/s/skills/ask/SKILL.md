@@ -99,6 +99,10 @@ plainly that you demoted it. (If the demoted verdict names no `q-<slug>`, there
 is nothing to capture against; ask the user and relay the answer for the
 session only, exactly as under `Queued: none`.)
 
+**Brief every question.** Open each question with the brief that
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+defines, and follow its rule on dialogs and typed rounds.
+
 ## Ask the user, then capture the answer
 
 On `INSUFFICIENT`, the human rung is the user in front of you — so ask them

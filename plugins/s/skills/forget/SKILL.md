@@ -115,6 +115,10 @@ before any `wiki-remove` runs.
 - **On the negative selection** — run no `wiki-remove`; the page remains. Report
   that the memory was kept and stop.
 
+**Brief every question.** Open each question with the brief that
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+defines, and follow its rule on dialogs and typed rounds.
+
 ## Question rejection recovery
 
 **Question rejection recovery.** A known Claude Code bug can deliver an

@@ -1,5 +1,5 @@
 # question-brief
-Status: ready
+Status: verified
 Theme: developer-experience
 
 ## Idea

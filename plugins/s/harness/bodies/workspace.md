@@ -31,6 +31,11 @@ parent directory, recommended, or the repository root itself, both as resolved
 absolute paths) and **portable git seeding** (plain init, recommended, or
 `--git`, which also runs `git init` there and ensures the marked member-repos
 block in `.gitignore`).
+
+**Brief every question.** Open each question with the brief that
+`skills/document/references/question-brief.md` defines, and follow its rule
+on dialogs and typed rounds.
+
 <!-- if:question-dialogs -->
 Put both questions in a single question dialog, recommended option first.
 <!-- else -->

@@ -75,6 +75,10 @@ exit, surface the error and report that nothing was removed. Delete the script
 file **only** when the user chose that, never as a side effect. Then read the
 list back and show what remains.
 
+**Brief every question.** Open each question with the brief that
+`skills/document/references/question-brief.md` defines, and follow its rule
+on dialogs and typed rounds.
+
 You never create or remove a worktree here — `shipd worktree <change>` and
 `"$S/worktree.sh" remove <change>` belong to the build flows; you only
 configure what runs after a creation. To exercise a registered list, tell the

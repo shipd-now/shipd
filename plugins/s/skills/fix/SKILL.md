@@ -209,6 +209,10 @@ it is the user's call under the host repository's conventions.
 - **The reproduction is the evidence.** A fix reported without one is reported
   as unverified, in those words.
 
+**Brief every question.** Open each question with the brief that
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+defines, and follow its rule on dialogs and typed rounds.
+
 ## Question rejection recovery
 
 A known Claude Code bug can deliver an AskUserQuestion interaction as a tool

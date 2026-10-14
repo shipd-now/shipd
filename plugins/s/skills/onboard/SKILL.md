@@ -289,6 +289,9 @@ delete without the user choosing to.
   `back` is not a stop and not a restart — never re-scaffold and never jump to
   step 1; answer the user or re-render the current step, then restate its
   navigation line.
+- **Brief every question.** Open each question with the brief that
+  `${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+  defines, and follow its rule on dialogs and typed rounds.
 - **Question rejection recovery.** A known Claude Code bug can deliver an
   AskUserQuestion interaction as a tool rejection ("The user doesn't want to
   proceed with this tool use") even when the user tried to answer. For the

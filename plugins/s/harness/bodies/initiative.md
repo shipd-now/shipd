@@ -23,6 +23,11 @@ Ask one batched round for whatever the workspace did not settle: the **goal**,
 the **outcome requirements**, and the optional **`Project:` scope** (the
 declared project slugs plus "unscoped"), concrete options with the recommended
 default first.
+
+**Brief every question.** Open each question with the brief that
+`skills/document/references/question-brief.md` defines, and follow its rule
+on dialogs and typed rounds.
+
 <!-- if:question-dialogs -->
 Put the whole round in a single question dialog.
 <!-- else -->

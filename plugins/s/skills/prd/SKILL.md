@@ -228,6 +228,10 @@ When the PRD is installed and reads back clean:
 4. **Stop.** This skill never invokes `/s:epic` itself, never plans or builds a
    member change, and never writes a PRD's status by hand.
 
+**Brief every question.** Open each question with the brief that
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+defines, and follow its rule on dialogs and typed rounds.
+
 ## Question rejection recovery
 
 **Question rejection recovery.** A known Claude Code bug can deliver an

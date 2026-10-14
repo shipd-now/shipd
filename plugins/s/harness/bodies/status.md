@@ -41,6 +41,9 @@ re-implement a check the engine already owns.
      Surface that reason and put the choice to the user.
 3. **Only an explicit override forces.** Offer exactly two options — override
    anyway, or leave the status unchanged (the default).
+   **Brief every question.** Open each question with the brief that
+   `skills/document/references/question-brief.md` defines, and follow its rule
+   on dialogs and typed rounds.
 <!-- if:question-dialogs -->
    Ask it as a single AskUserQuestion dialog: the turn carries nothing but the
    refusal reason and the two options, which is exactly the shape a dialog is

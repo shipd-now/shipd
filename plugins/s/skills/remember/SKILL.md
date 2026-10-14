@@ -153,6 +153,10 @@ Classify each candidate:
   update re-emits the whole page; in-place edits stay forbidden).
 - **skip** — a duplicate the store already records unchanged → touch nothing.
 
+**Brief every question.** Open each question with the brief that
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+defines, and follow its rule on dialogs and typed rounds.
+
 ## 4. Confirm the proposed set (typed round, no AskUserQuestion)
 
 Because the capture writes durable personal memory — and, for session
