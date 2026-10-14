@@ -583,6 +583,12 @@ class DispatchTest(ShipdCliTestBase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout, direct.stdout)
 
+    def test_the_banner_room_line_names_watch(self):
+        # room-watch-tests: the banner's room line lists the watch verb.
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("close, watch", r.stdout)
+
     def test_room_passes_trailing_arguments_through(self):
         # shipd-cli cli-dispatch: Room passes trailing arguments through.
         r = self.cli("room", "frobnicate")

@@ -177,7 +177,7 @@ verbs:
                              create the change's worktree, then run the
                              configured post-worktree-scripts
                              (also: remove, prune-branches, hooks)
-  room <verb> <pr> [args]    the PR room: join, list, message, close
+  room <verb> <pr> [args]    the PR room: join, list, message, close, watch
   doctor                     preflight this environment for shipd
   statusline [install]       report or register the shipd statusline
   copilot [add|remove]       maintain the Copilot code-review skill in a repo
