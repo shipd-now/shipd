@@ -154,5 +154,5 @@ The `After` column below orders the members along those layers.
 | drift-skill | `/s:drift` runs the verb and asks a model for a holds/revise/conflict verdict on flagged members only | low | medium | medium | low | drift-verb |
 | autopilot-preflight-verb | `autopilot.py --preflight` prints the ok/warn/fail launch rubric and exits non-zero on any fail | medium | high | medium | medium | drift-verb, wave-dependency-order |
 | autopilot-unattended-run | `/s:autopilot` runs the preflight, adds the pre-build drift step, parks and continues, and tells plan stages no human is present | medium | high | medium | high | autopilot-preflight-verb, drift-skill |
-| detached-drift-replan | The detached driver runs the pre-build drift step with a re-plan session and parks on conflict | medium | high | medium | medium | drift-verb |
+| detached-drift-replan | The detached driver runs the pre-build drift step with a re-plan session and parks on conflict | medium | high | medium | medium | drift-verb, drift-skill |
 | grill-preflight-handoff | `/s:epic-grill` ends by running the preflight and hands off only on a green rubric | low | low | low | low | autopilot-preflight-verb |
