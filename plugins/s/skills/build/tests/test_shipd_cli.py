@@ -42,7 +42,7 @@ MANIFEST = os.path.join(PLUGIN_ROOT, ".claude-plugin", "plugin.json")
 VERBS = ("init", "list", "status", "locate", "related", "search", "prd",
          "epic",
          "workspace", "wiki", "config", "board", "render", "metrics", "lint",
-         "worktree",
+         "worktree", "room",
          "doctor", "statusline", "copilot", "vendor", "harness", "install",
          "update")
 
@@ -558,6 +558,37 @@ class DispatchTest(ShipdCliTestBase):
         r = self.cli("worktree", "prune-branches")
         self.assertEqual(r.returncode, direct.returncode)
         self.assertEqual(r.stderr, direct.stderr)
+
+    def test_room_is_a_curated_verb_mapped_to_the_room_script(self):
+        """The `room` row delegates to ``room.py`` (shipd-cli cli-dispatch)."""
+        self.assertEqual(shipd.VERB_TABLE.get("room"), ("room.py", []))
+
+    def test_room_script_resolves_under_the_room_skill(self):
+        # The network-bearing room verbs never enter the engine directory.
+        path = str(shipd.SKILL_SCRIPT_DIRS["room.py"]).rstrip(os.sep) + os.sep
+        self.assertTrue(
+            path.endswith(os.path.join("plugins", "s", "skills", "room",
+                                       "scripts") + os.sep), path)
+
+    def test_room_help_is_the_room_script_help(self):
+        # shipd-cli cli-dispatch: Room is a curated verb that delegates to
+        # the room skill.
+        direct = subprocess.run(
+            [sys.executable,
+             os.path.join(PLUGIN_ROOT, "skills", "room", "scripts",
+                          "room.py"), "--help"],
+            capture_output=True, text=True, cwd=self.root, env=self.env())
+        r = self.cli("room", "--help")
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+
+    def test_room_passes_trailing_arguments_through(self):
+        # shipd-cli cli-dispatch: Room passes trailing arguments through.
+        r = self.cli("room", "frobnicate")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("usage: room", r.stderr)
+        self.assertNotIn("usage: shipd <verb>", r.stderr)
 
     def test_retired_tui_verb_is_a_usage_error(self):
         r = self.cli("tui")
