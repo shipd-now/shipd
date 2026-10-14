@@ -1,5 +1,5 @@
 # pr-room
-Status: ready
+Status: active
 Theme: developer-experience
 
 ## Introduction
