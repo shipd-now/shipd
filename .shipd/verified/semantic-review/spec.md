@@ -248,23 +248,9 @@ never a symptom site in place of it. A further location SHALL name a site at
 which the defect is visible: a line wrong in the same way, a line that shows
 the mismatch on its own terms, or, where the defect is the conjunction of two
 lines neither wrong alone, the line at which it surfaces at run time even
-though that line is correct in isolation. A further location SHALL also lie
-outside the primary's hunk **and** outside the function, block or table the
-primary sits in — the conditions are conjunctive, since an anchor only has to
-be near by one measure to be restating the defect rather than naming a second
-site. Where the primary sits in neither a function nor a hunk, as a manifest
-line in an untouched file does, the enclosing block or table SHALL decide. A
-recurring site SHALL be exempt from that distance, so a defect appearing
-independently at more than one site — each wrong on its own — still names
-every site however close they sit. Two lines that together make a single
-defect SHALL NOT count as a recurrence; that is the conjunction shape, to
-which the distance condition applies. Without that discriminator the
-exemption would swallow the rule, since the anchors the condition exists to
-suppress are precisely the second half of a two-line mechanism. This is the general
+though that line is correct in isolation. This is the general
 permission the packaging and description-drift cases rely on, so no other
-requirement SHALL grant it separately — both of those cases anchor in a
-different file from their primary, so the distance condition leaves them
-untouched. Where the same defect recurs at
+requirement SHALL grant it separately. Where the same defect recurs at
 more than one call site, the skill SHALL report one finding whose locations
 name every recurring site, rather than one finding per site.
 
@@ -529,35 +515,6 @@ judgement passes as the skill, so the two surfaces do not drift.
   manifest omitting a file and the import that names it
 - **THEN** the finding anchors at the fix site and names the importing line as
   a further location, because that is where the defect surfaces at run time
-
-#### Scenario: A line inside the primary's own function is not a further location
-- **WHEN** the defect's mechanism continues a few lines below the primary,
-  inside the same function and the same hunk
-- **THEN** the finding carries the primary alone, and those lines are described
-  in its prose rather than anchored
-
-#### Scenario: A primary with no function is still constrained
-- **WHEN** the primary is a line in a manifest or data file with no enclosing
-  function, so only a block or table encloses it
-- **THEN** the distance condition still applies through that block or table,
-  rather than being satisfied vacuously by the absent function
-
-#### Scenario: A recurring site is exempt from the distance condition
-- **WHEN** the same defect appears independently at two sites inside a single
-  function, each wrong on its own
-- **THEN** the finding names both sites, because recurrence outranks distance
-
-#### Scenario: Half a two-line mechanism is not a recurrence
-- **WHEN** a defect is the conjunction of two nearby lines, so the second line
-  is the other half of one mechanism rather than a second instance
-- **THEN** the distance condition applies and the second line is not anchored,
-  the recurrence exemption being unavailable to it
-
-#### Scenario: A cross-file anchor is unaffected by the distance condition
-- **WHEN** a packaging finding anchors at the manifest and names the importing
-  line in another file
-- **THEN** that further location still qualifies, lying outside the primary's
-  hunk and outside its block
 
 ### Requirement: Spec-aware verification
 id: spec-aware-review
@@ -1091,7 +1048,7 @@ that flow rather than restating it.
 Guidance that runs on every review SHALL stay inline in `SKILL.md`: the
 workflow steps, the severity rubric, the presentation shape, the review-start
 difftastic probe and its degradation ladder, the base-freshness block, and the
-guardrails. `SKILL.md` SHALL stay under 350 lines; this requirement owns that
+guardrails. `SKILL.md` SHALL stay under 340 lines; this requirement owns that
 ceiling, and no other requirement SHALL restate the figure.
 
 Each reference file SHALL open with a level-1 title and state its own load
@@ -1123,7 +1080,7 @@ into a reference SHALL NOT change that guidance's substance.
 
 #### Scenario: The skill body fits the ceiling
 - **WHEN** `plugins/s/skills/review/SKILL.md` is measured
-- **THEN** it is under 350 lines
+- **THEN** it is under 340 lines
 
 #### Scenario: A reference states its own trigger
 - **WHEN** a file under `plugins/s/skills/review/references/` is read on its own
@@ -1763,110 +1720,3 @@ it already posted — a refused merge arming never costs the verdict.
 #### Scenario: A refused arming keeps the verdict
 - **WHEN** the merge arming call exits non-zero after the status was posted
 - **THEN** `post` reports the arming failure and the posted status stands
-
-### Requirement: Related-file context subcommand
-id: related-context
-
-The system SHALL provide `semdiff related <base> [<head>] [--mode
-balanced|max]` emitting, per changed file, the files that import it and the
-files it imports, as JSON carrying the same best-effort note
-`semdiff context` carries — the candidates come from ripgrep when present and
-`git grep` otherwise, and are never a complete call graph.
-
-The set SHALL be bounded, and the bound SHALL be part of the contract rather
-than a tuning detail: at most 8 related files per changed file and 40 across
-the review in `balanced` mode, and at most 20 and 120 in `max` mode.
-Candidates SHALL be ranked by proximity — same directory first, then nearest
-common ancestor — so the cap keeps the files most likely to matter. Every
-truncation SHALL be reported in the output as a count, never applied silently,
-so a review can name withheld context among what it could not verify.
-
-`--mode` SHALL default to `balanced`, and the output SHALL state the mode it
-ran in.
-
-The per-review budget SHALL be allocated **fairly across changed files**, never
-in arrival order. Allocation SHALL proceed in passes: on each pass every changed
-file with an unallocated candidate takes its next one, so no changed file
-receives a second related file while another with candidates has none. Within a
-pass, files SHALL be visited in ascending order of candidate count, so a file
-with few candidates is served before a hub with many. Within a changed file,
-importees SHALL rank above importers, since an arbitrary sample of a hub's
-callers is the weakest context the subcommand can return.
-
-A related file shared by several changed files SHALL be charged against the
-per-review cap **once**, and SHALL still be listed under every changed file that
-relates to it. The cap bounds what the review must read, and a shared file is
-read once however many changed files point at it. Charging nothing against the
-review budget SHALL NOT exempt a candidate from the per-file cap: that cap
-limits what one changed file lists, independently of what the candidate cost.
-
-The summary SHALL distinguish the two reasons a changed file carries no related
-file: `files_without_candidates`, where the search found nothing to relate, and
-`files_starved`, where candidates existed and the budget denied them all. It
-SHALL also report `related_files`, the distinct count charged against the cap,
-alongside `related_edges`, the number of file-to-related pairs listed.
-
-#### Scenario: No file takes a second while another has none
-- **WHEN** more changed files carry candidates than the per-review cap can
-  satisfy twice over
-- **THEN** every candidate-bearing file holds at least one related file before
-  any holds two
-
-#### Scenario: A starved file is distinguished from a file with nothing to relate
-- **WHEN** one changed file has no candidates at all and the budget is
-  exhausted before another candidate-bearing file is reached
-- **THEN** the summary counts the first under `files_without_candidates` and
-  the second under `files_starved`
-
-#### Scenario: A shared related file is charged once
-- **WHEN** several changed files all relate to the same module
-- **THEN** that module counts once against the per-review cap, appears under
-  each of those changed files, and `related_edges` exceeds `related_files`
-
-#### Scenario: A scarce file outranks a hub within a pass
-- **WHEN** one changed file has two candidates and another has twenty
-- **THEN** the file with two is served first in each pass
-
-A candidate SHALL be an **import**, not a mention. An importer SHALL be matched
-by the importing syntax of a language — the import, require, use, or include
-form that names the module — never by a bare occurrence of the file's name, so
-prose that merely discusses a module is not reported as depending on it. The
-candidate set SHALL be restricted to files a language could import: a
-documentation file, a specification artifact, or any other non-source file
-SHALL NOT appear as an importer. An importee SHALL resolve to a path that
-exists in the repository, and a changed file that imports in-repository modules
-SHALL report them.
-
-#### Scenario: Prose that names a module is not an importer
-- **WHEN** a markdown file discusses `semdiff.py` by name and no source file
-  imports it
-- **THEN** that markdown file does not appear among the importers
-
-#### Scenario: A real importer outranks a cap
-- **WHEN** more candidates exist than the per-file cap allows
-- **THEN** the surviving entries are importers matched by import syntax, not
-  whichever paths sorted first
-
-#### Scenario: Importers and importees both appear
-- **WHEN** `semdiff related main` runs over a diff changing one module
-- **THEN** each changed file's entry names the files that import it and the
-  files it imports, with the best-effort note present
-
-#### Scenario: The bound is reported, not hidden
-- **WHEN** a changed file has more related files than the mode's per-file cap
-- **THEN** the entry carries the capped list and a count of what was dropped
-
-#### Scenario: Max mode raises the caps
-- **WHEN** the same diff is run with `--mode max`
-- **THEN** the per-file and per-review caps are the higher pair, and the
-  output names the mode
-
-#### Scenario: Neither search tool is present
-- **WHEN** `semdiff related` runs where both `rg` and `git` are absent
-- **THEN** it fails the way `semdiff context` does, naming the missing tools
-
-#### Scenario: The per-file cap bounds a file whose candidates are all free
-- **WHEN** a changed file's candidates are all already selected for other
-  changed files, and there are more of them than the per-file cap
-- **THEN** that file lists at most the per-file cap, because costing the review
-  budget nothing does not exempt a candidate from the per-file limit
