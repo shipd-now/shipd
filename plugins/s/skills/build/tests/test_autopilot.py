@@ -54,13 +54,23 @@ def _write(path, text):
         fh.write(text)
 
 
-def _make_epic(root, slug, rows, status="ready"):
+def _make_epic(root, slug, rows, status="ready", after=None):
     """Write ``.shipd/epics/<slug>/epic.md`` with a stub table of ``rows`` —
-    each a ``(member_slug, risk)`` pair."""
+    each a ``(member_slug, risk)`` pair. A non-None ``after`` mapping
+    (``{member: [slugs]}``) adds the seventh ``After`` column."""
+    header = EPIC_HEADER
+    if after is not None:
+        header = (
+            "| Change | Description | Code | Integration | Unknowns | Risk "
+            "| After |\n| --- | --- | --- | --- | --- | --- | --- |\n")
     body = ["# %s\n" % slug, "Status: %s\n" % status, "\n",
-            "## Changes\n", "\n", EPIC_HEADER]
+            "## Changes\n", "\n", header]
     for member, risk in rows:
-        body.append(_member_row(member, risk))
+        row = _member_row(member, risk)
+        if after is not None:
+            row = row.rstrip("\n") + " %s |\n" % ", ".join(
+                after.get(member, []))
+        body.append(row)
     _write(os.path.join(root, ".shipd", "epics", slug, "epic.md"), "".join(body))
 
 
@@ -182,6 +192,51 @@ class WaveTest(AutopilotTestBase):
         # An unplanned member has no capabilities to read yet.
         self.assertEqual(result["waves"][0]["members"][0]["capabilities"], [])
         self.assertEqual(result["waves"][0]["members"][0]["risk"], "low")
+
+    def test_declared_dependencies_layer_plan_waves(self):
+        _make_epic(self.root, "ep",
+                   [("a", "low"), ("b", "low"), ("c", "low"), ("d", "low"),
+                    ("e", "low")],
+                   after={"b": ["a"], "c": ["b"], "d": ["b"], "e": ["b"]})
+        result = autopilot.compute_waves(self.root, "ep", 3)
+        self.assertEqual(self._slugs(result), [["a"], ["b"], ["c", "d", "e"]])
+        self.assertEqual([w["stage"] for w in result["waves"]],
+                         ["plan"] * 3)
+        by = {m["slug"]: m for w in result["waves"] for m in w["members"]}
+        self.assertEqual(by["a"]["after"], [])
+        self.assertEqual(by["c"]["after"], ["b"])
+
+    def test_satisfied_dependency_does_not_block(self):
+        _make_epic(self.root, "ep", [("a", "low"), ("b", "low")],
+                   after={"b": ["a"]})
+        self.plant_ready("a", ["x"])
+        result = autopilot.compute_waves(self.root, "ep", 3)
+        self.assertEqual(self._slugs(result), [["b"], ["a"]])
+        self.assertEqual([w["stage"] for w in result["waves"]],
+                         ["plan", "build"])
+
+    def test_cycle_is_serialised_after_free_members(self):
+        _make_epic(self.root, "ep",
+                   [("x", "low"), ("y", "low"), ("z", "low")],
+                   after={"x": ["y"], "y": ["x"]})
+        result = autopilot.compute_waves(self.root, "ep", 3)
+        self.assertEqual(self._slugs(result), [["z"], ["x"], ["y"]])
+
+    def test_empty_after_column_chunks_by_risk(self):
+        _make_epic(self.root, "ep", [("hi", "high"), ("lo1", "low"),
+                                     ("lo2", "low"), ("mid", "medium")],
+                   after={})
+        result = autopilot.compute_waves(self.root, "ep", 2)
+        self.assertEqual(self._slugs(result), [["lo1", "lo2"], ["mid", "hi"]])
+        self.assertEqual(result["waves"][0]["members"][0]["after"], [])
+
+    def test_print_waves_shows_after(self):
+        _make_epic(self.root, "ep", [("a", "low"), ("b", "low")],
+                   after={"b": ["a"]})
+        lines = []
+        autopilot._print_waves(
+            autopilot.compute_waves(self.root, "ep", 3), out=lines.append)
+        self.assertTrue(any("after a" in ln for ln in lines))
 
     def test_disjoint_capabilities_share_a_build_wave(self):
         _make_epic(self.root, "ep",

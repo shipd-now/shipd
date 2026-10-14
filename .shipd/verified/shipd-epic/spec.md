@@ -9,7 +9,10 @@ round, and authoring the epic in reader order: an `## Introduction` opening
 with the problem and motivation, then the feature and its intended outcome
 with success criteria, closing with `### Non-goals`; then the epic's
 Decisions and Design sections; then the `## Changes` stub table with
-per-change complexity ratings. It SHALL emit the epic at `Status: draft`,
+per-change complexity ratings and an `After` column naming, per member,
+the sibling members it must be planned after as the Design's seams
+dictate, left empty where a member depends on none. It SHALL emit the epic
+at `Status: draft`,
 lint it with the linter's single-epic mode, and promote it to `ready` via
 `epic-set-status` only on user approval. It SHALL ship the epic through the
 repository's worktree-and-PR workflow, and SHALL NOT create member changes —
@@ -21,6 +24,11 @@ it points the user at `/s:plan` per stub, whose emitted changes carry
 - **THEN** the emitted document's first level-2 section is `## Introduction`,
   stating the problem before the feature description, and it contains a
   `### Non-goals` subsection
+
+#### Scenario: Stub table declares planning order
+- **WHEN** the skill authors an epic whose Design has `b` build on `a`
+- **THEN** the stub table header ends in `After` and row `b`'s `After` cell
+  names `a`
 
 #### Scenario: Epic emission is draft until approved
 - **WHEN** the skill finishes authoring an epic

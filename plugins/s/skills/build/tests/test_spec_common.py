@@ -386,6 +386,34 @@ class EpicChangesParserTest(unittest.TestCase):
         _header, rows = sc.parse_epic_changes(text)
         self.assertEqual([slug for slug, _d, _r in rows], ["csv-export"])
 
+    AFTER_EPIC = (
+        "## Changes\n\n"
+        "| Change | Description | Code | Integration | Unknowns | Risk "
+        "| After |\n"
+        "| --- | --- | --- | --- | --- | --- | --- |\n"
+        "| a | A | low | low | low | low |  |\n"
+        "| b | B | low | medium | low | high | a |\n"
+        "| c | C | low | low | low | medium | a, b |\n"
+    )
+
+    def test_seven_column_ratings_keep_four_cells(self):
+        header, rows = sc.parse_epic_changes(self.AFTER_EPIC)
+        self.assertEqual(header[-1], sc.EPIC_AFTER_COLUMN)
+        for _slug, _d, ratings in rows:
+            self.assertEqual(len(ratings), 4)
+        self.assertEqual([r[-1] for _s, _d, r in rows],
+                         ["low", "high", "medium"])
+
+    def test_parse_epic_after(self):
+        self.assertEqual(
+            sc.parse_epic_after(self.AFTER_EPIC),
+            {"a": [], "b": ["a"], "c": ["a", "b"]})
+
+    def test_parse_epic_after_six_column_is_all_empty(self):
+        self.assertEqual(
+            sc.parse_epic_after(self.EPIC),
+            {"csv-export": [], "pdf-export": []})
+
 
 def _write_ws_config(root, workspace=None, extra=None):
     """Write ``<root>/.shipd-config.json`` declaring a ``workspace`` object (plus

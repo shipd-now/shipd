@@ -1,5 +1,5 @@
 # grill-parallel-rubric
-Status: ready
+Status: verified
 Theme: developer-experience
 
 ## Idea

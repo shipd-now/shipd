@@ -88,6 +88,7 @@ class Member:
     risk: str
     state: str
     order: int
+    after: list = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -121,7 +122,9 @@ def parse_members(root, epic):
     internals: ``unplanned`` until planned, then the plan status, ``archived``
     once completed)."""
     with open(_epic_file(root, epic), encoding="utf-8") as fh:
-        header, rows = sc.parse_epic_changes(fh.read())
+        text = fh.read()
+    header, rows = sc.parse_epic_changes(text)
+    after_map = sc.parse_epic_after(text)
     risk_idx = None
     if header:
         for i, cell in enumerate(header):
@@ -139,7 +142,8 @@ def parse_members(root, epic):
             risk = ""
         members.append(Member(
             slug=slug, description=description, risk=risk,
-            state=ss._member_state(root, slug), order=order))
+            state=ss._member_state(root, slug), order=order,
+            after=list(after_map.get(slug, []))))
     return members
 
 
@@ -171,6 +175,33 @@ def member_capabilities(root, slug):
                   if os.path.isfile(os.path.join(specs, name, "spec.md")))
 
 
+def _plan_layers(to_drive, parallel):
+    """Dependency layers over the unplanned ``to_drive`` members (Kahn's
+    algorithm). An edge runs from a member to each ``after`` slug that is
+    itself unplanned; a dependency in any other state is satisfied. Each layer
+    sorts risk-ascending then by table order and is chunked to ``parallel``.
+    Members left when no member is free (a cycle) each form a wave of one, in
+    table order, after every acyclic layer."""
+    pending = {m.slug: m for m in to_drive}
+    deps = {m.slug: {a for a in m.after if a in pending and a != m.slug}
+            for m in to_drive}
+    key = lambda m: (RISK_RANK.get(m.risk, len(RISK_RANK)), m.order)
+    chunks = []
+    while pending:
+        free = sorted((pending[s] for s in pending if not deps[s]), key=key)
+        if not free:
+            break
+        for start in range(0, len(free), parallel):
+            chunks.append(free[start:start + parallel])
+        for m in free:
+            del pending[m.slug]
+        for s in deps:
+            deps[s] -= {m.slug for m in free}
+    for m in sorted(pending.values(), key=lambda m: m.order):
+        chunks.append([m])
+    return chunks
+
+
 def compute_waves(root, epic, parallel):
     """The waves of members the in-session drive may run concurrently, computed
     from on-disk state alone (epic-autopilot member-wave-scheduling).
@@ -192,13 +223,18 @@ def compute_waves(root, epic, parallel):
 
     def _entry(member, capabilities):
         return {"slug": member.slug, "risk": member.risk,
-                "capabilities": capabilities}
+                "capabilities": capabilities, "after": list(member.after)}
 
     waves = []
-    for start in range(0, len(to_drive), parallel):
-        chunk = to_drive[start:start + parallel]
-        waves.append({"index": len(waves) + 1, "stage": "plan",
-                      "members": [_entry(m, []) for m in chunk]})
+    if any(m.after for m in to_drive):
+        for chunk in _plan_layers(to_drive, parallel):
+            waves.append({"index": len(waves) + 1, "stage": "plan",
+                          "members": [_entry(m, []) for m in chunk]})
+    else:
+        for start in range(0, len(to_drive), parallel):
+            chunk = to_drive[start:start + parallel]
+            waves.append({"index": len(waves) + 1, "stage": "plan",
+                          "members": [_entry(m, []) for m in chunk]})
 
     ready = sorted(
         (m for m in skipped if m.state == "ready"),
@@ -1319,6 +1355,8 @@ def _print_waves(result, as_json=False, out=print):
                 detail = " ".join(member["capabilities"])
             else:
                 detail = "risk %s" % member["risk"]
+                if member.get("after"):
+                    detail += ", after %s" % ", ".join(member["after"])
             parts.append("%s (%s)" % (member["slug"], detail))
         out("  wave %d [%s]: %s"
             % (wave["index"], wave["stage"], ", ".join(parts)))

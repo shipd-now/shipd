@@ -56,7 +56,11 @@ as a settled decision and record a ledger entry with
 its plan builds on a `PLANNER` default in an earlier member's ledger, to
 append its own slug to that entry's `**Relied on by:**` field in the earlier
 member's installed `plan.md`, and to edit nothing else in another member's
-plan. The instruction SHALL direct the planner to install the change and
+plan. The instruction SHALL also direct the planner to list each such
+reliance in its `DEFERRED:` block as a line `RELIED: <earlier member> Q<n>`.
+After each wave, the skill SHALL check every `RELIED:` line against the named
+entry's `**Relied on by:**` field and SHALL append the planner's slug where it
+is missing, before the re-lint. The instruction SHALL direct the planner to install the change and
 stop at `Status: draft` without running `spec_gate.py`, ending its turn with
 a `DEFERRED:` block listing its `PLANNER` entries. The skill SHALL grade
 each planner from disk — `status <member>` printing `draft` and
@@ -83,3 +87,9 @@ skill SHALL stop and ask the human.
   entry `Q2`
 - **THEN** `a`'s installed `plan.md` entry `Q2` carries
   `**Relied on by:** b`, and `a` still passes the linter
+
+#### Scenario: A lost concurrent append is repaired
+- **WHEN** wave members `b` and `c` both rely on member `a`'s `Q2`, and `a`'s
+  entry ends the wave carrying only `**Relied on by:** b`
+- **THEN** the skill appends `c` from `c`'s `RELIED: a Q2` line before
+  re-linting `a`
