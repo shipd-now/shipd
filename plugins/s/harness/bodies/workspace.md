@@ -37,7 +37,9 @@ block in `.gitignore`).
 on dialogs and typed rounds.
 
 <!-- if:question-dialogs -->
-Put both questions in a single question dialog, recommended option first.
+A round of one self-contained question may use a single question dialog in a
+turn carrying no other prose; a round of several questions ends as plain text
+like the branch below.
 <!-- else -->
 End the turn as plain text with both questions numbered, options lettered,
 recommended first, and wait for a typed reply.

@@ -155,10 +155,10 @@ substance**. Each round:
   to keep asking, not to author plausible prose. The user's material is the
   only material a PRD carries.
 
-**The vehicle.** Where the harness offers question dialogs, put each round in a
-single AskUserQuestion call. Otherwise end the turn as plain text with the
-round's questions numbered, options lettered, default first, and wait for a
-typed reply.
+**The vehicle.** Put each round as a numbered typed round: end the turn as
+plain text with the round's questions numbered, options lettered, default
+first, and wait for a typed reply. Use a dialog only where a round holds one
+self-contained question.
 
 Stop interviewing the moment the active tier's every required section can be
 written from what the user gave you — an interrogation with nothing left to

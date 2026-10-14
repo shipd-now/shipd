@@ -3,7 +3,8 @@
 with its doc-type marker and part names, and every skill that asks the user a
 question (its SKILL.md mentions the dialog tool) and its harness body point to
 it. The roster is computed, so a skill that gains its first dialog fails until
-it adds the pointer."""
+it adds the pointer. A last test bans the retired phrases that put a whole
+multi-question round into one dialog."""
 
 import glob
 import os
@@ -53,6 +54,22 @@ class QuestionBriefContractTest(unittest.TestCase):
             if body:
                 with self.subTest(skill=skill, kind="body"):
                     self.assertIn(POINTER, _read(body))
+
+    def test_no_multi_question_dialog_phrases(self):
+        banned = (
+            "single AskUserQuestion call",
+            "Put the whole round in a single question dialog",
+            "Put each round in a single question dialog",
+            "Put both questions in a single question dialog",
+        )
+        for skill, (path, body) in _roster().items():
+            for kind, f in (("SKILL.md", path), ("body", body)):
+                if not f:
+                    continue
+                text = _read(f)
+                for phrase in banned:
+                    with self.subTest(skill=skill, kind=kind, phrase=phrase):
+                        self.assertNotIn(phrase, text)
 
 
 if __name__ == "__main__":

@@ -63,7 +63,9 @@ concrete options and the recommended default first, then converge.
 on dialogs and typed rounds.
 
 <!-- if:question-dialogs -->
-Use a single question dialog, in a turn carrying no other load-bearing prose.
+A round of one self-contained question may use a single question dialog in a
+turn carrying no other prose; a round of several questions ends as plain text
+like the branch below.
 <!-- else -->
 End the turn as plain text with the questions numbered, options lettered,
 default first, and wait for a typed reply.
