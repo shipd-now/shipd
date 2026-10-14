@@ -108,7 +108,8 @@ section below:
    **raw declared** value — it may carry `~`, so expand it to an absolute path
    before composing any candidate from it.
 
-   Then ask the user with a **single AskUserQuestion carrying two questions**:
+   Then ask the user with **one numbered typed round of two questions**, each
+   opening with its brief:
 
    - **Target root** — offer two concrete options, recommended default first:
      - **The repository's parent directory** (recommended) — a workspace groups
@@ -274,9 +275,10 @@ the workspace root (or from inside it).
    `unmaterializable` reasons, and skip straight to step 6.
 
 3. **Ask once — the single batched consent round.** Issue one
-   AskUserQuestion. Summarize the plan in the question text: how many members
-   would be materialized, and how many of those the candidate scan already
-   found a local checkout for (the records carrying a `source:`). Offer:
+   AskUserQuestion, its question text opening with the brief. Summarize the
+   plan in the question text: how many members would be materialized, and how
+   many of those the candidate scan already found a local checkout for (the
+   records carrying a `source:`). Offer:
 
    - **Reuse what I already have** *(recommended)* — map every member whose
      record names a `source:` candidate and materialize only the rest.
@@ -318,10 +320,10 @@ the workspace root (or from inside it).
    - **Stop** — execute nothing, write nothing, report the plan you would have
      run, and stop. Do not fall through to step 5.
    - **Review member by member** — run a per-member round in the `map` verb's
-     shape: one AskUserQuestion, one question per executable record, each
-     offering its `source:` candidate as a mapping (when it found one),
-     materializing via the record's `command:`, and skipping. Then execute
-     exactly what that round accepted.
+     shape: one numbered typed round, one question per executable record, each
+     opening with its brief and offering its `source:` candidate as a mapping
+     (when it found one), materializing via the record's `command:`, and
+     skipping. Then execute exactly what that round accepted.
    - **Reuse what I already have** — for every record carrying a `source:`,
      drive the map verb and run **no** command against that member:
 
@@ -409,10 +411,11 @@ through the engine's `workspace-map set` verb — **never** hand-edit
      `state: present`, say so in the question — it is materialized inside the
      workspace, so mapping it is a relocation the user must actually want.
 
-3. **Ask once.** Issue a **single AskUserQuestion round** covering every
-   unmapped member — one question per member, each offering its proposed path
-   (when the plan found one), "type a path", and "skip". Never drip a question
-   per member across rounds, and never ask about an already-mapped member.
+3. **Ask once.** Issue **one numbered typed round** covering every unmapped
+   member — one question per member, each opening with its brief and offering
+   its proposed path (when the plan found one), "type a path", and "skip".
+   Never drip a question per member across rounds, and never ask about an
+   already-mapped member.
 
    **Carry the checkout-folder question in that same round when no clone source
    resolves.** Read both halves of the source list before composing it:
@@ -521,7 +524,11 @@ Instead:
    from the base root and summarize the new team project(s) it now lists —
    there is nothing left to do; the wizard already wrote everything.
 
-## The question contract (AskUserQuestion)
+**Brief every question.** Open each question with the brief that
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+defines, and follow its rule on dialogs and typed rounds.
+
+## The question contract
 
 Every interviewing verb asks in **exactly one round**, and nothing is
 materialized or written before that round is answered:
@@ -538,9 +545,10 @@ materialized or written before that round is answered:
 For `sync` (and so for `clone`):
 
 - **One call, one round.** Issue a *single* AskUserQuestion before executing
-  anything, summarizing the whole plan — how many members would be
-  materialized, how many already have a local checkout the scan found. Never
-  interrogate member by member unless the user picks the review option.
+  anything, its question text opening with the brief and summarizing the
+  whole plan — how many members would be materialized, how many already have a
+  local checkout the scan found. Never interrogate member by member unless
+  the user picks the review option.
 - **Concrete options, default first.** Offer reuse-what-I-already-have
   (recommended), materialize-everything-fresh, review-member-by-member, and
   stop.
@@ -554,9 +562,9 @@ For `sync` (and so for `clone`):
 
 For `init`:
 
-- **One call, two questions.** Issue a *single* AskUserQuestion carrying both
-  the target-root choice and the portable-git-seeding choice; never drip
-  questions across rounds.
+- **One round, two questions.** Ask one numbered typed round carrying both
+  the target-root choice and the portable-git-seeding choice, each question
+  opening with its brief; never drip questions across rounds.
 - **Concrete options, default first.** For the target root, offer the
   repository's parent directory (recommended) and the repository root, both as
   resolved absolute paths. For git seeding, offer plain init (recommended,
@@ -572,9 +580,10 @@ For `init`:
 
 For `map`:
 
-- **One call, one question per unmapped member.** Issue a *single*
-  AskUserQuestion covering every member the plan reports without a `mapped:`
-  field; never drip a question per member across rounds.
+- **One round, one question per unmapped member.** Ask one numbered typed
+  round covering every member the plan reports without a `mapped:` field,
+  each question opening with its brief; never drip a question per member
+  across rounds.
 - **Concrete options, plan-derived default.** Offer the plan's `source:`
   checkout (recommended) when it found one, plus "type a path" and "skip";
   where the plan found none, "skip" is the recommended default.

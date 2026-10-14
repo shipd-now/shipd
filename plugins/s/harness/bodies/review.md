@@ -139,3 +139,7 @@ edits the repository.
    finish the review locally or hand the posting step to a harness that
    carries that reference.
 <!-- end -->
+
+**Brief every question.** Open each question with the brief that
+`skills/document/references/question-brief.md` defines, and follow its rule
+on dialogs and typed rounds.

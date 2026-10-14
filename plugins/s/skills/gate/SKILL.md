@@ -390,6 +390,10 @@ and nothing here touches it. Report it as a note, not a step:
 This is what the poll fallback waits for. In CLI reviewer mode the gate reviews
 every pull request from its own Actions job, so it is optional there.
 
+**Brief every question.** Open each question with the brief that
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+defines, and follow its rule on dialogs and typed rounds.
+
 ## Question rejection recovery
 
 **Question rejection recovery.** A known Claude Code bug can deliver an

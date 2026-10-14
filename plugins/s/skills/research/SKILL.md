@@ -91,6 +91,10 @@ or region). When that is the case, ask **one** batched round:
   straight to the pipeline; do not spawn a fresh round unless an answer genuinely
   opened a new un-inferrable decision.
 
+**Brief every question.** Open each question with the brief that
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+defines, and follow its rule on dialogs and typed rounds.
+
 ## Question rejection recovery
 
 **Question rejection recovery.** A known Claude Code bug can deliver an

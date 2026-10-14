@@ -221,13 +221,13 @@ When the target is a genuine epic, proceed:
    (`gh pr merge --auto --squash --delete-branch`). Report the PR with its full
    clickable URL.
 
-## The question contract (AskUserQuestion)
+## The question contract (typed round)
 
 `new` is the only verb that interviews; it asks under this discipline:
 
-- **Batch into one call.** Issue a *single* AskUserQuestion covering the goal,
-  the outcome requirements, and the optional `Project:` scope. Never drip
-  questions one at a time.
+- **Batch into one round.** Ask one numbered typed round covering the goal,
+  the outcome requirements, and the optional `Project:` scope, each question
+  opening with its brief. Never drip questions one at a time.
 - **Only the un-inferrable.** Every question must be a decision the workspace
   and the request cannot answer. If `workspace-show` or an existing brief
   already settled it, do not ask it.
@@ -237,6 +237,10 @@ When the target is a genuine epic, proceed:
 - **Ask once, then converge.** Fold the answers in and go straight to authoring
   the brief; do not spawn a fresh round unless an answer genuinely opened a new
   un-inferrable decision.
+
+**Brief every question.** Open each question with the brief that
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+defines, and follow its rule on dialogs and typed rounds.
 
 ## Question rejection recovery
 

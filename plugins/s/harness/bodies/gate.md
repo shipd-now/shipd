@@ -43,6 +43,10 @@ pushed — say so, and carry on to the settings.
 
 ## 4. Take consent once for the settings
 
+**Brief every question.** Open each question with the brief that
+`skills/document/references/question-brief.md` defines, and follow its rule
+on dialogs and typed rounds.
+
 Read the PR mode first: `python3 "$S/spec_status.py" config-show`. Where
 `pr-mode = "draft"`, drop the auto-merge option and note that the draft flow
 never arms auto-merge. Then ask **once**, in a turn carrying no other

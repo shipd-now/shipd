@@ -35,6 +35,9 @@ ask what to forget and wait for a description before doing anything.
 3. **Confirm, then remove.** Removal is destructive, so exactly one
    confirmation always precedes it, offering two options — "Remove it" and
    "Keep it" (the default, so the affirmative is never the default).
+   **Brief every question.** Open each question with the brief that
+   `skills/document/references/question-brief.md` defines, and follow its rule
+   on dialogs and typed rounds.
 <!-- if:question-dialogs -->
    Ask it as a single AskUserQuestion dialog in a prose-free turn: the matched
    slug and summary ride inside the dialog's own fields, not in surrounding

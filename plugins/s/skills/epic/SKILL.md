@@ -249,7 +249,7 @@ about. A question you could have answered by reading is a failure of this skill.
 2. **Ask only what remains** — and only if something remains. If genuinely
    un-inferrable decisions are left (the decomposition boundaries, a shared
    architectural choice, the theme/initiative), batch them into a **single**
-   AskUserQuestion call (see the question contract below). If investigation
+   numbered typed round (see the question contract below). If investigation
    already settled everything, ask nothing and go straight to emission.
 3. **Emit** the epic at `.shipd/epics/<slug>/epic.md` (see the epic contract below),
    at `Status: draft`. Draft the `## Introduction` first — the why-first
@@ -265,13 +265,13 @@ about. A question you could have answered by reading is a failure of this skill.
 The moment the decomposition is settled and recorded, stop investigating and
 emit — do not open new threads of exploration.
 
-## The question contract (AskUserQuestion)
+## The question contract (typed round)
 
 When decisions remain that you truly cannot infer, ask them under this
 discipline — it is what separates a lean gate from an interrogation:
 
-- **Batch into one call.** Issue a *single* AskUserQuestion containing **2–4**
-  focused questions. Never drip questions one at a time.
+- **Batch into one round.** Ask one numbered typed round of **2–4** focused
+  questions, each opening with its brief. Never drip questions one at a time.
 - **Only the un-inferrable.** Every question must be a decision the codebase and
   the request cannot answer. If you could find it by reading, read it.
 - **Concrete options, default first.** Each question offers concrete options, the
@@ -301,6 +301,10 @@ discipline — it is what separates a lean gate from an interrogation:
 
   The rubric's calibrated examples and tie-breakers settle borderline cases; a
   single answer may split across tiers, each part routed on its own.
+
+**Brief every question.** Open each question with the brief that
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+defines, and follow its rule on dialogs and typed rounds.
 
 ## Question rejection recovery
 

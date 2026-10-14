@@ -27,6 +27,9 @@ against a lint-clean change, and only inside that change's own branch.
    `base:` hashes and proceed. An already-merged change that did this plan's
    substance → stop, report the superseding merge, and ask the user whether to
    abandon the change or re-scope it to what remains.
+   **Brief every question.** Open each question with the brief that
+   `skills/document/references/question-brief.md` defines, and follow its rule
+   on dialogs and typed rounds.
 4. **Open the work.** `python3 "$S/spec_status.py" use <change>`, then
    `python3 "$S/spec_status.py" set-status active <change>`.
 5. **Implement every task in `tasks.md`, in order.** The delta specs and

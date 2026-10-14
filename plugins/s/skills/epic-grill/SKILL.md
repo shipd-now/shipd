@@ -146,11 +146,13 @@ decision into one question naming every member and `Q<n>` it covers.
 
 - **Empty agenda: ask nothing** and go to Amend and gate.
 - Otherwise ask the whole agenda here, after the consistency pass and never
-  before it, through **AskUserQuestion** calls of **at most four questions
-  each**. Each question names its member(s) and `Q<n>` references; the adopted
-  default is the **first option, marked "(Recommended)"**. Put all context in
-  the question and option text. The turn that issues a dialog carries **no
-  other substantive prose**, because the harness can drop it.
+  before it, as **one numbered typed round**. Each question opens with its
+  brief, names its member(s) and `Q<n>` references, and lists the adopted
+  default as the **first option, marked "(Recommended)"**. The user replies
+  like "1a 2b".
+- **Brief every question.** Open each question with the brief that
+  `${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+  defines, and follow its rule on dialogs and typed rounds.
 - **Question rejection recovery.** A known Claude Code bug can deliver an
   AskUserQuestion as a tool rejection even when the user tried to answer.
   Never treat a rejected or interrupted dialog as a decline or an answer. If
@@ -183,8 +185,9 @@ For each answered decision:
    on every member its `**Relied on by:**` field names; when the field is
    absent (a draft from an older grill), re-run it on every selected member.
    Fix what the repository settles and re-lint; ask any conflict only a human
-   can settle in one further round, under the Final round rules, then apply
-   those answers through steps 1-3 without re-checking again, before gating.
+   can settle in one further numbered typed round, under the Final round
+   rules, then apply those answers through steps 1-3 without re-checking again,
+   before gating.
    When every default was accepted, skip this step.
 
 Then gate every selected member:
@@ -195,9 +198,10 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_gate.py" <member> --roo
 
 Exit 0 promotes the member to `ready`. On exit 2, read the findings written
 into the member's `plan.md`: resolve what the repository answers, ask the
-human (one dialog, as above) about the rest, then re-gate. **Never set a
-member's status by any other path** (no `set-status`, no hand edit of the
-`Status:` line, no `--force`): `ready` is reached only through the gate.
+human (one numbered typed round, as above) about the rest, then re-gate.
+**Never set a member's status by any other path** (no `set-status`, no hand
+edit of the `Status:` line, no `--force`): `ready` is reached only through
+the gate.
 
 ## Ending — hand off, don't build
 

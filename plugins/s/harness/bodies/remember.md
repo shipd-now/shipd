@@ -47,6 +47,9 @@ the session.
    candidate's classification, target slug, and the one line that would be
    written — as a **plain-text typed round**, never a dialog. Wait for a typed
    go-ahead; revise and reflect back anything the user prunes or amends.
+   **Brief every question.** Open each question with the brief that
+   `skills/document/references/question-brief.md` defines, and follow its rule
+   on dialogs and typed rounds.
 5. **Install through one staged write.** Stage into `staging=$(mktemp -d)`,
    mirroring the store layout: each added or updated
    `wiki/memory-<subject>.md`; the **full** `index.md` (existing entries plus

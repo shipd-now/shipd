@@ -324,6 +324,9 @@ report, the summary comment, and `--json` — never "issue" or "concern".
   added entry's inlined `content` is reviewed with the same rigour as a hunk —
   never passed on its path and line count alone. When `content_truncated` is
   `true`, read the remainder of the file directly before judging it.
+- **Brief every question.** Open each question with the brief that
+  `${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+  defines, and follow its rule on dialogs and typed rounds.
 
 ## Question rejection recovery
 

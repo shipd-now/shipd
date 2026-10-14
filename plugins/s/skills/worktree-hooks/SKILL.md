@@ -205,6 +205,10 @@ Removal changes what every future worktree runs, so it always goes through a
 
 Then read `<shipd> worktree hooks list` back and show the remaining list.
 
+**Brief every question.** Open each question with the brief that
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+defines, and follow its rule on dialogs and typed rounds.
+
 ## Question rejection recovery
 
 **Question rejection recovery.** A known Claude Code bug can deliver an

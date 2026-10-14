@@ -45,6 +45,11 @@ from their planned capabilities, capped at `--parallel N`.
 Offer three choices — deliver every member (the recommended default), deliver
 one member first as a cautious trial (`--max-members 1`), or cancel and drive
 nothing — and honour a typed override of any knob. On cancel, stop here.
+
+**Brief every question.** Open each question with the brief that
+`skills/document/references/question-brief.md` defines, and follow its rule
+on dialogs and typed rounds.
+
 <!-- if:question-dialogs -->
 Put that choice in a single question dialog, in a turn that carries the dry
 run's member list and no other load-bearing prose.

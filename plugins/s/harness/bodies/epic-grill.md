@@ -46,6 +46,7 @@ slug (`/s:epic-grill <slug>`).
 5. **One final round.** Build the agenda from the `PLANNER` entries on disk,
    merging entries that pose the same decision. If it is empty, ask nothing.
    Otherwise ask the whole agenda as one numbered typed round: each question
+   opens with the brief from `skills/document/references/question-brief.md`,
    names its member(s) and `Q<n>`, lists the options with the adopted default
    first and marked "(Recommended)", and the user replies by number. Capture
    each answer that carries a `**Queued:**` slug with `wiki-queue-answer` or
@@ -57,9 +58,9 @@ slug (`/s:epic-grill <slug>`).
    that entry's member and on every member its `**Relied on by:**` field names
    (every selected member when the field is absent), fix what the plans and
    repository settle, and ask any conflict only a human can settle as one more
-   numbered typed round, then apply those answers the same way without
-   re-checking again. Keep the field when rewriting an entry to `USER`. Then
-   run `spec_gate.py <member> --root <worktree>` on every
+   numbered typed round (each question opening with the same brief), then
+   apply those answers the same way without re-checking again. Keep the
+   field when rewriting an entry to `USER`. Then run `spec_gate.py <member> --root <worktree>` on every
    selected member. On exit 2, resolve what the repository answers, ask the
    user about the rest, and re-gate. Never set a status by any other path.
 7. **Hand off.** Print a why-first summary per member, any epic-wide answers

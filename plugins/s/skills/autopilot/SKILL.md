@@ -557,6 +557,10 @@ verbatim, then add human-readable pointers:
 Then stop — this skill does no other work. It never edits code, never plans or
 builds, and never answers a driven session on the user's behalf.
 
+**Brief every question.** Open each question with the brief that
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+defines, and follow its rule on dialogs and typed rounds.
+
 ## Question rejection recovery
 
 A known Claude Code bug can deliver an AskUserQuestion interaction as a tool

@@ -314,6 +314,10 @@ ceremony to shortcut for small tasks.
    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" set-status ready <change-name>
    ```
 
+**Brief every question.** Open each question with the brief that
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
+defines, and follow its rule on dialogs and typed rounds.
+
 ### Question rejection recovery
 
 A known Claude Code bug can deliver an AskUserQuestion interaction as a tool
