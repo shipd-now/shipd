@@ -128,12 +128,13 @@ def card_from_dict(d):
     skills = d.get("skills", ())
     if skills is None:
         skills = ()
-    if isinstance(skills, str) or not isinstance(skills, (list, tuple)):
+    if isinstance(skills, str) or not isinstance(skills, (list, tuple)) or \
+            not all(isinstance(s, str) for s in skills):
         raise SchemaError("agent card skills must be a list of skill ids")
     return AgentCard(
         name=name,
         description=_str_field(d, "description", "agent card"),
-        skills=tuple(str(s) for s in skills),
+        skills=tuple(skills),
         version=_str_field(d, "version", "agent card"),
         harness=_str_field(d, "harness", "agent card"),
         extra={k: v for k, v in d.items() if k not in _CARD_KEYS},
@@ -235,6 +236,10 @@ def message_from_dict(d):
     if not isinstance(parts, (list, tuple)) or not all(
             isinstance(part, dict) for part in parts):
         raise SchemaError("message parts must be a list of objects")
+    for part in parts:
+        if part.get("kind") == "text" and not isinstance(
+                part.get("text", ""), str):
+            raise SchemaError("message text part text must be a string")
     metadata = d.get("metadata", {})
     if metadata is None:
         metadata = {}
@@ -375,7 +380,10 @@ def build_tasks(entries):
     for task_id in sorted(chains):
         messages = chains[task_id]
         opener, last = messages[0], messages[-1]
-        rnd = last.round
+        # The last round any message carried: one post that omits it must
+        # not reset the task to round 1 and lapse the round cap.
+        rnd = next((m.round for m in reversed(messages)
+                    if m.round is not None), None)
         tasks.append(Task(
             id=task_id,
             context_id=opener.context_id,

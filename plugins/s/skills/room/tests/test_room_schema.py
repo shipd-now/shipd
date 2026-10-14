@@ -155,6 +155,13 @@ class AgentCardTests(unittest.TestCase):
         with self.assertRaises(room_schema.SchemaError):
             room_schema.parse_comment('<!-- shipd-room-card {"name":""} -->')
 
+    def test_non_string_skill_raises(self):
+        for skills in ('[{"id":"rev"}]', '[3]'):
+            with self.assertRaises(room_schema.SchemaError):
+                room_schema.parse_comment(
+                    '<!-- shipd-room-card {"name":"x","skills":%s} -->'
+                    % skills)
+
     def test_unknown_card_keys_round_trip(self):
         body = ('<!-- shipd-room-card {"name":"x","securitySchemes":'
                 '{"bearer":{"type":"http"}}} -->')
@@ -228,6 +235,12 @@ class MessageTests(unittest.TestCase):
                     self._valid(metadata={"state": "working",
                                           "round": rnd})))
 
+    def test_non_string_text_part_raises(self):
+        for text in (5, None, ["x"]):
+            with self.assertRaises(room_schema.SchemaError):
+                room_schema.parse_comment(self._body(
+                    self._valid(parts=[{"kind": "text", "text": text}])))
+
     def test_bad_role_raises(self):
         with self.assertRaises(room_schema.SchemaError):
             room_schema.parse_comment(self._body(self._valid(role="bot")))
@@ -280,6 +293,17 @@ class TaskViewTests(unittest.TestCase):
         self.assertEqual(task.round, 2)
         self.assertEqual(task.last_agent, "b")
         self.assertEqual(task.messages, [opener, reply])
+
+    def test_round_carried_when_last_message_omits_it(self):
+        opener = _agent_msg(agent="a", state="input-required", to="b",
+                            round=1)
+        reply = _agent_msg(agent="b", task_id=10, state="input-required",
+                           to="a", round=4)
+        bare = _agent_msg(agent="a", task_id=10, state="working")
+        task = room_schema.build_tasks(
+            [(10, opener), (12, reply), (14, bare)])[0]
+        self.assertEqual(task.round, 4)
+        self.assertEqual(task.last_agent, "a")
 
     def test_orphan_reply_is_skipped(self):
         orphan = _agent_msg(agent="b", task_id=99, state="working")
