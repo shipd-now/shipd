@@ -273,6 +273,7 @@ REPO_ROOT = os.path.normpath(os.path.join(PLUGIN_S_ROOT, "..", ".."))
 # green. A seventh trigger or twelfth category would do it again.
 DOCS_ROOT = os.path.join(REPO_ROOT, "docs")
 SEMANTIC_REVIEW_DOC = os.path.join(DOCS_ROOT, "semantic-review.md")
+RISK_LENSES_MD = os.path.join(REFERENCES_DIR, "risk-lenses.md")
 SEMANTIC_REVIEW_REFERENCE_DOC = os.path.join(
     DOCS_ROOT, "semantic-review-reference.md")
 
@@ -811,6 +812,90 @@ class LocationRuleGeneralisedTest(unittest.TestCase):
                     "neither wrong alone — not state it as an unscoped "
                     "licence to anchor at any correct-in-isolation site")
 
+
+
+class RiskLensCountsAgreeTest(unittest.TestCase):
+    """`risk-lenses.md`'s header counts match the triggers it documents.
+
+    `review-risk-lenses` fixes the shape: **five** lenses — security,
+    performance, stability, data integrity, packaging — expressed as **six**
+    triggers, because security splits into exposure and authorization.
+
+    The file's own header said "Five triggers, four lenses" — both numbers
+    wrong and transposed — while documenting six sections, and it stayed that
+    way through every version of this benchmark series. It is on the
+    `/s:review` prompt path, so a reviewer reading it was told to expect four
+    lenses and five triggers before reading six, with the sixth — packaging and
+    dependency manifests — the one most likely to be dropped as surplus to a
+    stated count.
+
+    Nothing compared the header to the sections, which is the only reason it
+    survived. The count words are asserted, not just the section tally,
+    because a file can document six sections under a sentence that still says
+    five.
+
+    Four assertions, and the scope of the last two matters. The first two read
+    this file alone. The third compares `TRIGGER_PHRASES` against this file's
+    sections. The fourth reads `SKILL.md` step 5b and requires its trigger
+    bullets to be exactly that tuple — and it is the fourth that catches a
+    seventh trigger reaching the skill and not this file, since
+    `test_risk_lens_triggers_stated_inline` already pins every tuple entry
+    into the skill, so both containments close. An earlier version of this
+    class advertised that guarantee on the third assertion, which never opened
+    `SKILL.md` at all, so a seventh trigger in step 5b alone left every test
+    green. The name said one thing and the code did another.
+    """
+
+    def test_the_header_states_six_triggers_and_five_lenses(self):
+        flat = _flat(_read(RISK_LENSES_MD))
+        self.assertIn(
+            "six triggers, five lenses", flat,
+            "risk-lenses.md's header must state the counts "
+            "`review-risk-lenses` fixes: six triggers, five lenses")
+        self.assertNotIn(
+            "five triggers, four lenses", flat,
+            "risk-lenses.md still carries the transposed counts")
+
+    def test_the_header_count_matches_the_sections_it_documents(self):
+        text = _read(RISK_LENSES_MD)
+        sections = re.findall(r"^## (.+)$", text, re.M)
+        self.assertEqual(
+            6, len(sections),
+            "risk-lenses.md documents one section per trigger, so six; got %s"
+            % ", ".join(sections))
+
+    def test_every_trigger_the_skill_names_has_a_section(self):
+        sections = [s.lower() for s in
+                    re.findall(r"^## (.+)$", _read(RISK_LENSES_MD), re.M)]
+        for phrase in TRIGGER_PHRASES:
+            with self.subTest(trigger=phrase):
+                self.assertTrue(
+                    any(phrase in s for s in sections),
+                    "risk-lenses.md has no section for the %r trigger that "
+                    "SKILL.md names" % phrase)
+
+    def test_the_skill_names_no_trigger_beyond_the_pinned_set(self):
+        """`SKILL.md` step 5b names exactly the pinned triggers.
+
+        This is the assertion that catches a seventh trigger added to the
+        skill and not to this file. Its sibling above compares the tuple
+        against the reference file and never reads the skill; without this
+        one, nothing did.
+        """
+        section = re.search(
+            r"^### 5b\. Risk lenses\n(.*?)(?=^### )",
+            _read(SKILL_MD), re.M | re.S)
+        self.assertIsNotNone(
+            section, "no '### 5b. Risk lenses' section found in SKILL.md")
+        named = {b.lower()
+                 for b in re.findall(r"^- \*\*(.+?)\*\*", section.group(1),
+                                     re.M)}
+        self.assertEqual(
+            set(TRIGGER_PHRASES), named,
+            "SKILL.md step 5b and TRIGGER_PHRASES must name the same "
+            "triggers; only in SKILL.md: %s; only in TRIGGER_PHRASES: %s"
+            % (sorted(named - set(TRIGGER_PHRASES)),
+               sorted(set(TRIGGER_PHRASES) - named)))
 
 
 class PublishedDocsCarryEveryEnumerationTest(unittest.TestCase):

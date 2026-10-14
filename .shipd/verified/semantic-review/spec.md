@@ -1106,6 +1106,13 @@ NOT be gated on a cohort, a file type, or any other condition. The detailed
 guidance and worked examples for the lenses SHALL live in
 `plugins/s/skills/review/references/risk-lenses.md`, read when a trigger fires.
 
+That reference file SHALL state those same two counts in its own header and
+SHALL carry one section per trigger, so a reviewer opening it is never told to
+expect a different number from the one it documents. Its header stated "Five
+triggers, four lenses" — both figures wrong, and transposed — while
+documenting six sections, and it stayed that way through every version of this
+skill because nothing compared the header to the sections.
+
 A finding of secret or credential exposure, or of an authorization boundary
 reached without the caller's scope check, SHALL carry severity `high`
 regardless of the reviewer's confidence. Findings from the remaining triggers
@@ -1190,6 +1197,11 @@ the exposure severity floor inline.
   manifest's published-files allowlist omits it
 - **THEN** the finding's primary location is the manifest and its locations
   also name the importing line
+
+#### Scenario: The reference file's header matches what it documents
+- **WHEN** `plugins/s/skills/review/references/risk-lenses.md` is inspected
+- **THEN** its header states six triggers and five lenses, and the file carries
+  one `##` section per trigger `SKILL.md` names
 
 ### Requirement: Taxonomy parity across payload surfaces
 id: review-taxonomy-parity
