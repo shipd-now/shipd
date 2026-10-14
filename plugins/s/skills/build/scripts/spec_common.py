@@ -405,6 +405,7 @@ RECOGNIZED_CONFIG_KEYS = (
     "memory_dir",
     "post-worktree-scripts",
     "pr-mode",
+    "room",
     "store_autocommit",
     "store_root",
     "store_sync",
@@ -1120,6 +1121,57 @@ def resolve_pr_mode(root):
             % (PR_MODE_KEY, " or ".join(PR_MODES),
                prov.get(PR_MODE_KEY, "default"), raw))
     return raw
+
+
+# ---------------------------------------------------------------------------
+# PR room (shipd-config room-config-key)
+# ---------------------------------------------------------------------------
+
+# The config key naming this harness's PR-room agent and the task round cap.
+ROOM_KEY = "room"
+
+# The turn cap a room task reaches before a reply posts `failed` with reason
+# `round-cap`, when no layer declares `room.max_rounds`.
+DEFAULT_ROOM_MAX_ROUNDS = 6
+
+
+def resolve_room(root):
+    """Resolve the PR-room settings for ``root`` (shipd-config
+    room-config-key) as ``(agent, max_rounds)``.
+
+    Reads the ``room`` key from ``root``'s layered configuration (via
+    :func:`resolve_config`). Returns ``(None, DEFAULT_ROOM_MAX_ROUNDS)`` when no
+    layer declares it; a declared object supplies ``agent`` (a non-empty
+    string) and ``max_rounds`` (an integer of at least 1), each defaulting
+    when absent. A value that is not an object, or a member of the wrong
+    shape, raises :class:`ConfigError` naming ``room``, the member, and the
+    config file that supplied it. Other members are ignored, so a later room
+    feature can add its own. Stdlib-only."""
+    config, prov = resolve_config(root)
+    if ROOM_KEY not in config:
+        return None, DEFAULT_ROOM_MAX_ROUNDS
+    raw = config[ROOM_KEY]
+    source = prov.get(ROOM_KEY, "default")
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            "`%s` must be an object with `agent` and `max_rounds` members "
+            "(from %s), got %r" % (ROOM_KEY, source, raw))
+    agent = None
+    if "agent" in raw:
+        agent = raw["agent"]
+        if not isinstance(agent, str) or not agent.strip():
+            raise ConfigError(
+                "`%s.agent` must be a non-empty string (from %s), got %r"
+                % (ROOM_KEY, source, agent))
+    max_rounds = DEFAULT_ROOM_MAX_ROUNDS
+    if "max_rounds" in raw:
+        max_rounds = raw["max_rounds"]
+        if isinstance(max_rounds, bool) or not isinstance(max_rounds, int) \
+                or max_rounds < 1:
+            raise ConfigError(
+                "`%s.max_rounds` must be an integer of at least 1 (from %s), "
+                "got %r" % (ROOM_KEY, source, max_rounds))
+    return agent, max_rounds
 
 
 # ---------------------------------------------------------------------------

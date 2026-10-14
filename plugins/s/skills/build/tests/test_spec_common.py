@@ -3672,6 +3672,88 @@ class ResolvePrModeTest(unittest.TestCase):
             self.assertIn(sc.PR_MODE_KEY, str(cm.exception))
 
 
+class ResolveRoomTest(unittest.TestCase):
+    """resolve_room: the layered `room` key naming this harness's room agent
+    and the task round cap (shipd-config room-config-key). Stdlib-only.
+    ``$HOME`` is always overridden to an empty directory so the real home
+    config never leaks into a test."""
+
+    def _write_config(self, d, payload):
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, sc.CONFIG_FILENAME), "w",
+                  encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        return d
+
+    def _resolve(self, root, home):
+        with imports_blocked("pipeline_schema"), \
+                home_set_to(os.path.realpath(home)):
+            return sc.resolve_room(root)
+
+    def test_key_constants(self):
+        self.assertEqual(sc.ROOM_KEY, "room")
+        self.assertEqual(sc.DEFAULT_ROOM_MAX_ROUNDS, 6)
+        self.assertIn("room", sc.RECOGNIZED_CONFIG_KEYS)
+
+    def test_absent_key_yields_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            self.assertEqual(
+                self._resolve(os.path.realpath(tmp), home), (None, 6))
+
+    def test_workspace_layer_governs_a_member_repo(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "repo")
+            self._write_config(ws, {"workspace": {}, "room": {
+                "agent": "claude-mikkel", "max_rounds": 4}})
+            os.makedirs(repo, exist_ok=True)
+            self.assertEqual(self._resolve(repo, home), ("claude-mikkel", 4))
+
+    def test_zero_max_rounds_errors_naming_key_member_and_file(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"room": {"max_rounds": 0}})
+            with self.assertRaises(sc.ConfigError) as cm:
+                self._resolve(root, home)
+            msg = str(cm.exception)
+            self.assertIn("room", msg)
+            self.assertIn("max_rounds", msg)
+            self.assertIn(os.path.join(root, sc.CONFIG_FILENAME), msg)
+
+    def test_empty_agent_errors(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"room": {"agent": ""}})
+            with self.assertRaises(sc.ConfigError) as cm:
+                self._resolve(root, home)
+            msg = str(cm.exception)
+            self.assertIn("room", msg)
+            self.assertIn("agent", msg)
+            self.assertIn(os.path.join(root, sc.CONFIG_FILENAME), msg)
+
+    def test_non_object_value_errors(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"room": "claude-mikkel"})
+            with self.assertRaises(sc.ConfigError) as cm:
+                self._resolve(root, home)
+            msg = str(cm.exception)
+            self.assertIn("room", msg)
+            self.assertIn(os.path.join(root, sc.CONFIG_FILENAME), msg)
+
+    def test_unknown_members_are_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"room": {"agent": "x", "interval": 5}})
+            self.assertEqual(self._resolve(root, home), ("x", 6))
+
+
 class ResolveModelTierTest(unittest.TestCase):
     """The stdlib model-tier authority the pipeline's consumers resolve a
     `model`/`subagent_model` option through (epic-autopilot

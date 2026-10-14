@@ -93,6 +93,15 @@ VERB_TABLE = {
     "metrics": ("metrics.py", []),
     "lint": ("spec_lint.py", []),
     "worktree": ("worktree.py", []),
+    "room": ("room.py", []),
+}
+
+# Delegates that resolve outside the engine's ``skills/build/scripts/``
+# directory, keyed by script name. The constitution keeps network access out
+# of the engine scripts, so the ``gh``-calling room verbs live under the room
+# skill's own scripts directory instead.
+SKILL_SCRIPT_DIRS = {
+    "room.py": PLUGIN_ROOT / "skills" / "room" / "scripts",
 }
 
 # ``board`` leads with the interactive board and exposes its other renderings
@@ -168,6 +177,7 @@ verbs:
                              create the change's worktree, then run the
                              configured post-worktree-scripts
                              (also: remove, prune-branches, hooks)
+  room <verb> <pr> [args]    the PR room: join, list, message, close
   doctor                     preflight this environment for shipd
   statusline [install]       report or register the shipd statusline
   copilot [add|remove]       maintain the Copilot code-review skill in a repo
@@ -183,8 +193,8 @@ options:
   --version                  print the plugin version
 
 The read verbs list, status, locate, related, search, prd, epic, workspace,
-lint, and harness accept --json, emitting one machine-readable JSON document
-instead of the text report.
+lint, harness, and room list accept --json, emitting one machine-readable JSON
+document instead of the text report.
 """
 
 
@@ -2824,7 +2834,8 @@ def main(argv):
         if mode is not None:
             rest = rest[1:]
         script, leading = WIKI_MODES[mode]
-    command = [sys.executable, str(SCRIPTS / script), *leading, *rest]
+    script_dir = SKILL_SCRIPT_DIRS.get(script, SCRIPTS)
+    command = [sys.executable, str(script_dir / script), *leading, *rest]
     try:
         os.execv(sys.executable, command)
     except OSError as exc:

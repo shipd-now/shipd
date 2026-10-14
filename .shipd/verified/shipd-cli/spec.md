@@ -5,41 +5,44 @@ id: cli-dispatch
 
 The `shipd` binary SHALL expose exactly the curated verbs `init`, `list`,
 `status`, `locate`, `related`, `search`, `prd`, `epic`, `workspace`,
-`wiki`, `config`,
-`board`, `render`, `metrics`, `lint`, `worktree`, `doctor`, `statusline`,
-`copilot`, `vendor`, `harness`, `install`, and `update`, and for every verb
-except `list`, `doctor`, `statusline`, `copilot`, `vendor`, `harness`,
-`install`, and `update` SHALL delegate by replacing its own process with the
-mapped engine script invocation (`init` -> `spec_status.py init`, `status` ->
-`spec_status.py show`, `locate` -> `spec_status.py locate`, `related` ->
-`spec_status.py related`, `search` -> `spec_status.py search`, `prd` ->
-`spec_status.py prd-show`, `epic` ->
-`spec_status.py epic-show`, `workspace`
--> `spec_status.py` per the workspace-mode mapping below, `wiki` ->
-`spec_status.py` per the wiki-mode mapping below, `config` ->
-`spec_status.py config-show`, `board` -> `dashboard.py` per the board-mode
-mapping below, `render` -> `render.py` per the render-mode mapping below,
-`metrics` -> `metrics.py`, `lint` -> `spec_lint.py`, `worktree` ->
-`worktree.py`), passing all trailing arguments through verbatim so the
-delegate's output and exit code are the binary's own. When `metrics` is given
-no trailing arguments, the binary SHALL delegate to `metrics.py summary`.
-When invoked as `shipd workspace`, the binary SHALL select the delegate by
-the first trailing argument: the bare word `init` SHALL be consumed and
-delegate to `spec_status.py workspace-init`, the bare word `sync` SHALL be
-consumed and delegate to `spec_status.py workspace-sync`, the bare word
-`team` SHALL be consumed and delegate to `spec_status.py workspace-team`,
-and any other first trailing argument (or none) SHALL delegate to
-`spec_status.py workspace-show` with all trailing arguments intact. When
-invoked as `shipd wiki`, the binary SHALL select the delegate by the first
-trailing argument: the bare word `init` SHALL be consumed and delegate to
-`spec_status.py wiki-init`, and any other first trailing argument (or none)
-SHALL delegate to `spec_status.py wiki-show` with all trailing arguments
-intact. When invoked as `shipd board`, the binary SHALL select the delegate
-by the first trailing argument: the bare word `text` SHALL be consumed and
-delegate to `dashboard.py board`, and any other first trailing argument (or
-none) SHALL delegate to `dashboard.py tui` with all trailing arguments
-intact. When invoked as `shipd render`, the binary SHALL select the delegate
-by the first trailing argument: the bare word `output` SHALL be consumed and
+`wiki`, `config`, `board`, `render`, `metrics`, `lint`, `worktree`, `room`,
+`doctor`, `statusline`, `copilot`, `vendor`, `harness`, `install`, and
+`update`, and for every verb except `list`, `doctor`, `statusline`,
+`copilot`, `vendor`, `harness`, `install`, and `update` SHALL delegate by
+replacing its own process with the mapped script invocation (`init` ->
+`spec_status.py init`, `status` -> `spec_status.py show`, `locate` ->
+`spec_status.py locate`, `related` -> `spec_status.py related`, `search` ->
+`spec_status.py search`, `prd` -> `spec_status.py prd-show`, `epic` ->
+`spec_status.py epic-show`, `workspace` -> `spec_status.py` per the
+workspace-mode mapping below, `wiki` -> `spec_status.py` per the wiki-mode
+mapping below, `config` -> `spec_status.py config-show`, `board` ->
+`dashboard.py` per the board-mode mapping below, `render` -> `render.py` per
+the render-mode mapping below, `metrics` -> `metrics.py`, `lint` ->
+`spec_lint.py`, `worktree` -> `worktree.py`, `room` -> `room.py`), passing
+all trailing arguments through verbatim so the delegate's output and exit
+code are the binary's own. Every delegate SHALL resolve under the engine's
+`skills/build/scripts/` directory except `room.py`, which the binary SHALL
+resolve under the room skill's own `skills/room/scripts/` directory through
+a script-name-keyed override table, so the network-bearing room verbs never
+enter the engine directory. When `metrics` is given no trailing arguments,
+the binary SHALL delegate to `metrics.py summary`. When invoked as `shipd
+workspace`, the binary SHALL select the delegate by the first trailing
+argument: the bare word `init` SHALL be consumed and delegate to
+`spec_status.py workspace-init`, the bare word `sync` SHALL be consumed and
+delegate to `spec_status.py workspace-sync`, the bare word `team` SHALL be
+consumed and delegate to `spec_status.py workspace-team`, and any other
+first trailing argument (or none) SHALL delegate to `spec_status.py
+workspace-show` with all trailing arguments intact. When invoked as `shipd
+wiki`, the binary SHALL select the delegate by the first trailing argument:
+the bare word `init` SHALL be consumed and delegate to `spec_status.py
+wiki-init`, and any other first trailing argument (or none) SHALL delegate
+to `spec_status.py wiki-show` with all trailing arguments intact. When
+invoked as `shipd board`, the binary SHALL select the delegate by the first
+trailing argument: the bare word `text` SHALL be consumed and delegate to
+`dashboard.py board`, and any other first trailing argument (or none) SHALL
+delegate to `dashboard.py tui` with all trailing arguments intact. When
+invoked as `shipd render`, the binary SHALL select the delegate by the
+first trailing argument: the bare word `output` SHALL be consumed and
 delegate to `render.py output`, and any other first trailing argument (or
 none) SHALL delegate to `render.py screen` with all trailing arguments
 intact. The binary SHALL resolve the engine scripts relative to its own
@@ -53,6 +56,18 @@ SHALL print the same banner to stdout and exit `0`.
   not exist
 - **THEN** the binary exits `1` with `Error: change 'no-such-change' not found`
   on stderr, exactly as `spec_status.py locate` does
+
+#### Scenario: Room is a curated verb that delegates to the room skill
+- **WHEN** `shipd room --help` runs
+- **THEN** the banner of `shipd --help` lists `room` among the verbs, and the
+  output is identical to `python3 plugins/s/skills/room/scripts/room.py
+  --help` with exit code `0`, proving the delegate resolves under the room
+  skill's scripts directory
+
+#### Scenario: Room passes trailing arguments through
+- **WHEN** `shipd room frobnicate` runs
+- **THEN** `room.py`'s own usage error is printed — not the shipd banner — and
+  the binary exits `2`
 
 #### Scenario: Workspace init mode
 - **WHEN** `shipd workspace init --help` runs

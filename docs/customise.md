@@ -42,6 +42,7 @@ repo's own `.shipd/` copy may be behind it.
 | `valid_themes` | The theme vocabulary the linter accepts in an artifact's `Theme:` header. |
 | `autonomous-pipeline` | Which steps a delivery runs. See "The delivery steps" below. |
 | `pr-mode` | How a change's PR ships: `auto` (default) or `draft`. See the content directory's `README.md`. |
+| `room` | The PR room verbs: `agent`, the name posted under when `--agent` and `SHIPD_ROOM_AGENT` are unset (no default), and `max_rounds`, the turn cap per task. Default 6. |
 | `guardrails` | The guardrail hook's kill-switches. See [docs/guardrails.md](guardrails.md). |
 | `voice` | Gates the session-start voice digest hook. Default `true`. |
 | `workspace` | Marks the declaring directory as a workspace root; holds its `projects` and `focus` registry. |
