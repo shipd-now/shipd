@@ -257,6 +257,21 @@ class GhSeamTest(RoomTestBase):
         self.assertEqual(len(lines), 1, err)
         self.assertTrue(lines[0].startswith("Error: "), err)
 
+    def test_missing_gh_binary_is_one_error_line(self):
+        # The default runner reports an unrunnable gh as a failed call, not
+        # a traceback (room-gh-seam).
+        missing = FileNotFoundError(2, "No such file or directory", "gh")
+        with unittest.mock.patch.object(room.subprocess, "run",
+                                        side_effect=missing):
+            code, out, err = self.room(None, "list", "7",
+                                       "--agent", "codex-a")
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        lines = err.splitlines()
+        self.assertEqual(len(lines), 1, err)
+        self.assertTrue(lines[0].startswith("Error: "), err)
+        self.assertIn("could not run gh", err)
+
     def test_malformed_marker_is_skipped_with_a_warning(self):
         gh = FakeGh(comments=[
             card_comment(100, "codex-a"),
@@ -531,6 +546,16 @@ class MessageTest(RoomTestBase):
                                     env={"SHIPD_ROOM_AGENT": "claude-b"})
         self.assertEqual(code, 0, err)
         self.assertEqual(self._posted(gh).agent, "claude-b")
+
+    def test_new_task_at_a_non_opening_state_names_the_opening_states(self):
+        gh = FakeGh(comments=_joined())
+        code, _out, err = self.room(gh, "message", "7", "--new", "--state",
+                                    "working", "hi", "--agent", "codex-a")
+        self.assertEqual(code, 1)
+        self.assertEqual(gh.posts(), [])
+        self.assertIn("Error: a new task opens at submitted or "
+                      "input-required, not working", err)
+        self.assertNotIn("None", err)
 
     def test_unknown_task_is_not_found(self):
         gh = FakeGh(comments=_joined(self._open_task()))

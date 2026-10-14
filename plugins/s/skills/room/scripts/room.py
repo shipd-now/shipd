@@ -54,9 +54,14 @@ class RoomError(Exception):
 # ---------------------------------------------------------------------------
 
 def _default_gh(args, input=None):
-    proc = subprocess.run(
-        ["gh"] + list(args), input=input, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        proc = subprocess.run(
+            ["gh"] + list(args), input=input, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as exc:
+        # A missing or unrunnable gh is a failed call like any other: one
+        # ``Error:`` line through ``_gh_json``, never a traceback.
+        return 127, "", "could not run gh: %s" % exc
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 
 
@@ -219,6 +224,10 @@ def _transition(task_id, current, requested):
     try:
         return room_schema.next_state(current, requested)
     except room_schema.InvalidTransition:
+        if current is None:
+            raise RoomError("a new task opens at %s, not %s"
+                            % (" or ".join(room_schema.OPENING_STATES),
+                               requested))
         raise RoomError("task %s is %s; no transition to %s"
                         % (task_id, current, requested))
 
@@ -331,7 +340,7 @@ def cmd_message(opts, parser, gh):
     if opts.new:
         requested = opts.state or (
             "input-required" if opts.to else "submitted")
-        state = _transition("(new)", None, requested)
+        state = _transition(None, None, requested)
         rnd = 1
         if opts.skill:
             metadata["skill"] = opts.skill
