@@ -3,7 +3,7 @@
 The skill reads this file when a risk lens trigger fires during review of the
 diff.
 
-Five triggers, four lenses: security splits into two triggers because exposure
+Six triggers, five lenses: security splits into two triggers because exposure
 and authorization are spotted by looking for different things. Each trigger
 below names what to look for in the diff, one worked example of a finding
 worth reporting, and one worked example of a reflex hit that is not — the line

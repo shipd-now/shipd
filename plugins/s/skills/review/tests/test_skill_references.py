@@ -273,6 +273,7 @@ REPO_ROOT = os.path.normpath(os.path.join(PLUGIN_S_ROOT, "..", ".."))
 # green. A seventh trigger or twelfth category would do it again.
 DOCS_ROOT = os.path.join(REPO_ROOT, "docs")
 SEMANTIC_REVIEW_DOC = os.path.join(DOCS_ROOT, "semantic-review.md")
+RISK_LENSES_MD = os.path.join(REFERENCES_DIR, "risk-lenses.md")
 SEMANTIC_REVIEW_REFERENCE_DOC = os.path.join(
     DOCS_ROOT, "semantic-review-reference.md")
 
@@ -811,6 +812,56 @@ class LocationRuleGeneralisedTest(unittest.TestCase):
                     "neither wrong alone — not state it as an unscoped "
                     "licence to anchor at any correct-in-isolation site")
 
+
+
+class RiskLensCountsAgreeTest(unittest.TestCase):
+    """`risk-lenses.md`'s header counts match the triggers it documents.
+
+    `review-risk-lenses` fixes the shape: **five** lenses — security,
+    performance, stability, data integrity, packaging — expressed as **six**
+    triggers, because security splits into exposure and authorization.
+
+    The file's own header said "Five triggers, four lenses" — both numbers
+    wrong and transposed — while documenting six sections, and it stayed that
+    way through every version of this benchmark series. It is on the
+    `/s:review` prompt path, so a reviewer reading it was told to expect four
+    lenses and five triggers before reading six, with the sixth — packaging and
+    dependency manifests — the one most likely to be dropped as surplus to a
+    stated count.
+
+    Nothing compared the header to the sections, which is the only reason it
+    survived. The count words are asserted, not just the section tally,
+    because a file can document six sections under a sentence that still says
+    five.
+    """
+
+    def test_the_header_states_six_triggers_and_five_lenses(self):
+        flat = _flat(_read(RISK_LENSES_MD))
+        self.assertIn(
+            "six triggers, five lenses", flat,
+            "risk-lenses.md's header must state the counts "
+            "`review-risk-lenses` fixes: six triggers, five lenses")
+        self.assertNotIn(
+            "five triggers, four lenses", flat,
+            "risk-lenses.md still carries the transposed counts")
+
+    def test_the_header_count_matches_the_sections_it_documents(self):
+        text = _read(RISK_LENSES_MD)
+        sections = re.findall(r"^## (.+)$", text, re.M)
+        self.assertEqual(
+            6, len(sections),
+            "risk-lenses.md documents one section per trigger, so six; got %s"
+            % ", ".join(sections))
+
+    def test_every_trigger_the_skill_names_has_a_section(self):
+        sections = [s.lower() for s in
+                    re.findall(r"^## (.+)$", _read(RISK_LENSES_MD), re.M)]
+        for phrase in TRIGGER_PHRASES:
+            with self.subTest(trigger=phrase):
+                self.assertTrue(
+                    any(phrase in s for s in sections),
+                    "risk-lenses.md has no section for the %r trigger that "
+                    "SKILL.md names" % phrase)
 
 
 class PublishedDocsCarryEveryEnumerationTest(unittest.TestCase):
