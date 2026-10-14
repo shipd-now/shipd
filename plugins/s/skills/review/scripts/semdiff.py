@@ -1133,7 +1133,7 @@ class GrepFailure(RuntimeError):
 
 def _grep_matches(pattern, path=None, word=True, lang=None, fixed=False):
     """Best-effort search for `pattern` across the repo (or `path`), via
-    ripgrep when present and `git grep` otherwise — the one tool ladder both
+    ripgrep when present and `git grep` otherwise — the one tool ladder
     `context` runs. `word` requests a whole-word match; `fixed`
     requests a literal (non-regex) match, for a term such as a path that may
     carry regex metacharacters. Returns a list of {"file", "line", "text"}
@@ -1205,28 +1205,6 @@ def cmd_context(args):
               sys.stdout, indent=2)
     print()
     return 0
-
-
-
-# Lines that name another module: Python import/from, JS/TS import-from and
-# require(), Rust use, and C/C++ #include. Each pattern's one capture group is
-# the raw module/path token(s) (comma-separated for Python's `import a, b`).
-_IMPORT_LINE_PATTERNS = (
-    re.compile(r'^\s*from\s+([.\w]+)\s+import\b'),
-    re.compile(r'^\s*import\s+([.\w]+(?:\s*,\s*[.\w]+)*)'),
-    re.compile(r'''\bfrom\s+['"]([^'"]+)['"]'''),
-    re.compile(r'''^\s*import\s+['"]([^'"]+)['"]'''),
-    re.compile(r'''\brequire\(\s*['"]([^'"]+)['"]\s*\)'''),
-    re.compile(r'^\s*use\s+([\w:]+)'),
-    re.compile(r'^\s*#\s*include\s+["<]([^">]+)[">]'),
-)
-
-# Go's grouped import form, `import (\n\t"path"\n\t...\n)`, names each path
-# on its own line with no keyword beside it — none of the per-line patterns
-# above can match it, since they all require a keyword on the same line as
-# the quoted path. Matched separately, across the whole text.
-_GO_IMPORT_BLOCK_RE = re.compile(r'(?m)^\s*import\s*\((.*?)^\s*\)', re.DOTALL)
-_GO_IMPORT_PATH_RE = re.compile(r'"([^"]+)"')
 
 
 def _import_engine():

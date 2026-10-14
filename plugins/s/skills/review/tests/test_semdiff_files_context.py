@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Unit tests for `semdiff files` (cohort grouping) and `semdiff context`
-(best-effort reference lookup). Fixtures are temp git repos; no network."""
+(best-effort reference lookup), plus the module-reachability guard that keeps
+a deletion from `semdiff.py` leaving its orphans behind. Fixtures are temp
+git repos; no network."""
 
 import argparse
+import ast
 import json
 import os
 import shutil
@@ -205,9 +208,9 @@ class ContextTest(unittest.TestCase):
 class GrepFailureTest(unittest.TestCase):
     """A genuine `rg`/`git grep` tool failure (a non-zero exit outside the
     {0, 1} match/no-match pair both tools document) must surface as a hard
-    failure, in both `context` and `related` — never come back silently as
-    "no matches"/"no importers", which would be indistinguishable from the
-    search having actually run and found nothing. White-box: imports
+    failure, in `context` — never come back silently as "no matches", which
+    would be indistinguishable from the search having actually run and
+    found nothing. White-box: imports
     `semdiff` directly so the failure can be injected below the subprocess
     boundary, deterministically and without depending on either tool's
     real-world exit codes for a crafted error."""
@@ -267,3 +270,58 @@ class GrepFailureTest(unittest.TestCase):
             with self.assertRaises(SystemExit) as ctx:
                 semdiff.cmd_context(args)
         self.assertNotEqual(ctx.exception.code, 0)
+
+
+# Nothing may be deliberately defined in `semdiff.py` and read only from
+# outside it: the module is a standalone CLI, never imported for its symbols
+# except by these white-box tests. Any entry added here must say which
+# out-of-module reader justifies it.
+REACHABILITY_ALLOWLIST = frozenset()
+
+
+class ModuleReachabilityTest(unittest.TestCase):
+    """Every module-level definition in `semdiff.py` must be read somewhere
+    in `semdiff.py`.
+
+    A subcommand removal deletes a function and leaves whatever only that
+    function read. Behavioural tests cannot catch it: a definition nobody
+    reads changes no output, so the suite stays green while dead machinery
+    accumulates — which is how `semdiff-drop-related` left three orphaned
+    import-matching regexes behind after deleting their one reader.
+
+    The scan is whole-file and name-based on purpose, the same shape the
+    deletion itself has to reason in. A load inside a module-level lambda,
+    a comprehension, a dict literal or a decorator counts, because those are
+    exactly the call sites a `def`-body scan misses: `_is_manifest`'s only
+    reader is a lambda in `COHORT_RULES`, and a body-only scan would report
+    it unused and invite its deletion.
+    """
+
+    def test_no_module_level_definition_is_unread(self):
+        with open(semdiff.__file__, encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
+
+        defined = set()
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+                defined.add(node.name)
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        defined.add(target.id)
+            elif isinstance(node, ast.AnnAssign):
+                if isinstance(node.target, ast.Name):
+                    defined.add(node.target.id)
+
+        loaded = {node.id for node in ast.walk(tree)
+                  if isinstance(node, ast.Name)
+                  and isinstance(node.ctx, ast.Load)}
+
+        orphans = sorted(defined - loaded - REACHABILITY_ALLOWLIST)
+        self.assertEqual(
+            orphans, [],
+            "module-level definitions in semdiff.py that nothing in "
+            "semdiff.py reads: %s — delete them, or add each to "
+            "REACHABILITY_ALLOWLIST naming its out-of-module reader"
+            % ", ".join(orphans))
