@@ -30,7 +30,9 @@ slug (`/s:epic-grill <slug>`).
 3. **Plan wave by wave, in this session.** Run one planner per member of a
    wave, reading the plans of every earlier wave first and never a sibling of
    the same wave; grade the whole wave and re-lint every earlier member before
-   the next wave starts. For an `unplanned` member
+   the next wave starts. Before the first wave, add every selected `draft`
+   member to the plans you read, since computed waves hold only `unplanned`
+   members. For an `unplanned` member
    run `shipd worktree <member>`, then follow the `/s:plan` workflow inside
    `.worktrees/<member>`. Open no
    question round. For every decision the oracle leaves open, adopt your

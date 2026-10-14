@@ -74,7 +74,9 @@ planner can read the plans of every earlier wave. Keep a running list of
 wave of several `unplanned` members, create each worktree, then spawn one
 planner per member **together in a single message** and wait for the whole
 wave before grading it and starting the next. A wave of one is the serial
-path.
+path. Computed waves hold only `unplanned` members, so add every selected
+`draft` member to the running list, as its bullet below says, before the
+first wave.
 
 - **`unplanned` member.** Create its worktree, then spawn the planner:
   ```
