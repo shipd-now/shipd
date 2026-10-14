@@ -1062,6 +1062,19 @@ class WatchRoundCapTest(WatchTestBase):
         self.assertIn("WARNING: task 10: round cap reached; join the room "
                       "to close it", err)
 
+    def test_cap_without_a_card_warns_once_per_watch(self):
+        gh = FakeGh(comments=[self._capped()])
+        sleep = FakeSleep()
+        code, out, err = self.watch(gh, "--agent", "claude-b",
+                                    "--max-rounds", "6", "--timeout", "60",
+                                    sleep=sleep, clock=FakeClock(step=25))
+        self.assertEqual(code, 0, err)
+        self.assertGreaterEqual(len(_reads(gh)), 2)
+        self.assertEqual(out, "")
+        self.assertEqual(gh.posts(), [])
+        self.assertEqual(err.count("WARNING: task 10: round cap reached; "
+                                   "join the room to close it"), 1, err)
+
     def test_task_below_the_cap_is_still_surfaced(self):
         gh = FakeGh(comments=[
             card_comment(1, "claude-b"), self._capped(),

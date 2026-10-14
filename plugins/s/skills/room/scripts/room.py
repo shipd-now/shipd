@@ -526,13 +526,17 @@ def _watch_line(task, comment, context, cursor):
     return json.dumps(obj, sort_keys=True)
 
 
-def _cap_task(gh, repo, number, context, agent, card, task, max_rounds):
+def _cap_task(gh, repo, number, context, agent, card, task, max_rounds,
+              warned):
     """Close a task at the round cap: post ``failed``/``round-cap`` on it
     when ``agent`` has a card, else warn that someone must join to close
-    it. Either way the caller does not surface the task."""
+    it — once per task per watch, tracked in the ``warned`` id set. Either
+    way the caller does not surface the task."""
     if card is None:
-        cli_common.warn("task %s: round cap reached; join the room to close "
-                        "it" % task.id)
+        if task.id not in warned:
+            warned.add(task.id)
+            cli_common.warn("task %s: round cap reached; join the room to "
+                            "close it" % task.id)
         return
     capped = _message(
         context, agent, "round cap (%d) reached" % max_rounds, task.id,
@@ -552,6 +556,7 @@ def cmd_watch(opts, gh, sleep, clock, parser):
     max_rounds = _max_rounds(opts, root)
     repo, number, context = _resolve_room(gh, opts.pr)
     cursor = opts.since
+    warned = set()
     start = clock()
     while True:
         comments = _read_comments(gh, repo, number)
@@ -562,7 +567,7 @@ def cmd_watch(opts, gh, sleep, clock, parser):
         for task in actionable_tasks(tasks, agent, skills):
             if room_schema.at_round_cap(task, agent, max_rounds):
                 _cap_task(gh, repo, number, context, agent, card, task,
-                          max_rounds)
+                          max_rounds, warned)
                 continue
             comment = _last_comment(comments, task)
             if comment is not None and _is_new(comment, cursor):
