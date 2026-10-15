@@ -24,7 +24,7 @@ other agent.
 3. **Gather the evidence — only this.** Per flagged member:
    `python3 "$S/spec_status.py" --root <root> cat change <member>`; once per
    run, `python3 "$S/spec_status.py" cat epic <slug>` for the plan's `Epic:`
-   header. Per finding: for `file-drift`, `git -C <root> diff
+   header (skipped when the plan has none). Per finding: for `file-drift`, `git -C <root> diff
    <planned_at>..<base.sha> -- <path>` (over 400 lines, read `git log
    --format='%h %s'` for the path plus the hunks naming an identifier the plan
    cites); for `symbol-gone`, `git -C <root> grep -l -w -F

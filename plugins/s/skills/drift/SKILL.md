@@ -78,7 +78,9 @@ python3 STATUS_CLI --root <root> cat change <member>
 python3 STATUS_CLI cat epic <slug>
 ```
 
-`cat epic` runs once per run, for the slug in the plan's `Epic:` header.
+`cat epic` runs once per run, for the slug in the plan's `Epic:` header; when
+the plan carries no `Epic:` header, skip it — only the plan's `USER` entries
+can then raise `conflict`.
 
 Per finding:
 
