@@ -8,8 +8,9 @@ the structural linter plus four deterministic, repository-local context checks
 and a provisional-entry check, and settles the change's status:
 
   * every check passes  → any ``## Context insufficient`` section is removed
-    from ``plan.md``, the plan is promoted ``draft`` → ``ready`` (a ``ready``
-    plan is left ``ready``), a pass line prints, and the exit code is 0.
+    from ``plan.md``, the plan stamp is written into its header (see below),
+    the plan is promoted ``draft`` → ``ready`` (a ``ready`` plan is left
+    ``ready``), a pass line and a ``stamp:`` line print, and the exit code is 0.
   * any check fails      → the findings are written into ``plan.md`` as a single
     ``## Context insufficient`` section (after the header metadata, before
     ``## Idea``), the status is set to ``rejected``, the findings print, and the
@@ -35,6 +36,24 @@ provisional-entry-check) rejects any ``## Questions and answers`` entry in
 ``plan.md`` whose ``**Answered by:**`` field holds ``PLANNER``: a provisional
 default still awaits a human answer.
 
+The plan stamp (context-gate plan-stamp-write): on a pass the gate writes
+``Planned-at: <sha>`` — ``git merge-base HEAD <base>`` resolved from the plan's
+own directory, ``--base`` defaulting to ``main`` — and ``Gated-hash: <hash>`` —
+:func:`spec_common.plan_gated_hash` of the stripped plan — as the last lines of
+the header metadata block, replacing existing stamp lines in place. When the
+base cannot be resolved (no git, no work tree, unresolvable ref) the
+``Planned-at`` line is omitted (a stale one removed) and one ``note:`` line
+prints on stderr; the gate still passes. A rejecting run leaves any existing
+stamp lines untouched.
+
+Check mode (context-gate gate-check-mode): ``spec_gate.py <change> --check``
+runs the same checks plus, on a stamped plan, a ``Gated-hash`` mismatch check
+(the plan was edited after it was gated), prints ``PASS (check): ...`` (exit 0)
+or ``REJECTED (check): ...`` with one dot-point per finding (exit 2), and is
+read-only by construction: it writes no file, moves no status, runs no store
+autocommit, and records no flow snapshot. An unstamped plan gets no mismatch
+finding.
+
 Status writes go through :mod:`spec_status`'s metadata-preserving writer, never
 ad-hoc edits, so the title, ``Status:`` line, and header metadata survive. The
 gate never invokes a model or the network.
@@ -47,6 +66,7 @@ never uses.
 import argparse
 import os
 import re
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -375,9 +395,29 @@ def collect_findings(root, change):
 # ---------------------------------------------------------------------------
 
 
-def run_gate(root, change):
-    """Evaluate ``change`` and settle its status. Returns the process exit code
-    (0 pass, 2 rejected). Raises :class:`GateError` for a general error."""
+def _resolve_planned_at(plan_path, base):
+    """Return ``(sha, reason)``: the full commit id of ``git merge-base HEAD
+    <base>`` run from the plan's own directory (so a linked worktree or an
+    external store anchors correctly), or ``(None, reason)`` when git is
+    absent, the directory is not in a work tree, or the ref is unresolvable.
+    Never raises: the gate's verdict is about context, not git."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", os.path.dirname(os.path.abspath(plan_path)),
+             "merge-base", "HEAD", base],
+            capture_output=True, text=True)
+    except OSError as exc:
+        return None, "git unavailable: %s" % exc
+    sha = r.stdout.strip()
+    if r.returncode != 0 or not re.match(r"^[0-9a-f]{40}$", sha):
+        detail = (r.stderr.strip().splitlines() or ["exit %d" % r.returncode])[0]
+        return None, "git merge-base HEAD %s failed: %s" % (base, detail)
+    return sha, None
+
+
+def _validate_change(root, change):
+    """Return the change's ``plan.md`` path, raising :class:`GateError` for an
+    unknown change or a missing plan."""
     if not os.path.isdir(_planned_dir(root, change)):
         raise GateError(
             "unknown change '%s' (no directory under %s)"
@@ -385,12 +425,62 @@ def run_gate(root, change):
     plan_path = _plan_path(root, change)
     if not os.path.isfile(plan_path):
         raise GateError("plan.md not found for change '%s'" % change)
+    return plan_path
+
+
+def _check_gated_hash(root, change):
+    """The ``--check`` mode's edited-after-gate finding (context-gate
+    gate-check-mode): when the plan carries a ``Gated-hash`` stamp that no
+    longer matches :func:`spec_common.plan_gated_hash` of the plan with its
+    gate section stripped, return one finding naming both hashes; otherwise an
+    empty list (an unstamped plan is never a finding)."""
+    text = _read(_plan_path(root, change))
+    _planned_at, stamped = sc.read_plan_stamp(text)
+    if stamped is None:
+        return []
+    current = sc.plan_gated_hash(_strip_gate_section(text))
+    if current == stamped:
+        return []
+    return ["gated-hash mismatch: plan.md was edited after it was gated "
+            "(stamp %s, content %s); re-gate with spec_gate.py %s"
+            % (stamped, current, change)]
+
+
+def run_check(root, change):
+    """Run every gate check plus the ``Gated-hash`` mismatch check, read-only.
+    Returns the process exit code (0 pass, 2 findings). Raises
+    :class:`GateError` for a general error. Writes nothing."""
+    _validate_change(root, change)
+    findings = collect_findings(root, change) + _check_gated_hash(root, change)
+    if not findings:
+        print("PASS (check): change '%s' has sufficient context; nothing "
+              "written." % change)
+        return 0
+    print("REJECTED (check): change '%s' lacks sufficient context (%d "
+          "finding(s)):" % (change, len(findings)))
+    for finding in findings:
+        print("- %s" % finding)
+    return 2
+
+
+def run_gate(root, change, base="main"):
+    """Evaluate ``change`` and settle its status. Returns the process exit code
+    (0 pass, 2 rejected). Raises :class:`GateError` for a general error.
+    ``base`` is the ref the plan stamp's ``Planned-at`` merge-base is taken
+    against."""
+    plan_path = _validate_change(root, change)
 
     findings = collect_findings(root, change)
 
     if not findings:
-        # Pass: remove any stale gate section, promote to ready.
+        # Pass: remove any stale gate section, stamp the plan, promote to
+        # ready (context-gate plan-stamp-write).
         text = _strip_gate_section(_read(plan_path))
+        sha, reason = _resolve_planned_at(plan_path, base)
+        gated_hash = sc.plan_gated_hash(text)
+        text = sc.write_plan_stamp(text, sha, gated_hash)
+        if sha is None:
+            print("note: Planned-at omitted (%s)" % reason, file=sys.stderr)
         with open(plan_path, "w", encoding="utf-8") as fh:
             fh.write(text)
         ss.write_status(root, change, "ready")
@@ -401,6 +491,7 @@ def run_gate(root, change):
                             "shipd: gate change %s (ready)" % change)
         print("PASS: change '%s' has sufficient context; status is now ready."
               % change)
+        print("stamp: Planned-at %s Gated-hash %s" % (sha or "none", gated_hash))
         return 0
 
     # Reject: set status, then write the findings into the plan.
@@ -425,6 +516,12 @@ def main(argv=None):
     parser.add_argument("--root", default=os.getcwd(),
                         help="repo root containing the .shipd/ content directory "
                              "(default: cwd)")
+    parser.add_argument("--base", default="main",
+                        help="ref the plan stamp's Planned-at merge-base is "
+                             "taken against (default: main)")
+    parser.add_argument("--check", action="store_true",
+                        help="run every check (plus the Gated-hash mismatch "
+                             "check) read-only: write nothing, move no status")
     args = parser.parse_args(argv)
     root = os.path.abspath(args.root)
 
@@ -433,7 +530,9 @@ def main(argv=None):
         # refuse a repo whose artifacts declare a different grammar major
         # before the change is evaluated or its status settled.
         sc.check_schema_compat(root)
-        return run_gate(root, args.change)
+        if args.check:
+            return run_check(root, args.change)
+        return run_gate(root, args.change, base=args.base)
     except GateError as exc:
         cc.err(str(exc))
         return 1

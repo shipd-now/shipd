@@ -220,8 +220,11 @@ Epic: reporting-overhaul
 Theme: reliability
 ```
 
-Exactly four keys are recognized; every value is a **kebab-case slug**. An
-unrecognized key in the block (e.g. a `Them:` typo) or a non-kebab value is a
+Exactly seven keys are recognized — `Profile`, `Epic`, `Initiative`,
+`Theme`, `Fixes`, `Planned-at`, and `Gated-hash`. A key is a bareword of
+letters, digits, and hyphens. The first five take a **kebab-case slug** value;
+the two stamp keys take lowercase hex values. An unrecognized key in the block
+(e.g. a `Them:` typo), a non-kebab slug value, or a malformed stamp value is a
 lint error.
 
 - **`Profile:`** — `full` or `lite`; absent means `full`. `lite` **relaxes
@@ -235,6 +238,24 @@ lint error.
   derives its initiative *through* its epic. Only a standalone change (no
   `Epic:`) may carry `Initiative:` directly; declaring both is a lint error.
 - **`Theme:`** — a cross-cutting theme slug (see the theme vocabulary below).
+- **`Fixes:`** — repeatable; each line names one shipped change this change
+  remediates. The slug need not resolve to an existing change.
+- **`Planned-at:`** — the 7–40 character lowercase hex commit id the context
+  gate stamped: `git merge-base HEAD <base>` (`--base`, default `main`),
+  resolved from the plan's own directory. The gate omits it when that commit
+  cannot be resolved, for example outside a git work tree.
+- **`Gated-hash:`** — the 12-character lowercase hex content hash of the plan
+  the gate approved, excluding the `Status:` line and both stamp lines. A
+  whitespace-only edit does not change it.
+
+The two stamp keys are **gate-written**: `spec_gate.py <change>` writes them
+on every passing run, replacing any earlier stamp in place, and a rejecting
+run leaves them untouched. Every status write preserves them like any other
+metadata line. `spec_gate.py <change> --check` runs every gate check
+read-only — it writes nothing and moves no status — and on a stamped plan
+also reports a `gated-hash mismatch` finding when the plan was edited after it
+was gated. The linter checks only the stamp values' hex shape and never
+recomputes the hash.
 
 The status CLI preserves these lines: `set-status` and `sync` rewrite only the
 `Status:` line, leaving the metadata untouched, and `show` prints the

@@ -566,6 +566,34 @@ class PlanMetadataTest(unittest.TestCase):
         errors = self._errors("c", "# c\nStatus: ready\nFixes: Not_Kebab\n")
         self.assertTrue(has(errors, "Not_Kebab"))
 
+    def test_stamp_lines_lint_clean(self):
+        errors = self._errors(
+            "c",
+            "# c\nStatus: ready\nEpic: e\n"
+            "Planned-at: 076a9effc1acd6acbf99b2c2209d1998fe5ab9fe\n"
+            "Gated-hash: 9851e28d228d\n")
+        self.assertEqual(errors, [])
+
+    def test_malformed_gated_hash_errors(self):
+        errors = self._errors(
+            "c", "# c\nStatus: ready\nGated-hash: not-a-hash\n")
+        self.assertTrue(has(errors, "not-a-hash"))
+        self.assertTrue(has(errors, "hex"))
+
+    def test_short_planned_at_errors(self):
+        errors = self._errors("c", "# c\nStatus: ready\nPlanned-at: 123456\n")
+        self.assertTrue(has(errors, "123456"))
+        self.assertTrue(has(errors, "hex"))
+
+    def test_planned_at_on_epic_is_unrecognized(self):
+        errors = []
+        sl._check_epic_metadata(
+            self.root, "epic.md",
+            "# e\nStatus: draft\nPlanned-at: 076a9ef\n\n## Introduction\n",
+            errors)
+        errors = [str(e) for e in errors]
+        self.assertTrue(has(errors, "unrecognized key 'Planned-at'"))
+
 
 class ThemeVocabularyTest(unittest.TestCase):
     """Theme vocabulary validation against the resolved layered configuration's

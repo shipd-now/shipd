@@ -258,6 +258,22 @@ class ShowTest(SpecStatusTestBase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(r.stdout.strip(), "feat: active (1/3 tasks)")
 
+    def test_show_prints_plan_stamp_lines(self):
+        # The stamp keys are in METADATA_KEYS, so `show` prints them through
+        # its existing metadata filter (shipd-spec-format
+        # plan-header-metadata-lines).
+        sha = "076a9effc1acd6acbf99b2c2209d1998fe5ab9fe"
+        self.write_plan(
+            "feat",
+            "# feat\nStatus: ready\nEpic: e\nPlanned-at: %s\n"
+            "Gated-hash: 9851e28d228d\n\n## Idea\nA summary.\n" % sha)
+        r = self.cli("show", "feat")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertIn("Epic: e", lines)
+        self.assertIn("Planned-at: %s" % sha, lines)
+        self.assertIn("Gated-hash: 9851e28d228d", lines)
+
     def test_show_omits_counts_without_tasks(self):
         self.make_change("feat", status="ready")
         r = self.cli("show", "feat")
