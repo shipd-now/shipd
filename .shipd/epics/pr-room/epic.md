@@ -1,5 +1,5 @@
 # pr-room
-Status: active
+Status: complete
 Theme: developer-experience
 
 ## Introduction
@@ -281,3 +281,16 @@ member order.
 | room-skill | `/s:room` skill, harness body template, docs, AGENTS.md entry | low | medium | low | low |
 | room-action-wake | `room-wake.yml` managed workflow template, installed and refreshed via the `copilot add`-style verb family | medium | high | high | medium |
 | room-gate-adoption | `review_gate.py` emits room markers on the summary and anchored findings; gate summary carries the gate's card | medium | high | low | medium |
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 372 | 34.7k |
+| (no tool) | 0 | 13.6k |
+| Read | 14 | 2.6k |
+| Agent | 23 | 1.2k |
+| SubagentHandback | 34 | 371 |
+| Write | 21 | 222 |
+| Skill | 1 | 3 |
+| **Total** | 465 | 52.7k |
