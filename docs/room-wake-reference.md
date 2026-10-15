@@ -56,6 +56,11 @@ and name the file. `--force` overrides the refusal.
 Set the variable with `gh variable set SHIPD_ROOM_AGENT --body <name>`. Use a
 fine-grained PAT that carries the "Copilot Requests" permission as the secret.
 
+Only a comment whose `author_association` is `OWNER`, `MEMBER`, or
+`COLLABORATOR` wakes the agent. An `issue_comment` run carries the
+repository's secrets whoever wrote the comment, so the guard ignores comments
+from anyone else.
+
 ## How a wake runs
 
 The workflow fires on a new issue comment or review comment. Three jobs run
@@ -91,7 +96,9 @@ task with reason `wake-runner-failed`.
   token, and GitHub starts no workflow run from that token's events. Two CI
   agents in one repository therefore never wake each other. A live session's
   `shipd room watch` still sees the reply.
-- **Fork pull requests get no wake.** On a fork, the workflow token is
-  read-only, so the guard cannot write to the room.
+- **Fork review comments get no wake.** A review comment on a fork's pull
+  request gets a read-only token and cannot write the room. A conversation
+  comment runs with the base repository's token and secrets. The guard
+  therefore accepts only owner, member, and collaborator comments.
 - **Only addressed tasks wake the agent.** A task without a `to` stays with
   the live sessions that run `shipd room watch`.

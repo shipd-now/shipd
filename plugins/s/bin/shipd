@@ -1926,8 +1926,8 @@ def _room_remove(root):
             return 1
         removed.append(relative)
     # Every directory under (and including) .github/shipd-room the runtime
-    # occupies, deepest first, and only while empty — the first directory
-    # still holding anything of the user's stops the pruning.
+    # occupies, deepest first: each one left empty is pruned, and one still
+    # holding anything of the user's is skipped, along with its ancestors.
     directories = {ROOM_RUNTIME_DIR}
     for source in ROOM_RUNTIME:
         parent = os.path.dirname(source)
@@ -1938,10 +1938,8 @@ def _room_remove(root):
                            key=lambda d: (-d.count(os.sep), d)):
         try:
             os.rmdir(os.path.join(root, relative))
-        except FileNotFoundError:
-            continue
         except OSError:
-            break
+            continue
     if not removed:
         print("nothing to remove: no shipd room wake files in %s" % root)
         return 0

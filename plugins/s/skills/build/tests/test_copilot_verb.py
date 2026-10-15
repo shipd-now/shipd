@@ -2841,6 +2841,17 @@ class CopilotRoomWakeVerbTest(CopilotVerbCase):
         self.assertEqual(self.cli("remove", "--room").returncode, 0)
         self.assertEqual(self.tree(), {mine})
 
+    def test_remove_room_prunes_every_emptied_directory(self):
+        self.install_room()
+        mine = os.path.join(ROOM_RUNTIME_DIR, "skills", "build", "scripts",
+                            "mine.py")
+        self.plant(mine, "mine\n")
+        self.assertEqual(self.cli("remove", "--room").returncode, 0)
+        self.assertEqual(self.tree(), {mine})
+        self.assertFalse(os.path.isdir(
+            self.path(os.path.join(ROOM_RUNTIME_DIR, "skills", "room"))))
+        self.assertTrue(os.path.isdir(self.path(os.path.dirname(mine))))
+
     def test_remove_room_refuses_a_foreign_wake_workflow(self):
         self.install_room()
         self.plant(ROOM_WORKFLOW_PATH, "name: someone else's wake\n")

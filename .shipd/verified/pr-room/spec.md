@@ -547,8 +547,9 @@ The plugin SHALL ship `plugins/s/integrations/copilot/room-wake.yml`, whose
 first line is `# shipd-copilot v{version}`, triggered on `issue_comment` and
 `pull_request_review_comment` with `types: [created]`, and composed of three
 jobs. The `guard` job SHALL run only when `vars.SHIPD_ROOM_AGENT` is
-non-empty, the comment body contains `<!-- shipd-room `, and the event is a
-review comment or an issue comment on a pull request; it SHALL bind
+non-empty, the comment body contains `<!-- shipd-room `, the comment's
+`author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`, and the event is
+a review comment or an issue comment on a pull request; it SHALL bind
 `github.token` and never `COPILOT_GITHUB_TOKEN`, check out the default
 branch, and report not-actionable when the `COPILOT_GITHUB_TOKEN` secret is
 absent. Otherwise it SHALL run the bundled

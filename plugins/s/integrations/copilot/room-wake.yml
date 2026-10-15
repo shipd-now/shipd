@@ -12,6 +12,9 @@
 #     (`gh variable set SHIPD_ROOM_AGENT --body <name>`). Unset, nothing runs.
 #     Only tasks whose `to` names this agent wake it; an unaddressed task is
 #     left for a live session's `shipd room watch`.
+#   * Only a comment whose author is the repository's owner, a member of its
+#     organization, or a collaborator wakes the agent: an issue_comment run
+#     carries the repository's secrets whoever wrote the comment.
 #   * COPILOT_GITHUB_TOKEN, a repository secret, is the Copilot CLI's
 #     credential: a fine-grained PAT carrying only the account-level
 #     "Copilot Requests" permission. Without it the guard logs that it is
@@ -42,8 +45,11 @@
 #
 # Known limit: a reply posted with the workflow token starts no workflow
 # run, so two CI agents in one repository never wake each other; a live
-# session's `shipd room watch` still sees the reply. On a pull request from a
-# fork the workflow token is read-only and the room cannot be written.
+# session's `shipd room watch` still sees the reply. A review comment on a
+# fork's pull request gets a read-only workflow token and cannot write the
+# room; a conversation comment runs with the base repository's token and
+# secrets, which is why the guard accepts only owner, member and collaborator
+# comments.
 
 name: shipd room wake
 
@@ -63,10 +69,14 @@ concurrency:
 jobs:
   guard:
     # Cheap prefilter before any runner starts: an agent is configured, the
-    # comment carries a room marker, and it sits on a pull request.
+    # comment carries a room marker, its author is an owner, member or
+    # collaborator (the run carries the repository's secrets), and it sits on
+    # a pull request.
     if: >-
       vars.SHIPD_ROOM_AGENT != ''
       && contains(github.event.comment.body, '<!-- shipd-room ')
+      && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                  github.event.comment.author_association)
       && (github.event_name == 'pull_request_review_comment'
           || github.event.issue.pull_request)
     runs-on: ubuntu-latest

@@ -293,6 +293,12 @@ class TemplateTextTest(unittest.TestCase):
         self.assertIn("github.event.issue.pull_request", guard_if)
         self.assertIn("pull_request_review_comment", guard_if)
 
+    def test_guard_runs_only_for_an_owner_member_or_collaborator(self):
+        guard_if = self.jobs["guard"].split("runs-on:", 1)[0]
+        self.assertIn("github.event.comment.author_association", guard_if)
+        for role in ("OWNER", "MEMBER", "COLLABORATOR"):
+            self.assertIn('"%s"' % role, guard_if)
+
     def test_the_pr_number_covers_both_triggers(self):
         self.assertIn("github.event.issue.number || "
                       "github.event.pull_request.number", self.jobs["guard"])
