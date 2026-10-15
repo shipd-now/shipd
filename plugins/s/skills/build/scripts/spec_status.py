@@ -62,6 +62,17 @@ Verbs (see the spec-status + statusline capabilities for the contract):
                      library (read-only), printing one finding line per
                      mismatched entry (stale-base/missing-master/id-collision)
                      plus a summary; exit 0 clean, 4 on findings
+  drift [change] [--epic <slug>] [--base <ref>]
+                     measure, from local git alone and read-only, whether a
+                     gated plan still matches the code: from its Planned-at
+                     stamp (else its plan.md's last commit) to the base ref
+                     (default `main`), report file-drift (a cited path with
+                     commits since), symbol-gone (a cited symbol present at
+                     the stamp, absent at the base), and stale-base lines plus
+                     a summary; --epic measures every planned member from its
+                     hosting root, listing unplanned, archived, and
+                     unmeasurable members as skipped; exit 0 clean, 4 on
+                     findings, 1 when the plan cannot be measured
   base-hash <capability> <requirement-id>
                      print a master requirement's content hash (read-only),
                      resolved and hashed through the same primitives
@@ -194,7 +205,8 @@ The six read verbs — ``show``, ``status``, ``locate``, ``related``,
 ``workspace-show`` — additionally accept ``--json``, emitting exactly one JSON
 document on stdout in place of their text report, derived from the same data
 (spec-status json-output); ``pipeline-show`` accepts it on the same terms, as
-the machine contract its skill consumers read instead of the rendered labels.
+the machine contract its skill consumers read instead of the rendered labels,
+and ``drift`` accepts it as one report object (spec-status drift-verb).
 Exit codes and the ``Error:`` stderr paths are the same in both modes.
 
 The initiative, workspace, and project verbs resolve the workspace from
@@ -209,8 +221,8 @@ spec_lint.
 
 Exit codes: 0 success, 1 error (unknown change/status, missing plan, no
 selection), 2 usage, 3 refusal (a guard blocked a ``set-status`` transition),
-4 findings (the supersession gate or the epic amendment gate tripped —
-distinct from a crash).
+4 findings (the supersession gate, the epic amendment gate, or ``drift``
+tripped — distinct from a crash).
 """
 
 import argparse
@@ -1316,6 +1328,29 @@ def cmd_check_base(root, change):
         raise StatusError(
             "change '%s' has no delta specs (%s)" % (change, deltas_dir))
 
+    findings = check_base_findings(root, change)
+    for capability, req_id, kind, detail in findings:
+        line = "%s/%s: %s" % (capability, req_id, kind)
+        if detail:
+            line += " (%s)" % detail
+        print(line)
+    if findings:
+        print("check-base: %d finding(s)." % len(findings))
+        return 4
+    print("check-base: clean (no findings).")
+    return 0
+
+
+def check_base_findings(root, change):
+    """Return the check-base findings for the resolved ``change`` under
+    ``root`` (spec-status check-base-verb) as a list of ``(capability, id,
+    kind, detail-or-None)`` tuples — the computation :func:`cmd_check_base`
+    prints and the drift verb (spec-status drift-verb) filters to
+    ``stale-base``. A change with no ``specs/`` directory yields no findings.
+    Strictly read-only."""
+    deltas_dir = os.path.join(_change_dir(root, change), "specs")
+    if not os.path.isdir(deltas_dir):
+        return []
     findings = []  # list of (capability, id, kind, detail-or-None)
     for capability in sorted(os.listdir(deltas_dir)):
         delta_path = os.path.join(deltas_dir, capability, "spec.md")
@@ -1348,17 +1383,7 @@ def cmd_check_base(root, change):
         for entry in delta.added:
             if entry.id in master_reqs:
                 findings.append((capability, entry.id, "id-collision", None))
-
-    for capability, req_id, kind, detail in findings:
-        line = "%s/%s: %s" % (capability, req_id, kind)
-        if detail:
-            line += " (%s)" % detail
-        print(line)
-    if findings:
-        print("check-base: %d finding(s)." % len(findings))
-        return 4
-    print("check-base: clean (no findings).")
-    return 0
+    return findings
 
 
 def cmd_base_hash(root, capability, requirement_id):
@@ -1384,6 +1409,306 @@ def cmd_base_hash(root, capability, requirement_id):
     raise StatusError(
         "requirement '%s' not found in capability '%s' (%s)"
         % (requirement_id, capability, mpath))
+
+
+# ---------------------------------------------------------------------------
+# Drift (spec-status drift-verb)
+# ---------------------------------------------------------------------------
+
+
+class _DriftUnmeasurable(StatusError):
+    """A plan drift cannot measure (spec-status drift-verb): no ``Planned-at``
+    stamp and no commit touching ``plan.md`` (``no-stamp``), or a stamp sha
+    absent from the repository (``unknown-stamp``). The single-change form
+    reports it as an ordinary error (exit 1); the ``--epic`` form lists the
+    member as skipped with :attr:`reason` (spec-status drift-epic-mode)."""
+
+    def __init__(self, reason, message):
+        super().__init__(message)
+        self.reason = reason
+
+
+_STALE_DETAIL_RE = re.compile(r"^expected (\S+), actual (\S+)$")
+
+
+def _git_run(root, *args):
+    """Run a local ``git`` command under ``root`` and return ``(returncode,
+    stdout)`` without raising on a non-zero exit — for the probes whose
+    failure exit is an answer (``rev-parse --verify --quiet``, ``grep``).
+    A missing git is a :class:`StatusError`. Local git only."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", root, *args], capture_output=True, text=True)
+    except OSError as exc:
+        raise StatusError("git is not available (%s)" % exc)
+    return result.returncode, result.stdout
+
+
+def _drift_resolve_commit(root, ref):
+    """Return the full commit sha ``ref`` resolves to under ``root``, or
+    ``None`` when it does not resolve to a commit."""
+    rc, out = _git_run(root, "rev-parse", "--verify", "--quiet",
+                       "%s^{commit}" % ref)
+    sha = out.strip()
+    return sha if rc == 0 and sha else None
+
+
+def _drift_stamp(hosting_root, change):
+    """Return ``(sha, source)`` — the commit drift measures ``change`` from
+    (spec-status drift-verb): the plan's ``Planned-at`` stamp (``stamp``),
+    else the last commit touching its ``plan.md`` (``plan-commit``). Raises
+    :class:`_DriftUnmeasurable` when neither exists (``no-stamp``) or the
+    stamp is not a commit of the hosting repository (``unknown-stamp``)."""
+    plan_path = _plan_path(hosting_root, change)
+    with open(plan_path, encoding="utf-8") as fh:
+        planned_at, _gated = sc.read_plan_stamp(fh.read())
+    if planned_at:
+        sha = _drift_resolve_commit(hosting_root, planned_at)
+        if sha is None:
+            raise _DriftUnmeasurable(
+                "unknown-stamp",
+                "change '%s' has a Planned-at stamp '%s' that is not a commit "
+                "in %s; re-gate it with spec_gate.py %s"
+                % (change, planned_at, hosting_root, change))
+        return sha, "stamp"
+    relpath = os.path.relpath(plan_path, hosting_root)
+    rc, out = _git_run(hosting_root, "log", "-1", "--format=%H", "--", relpath)
+    sha = out.strip() if rc == 0 else ""
+    if not sha:
+        raise _DriftUnmeasurable(
+            "no-stamp",
+            "change '%s' has no Planned-at stamp and its plan.md has no "
+            "commit; gate it with spec_gate.py %s" % (change, change))
+    return sha, "plan-commit"
+
+
+def _drift_cited(change_dir):
+    """Return ``(paths, symbols)`` cited by a change (spec-status drift-verb):
+    the backticked tokens of its ``plan.md``, ``tasks.md``, and every
+    ``specs/*/spec.md``, through ``sc.cited_paths`` (line suffixes stripped)
+    and ``sc.cited_symbols``. A leading ``./`` is stripped from each path
+    before ``artefacts/`` references and ``sc.VERSION_BUMP_EXEMPT_PATHS`` are
+    dropped, so the exemption holds however the path is spelled."""
+    sources = [os.path.join(change_dir, "plan.md"),
+               os.path.join(change_dir, "tasks.md")]
+    sources += sorted(glob.glob(os.path.join(change_dir, "specs", "*",
+                                             "spec.md")))
+    texts = []
+    for path in sources:
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as fh:
+                texts.append(fh.read())
+    text = "\n".join(texts)
+    paths = []
+    for p in sc.cited_paths(text, True):
+        p = p[2:] if p.startswith("./") else p  # `./x/y` and `x/y` are one path
+        if (p in paths or p.startswith("artefacts/")
+                or p in sc.VERSION_BUMP_EXEMPT_PATHS):
+            continue
+        paths.append(p)
+    return paths, sc.cited_symbols(text)
+
+
+def _drift_file_findings(hosting_root, stamp, base_sha, paths):
+    """One ``file-drift`` finding per cited path with at least one commit in
+    ``<stamp>..<base>`` (spec-status drift-verb). A path that never existed
+    has no commits, so it needs no existence check."""
+    findings = []
+    for path in paths:
+        out = _git_capture(hosting_root, "log", "--format=%h",
+                           "%s..%s" % (stamp, base_sha), "--", path)
+        commits = [line.strip() for line in out.splitlines() if line.strip()]
+        if commits:
+            findings.append(
+                {"kind": "file-drift", "path": path, "commits": commits})
+    return findings
+
+
+def _drift_present(hosting_root, ref, symbols, exclude):
+    """The subset of ``symbols`` ``git grep`` finds as whole words in the tree
+    at ``ref`` — one call, matched literals read in-process. ``exclude`` (a
+    path relative to ``hosting_root``) is left out of the search: the change's
+    own directory, whose plan text names every symbol it cites and would
+    otherwise make a symbol the plan introduces read as present at a stamp
+    that contains the plan."""
+    if not symbols:
+        return set()
+    args = ["grep", "-o", "-h", "-w", "-F"]
+    for symbol in symbols:
+        args += ["-e", symbol]
+    args += [ref, "--", ".", ":(exclude)%s" % exclude]
+    rc, out = _git_run(hosting_root, *args)
+    if rc == 1:
+        return set()
+    if rc != 0:
+        raise StatusError("git grep failed at %s in %s" % (ref, hosting_root))
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
+def _drift_symbol_findings(hosting_root, stamp, base_sha, symbols, exclude):
+    """One ``symbol-gone`` finding per cited symbol present at the stamp and
+    absent at the base (spec-status drift-verb): the base is grepped for every
+    symbol first, then the stamp for the missing ones only — two calls. A
+    symbol the plan introduces is absent at both refs, so it is never gone;
+    the change's own directory (``exclude``) is never searched."""
+    at_base = _drift_present(hosting_root, base_sha, symbols, exclude)
+    missing = [s for s in symbols if s not in at_base]
+    at_stamp = _drift_present(hosting_root, stamp, missing, exclude)
+    return [{"kind": "symbol-gone", "symbol": s}
+            for s in missing if s in at_stamp]
+
+
+def _drift_stale_findings(hosting_root, change):
+    """The ``stale-base`` findings of :func:`check_base_findings`, in the
+    drift report's shape (spec-status drift-verb)."""
+    findings = []
+    for capability, req_id, kind, detail in check_base_findings(
+            hosting_root, change):
+        if kind != "stale-base":
+            continue
+        m = _STALE_DETAIL_RE.match(detail or "")
+        expected, actual = (m.group(1), m.group(2)) if m else (None, None)
+        findings.append({"kind": "stale-base", "capability": capability,
+                         "id": req_id, "expected": expected,
+                         "actual": actual})
+    return findings
+
+
+def _drift_measure(hosting_root, change, base_ref, base_sha):
+    """Measure one planned change hosted under ``hosting_root`` against the
+    resolved base (spec-status drift-verb) and return the single-change
+    result dict — ``change``, ``root``, ``planned_at``, ``stamp_source``,
+    ``base`` (``ref``, ``sha``), ``findings``. Raises
+    :class:`_DriftUnmeasurable` for a plan with no measuring point."""
+    stamp, source = _drift_stamp(hosting_root, change)
+    change_dir = _change_dir(hosting_root, change)
+    paths, symbols = _drift_cited(change_dir)
+    own_dir = os.path.relpath(change_dir, hosting_root)
+    findings = (_drift_file_findings(hosting_root, stamp, base_sha, paths)
+                + _drift_symbol_findings(hosting_root, stamp, base_sha,
+                                         symbols, own_dir)
+                + _drift_stale_findings(hosting_root, change))
+    return {"change": change, "root": hosting_root, "planned_at": stamp,
+            "stamp_source": source,
+            "base": {"ref": base_ref, "sha": base_sha},
+            "findings": findings}
+
+
+def _drift_render(result):
+    """Return the text lines of one single-change drift block: the keyed
+    header, then one line per finding (spec-status drift-verb)."""
+    lines = [
+        "change: %s" % result["change"],
+        "root: %s" % result["root"],
+        "planned-at: %s (%s)" % (result["planned_at"], result["stamp_source"]),
+        "base: %s %s" % (result["base"]["ref"], result["base"]["sha"]),
+    ]
+    for f in result["findings"]:
+        if f["kind"] == "file-drift":
+            lines.append("file-drift %s %d (%s)"
+                         % (f["path"], len(f["commits"]),
+                            ", ".join(f["commits"])))
+        elif f["kind"] == "symbol-gone":
+            lines.append("symbol-gone %s" % f["symbol"])
+        else:
+            lines.append("stale-base %s/%s (expected %s, actual %s)"
+                         % (f["capability"], f["id"], f["expected"],
+                            f["actual"]))
+    return lines
+
+
+def _drift_summary(count):
+    if count:
+        return "drift: %d finding(s)." % count
+    return "drift: clean (no findings)."
+
+
+def _drift_hosting_root(root, change):
+    """The first candidate root (:func:`candidate_roots`) holding
+    ``planned/<change>/plan.md``, or ``None``."""
+    for candidate in candidate_roots(root):
+        try:
+            if os.path.isfile(_plan_path(candidate, change)):
+                return candidate
+        except sc.ConfigError:
+            continue
+    return None
+
+
+def cmd_drift(root, change, epic, base, as_json=False):
+    """Report whether a gated plan still matches the code it was gated
+    against (spec-status drift-verb), from local git alone and strictly
+    read-only. The plan's ``Planned-at`` stamp — else its ``plan.md``'s last
+    commit — is measured against ``base`` (resolved once): ``file-drift``
+    for each cited path with commits in ``<stamp>..<base>``, ``symbol-gone``
+    for each cited symbol present at the stamp and absent at the base, and
+    ``stale-base`` from :func:`check_base_findings`. With ``epic``, every stub
+    member with a plan is measured from its hosting root (spec-status
+    drift-epic-mode). Exit 0 clean, 4 on findings; an unresolvable base, a
+    missing plan, or an unmeasurable plan is a :class:`StatusError` (exit 1).
+    No ``Gated-hash`` comparison, no file timestamps, no model or network."""
+    base_sha = _drift_resolve_commit(root, base)
+    if base_sha is None:
+        raise StatusError(
+            "base ref '%s' does not resolve to a commit in %s; pass an "
+            "existing ref with --base" % (base, root))
+    if epic:
+        return _cmd_drift_epic(root, epic, base, base_sha, as_json)
+
+    change = _resolve_change(root, change)
+    hosting_root = _drift_hosting_root(root, change)
+    if hosting_root is None:
+        raise StatusError(
+            "change '%s' has no plan (no planned/%s/plan.md under %s or its "
+            "worktrees)" % (change, change, root))
+    result = _drift_measure(hosting_root, change, base, base_sha)
+    if as_json:
+        print(json.dumps(result))
+    else:
+        for line in _drift_render(result):
+            print(line)
+        print(_drift_summary(len(result["findings"])))
+    return 4 if result["findings"] else 0
+
+
+def _cmd_drift_epic(root, slug, base, base_sha, as_json):
+    """The ``drift --epic <slug>`` form (spec-status drift-epic-mode): resolve
+    the epic through :func:`_epic_hosting_root`, walk its ``## Changes`` stub
+    members in table order, and measure each member with a plan from the root
+    :func:`_member_state_with_root` finds hosting it. An ``unplanned`` or
+    ``archived`` member, or one whose plan cannot be measured (``no-stamp``,
+    ``unknown-stamp``), is listed as skipped and counts as no finding."""
+    epic_root = _epic_hosting_root(root, slug)
+    if epic_root is None:
+        raise StatusError(
+            "epic '%s' not found under %s or its worktrees" % (slug, root))
+    members, skipped = [], []
+    for mslug, _desc, _ratings in _epic_rows(epic_root, slug):
+        state, hosting_root = _member_state_with_root(root, mslug)
+        if state in ("unplanned", "archived"):
+            skipped.append({"member": mslug, "reason": state})
+            continue
+        if not os.path.isfile(_plan_path(hosting_root, mslug)):
+            skipped.append({"member": mslug, "reason": "unplanned"})
+            continue
+        try:
+            members.append(_drift_measure(hosting_root, mslug, base, base_sha))
+        except _DriftUnmeasurable as exc:
+            skipped.append({"member": mslug, "reason": exc.reason})
+    total = sum(len(m["findings"]) for m in members)
+    if as_json:
+        print(json.dumps({"epic": slug, "base": {"ref": base, "sha": base_sha},
+                          "members": members, "skipped": skipped}))
+    else:
+        for i, result in enumerate(members):
+            if i:
+                print()
+            for line in _drift_render(result):
+                print(line)
+        for entry in skipped:
+            print("skipped: %s (%s)" % (entry["member"], entry["reason"]))
+        print(_drift_summary(total))
+    return 4 if total else 0
 
 
 # ---------------------------------------------------------------------------
@@ -4709,6 +5034,20 @@ def main(argv=None):
         help="compare a change's deltas against the master library (read-only)")
     p_check_base.add_argument("change", nargs="?", default=None)
 
+    p_drift = sub.add_parser(
+        "drift",
+        help="report a gated plan's drift from the code since its stamp: "
+             "file-drift, symbol-gone, stale-base (read-only)")
+    p_drift.add_argument("change", nargs="?", default=None)
+    p_drift.add_argument(
+        "--epic", default=None, metavar="SLUG",
+        help="measure every planned member of the epic from its hosting root")
+    p_drift.add_argument(
+        "--base", default=DEFAULT_AMEND_BASE, metavar="REF",
+        help="the ref drift is measured against (default: %s)"
+             % DEFAULT_AMEND_BASE)
+    _add_json_flag(p_drift)
+
     p_base_hash = sub.add_parser(
         "base-hash",
         help="print a master requirement's content hash (read-only)")
@@ -4981,6 +5320,11 @@ def main(argv=None):
             return cmd_search(root, args.terms, as_json=args.json)
         if args.verb == "check-base":
             return cmd_check_base(root, args.change)
+        if args.verb == "drift":
+            if args.change and args.epic:
+                parser.error("drift takes a change or --epic, not both")
+            return cmd_drift(root, args.change, args.epic, args.base,
+                             as_json=args.json)
         if args.verb == "base-hash":
             return cmd_base_hash(root, args.capability, args.requirement_id)
         if args.verb == "epic-show":

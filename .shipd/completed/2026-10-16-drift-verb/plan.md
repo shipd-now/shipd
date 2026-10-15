@@ -1,5 +1,5 @@
 # drift-verb
-Status: active
+Status: verified
 Epic: autopilot-preflight
 Theme: reliability
 
@@ -75,7 +75,11 @@ dependency.
 - **symbol-gone**: `present(ref, symbols)` = the set of literals from `git
   grep -o -h -w -F -e s1 -e s2 ... <ref>` (exit 1 → empty set; other failures
   raise). Grep the base for every symbol first, then the stamp for the missing
-  ones only — two calls per change; `gone` keeps citation order.
+  ones only — two calls per change; `gone` keeps citation order. Both greps
+  exclude the change's own directory (`-- . ':(exclude)<content-dir>/planned/
+  <change>'`): a `plan-commit` stamp's tree contains the plan, which names
+  every symbol it introduces, so without the exclusion every introduced
+  symbol would read as present at the stamp and absent at the base.
 - **stale-base**: `check_base_findings(root, change)` returns the tuple list
   `cmd_check_base` builds today; drift keeps `kind == "stale-base"`. The
   hosting root's master library is what that checkout's `check-base` sees.

@@ -27,7 +27,8 @@ The four context checks (see the context-gate capability):
   3. Task file references — every backticked, path-shaped token in ``tasks.md``
      containing ``/`` must resolve to an existing file or directory, or have an
      existing parent or grandparent directory (the new-file / one-new-directory
-     case, e.g. a new skill or test tree).
+     case, e.g. a new skill or test tree). The tokens come from the shared
+     ``spec_common.cited_paths`` helper the drift verb also reads.
   4. Delta targets — every MODIFIED/REMOVED/RENAMED delta operation must target
      a capability whose master spec exists; ADDED-only new capabilities pass.
 
@@ -87,13 +88,11 @@ PLACEHOLDER_RE = re.compile(
     re.IGNORECASE)
 QMARK_MARKER = "???"
 
-# A backticked token in tasks.md that is shaped like a repository path: two or
-# more ``/``-separated components of path characters, with an optional ``./``
-# prefix. A leading ``/`` (absolute) and any ``://`` (a URL) are deliberately
-# excluded so the check stays bounded to repo-relative paths (design: the
-# path-shape bound guards against file-reference false positives).
-BACKTICK_RE = re.compile(r"`([^`]+)`")
-PATH_TOKEN_RE = re.compile(r"^(?:\./)?[\w.-]+(?:/[\w.-]+)+$")
+# A backticked token in tasks.md that is shaped like a repository path. The
+# patterns live in spec_common (shared with the drift verb through
+# ``sc.cited_paths``); they are rebound here for existing callers.
+BACKTICK_RE = sc.BACKTICK_RE
+PATH_TOKEN_RE = sc.PATH_TOKEN_RE
 
 
 class GateError(Exception):
@@ -319,16 +318,7 @@ def _check_task_paths(root, change):
     if not os.path.isfile(tasks_path):
         return findings
     text = _read(tasks_path)
-    seen = set()
-    for token in BACKTICK_RE.findall(text):
-        token = token.strip()
-        if token in seen:
-            continue
-        if "/" not in token or "://" in token:
-            continue
-        if not PATH_TOKEN_RE.match(token):
-            continue
-        seen.add(token)
+    for token in sc.cited_paths(text):
         full = os.path.join(root, token)
         if os.path.exists(full):
             continue

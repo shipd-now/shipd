@@ -1,6 +1,6 @@
 ## 1. Shared cited-token helpers
 
-- [ ] 1.1 [req: drift-verb] In
+- [x] 1.1 [req: drift-verb] In
       `plugins/s/skills/build/tests/test_spec_common.py`, after
       `PlanMetadataParserTest` (line 275), add `CitedTokensTest`:
       `cited_paths` on a text with `` `src/a.py` ``, `` `./x/y` ``,
@@ -14,7 +14,7 @@
       ("plugins/s/.claude-plugin/plugin.json",)`; `PATH_TOKEN_RE` and
       `BACKTICK_RE` exist on `spec_common`. Run `python3 -m unittest
       plugins.s.skills.build.tests.test_spec_common` and observe the failures.
-- [ ] 1.2 [req: drift-verb] In `plugins/s/skills/build/scripts/spec_common.py`
+- [x] 1.2 [req: drift-verb] In `plugins/s/skills/build/scripts/spec_common.py`
       after `parse_plan_metadata` (line 3013): add `BACKTICK_RE` and
       `PATH_TOKEN_RE` (the exact patterns from `spec_gate.py:74-76`),
       `LINE_SUFFIX_RE`, `CALL_SUFFIX_RE`, `SYMBOL_TOKEN_RE`,
@@ -22,7 +22,7 @@
       and `cited_symbols(text)` as `plan.md` "Cited tokens" specifies, each
       with a docstring citing the drift-verb requirement. Re-run 1.1 until it
       passes.
-- [ ] 1.3 [req: drift-verb] In `plugins/s/skills/build/scripts/spec_gate.py`:
+- [x] 1.3 [req: drift-verb] In `plugins/s/skills/build/scripts/spec_gate.py`:
       replace the local `BACKTICK_RE`/`PATH_TOKEN_RE` definitions (lines
       70-76) with `BACKTICK_RE = sc.BACKTICK_RE` and `PATH_TOKEN_RE =
       sc.PATH_TOKEN_RE`, and make `_check_task_paths` iterate
@@ -31,13 +31,13 @@
       the module docstring's check 3 to name the shared helper. Run
       `python3 -m unittest plugins.s.skills.build.tests.test_spec_gate` — all
       existing tests pass unchanged.
-- [ ] 1.4 [req: drift-verb] Bump `version` in
+- [x] 1.4 [req: drift-verb] Bump `version` in
       `plugins/s/.claude-plugin/plugin.json` to the next patch above `main`
       (`0.6.292` at planning time).
 
 ## 2. Check-base findings seam
 
-- [ ] 2.1 [req: drift-verb] In `plugins/s/skills/build/scripts/spec_status.py`
+- [x] 2.1 [req: drift-verb] In `plugins/s/skills/build/scripts/spec_status.py`
       split `cmd_check_base` (line 1289): move the loop that builds the
       `(capability, id, kind, detail)` list into
       `check_base_findings(root, change)` returning that list, and leave
@@ -47,7 +47,7 @@
 
 ## 3. Single-change drift
 
-- [ ] 3.1 [req: drift-verb] In
+- [x] 3.1 [req: drift-verb] In
       `plugins/s/skills/build/tests/test_spec_status.py` after `CheckBaseTest`
       (line 6738), add `DriftTest(SpecStatusTestBase)` with helpers:
       `_init_git` (`git init -q -b main`, user config, add, commit — mirror
@@ -76,7 +76,7 @@
       the content directory is byte-identical before and after
       (`snapshot_content` as `CheckBaseTest` does). Run and observe the
       failures.
-- [ ] 3.2 [req: drift-verb] In `spec_status.py` under a new "Drift (spec-status
+- [x] 3.2 [req: drift-verb] In `spec_status.py` under a new "Drift (spec-status
       drift-verb)" section after `cmd_base_hash`: add `_drift_stamp`,
       `_drift_cited(change_dir)` (paths and symbols from `plan.md`,
       `tasks.md`, `specs/*/spec.md` via `sc.cited_paths(text, True)` and
@@ -96,7 +96,7 @@
 
 ## 4. Epic mode
 
-- [ ] 4.1 [req: drift-epic-mode] In `DriftTest`, add epic tests: an
+- [x] 4.1 [req: drift-epic-mode] In `DriftTest`, add epic tests: an
       `epics/e/epic.md` whose `## Changes` table lists `a`, `b`, `c` (plus
       an `After` column) with `a` stamped and drifted under the root, `b`
       stamped and clean under `.worktrees/wt/.shipd/planned/b/`, and `c`
@@ -108,7 +108,7 @@
       parses as one object with `epic`, `base`, `members`, `skipped`;
       `drift a --epic e` exits 2 with usage on stderr; `drift --epic nosuch`
       exits 1. Run and observe the failures.
-- [ ] 4.2 [req: drift-epic-mode] In `spec_status.py` `cmd_drift`: implement
+- [x] 4.2 [req: drift-epic-mode] In `spec_status.py` `cmd_drift`: implement
       the `--epic` branch per `plan.md` "`--epic`": `parser.error` on both
       forms, `_epic_hosting_root` (error when `None`), `_epic_rows` in table
       order, `_member_state_with_root` per member, `skipped` for
@@ -119,10 +119,23 @@
 
 ## 5. Verification
 
-- [ ] 5.1 [req: *] Run `python3 -m unittest discover -s
+- [x] 5.1 [req: *] Run `python3 -m unittest discover -s
       plugins/s/skills/build/tests` and `python3 -m unittest discover -s
       evals/tests`; then from the worktree run `python3
       plugins/s/skills/build/scripts/spec_status.py drift drift-verb` and
       `... drift --epic autopilot-preflight --json`, confirming the first
       reports this change from its plan commit and the second lists the
       unplanned siblings under `skipped`.
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 91 | 1.6k |
+| ToolSearch | 4 | 1.0k |
+| (no tool) | 0 | 1.0k |
+| Agent | 2 | 124 |
+| TaskStop | 1 | 63 |
+| SubagentHandback | 3 | 53 |
+| SendMessage | 2 | 26 |
+| **Total** | 103 | 3.9k |

@@ -3048,6 +3048,67 @@ def parse_plan_metadata(text):
     return pairs
 
 
+# Cited tokens (spec-status drift-verb). A backticked token shaped like a
+# repository path: two or more ``/``-separated components of path characters,
+# with an optional ``./`` prefix. A leading ``/`` (absolute) and any ``://``
+# (a URL) are deliberately excluded so readers stay bounded to repo-relative
+# paths. The gate's task-path check (context-gate) and the drift verb share
+# these through :func:`cited_paths`.
+BACKTICK_RE = re.compile(r"`([^`]+)`")
+PATH_TOKEN_RE = re.compile(r"^(?:\./)?[\w.-]+(?:/[\w.-]+)+$")
+# A trailing ``:<line>[-<line>]`` citation on a path token.
+LINE_SUFFIX_RE = re.compile(r":\d+(?:-\d+)?$")
+# A trailing call suffix on a symbol token: ``name(args)``.
+CALL_SUFFIX_RE = re.compile(r"\(.*\)$")
+# A cited symbol: an identifier, a dotted name, or a ``--flag``.
+SYMBOL_TOKEN_RE = re.compile(r"^(?:--[A-Za-z][\w-]*|[A-Za-z_][\w.]*)$")
+# Paths every change touches through the plugin version bump, so a commit to
+# them is never drift (spec-status drift-verb); the preflight overlap check
+# reuses this constant.
+VERSION_BUMP_EXEMPT_PATHS = ("plugins/s/.claude-plugin/plugin.json",)
+
+
+def cited_paths(text, strip_line_suffix=False):
+    """Return the path-shaped backticked tokens in ``text`` (spec-status
+    drift-verb), in first-citation order and de-duplicated. A token carrying
+    ``://`` (a URL) or no ``/`` is skipped. With ``strip_line_suffix`` a
+    trailing ``:<line>[-<line>]`` citation is removed before the shape test,
+    so ``src/a.py:12-14`` counts as ``src/a.py``."""
+    out = []
+    seen = set()
+    for token in BACKTICK_RE.findall(text):
+        token = token.strip()
+        if strip_line_suffix:
+            token = LINE_SUFFIX_RE.sub("", token)
+        if token in seen:
+            continue
+        if "/" not in token or "://" in token:
+            continue
+        if not PATH_TOKEN_RE.match(token):
+            continue
+        seen.add(token)
+        out.append(token)
+    return out
+
+
+def cited_symbols(text):
+    """Return the symbol-shaped backticked tokens in ``text`` (spec-status
+    drift-verb) — identifiers, dotted names, and ``--flags`` — in
+    first-citation order and de-duplicated. A trailing call suffix
+    (``name(args)``) is stripped; path-shaped tokens are excluded."""
+    out = []
+    seen = set()
+    for token in BACKTICK_RE.findall(text):
+        token = CALL_SUFFIX_RE.sub("", token.strip())
+        if not token or token in seen:
+            continue
+        if PATH_TOKEN_RE.match(token) or not SYMBOL_TOKEN_RE.match(token):
+            continue
+        seen.add(token)
+        out.append(token)
+    return out
+
+
 def _plan_metadata_block(lines):
     """Return ``(status_idx, end)`` for a plan's header: the index of the first
     ``Status:`` line and the index just past its contiguous metadata block.
