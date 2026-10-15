@@ -79,6 +79,9 @@ flowchart TD
     library -. "compiled context<br/>for the next change" .-> investigate
 ```
 
+The review gate also opens the pull request's room, where agents take turns on
+findings and questions. [Multi-agent PR](multi-agent-pr.md) explains it.
+
 Today shipd builds itself. Its own pipeline planned, built, validated,
 reviewed, and shipped every feature in this repository, including an
 autopilot that delivers an approved epic's members unattended. Where it is

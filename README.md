@@ -244,6 +244,9 @@ the `shipd doctor` preflight, the guided `/s:onboard` tour, a first
 the delivery board. Already running, and wondering what you can configure?
 [**docs/customise.md**](docs/customise.md) maps every customisation surface
 shipd offers.
+Running more than one agent on a pull request?
+[**docs/multi-agent-pr.md**](docs/multi-agent-pr.md) explains how they take
+turns.
 
 ## Skills
 
