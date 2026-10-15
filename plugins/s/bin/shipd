@@ -1620,6 +1620,26 @@ COPILOT_TEMPLATED = {
                             re.compile(r"^# shipd-copilot v(\S+)$", re.M)),
 }
 
+# The room wake set ``--room`` manages (shipd-cli copilot-room-wake), kept
+# apart from the four gate files above: the wake workflow, rendered from its
+# template, and the room runtime it runs — five plugin files bundled
+# byte-identical under ``.github/shipd-room/`` at their plugin-relative
+# paths, so ``room.py``'s own ``sys.path`` insert and manifest read work
+# unchanged. A runtime file is owned exactly when the workflow is.
+ROOM_WAKE_WORKFLOW = os.path.join(".github", "workflows", "room-wake.yml")
+ROOM_WAKE_TEMPLATE = "room-wake.yml"
+ROOM_WAKE_MARKER = re.compile(r"^# shipd-copilot v(\S+)$", re.M)
+ROOM_RUNTIME_DIR = os.path.join(".github", "shipd-room")
+ROOM_RUNTIME = (
+    os.path.join(".claude-plugin", "plugin.json"),
+    os.path.join("skills", "room", "scripts", "room.py"),
+    os.path.join("skills", "room", "scripts", "room_schema.py"),
+    os.path.join("skills", "build", "scripts", "spec_common.py"),
+    os.path.join("skills", "build", "scripts", "cli_common.py"),
+)
+ROOM_MANAGED = (ROOM_WAKE_WORKFLOW,) + tuple(
+    os.path.join(ROOM_RUNTIME_DIR, source) for source in ROOM_RUNTIME)
+
 
 def _read_bytes(path):
     """``path``'s bytes, or ``None`` when it cannot be read."""
@@ -1697,6 +1717,56 @@ def copilot_states(root, version):
     return [(relative,) + states[relative] for relative in COPILOT_MANAGED]
 
 
+def room_wake_states(root, version):
+    """``[(relative path, state, detail)]`` for the room wake set under
+    ``root``, in :data:`ROOM_MANAGED` order — :func:`copilot_states`' rules
+    applied to the wake workflow and its bundled runtime.
+
+    The workflow is judged by its marker; each runtime file is ``foreign``
+    while the workflow carries no marker, ``stale`` when its bytes differ
+    from the plugin's, else ``installed``; and the workflow is only
+    ``installed`` while every runtime file is."""
+    states = []
+    target = os.path.join(root, ROOM_WAKE_WORKFLOW)
+    marker = None
+    if not os.path.exists(target):
+        workflow = ("absent", "not installed")
+    else:
+        marker = _copilot_marker(target, ROOM_WAKE_MARKER)
+        if marker is None:
+            workflow = ("foreign", "exists without a shipd-copilot marker")
+        elif marker != version:
+            workflow = (
+                "stale", "marker v%s — `shipd copilot add --room` refreshes "
+                         "it to v%s" % (marker, version))
+        else:
+            workflow = ("installed", "shipd-copilot v%s" % version)
+
+    for source in ROOM_RUNTIME:
+        relative = os.path.join(ROOM_RUNTIME_DIR, source)
+        target = os.path.join(root, relative)
+        if not os.path.exists(target):
+            state = ("absent", "not installed")
+        elif marker is None:
+            state = ("foreign", "the room-wake.yml beside it is not "
+                                "shipd-owned")
+        elif _read_bytes(target) != _read_bytes(str(PLUGIN_ROOT / source)):
+            state = ("stale", "differs from the plugin's copy — `shipd "
+                              "copilot add --room` refreshes it")
+        else:
+            state = ("installed", "byte-identical to the plugin's copy")
+        states.append((relative,) + state)
+
+    # The workflow is only installed when the runtime it runs is.
+    if workflow[0] == "installed":
+        lagging = [state for _relative, state, _detail in states
+                   if state != "installed"]
+        if lagging:
+            workflow = ("stale", "its bundled room runtime is %s"
+                                 % ", ".join(sorted(set(lagging))))
+    return [(ROOM_WAKE_WORKFLOW,) + workflow] + states
+
+
 def _copilot_render(relative, version):
     """The template for managed path ``relative``, its ``{version}``
     placeholder resolved, as bytes ready to write."""
@@ -1725,8 +1795,9 @@ def _atomic_write(path, data, mode, prefix=".shipd-copilot-"):
         raise
 
 
-def _copilot_report(root, version, states):
-    """The bare verb's read-only report. Nothing here writes."""
+def _copilot_report(root, version, states, room_states):
+    """The bare verb's read-only report: the four gate files, then the room
+    wake set under its own heading. Nothing here writes."""
     print("copilot review skill in %s (this install: v%s)" % (root, version))
     for relative, state, detail in states:
         print("  %s %s — %s" % (state, relative, detail))
@@ -1736,6 +1807,9 @@ def _copilot_report(root, version, states):
           "ruleset requiring Copilot code review on the protected branch.")
     print("The Copilot code-review surface exposes no repository-side model "
           "selection, so nothing here pins a model.")
+    print("room wake set:")
+    for relative, state, detail in room_states:
+        print("  %s %s — %s" % (state, relative, detail))
     return 0
 
 
@@ -1806,11 +1880,82 @@ def _copilot_remove(root):
     return 0
 
 
+def _room_add(root, version):
+    """Install or refresh the room wake set. Every payload — the rendered
+    workflow and the five runtime files with their source modes — is
+    prepared before the first write, so a broken source installs nothing."""
+    try:
+        with open(COPILOT_TEMPLATES / ROOM_WAKE_TEMPLATE,
+                  encoding="utf-8") as fh:
+            workflow = fh.read().replace("{version}", version).encode("utf-8")
+        payloads = [(ROOM_WAKE_WORKFLOW, workflow, 0o644)]
+        for source in ROOM_RUNTIME:
+            origin = PLUGIN_ROOT / source
+            with open(origin, "rb") as fh:
+                data = fh.read()
+            payloads.append((os.path.join(ROOM_RUNTIME_DIR, source), data,
+                             stat.S_IMODE(os.stat(origin).st_mode)))
+    except (OSError, ValueError) as exc:
+        _err("cannot read the room wake sources in %s: %s"
+             % (PLUGIN_ROOT, exc))
+        return 1
+
+    for relative, data, mode in payloads:
+        target = os.path.join(root, relative)
+        try:
+            _atomic_write(target, data, mode)
+        except OSError as exc:
+            _err("cannot write %s: %s" % (target, exc))
+            return 1
+    for relative, _data, _mode in payloads:
+        print("wrote %s" % relative)
+    return 0
+
+
+def _room_remove(root):
+    """Delete the room wake files and prune the runtime tree they emptied."""
+    removed = []
+    for relative in ROOM_MANAGED:
+        target = os.path.join(root, relative)
+        try:
+            os.remove(target)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            _err("cannot remove %s: %s" % (target, exc))
+            return 1
+        removed.append(relative)
+    # Every directory under (and including) .github/shipd-room the runtime
+    # occupies, deepest first, and only while empty — the first directory
+    # still holding anything of the user's stops the pruning.
+    directories = {ROOM_RUNTIME_DIR}
+    for source in ROOM_RUNTIME:
+        parent = os.path.dirname(source)
+        while parent:
+            directories.add(os.path.join(ROOM_RUNTIME_DIR, parent))
+            parent = os.path.dirname(parent)
+    for relative in sorted(directories,
+                           key=lambda d: (-d.count(os.sep), d)):
+        try:
+            os.rmdir(os.path.join(root, relative))
+        except FileNotFoundError:
+            continue
+        except OSError:
+            break
+    if not removed:
+        print("nothing to remove: no shipd room wake files in %s" % root)
+        return 0
+    for relative in removed:
+        print("removed %s" % relative)
+    return 0
+
+
 def cmd_copilot(args):
     """Report on, install, or remove the shipd Copilot code-review skill in a
     repository. Bare it is read-only; only the explicit words ``add`` and
-    ``remove`` write, and only inside the four managed paths. Nothing here
-    runs ``gh`` or touches the network."""
+    ``remove`` write, and only inside the four managed paths — or, with
+    ``--room``, only inside the room wake set. Nothing here runs ``gh`` or
+    touches the network."""
     parser = argparse.ArgumentParser(
         prog="shipd copilot",
         description="Maintain the shipd Copilot code-review skill in a "
@@ -1824,6 +1969,10 @@ def cmd_copilot(args):
     parser.add_argument(
         "--force", action="store_true",
         help="act on a managed path this install does not own")
+    parser.add_argument(
+        "--room", action="store_true",
+        help="with add/remove: act on the room wake set (room-wake.yml and "
+             "its bundled runtime) instead of the four gate files")
     opts = parser.parse_args(args)
     root = os.path.abspath(opts.root)
 
@@ -1833,9 +1982,12 @@ def cmd_copilot(args):
         _err("cannot read %s: %s" % (MANIFEST, exc))
         return 1
 
-    states = copilot_states(root, version)
     if opts.action is None:
-        return _copilot_report(root, version, states)
+        return _copilot_report(root, version, copilot_states(root, version),
+                               room_wake_states(root, version))
+
+    states = (room_wake_states(root, version) if opts.room
+              else copilot_states(root, version))
 
     foreign = [relative for relative, state, _detail in states
                if state == "foreign"]
@@ -1845,6 +1997,10 @@ def cmd_copilot(args):
              % (", ".join(foreign), opts.action,
                 "them" if len(foreign) > 1 else "it"))
         return 1
+    if opts.room:
+        if opts.action == "add":
+            return _room_add(root, version)
+        return _room_remove(root)
     if opts.action == "add":
         return _copilot_add(root, version)
     return _copilot_remove(root)

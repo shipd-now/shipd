@@ -3,7 +3,7 @@
 # Copilot review reference
 
 [Install the Copilot review gate](copilot-review.md) is the how-to. This page
-lists what the gate installs and how it decides.
+lists what the gate installs and how it decides; [Room wake reference](room-wake-reference.md) covers `--room`.
 
 ## The managed files
 
