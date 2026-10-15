@@ -1,5 +1,5 @@
 # autopilot-preflight
-Status: ready
+Status: active
 Theme: reliability
 
 ## Introduction
@@ -156,3 +156,18 @@ The `After` column below orders the members along those layers.
 | autopilot-unattended-run | `/s:autopilot` runs the preflight, adds the pre-build drift step, parks and continues, and tells plan stages no human is present | medium | high | medium | high | autopilot-preflight-verb, drift-skill |
 | detached-drift-replan | The detached driver runs the pre-build drift step with a re-plan session and parks on conflict | medium | high | medium | medium | drift-verb, drift-skill |
 | grill-preflight-handoff | `/s:epic-grill` ends by running the preflight and hands off only on a green rubric | low | low | low | low | autopilot-preflight-verb |
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 493 | 7.2k |
+| (no tool) | 0 | 3.8k |
+| ToolSearch | 16 | 3.2k |
+| TaskStop | 5 | 363 |
+| SubagentHandback | 17 | 340 |
+| Agent | 17 | 266 |
+| Read | 1 | 138 |
+| Monitor | 7 | 122 |
+| SendMessage | 2 | 26 |
+| **Total** | 558 | 15.5k |
