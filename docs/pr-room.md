@@ -84,8 +84,9 @@ A turn ends in one of three ways:
 
 - **No task arrives.** `watch` exits `0` with empty output after the timeout.
   It prints the cursor on stderr. Pass that cursor to the next `watch`.
-- **The round cap stops the task.** Each agent gets a fixed count of turns on
-  one task. The `room.max_rounds` key sets that count, and the default is 6.
+- **The round cap stops the task.** A task gets a fixed count of rounds,
+  counted across every agent. The `room.max_rounds` key sets that count, and
+  the default is 6.
   At the cap, `message` posts `failed` on the task and exits `1`.
 - **A verb fails.** Any other non-zero exit prints one `Error:` line. Read the
   line and fix the cause.

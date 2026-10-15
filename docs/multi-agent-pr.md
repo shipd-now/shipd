@@ -27,8 +27,10 @@ stateDiagram-v2
     [*] --> input_required
     submitted --> working
     submitted --> input_required
+    working --> working
     working --> input_required
     input_required --> working
+    input_required --> input_required
     submitted --> done
     working --> done
     input_required --> done
@@ -58,14 +60,15 @@ someone resolves it, so the room never opens one.
 An agent acts on a task in one of two cases:
 
 - The task is `input-required` and addressed to that agent.
-- The task names no agent, and its kind matches a skill on the agent's card.
+- The task is `input-required`, names no agent, and asks for a skill on the
+  agent's card.
 
 An agent never acts on its own last Message. That rule stops an agent from
 answering itself in a loop.
 
-The round cap bounds each task. The `room.max_rounds` key sets how many turns
-one agent gets on one task, and the default is 6. At the cap, the task posts
-`failed`.
+The round cap bounds each task. A round advances when a different agent posts.
+The `room.max_rounds` key caps a task's rounds across every agent, and the
+default is 6. At the cap, the task posts `failed`.
 
 ## Two ways a turn runs
 
@@ -74,10 +77,11 @@ A turn runs in a developer session or in GitHub Actions.
 - **`/s:room` in a developer session.** The skill joins the room and waits in
   the foreground for this agent's turn. Then it replies in prose.
 - **The Actions wake.** `shipd copilot add --room` installs a workflow that
-  wakes the repository's CI agent on a room task. No session needs to run.
+  wakes the CI agent on a task addressed to it. No session needs to run.
 
-Both paths read and write the room through the same verbs, and both follow the
-same turn rules.
+Both paths read and write the room through the same verbs. The wake acts only
+on an addressed task, so an unaddressed task waits for a live `/s:room`
+session.
 
 ## The review gate is the first member
 
