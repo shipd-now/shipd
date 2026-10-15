@@ -1,4 +1,4 @@
-<!-- description: Plan every unplanned member of an approved epic in one pass, ask every open decision in one final round, then reconcile and gate the plans together. -->
+<!-- description: Plan every unplanned member of an approved epic in one pass, ask every open decision in one final round, then reconcile and gate the plans together and hand off to /s:autopilot on a green preflight. -->
 # /s:epic-grill — plan a whole epic, ask once
 
 Planning an epic member by member means answering questions one member at a
@@ -77,6 +77,12 @@ slug (`/s:epic-grill <slug>`).
    field when rewriting an entry to `USER`. Then run `spec_gate.py <member> --root <worktree>` on every
    selected member. On exit 2, resolve what the repository answers, ask the
    user about the rest, and re-gate. Never set a status by any other path.
-7. **Hand off.** Print a why-first summary per member, any epic-wide answers
-   and shared-requirement pairs, then a `## Summary` heading with one
-   sentence, then `/s:autopilot <slug>` alone on its own line. Never build.
+7. **Preflight and hand off.** After the last gate run
+   `python3 "$S/autopilot.py" <slug> --preflight` once from the repository
+   root and relay every `warn` and `fail` line and the `preflight:` line. Print
+   a why-first summary per member, any epic-wide answers and shared-requirement
+   pairs, then a `## Summary` heading with one sentence stating the preflight
+   verdict, and hand off only when the preflight exits 0 by printing
+   `/s:autopilot <slug>` alone on its own line; otherwise list every `fail`
+   line (or the error text when no rubric line printed), name the preflight
+   command to re-run, and print no hand-off. Never build.
