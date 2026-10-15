@@ -79,5 +79,21 @@ class EpicGrillContractTest(unittest.TestCase):
         self.assertNotIn("a sibling's name does not appear", skill)
 
 
+    def test_ending_runs_the_preflight_before_handing_off(self):
+        skill = _read("skills", "epic-grill", "SKILL.md")
+        body = _read("harness", "bodies", "epic-grill.md")
+        for text in (skill, " ".join(body.split())):
+            self.assertIn("--preflight", text)
+            self.assertIn("hand off only when the preflight exits 0", text)
+            self.assertIn("list every `fail` line", text)
+
+    def test_descriptions_name_the_green_preflight(self):
+        skill = " ".join(_read("skills", "epic-grill", "SKILL.md").split())
+        frontmatter = skill.split("# /s:epic-grill")[0]
+        self.assertIn("on a green preflight", frontmatter)
+        body = _read("harness", "bodies", "epic-grill.md")
+        self.assertIn("on a green preflight", body.splitlines()[0])
+
+
 if __name__ == "__main__":
     unittest.main()

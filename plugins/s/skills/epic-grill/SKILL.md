@@ -5,7 +5,7 @@ description: >-
   members by dependency, plan each through /s:plan with its human questions
   deferred, check the plans against each other, ask the whole question agenda
   in one final round, amend the plans to the answers, gate every member, and
-  hand off to /s:autopilot. Never builds. Use when asked to "grill an epic",
+  hand off to /s:autopilot on a green preflight. Never builds. Use when asked to "grill an epic",
   "plan the whole epic", or "/s:epic-grill". Trigger phrases: "grill an epic",
   "plan the whole epic", "/s:epic-grill".
 ---
@@ -234,13 +234,31 @@ the change exists and what it settles, then its final status and worktree
 root. List any epic-wide answers flagged for `/s:epic <epic> amend`, any pairs
 sharing a master requirement, and any member that did not reach `ready`.
 
+**Run the launch preflight.** Once, from the repository root, after the last
+gate and even when a member did not reach `ready`, run:
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> --preflight
+```
+
+Under a `## Preflight` heading relay every `warn` and `fail` line and the
+closing `preflight:` line verbatim, never the `ok` lines. A `warn` line
+(drift, overlap-files, a `doctor:` relay) is information and does not block.
+
 Close with a `## Summary` heading and **one sentence** saying how many members
-are planned and gated and what is left, then the hand-off command alone on its
-own line:
+are planned and gated, what is left, and whether the preflight is green or
+red. Then branch on the exit code:
+hand off only when the preflight exits 0, printing the hand-off command alone
+on its own line:
 
 ```
 /s:autopilot <epic>
 ```
+
+Otherwise list every `fail` line under the `## Summary` sentence (relay the
+stderr text instead when the verb printed no rubric line), say the run is not
+launched, print the preflight command to re-run after the remedies, and print
+no `/s:autopilot` line.
 
 Never build, run `/s:build`, push, or open a PR from this skill. If the grill
 is interrupted before the final round, every planned member stays at `draft`;
