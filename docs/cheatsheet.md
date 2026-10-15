@@ -41,7 +41,7 @@ venn-beta
   s:doctor, s:duck, s:plan, s:fix, s:review, s:drive, s:gate, s:status,
   s:document, s:worktree-hooks
 - **Epics, driven** — orchestration across many changes: s:epic, s:prd,
-  s:initiative, s:workspace, s:explain, s:epic-grill
+  s:initiative, s:workspace, s:explain, s:epic-grill, s:room
 - **Decisions that stick** — memory that outlives a change: s:remember,
   s:memory, s:forget
 - **Unattended** — s:build, s:autopilot
@@ -74,6 +74,7 @@ venn-beta
 | `/s:remember` | Capture a durable user preference into the personal memory store. | `/s:remember I prefer terse commit messages` |
 | `/s:research` | Turn a question into a cited research report an epic can link. | `/s:research What are common approaches to rate limiting?` |
 | `/s:review [target]` | Run a semantic review of local changes before you push. | `/s:review` |
+| `/s:room [pr]` | Take this agent's turn in a pull request's room: wait for a task, then reply in prose. | `/s:room 412` |
 | `/s:status <status\|validate\|set-status\|pipeline> [args]` | Report or change a spec's lifecycle status through the guarded CLI. | `/s:status status export-json-flag` |
 | `/s:teach [<change> Q<n>]` | Distill spec artifacts and answered queue entries into the workspace wiki. | `/s:teach` |
 | `/s:video-ingest <video-or-slug>` | Turn a screen recording into a grounded, cited intent brief. | `/s:video-ingest recording.mp4` |
