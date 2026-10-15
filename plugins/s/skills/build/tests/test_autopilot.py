@@ -901,6 +901,54 @@ class RunTest(AutopilotTestBase):
         self.assertIn("b", text)
         self.assertIn("plan", text)
 
+    def _after_run(self, a_result):
+        _make_epic(self.root, "ep", [("a", "low"), ("b", "low")],
+                   after={"b": ["a"]})
+        calls = []
+
+        def driver(root, epic, member, pipeline, heartbeat=None):
+            calls.append(member.slug)
+            if member.slug == "a":
+                if heartbeat is not None:
+                    heartbeat.member_started("a")
+                    heartbeat.member_finished("a", a_result)
+                return a_result
+            return autopilot.MemberResult(outcome="shipped")
+
+        lines = []
+        report = autopilot.run(self.root, "ep", member_driver=driver,
+                               sync_fn=lambda *a, **k: None, out=lines.append)
+        return calls, report, lines
+
+    def test_dependent_of_a_parked_member_is_not_driven(self):
+        calls, report, _lines = self._after_run(autopilot.MemberResult(
+            outcome="needs_human", stage="build", reason="grade unmet",
+            session_id="sess-a"))
+        self.assertEqual(calls, ["a"])
+        b = next(r for r in report["needs_human"] if r["member"] == "b")
+        self.assertEqual(b["stage"], "dependency")
+        self.assertIn("a", b["reason"])
+        self.assertIn("needs_human", b["reason"])
+        self.assertIsNone(b["session_id"])
+        with open(os.path.join(self.root, ".shipd", "autopilot",
+                               "ep-heartbeat.json"), encoding="utf-8") as fh:
+            roster = {r["slug"]: r["state"] for r in json.load(fh)["roster"]}
+        self.assertEqual(roster["b"], "needs-human")
+
+    def test_dependent_of_a_shipped_member_is_driven(self):
+        calls, _report, _lines = self._after_run(
+            autopilot.MemberResult(outcome="shipped"))
+        self.assertEqual(calls, ["a", "b"])
+
+    def test_dependent_of_a_drafted_member_waits(self):
+        calls, report, lines = self._after_run(
+            autopilot.MemberResult(outcome="drafted", pr_url="http://pr/a"))
+        self.assertEqual(calls, ["a"])
+        b = next(r for r in report["needs_human"] if r["member"] == "b")
+        self.assertEqual(b["stage"], "dependency")
+        b_line = next(l for l in lines if l.startswith("needs-human: b"))
+        self.assertNotIn("claude --resume", b_line)
+
     def test_max_members_reaches_one_rest_unreached(self):
         _make_epic(self.root, "ep",
                    [("a", "low"), ("b", "medium"), ("c", "high")])
@@ -1107,13 +1155,32 @@ def _member(slug="m", risk="low"):
                             state="unplanned", order=0)
 
 
+def _verdict_json(member, verdict, reason="r", contradicts=None,
+                  revise=None):
+    """A /s:drift --json object carrying one verdict for ``member`` (``holds``
+    is reported under ``clean``)."""
+    if verdict == "holds":
+        return json.dumps({"verdicts": [], "clean": [member], "error": None})
+    return json.dumps({"verdicts": [
+        {"member": member, "verdict": verdict, "reason": reason,
+         "contradicts": contradicts, "revise": revise}],
+        "clean": [], "error": None})
+
+
 class _Seams:
     """Configurable fakes for the drive_member seams."""
 
     def __init__(self, gate_rc=0, gate_rcs=None, session_plan=None,
-                 session_build=None, session_review=None, session_enrich=None):
+                 session_build=None, session_review=None, session_enrich=None,
+                 session_replan=None, drift=(0, "", ""), judge=None,
+                 completed=()):
         self.commands = []          # list of (cmd, cwd)
-        self.gate_calls = []        # list of (member, cwd)
+        self.gate_calls = []        # list of (member, cwd, base)
+        self.judgements = []        # list of (member, prompt)
+        self.drift = drift
+        self.judge = judge
+        self.completed = tuple(completed)
+        self._judge_n = 0
         self.sessions = []          # list of (stage, member, prompt)
         # Every session call's full argument record: one dict per call carrying
         # the stage plus the per-stage knobs the driver resolved for it.
@@ -1127,6 +1194,7 @@ class _Seams:
         self.session_build = session_build
         self.session_review = session_review
         self.session_enrich = session_enrich
+        self.session_replan = session_replan
         self._counts = {}
 
     def command_fn(self, cmd, cwd):
@@ -1142,14 +1210,21 @@ class _Seams:
         if isinstance(cmd, list) and cmd and cmd[0] == autopilot.WORKTREE_SH:
             os.makedirs(os.path.join(cwd, ".worktrees", cmd[1]), exist_ok=True)
             return 0, "", ""
+        # The pre-build drift verb answers the configured (rc, out, err).
+        if isinstance(cmd, list) and len(cmd) > 4 and cmd[4] == "drift":
+            return self.drift
+        # The base tree's completed/ listing, for the dependency check.
+        if isinstance(cmd, list) and cmd[:2] == ["git", "ls-tree"]:
+            return 0, "".join(".shipd/completed/001-%s\n" % c
+                              for c in self.completed), ""
         # The final-resolution PR probe: answer merged by default, so a
         # full pass ships unless a test overrides this fake to say otherwise.
         if isinstance(cmd, list) and cmd[:3] == ["gh", "pr", "view"]:
             return 0, "http://pr/m\tMERGED\n", ""
         return 0, "", ""
 
-    def gate_fn(self, member, cwd):
-        self.gate_calls.append((member, cwd))
+    def gate_fn(self, member, cwd, base=None):
+        self.gate_calls.append((member, cwd, base))
         if self.gate_rcs:
             rc = self.gate_rcs[0]
             if len(self.gate_rcs) > 1:
@@ -1168,10 +1243,23 @@ class _Seams:
         behavior = (self.session_plan if stage == "plan"
                     else self.session_build if stage == "build"
                     else self.session_review if stage == "review"
-                    else self.session_enrich if stage == "enrich" else None)
+                    else self.session_enrich if stage == "enrich"
+                    else self.session_replan if stage == "replan" else None)
         result = behavior(n) if behavior is not None else (
             True, "sess-%s-%d" % (stage, n), None)
         # Mirror the real seam: surface the session id mid-drive.
+        if on_session is not None and result[1] is not None:
+            on_session(result[1])
+        return result
+
+    def judge_fn(self, member, cwd, prompt, timeout, model=None,
+                 on_session=None):
+        self.judgements.append((member, prompt))
+        self._judge_n += 1
+        n = self._judge_n
+        result = (self.judge(n) if self.judge is not None else
+                  (True, "sess-drift-%d" % n, None,
+                   _verdict_json(member, "holds")))
         if on_session is not None and result[1] is not None:
             on_session(result[1])
         return result
@@ -1180,7 +1268,8 @@ class _Seams:
         return autopilot.drive_member(
             root, "ep", member or _member(), pipeline,
             session_fn=self.session_fn, gate_fn=self.gate_fn,
-            command_fn=self.command_fn, out=lambda *_: None, **kwargs)
+            command_fn=self.command_fn, judge_fn=self.judge_fn,
+            out=lambda *_: None, **kwargs)
 
 
 class StageExecutionTest(AutopilotTestBase):
@@ -1967,6 +2056,248 @@ class GateEnrichmentTest(AutopilotTestBase):
 # ---------------------------------------------------------------------------
 # Review stage: driven after build, graded on the posted semantic-review status
 # ---------------------------------------------------------------------------
+
+class PreBuildHelpersTest(unittest.TestCase):
+    OBJ = {"verdicts": [{"member": "m", "verdict": "revise", "reason": "r",
+                         "contradicts": None, "revise": "tasks 2.x"}],
+           "clean": [], "error": None}
+
+    def test_sync_base_ref_prefers_origin_main(self):
+        calls = []
+
+        def command_fn(cmd, cwd):
+            calls.append(cmd)
+            return 0, "", ""
+
+        self.assertEqual(autopilot._sync_base_ref(command_fn, "/r"),
+                         "origin/main")
+        self.assertEqual(calls[0], ["git", "fetch", "origin", "main"])
+
+    def test_sync_base_ref_falls_back_to_main(self):
+        def command_fn(cmd, cwd):
+            return (1, "", "") if cmd[:2] == ["git", "rev-parse"] else (0, "", "")
+
+        self.assertEqual(autopilot._sync_base_ref(command_fn, "/r"), "main")
+
+    def test_parse_drift_verdict_shapes(self):
+        want = ("revise", "r", None, "tasks 2.x")
+        text = json.dumps(self.OBJ)
+        self.assertEqual(autopilot._parse_drift_verdict(text, "m"), want)
+        self.assertEqual(
+            autopilot._parse_drift_verdict("```json\n%s\n```" % text, "m"),
+            want)
+        self.assertEqual(
+            autopilot._parse_drift_verdict("Here it is:\n%s" % text, "m"),
+            want)
+        self.assertEqual(
+            autopilot._parse_drift_verdict(
+                json.dumps({"clean": ["m"], "verdicts": [], "error": None}),
+                "m"), "holds")
+
+    def test_parse_drift_verdict_errors(self):
+        bad = [
+            json.dumps({"verdicts": [], "clean": [], "error": "boom"}),
+            json.dumps({"verdicts": [], "clean": [], "error": None}),
+            json.dumps({"verdicts": [{"member": "m", "verdict": "maybe"}],
+                        "clean": [], "error": None}),
+            "",
+        ]
+        for text in bad:
+            with self.assertRaises(ValueError):
+                autopilot._parse_drift_verdict(text, "m")
+
+    def test_drift_summary_counts_kinds_in_first_seen_order(self):
+        payload = {"findings": [{"kind": "file-drift"}, {"kind": "file-drift"},
+                                {"kind": "symbol-gone"}]}
+        self.assertEqual(autopilot._drift_summary(payload),
+                         "file-drift 2, symbol-gone 1")
+
+    def test_prompts(self):
+        self.assertIn("/s:drift m --base origin/main --json",
+                      autopilot._drift_prompt("m", "origin/main"))
+        prompt = autopilot._stage_prompt(
+            "replan", "m", {},
+            drift={"base_ref": "origin/main", "reason": "r",
+                   "revise": "tasks", "summary": "file-drift 1"})
+        for needle in ("r", "tasks", "origin/main", "s:oracle", "USER",
+                       "spec_gate.py", "--root"):
+            self.assertIn(needle, prompt)
+
+    def test_session_extra_args(self):
+        base = ["--plugin-dir", autopilot.PLUGIN_DIR,
+                "--permission-mode", "bypassPermissions"]
+        self.assertEqual(autopilot._session_extra_args(None), base)
+        self.assertEqual(autopilot._session_extra_args("claude-x"),
+                         base + ["--model", "claude-x"])
+
+
+class PreBuildDriftTest(AutopilotTestBase):
+    PGB = [{"stage": "plan"}, {"stage": "gate"}, {"stage": "build"}]
+    DRIFT_4 = (4, json.dumps({"findings": [{"kind": "file-drift"}]}), "")
+
+    def _wt(self):
+        return os.path.join(self.root, ".worktrees", "m")
+
+    def _stages(self, s):
+        return [st for st, _m, _p in s.sessions]
+
+    def _drift_cmds(self, s):
+        return [c for c, _cwd in s.commands
+                if isinstance(c, list) and len(c) > 4 and c[4] == "drift"]
+
+    def test_clean_drift_builds_without_a_judge(self):
+        s = _Seams()
+        result = s.drive(self.PGB, self.root)
+        self.assertEqual(result.outcome, "shipped")
+        self.assertEqual(self._stages(s), ["plan", "build"])
+        self.assertEqual(s.judgements, [])
+        cmds = [(c, cwd) for c, cwd in s.commands]
+        self.assertIn((["git", "fetch", "origin", "main"], self.root), cmds)
+        merge = (["git", "merge", "--no-edit", "origin/main"], self._wt())
+        verb = ([sys.executable,
+                 os.path.join(autopilot.SCRIPTS_DIR, "spec_status.py"),
+                 "--root", self._wt(), "drift", "m", "--base", "origin/main",
+                 "--json"], self._wt())
+        self.assertIn(merge, cmds)
+        self.assertIn(verb, cmds)
+        self.assertLess(cmds.index(merge), cmds.index(verb))
+
+    def test_holds_verdict_builds(self):
+        s = _Seams(drift=self.DRIFT_4)
+        result = s.drive(self.PGB, self.root)
+        self.assertEqual(result.outcome, "shipped")
+        self.assertEqual(len(s.judgements), 1)
+        self.assertIn("/s:drift m --base origin/main --json",
+                      s.judgements[0][1])
+        self.assertEqual(self._stages(s), ["plan", "build"])
+
+    def test_conflict_parks_with_judge_session(self):
+        s = _Seams(drift=self.DRIFT_4, judge=lambda n: (
+            True, "sess-drift-%d" % n, None,
+            _verdict_json("m", "conflict", contradicts="Q2")))
+        result = s.drive(self.PGB, self.root)
+        self.assertEqual(result.outcome, "needs_human")
+        self.assertEqual(result.stage, "drift")
+        self.assertIn("Q2", result.reason)
+        self.assertIn("r", result.reason)
+        self.assertEqual(result.session_id, "sess-drift-1")
+        self.assertNotIn("build", self._stages(s))
+
+    def test_revise_replans_and_regates(self):
+        s = _Seams(drift=self.DRIFT_4, judge=lambda n: (
+            True, "sess-drift-%d" % n, None,
+            _verdict_json("m", "revise", revise="tasks 2.x")))
+        result = s.drive(self.PGB, self.root)
+        self.assertEqual(result.outcome, "shipped")
+        self.assertEqual(self._stages(s), ["plan", "replan", "build"])
+        prompt = next(p for st, _m, p in s.sessions if st == "replan")
+        for needle in ("r", "tasks 2.x", "s:oracle", "USER", "spec_gate.py",
+                       "--base origin/main"):
+            self.assertIn(needle, prompt)
+        self.assertEqual(len(s.gate_calls), 2)
+        self.assertEqual(s.gate_calls[1][2], "origin/main")
+
+    def test_rejected_regate_records_rejected(self):
+        s = _Seams(drift=self.DRIFT_4, gate_rcs=[0, 2], judge=lambda n: (
+            True, "sess-drift-%d" % n, None,
+            _verdict_json("m", "revise", revise="tasks")))
+        result = s.drive(self.PGB, self.root)
+        self.assertEqual(result.outcome, "rejected")
+        self.assertEqual(result.stage, "replan")
+        self.assertEqual(result.session_id, "sess-replan-1")
+        self.assertNotIn("build", self._stages(s))
+
+    def test_transient_judge_fault_is_retried(self):
+        def judge(n):
+            if n == 1:
+                return False, None, "connection closed", ""
+            return (True, "sess-drift-%d" % n, None,
+                    "```json\n%s\n```" % _verdict_json("m", "holds"))
+
+        s = _Seams(drift=self.DRIFT_4, judge=judge)
+        result = s.drive(self.PGB, self.root)
+        self.assertEqual(result.outcome, "shipped")
+        self.assertEqual(len(s.judgements), 2)
+
+    def test_exhausted_judge_attempts_park(self):
+        s = _Seams(drift=self.DRIFT_4, judge=lambda n: (
+            True, "sess-drift-%d" % n, None, "not json"))
+        result = s.drive(self.PGB, self.root)
+        self.assertEqual(result.outcome, "needs_human")
+        self.assertEqual(result.stage, "drift")
+        self.assertIn("3 attempts", result.reason)
+        self.assertNotIn("build", self._stages(s))
+
+    def test_verb_error_parks_without_judge(self):
+        s = _Seams(drift=(1, "", "Error: no Planned-at"))
+        result = s.drive(self.PGB, self.root)
+        self.assertEqual(result.outcome, "needs_human")
+        self.assertEqual(result.stage, "drift")
+        self.assertIn("exit 1", result.reason)
+        self.assertIn("no Planned-at", result.reason)
+        self.assertEqual(s.judgements, [])
+        self.assertNotIn("build", self._stages(s))
+
+    def test_failed_sync_aborts_and_parks(self):
+        s = _Seams()
+        inner = s.command_fn
+
+        def command_fn(cmd, cwd):
+            if cmd[:3] == ["git", "merge", "--no-edit"]:
+                s.commands.append((cmd, cwd))
+                return 1, "CONFLICT in x\nmore", ""
+            return inner(cmd, cwd)
+
+        s.command_fn = command_fn
+        result = s.drive(self.PGB, self.root)
+        self.assertIn((["git", "merge", "--abort"], self._wt()), s.commands)
+        self.assertEqual(result.outcome, "needs_human")
+        self.assertEqual(result.stage, "sync")
+        self.assertIn("CONFLICT in x", result.reason)
+        self.assertNotIn("build", self._stages(s))
+
+    def test_unmerged_dependency_parks_before_the_sync(self):
+        member = autopilot.Member(slug="m", description="", risk="low",
+                                  state="unplanned", order=0, after=["a"])
+        s = _Seams()
+        result = s.drive(self.PGB, self.root, member=member)
+        self.assertEqual(result.outcome, "needs_human")
+        self.assertEqual(result.stage, "dependency")
+        self.assertIn("a", result.reason)
+        self.assertIn("origin/main", result.reason)
+        self.assertIsNone(result.session_id)
+        self.assertEqual(self._drift_cmds(s), [])
+        self.assertFalse([c for c, _ in s.commands
+                          if c[:2] == ["git", "merge"]])
+        self.assertNotIn("build", self._stages(s))
+
+        s = _Seams(completed=("a",))
+        result = s.drive(self.PGB, self.root, member=member)
+        self.assertEqual(result.outcome, "shipped")
+
+    def test_replaced_and_skipped_build_run_no_step(self):
+        for build in ({"stage": "build", "replace": {"command": "echo x"}},
+                      {"stage": "build", "skip": True}):
+            s = _Seams()
+            result = s.drive([{"stage": "plan"}, build], self.root)
+            self.assertEqual(self._drift_cmds(s), [])
+            self.assertFalse([c for c, _ in s.commands
+                              if c[:2] == ["git", "merge"]])
+            self.assertEqual(s.judgements, [])
+            shutil.rmtree(self._wt(), ignore_errors=True)
+
+    def test_targeted_ready_member_gets_the_step(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+        _plant_planned(self.root, "a", "ready")
+        s = _Seams()
+        result = autopilot.drive_single_member(
+            self.root, "ep", "a", session_fn=s.session_fn,
+            gate_fn=s.gate_fn, command_fn=s.command_fn, judge_fn=s.judge_fn,
+            out=lambda *_: None)
+        self.assertEqual(result.outcome, "shipped")
+        self.assertEqual(len(self._drift_cmds(s)), 1)
+        self.assertEqual(s.sessions[0][0], "build")
+
 
 class ReviewStageTest(AutopilotTestBase):
     PGBR = [{"stage": "plan"}, {"stage": "gate"}, {"stage": "build"},

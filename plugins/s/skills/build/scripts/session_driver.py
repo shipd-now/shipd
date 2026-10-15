@@ -11,6 +11,9 @@ Two entry points:
 * :func:`run_turn` runs a single headless turn, returning ``(ok, failure,
   session_id)``. The session id is parsed from the turn's JSON transcript so a
   human can later reopen the exact conversation with ``claude --resume <id>``.
+* :func:`run_turn_result` is :func:`run_turn` plus the turn's ``result`` text
+  as a fourth element (``""`` on any failure); ``run_turn`` returns the first
+  three unchanged.
 * :func:`drive` runs the grade-gated loop over an injectable turn ``runner``
   (default :func:`run_turn`), returning ``(ok, session_id, failure)``. The
   ``runner`` seam makes the loop unit-testable without a live session.
@@ -47,6 +50,20 @@ def session_id_from_transcript(text):
     return None
 
 
+def result_text_from_transcript(text):
+    """Return the string ``result`` field of a turn's JSON transcript, or
+    ``""`` when the text is not JSON or carries no string ``result``."""
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return ""
+    if isinstance(data, dict):
+        result = data.get("result")
+        if isinstance(result, str):
+            return result
+    return ""
+
+
 def _failure_detail(stdout, stderr):
     """Best-effort human-readable reason a non-zero ``claude -p`` turn failed.
 
@@ -77,16 +94,26 @@ def _failure_detail(stdout, stderr):
 
 def run_turn(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
              claude_bin="claude", extra_args=None):
+    """Run one headless turn; return ``(ok, failure, session_id)``.
+
+    See :func:`run_turn_result`, which this wraps."""
+    return run_turn_result(prompt, cwd, resume_id=resume_id, timeout=timeout,
+                           claude_bin=claude_bin, extra_args=extra_args)[:3]
+
+
+def run_turn_result(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
+                    claude_bin="claude", extra_args=None):
     """Run one headless turn of a ``claude`` conversation inside ``cwd``.
 
     Launches ``<claude_bin> -p <prompt> --output-format json`` — plus any
     ``extra_args`` (e.g. ``--plugin-dir``, ``--permission-mode``) and
     ``--resume <resume_id>`` when continuing an existing session.
 
-    Returns ``(ok, failure, session_id)``: ``ok`` is True only when the CLI
+    Returns ``(ok, failure, session_id, result_text)``: ``ok`` is True only when the CLI
     exits 0 within ``timeout``; ``session_id`` is parsed from the turn's JSON
     transcript (``None`` when unavailable). ``failure`` names the fault when
-    ``ok`` is False, else ``None``.
+    ``ok`` is False, else ``None``; ``result_text`` is the transcript's
+    ``result`` string (``""`` on every failure path).
     """
     cmd = [claude_bin, "-p", prompt, "--output-format", "json"]
     if extra_args:
@@ -98,14 +125,16 @@ def run_turn(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
             cmd, cwd=cwd, timeout=timeout, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except subprocess.TimeoutExpired:
-        return False, "session timed out after %d s" % timeout, None
+        return False, "session timed out after %d s" % timeout, None, ""
     except OSError as exc:
-        return False, "working directory missing: %s: %s" % (cwd, exc), None
+        return False, "working directory missing: %s: %s" % (cwd, exc), None, ""
     if proc.returncode != 0:
         detail = _failure_detail(proc.stdout or "", proc.stderr or "")
         return (False, "session CLI exited %d: %s" % (proc.returncode, detail),
-                None)
-    return True, None, session_id_from_transcript(proc.stdout or "")
+                None, "")
+    out = proc.stdout or ""
+    return (True, None, session_id_from_transcript(out),
+            result_text_from_transcript(out))
 
 
 def _default_runner(prompt, cwd, resume_id, turn_index, timeout=TIMEOUT_DEFAULT,

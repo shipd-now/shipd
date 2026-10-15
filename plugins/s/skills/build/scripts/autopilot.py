@@ -29,6 +29,15 @@ gate and gated-hash state, drift, requirement and file overlap, the pipeline,
 and relaying ``shipd doctor``; it exits non-zero on any ``fail`` and drives
 nothing.
 
+Before a member's built-in ``build`` stage, the driver runs a pre-build drift
+step: it resolves the base ref (``origin/main`` where it resolves, else
+``main``), parks the member if an ``After`` dependency has not merged into it,
+merges the ref into the member's worktree, and runs ``spec_status.py drift``.
+A drifted plan is judged by a headless ``/s:drift --json`` turn: ``holds``
+builds, ``conflict`` parks the member, and ``revise`` re-plans through a
+``replan`` session and re-gates against the synced ref. A member whose
+``After`` dependency parked earlier in the run is not driven at all.
+
 Standard library only. Live sessions, the gate, and external commands are all
 reached through injectable seams so the orchestration is unit-testable without
 spending model time.
@@ -707,11 +716,14 @@ def _merged_into_base(command_fn, root, slug):
                for line in out.splitlines() if line.strip())
 
 
-def _default_gate_fn(member, cwd):
+def _default_gate_fn(member, cwd, base=None):
     """Run the context-sufficiency gate for ``member`` in ``cwd``; return its
-    exit code (0 pass, 2 rejected, other error)."""
-    rc, _out, _err = _run_command(
-        [sys.executable, GATE_PY, member, "--root", cwd], cwd)
+    exit code (0 pass, 2 rejected, other error). ``base`` (when given) is
+    appended as ``--base <base>`` so the stamp anchors on that ref."""
+    cmd = [sys.executable, GATE_PY, member, "--root", cwd]
+    if base:
+        cmd += ["--base", base]
+    rc, _out, _err = _run_command(cmd, cwd)
     return rc
 
 
@@ -809,6 +821,17 @@ def _resolve_vanished(root, slug, last_session_id, stage, command_fn):
         reason="worktree vanished mid-run", session_id=last_session_id)
 
 
+def _session_extra_args(model=None):
+    """The extra ``claude -p`` arguments every driven session carries: the
+    plugin directory and bypass-permissions mode, plus ``--model <model>``
+    when a concrete model id is named."""
+    extra = ["--plugin-dir", PLUGIN_DIR,
+             "--permission-mode", "bypassPermissions"]
+    if model:
+        extra += ["--model", model]
+    return extra
+
+
 def _make_session_fn(claude_bin):
     """Build the production session seam: drive a headless ``claude`` session
     for a stage and return ``(ok, session_id, failure)`` where ``ok`` reflects
@@ -817,14 +840,9 @@ def _make_session_fn(claude_bin):
     ``model`` (a concrete model id already resolved through
     :func:`spec_common.resolve_model_tier`) becomes the session's ``--model``
     argument; ``None`` passes no flag, so the CLI's own default decides."""
-    base_extra = ["--plugin-dir", PLUGIN_DIR,
-                  "--permission-mode", "bypassPermissions"]
-
     def session_fn(stage, member, cwd, prompt, timeout, max_resumes,
                    on_session=None, model=None):
-        extra = list(base_extra)
-        if model:
-            extra += ["--model", model]
+        extra = _session_extra_args(model)
 
         def runner(prompt_, cwd_, resume_id, turn_index,
                    timeout=TIMEOUT_DEFAULT):
@@ -832,7 +850,7 @@ def _make_session_fn(claude_bin):
                 prompt_, cwd_, resume_id=resume_id, timeout=timeout,
                 claude_bin=claude_bin, extra_args=extra)
 
-        if stage == "plan" or stage == "enrich":
+        if stage in ("plan", "enrich", "replan"):
             grade = _plan_grade(cwd, member)
         elif stage == "build":
             grade = _build_grade(cwd, member)
@@ -947,7 +965,8 @@ def _review_prompt(member, entry):
     return head + loop + grade
 
 
-def _stage_prompt(stage, member, entry, model_anchor=None, pr_mode="auto"):
+def _stage_prompt(stage, member, entry, model_anchor=None, pr_mode="auto",
+                  drift=None):
     """The prompt driving ``stage`` for ``member``, conveying the resolved
     ``entry``'s declared options (epic-autopilot stage-options-in-prompts).
     ``model_anchor`` is the anchor a declared `subagent_model` resolves
@@ -986,6 +1005,8 @@ def _stage_prompt(stage, member, entry, model_anchor=None, pr_mode="auto"):
             "and on INSUFFICIENT — or an unavailable oracle — adopt your own "
             "recommendation. Exit through the re-gate so the change returns to "
             "Status: ready, lint-clean." % (member, member))
+    elif stage == "replan":
+        base = _replan_prompt(member, drift or {})
     elif stage == "review":
         base = _review_prompt(member, entry)
     else:
@@ -1061,10 +1082,236 @@ def _tier_anchor(session_model):
     return session_model or sc.MODEL_LADDER[0]
 
 
+# ---------------------------------------------------------------------------
+# Pre-build drift step (epic-autopilot detached-pre-build-drift)
+# ---------------------------------------------------------------------------
+
+def _make_judge_fn(claude_bin):
+    """Build the production judge seam: one headless turn returning
+    ``(ok, session_id, failure, text)`` where ``text`` is the turn's
+    ``result`` — the reply carrying ``/s:drift --json``'s one object.
+    ``on_session`` fires with the session id when the turn yields one."""
+    def judge_fn(member, cwd, prompt, timeout, model=None, on_session=None):
+        ok, failure, session_id, text = session_driver.run_turn_result(
+            prompt, cwd, timeout=timeout, claude_bin=claude_bin,
+            extra_args=_session_extra_args(model))
+        if session_id is not None and on_session is not None:
+            on_session(session_id)
+        return ok, session_id, failure, text
+    return judge_fn
+
+
+def _sync_base_ref(command_fn, root):
+    """Resolve the base ref the pre-build step syncs and measures against: a
+    best-effort ``git fetch origin main`` from ``root`` (exit code ignored),
+    then ``origin/main`` where it resolves, else ``main``
+    (``spec_status.DEFAULT_AMEND_BASE``) — the rule :func:`_merged_into_base`
+    uses."""
+    base = ss.DEFAULT_AMEND_BASE
+    command_fn(["git", "fetch", "origin", base], root)
+    rc, _out, _err = command_fn(
+        ["git", "rev-parse", "--verify", "--quiet", "origin/" + base], root)
+    return "origin/" + base if rc == 0 else base
+
+
+def _drift_prompt(member, base_ref):
+    """The judge turn's prompt: run the drift skill and reply with its JSON."""
+    return ("Run `/s:drift %s --base %s --json` for the change `%s` in this "
+            "worktree and reply with exactly its JSON object — no fence, no "
+            "prose. Edit no file, run no gate, open no question."
+            % (member, base_ref, member))
+
+
+def _parse_drift_verdict(text, member):
+    """Parse the judge reply for ``member``. Tolerates a code fence or
+    surrounding prose by reading the outermost braces. Returns ``"holds"`` for
+    a member listed under ``clean``, else ``(verdict, reason, contradicts,
+    revise)``. Raises :class:`ValueError` on unparseable text, an ``error``, a
+    missing member entry, or an unknown verdict word."""
+    text = text or ""
+    lo, hi = text.find("{"), text.rfind("}")
+    if lo < 0 or hi <= lo:
+        raise ValueError("no JSON object in the judge reply")
+    try:
+        data = json.loads(text[lo:hi + 1])
+    except ValueError as exc:
+        raise ValueError("unparseable judge reply: %s" % exc)
+    if not isinstance(data, dict):
+        raise ValueError("judge reply is not a JSON object")
+    if data.get("error"):
+        raise ValueError("drift skill error: %s" % data["error"])
+    if member in (data.get("clean") or []):
+        return "holds"
+    entry = next((v for v in (data.get("verdicts") or [])
+                  if isinstance(v, dict) and v.get("member") == member), None)
+    if entry is None:
+        raise ValueError("no verdict for member '%s'" % member)
+    verdict = entry.get("verdict")
+    if verdict not in ("holds", "revise", "conflict"):
+        raise ValueError("unknown verdict word: %r" % (verdict,))
+    return (verdict, entry.get("reason"), entry.get("contradicts"),
+            entry.get("revise"))
+
+
+def _drift_summary(payload):
+    """``"file-drift 2, symbol-gone 1"`` — the verb's finding kinds with
+    counts, in first-seen order."""
+    counts = {}
+    for finding in (payload or {}).get("findings") or []:
+        kind = finding.get("kind") if isinstance(finding, dict) else None
+        if kind:
+            counts[kind] = counts.get(kind, 0) + 1
+    return ", ".join("%s %d" % (k, n) for k, n in counts.items())
+
+
+def _replan_prompt(member, drift):
+    """The re-plan session's prompt (``drift`` carries ``base_ref``,
+    ``reason``, ``revise``, ``summary``, and optionally ``cwd``)."""
+    ref = drift.get("base_ref") or ss.DEFAULT_AMEND_BASE
+    return (
+        "The plan for the change `%s` has drifted from `%s` since it was "
+        "gated. Reason: %s\nRevise: %s\nDrift findings: %s\n\n"
+        "Revise the installed artifacts (plan.md, delta specs, tasks.md) in "
+        "place so they match the code now on `%s`. Keep every "
+        "`**Answered by:** USER` answer and every epic Decision untouched. "
+        "For decisions the repository cannot answer, consult the oracle "
+        "instead of a human — spawn agent `s:oracle` with one compact "
+        "question per gap; no human is present, so never wait for one. "
+        "Finish by running `python3 %s %s --root %s --base %s` so the change "
+        "returns to Status: ready, lint-clean."
+        % (member, ref, drift.get("reason") or "(none given)",
+           drift.get("revise") or "(none given)",
+           drift.get("summary") or "(none)", ref, GATE_PY, member,
+           drift.get("cwd") or ".", ref))
+
+
+def _first_text_line(*texts):
+    for text in texts:
+        for line in (text or "").splitlines():
+            if line.strip():
+                return line.strip()
+    return ""
+
+
+def _pre_build_step(root, member, cwd, entry, knobs, command_fn, session_fn,
+                    judge_fn, gate_fn, out, hook, on_sess):
+    """Run the pre-build drift step before a built-in ``build`` stage: resolve
+    the base ref, check ``After`` dependencies merged, merge the ref into the
+    worktree, run the drift verb, judge drift with a headless ``/s:drift``,
+    and re-plan and re-gate on ``revise``. ``knobs`` is ``(attempts, timeout,
+    resumes, model)`` from the build entry. Returns ``(outcome, stage, reason,
+    session_id)`` with ``outcome`` in ``proceed``, ``needs_human``,
+    ``rejected``."""
+    slug = member.slug
+    attempts, timeout, resumes, model = knobs
+    ref = _sync_base_ref(command_fn, root)
+
+    waiting = [d for d in member.after
+               if not _merged_into_base(command_fn, root, d)]
+    if waiting:
+        return ("needs_human", "dependency",
+                "waiting on %s: not merged into %s; re-run with --member "
+                "%s once merged" % (", ".join(waiting), ref, slug), None)
+
+    rc, mout, merr = command_fn(["git", "merge", "--no-edit", ref], cwd)
+    if rc != 0:
+        command_fn(["git", "merge", "--abort"], cwd)
+        return ("needs_human", "sync",
+                "merge of %s failed: %s"
+                % (ref, _first_text_line(mout, merr) or "exit %d" % rc), None)
+
+    rc, vout, verr = command_fn(
+        [sys.executable, STATUS_PY, "--root", cwd, "drift", slug,
+         "--base", ref, "--json"], cwd)
+    if rc == 0:
+        out("  drift [clean]")
+        return "proceed", None, None, None
+    payload = None
+    if rc == 4:
+        try:
+            payload = json.loads(vout)
+        except (ValueError, TypeError):
+            payload = None
+    if rc != 4 or not isinstance(payload, dict):
+        return ("needs_human", "drift",
+                "drift verb exit %d: %s" % (rc, _first_text_line(verr, vout)),
+                None)
+    summary = _drift_summary(payload)
+    out("  drift [%s] — judging" % summary)
+
+    prompt = _drift_prompt(slug, ref)
+    box = {}
+
+    def judge_action(_attempt, _prev):
+        ok, sid, failure, text = judge_fn(
+            slug, cwd, prompt, timeout, model=model, on_session=on_sess)
+        if not ok:
+            return False, sid, failure
+        try:
+            box["verdict"] = _parse_drift_verdict(text, slug)
+        except ValueError as exc:
+            return False, sid, str(exc)
+        return True, sid, None
+
+    ok, judge_sid, failure = _strike_loop(
+        judge_action, out, "drift", attempts=attempts,
+        on_attempt=hook("drift"))
+    if not ok:
+        return ("needs_human", "drift",
+                "drift judgment failed after %s: %s"
+                % (_attempts_phrase(attempts), failure), judge_sid)
+    verdict = box["verdict"]
+    if verdict == "holds":
+        out("  drift [holds]")
+        return "proceed", None, None, judge_sid
+    _word, reason, contradicts, revise = verdict
+    if _word == "conflict":
+        return ("needs_human", "drift",
+                "plan conflicts with %s: %s" % (contradicts, reason),
+                judge_sid)
+
+    # revise: re-plan through the enrichment machinery, then re-gate.
+    out("  drift [revise: %s] — re-planning" % reason)
+    replan_prompt = _stage_prompt(
+        "replan", slug, entry,
+        drift={"base_ref": ref, "reason": reason, "revise": revise,
+               "summary": summary, "cwd": cwd})
+
+    def replan_action(_attempt, prev_failure):
+        p = replan_prompt
+        if prev_failure:
+            p += ("\n\nA prior re-plan attempt failed: %s\nDiagnose and "
+                  "finish revising the plan." % prev_failure)
+        return session_fn("replan", slug, cwd, p, timeout, resumes,
+                          on_session=on_sess, model=model)
+
+    ok, sid, failure = _strike_loop(
+        replan_action, out, "replan", attempts=attempts,
+        on_attempt=hook("replan"))
+    sid = sid or judge_sid
+    if not ok:
+        return ("needs_human", "replan",
+                "drift re-plan failed after %s: %s"
+                % (_attempts_phrase(attempts), failure), sid)
+    if not os.path.isdir(cwd):
+        return "proceed", None, None, sid
+    verdict_g, greason = _run_gate(
+        lambda m, c: gate_fn(m, c, base=ref), slug, cwd, attempts=attempts,
+        on_attempt=hook("gate"))
+    if verdict_g == "pass":
+        out("  gate [passed after drift re-plan]")
+        return "proceed", None, None, sid
+    if verdict_g == "failed":
+        return "needs_human", "replan", greason, sid
+    return ("rejected", "replan",
+            "context insufficient after drift re-plan (gate exit 2)", sid)
+
+
 def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
                  max_resumes=MAX_RESUMES_DEFAULT, claude_bin="claude",
                  session_model=None, pr_mode=None, session_fn=None,
-                 gate_fn=None, command_fn=None, out=_noop, heartbeat=None):
+                 gate_fn=None, command_fn=None, judge_fn=None, out=_noop,
+                 heartbeat=None):
     """Drive a single member through the resolved ``pipeline`` in its own
     worktree. Returns a :class:`MemberResult`.
 
@@ -1087,6 +1334,8 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
         gate_fn = _default_gate_fn
     if session_fn is None:
         session_fn = _make_session_fn(claude_bin)
+    if judge_fn is None:
+        judge_fn = _make_judge_fn(claude_bin)
     if pr_mode is None:
         pr_mode = sc.resolve_pr_mode(root)
 
@@ -1272,6 +1521,33 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
                 reason="context insufficient after oracle enrichment",
                 session_id=last_session_id))
 
+        # Built-in build: the pre-build drift step first (sync, dependency
+        # check, drift verb, judgment, re-plan) — never for a skipped or
+        # replaced entry, which is the whole stage.
+        if stage == "build":
+            outcome, step_stage, step_reason, step_sid = _pre_build_step(
+                root, member, cwd, entry,
+                (attempts, entry_timeout, entry_resumes, entry_model),
+                command_fn, session_fn, judge_fn, gate_fn, out, _hook,
+                on_sess)
+            if step_sid is not None:
+                last_session_id = step_sid
+            if not os.path.isdir(cwd):
+                return _finish(_resolve_vanished(
+                    root, slug, last_session_id, "build", command_fn))
+            if outcome == "needs_human" and step_stage == "dependency":
+                # Waiting on an unmerged dependency is not a session to
+                # resume: the park carries no session id.
+                return _finish(MemberResult(
+                    outcome="needs_human", stage=step_stage,
+                    reason=step_reason))
+            if outcome == "needs_human":
+                return _park(step_stage, step_reason)
+            if outcome == "rejected":
+                return _finish(MemberResult(
+                    outcome="rejected", stage=step_stage, reason=step_reason,
+                    session_id=last_session_id))
+
         # Built-in plan / build: drive a graded headless session. A declared
         # `subagent_model` resolves against this stage's own model, falling
         # back to the run's anchor.
@@ -1345,7 +1621,8 @@ def _pipeline_from_stage(pipeline, stage):
 def drive_single_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
                         max_resumes=MAX_RESUMES_DEFAULT, claude_bin="claude",
                         session_model=None, session_fn=None, gate_fn=None,
-                        command_fn=None, out=_noop, heartbeat=None):
+                        command_fn=None, judge_fn=None, out=_noop,
+                        heartbeat=None):
     """Drive exactly the one epic member named by ``slug`` — independent of the
     ``member-selection-and-order`` auto-selection — entering the resolved
     pipeline at the stage matching its current lifecycle (``unplanned`` ->
@@ -1371,7 +1648,8 @@ def drive_single_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
         root, epic, member, sliced, timeout=timeout, max_resumes=max_resumes,
         claude_bin=claude_bin, session_model=session_model,
         pr_mode=sc.resolve_pr_mode(root), session_fn=session_fn,
-        gate_fn=gate_fn, command_fn=command_fn, out=out, heartbeat=heartbeat)
+        gate_fn=gate_fn, command_fn=command_fn, judge_fn=judge_fn, out=out,
+        heartbeat=heartbeat)
 
 
 def _run_gate(gate_fn, member, cwd, attempts=3, on_attempt=None):
@@ -1575,10 +1853,23 @@ def run(root, epic, *, max_members=None, dry_run=False,
 
     any_merged = False
     finished = False
+    outcomes = {}
     with _SigtermAbortGuard(hb, lambda: finished):
         try:
             for member in reached:
-                result = member_driver(root, epic, member, pipeline, hb)
+                waiting = [(d, outcomes[d]) for d in member.after
+                           if d in outcomes and outcomes[d] != "shipped"]
+                if waiting:
+                    result = MemberResult(
+                        outcome="needs_human", stage="dependency",
+                        reason="waiting on %s" % ", ".join(
+                            "%s (%s)" % w for w in waiting))
+                    hb.member_finished(member.slug, result)
+                    out("Member %s: not driven — %s"
+                        % (member.slug, result.reason))
+                else:
+                    result = member_driver(root, epic, member, pipeline, hb)
+                outcomes[member.slug] = result.outcome
                 if result.outcome == "shipped":
                     report["shipped"].append(
                         {"member": member.slug, "pr_url": result.pr_url})
