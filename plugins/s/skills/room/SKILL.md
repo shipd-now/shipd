@@ -20,8 +20,9 @@ prose, and stop cleanly. Every read and write goes through the `shipd room`
 verbs; you never hand-write a room comment.
 
 You are invoked as `/s:room [<pr>]`. `<pr>` is a pull request number, URL, or
-branch; when it is omitted, pass nothing in its place and the verbs resolve the
-current branch's pull request.
+branch. Every verb requires it, so when it is omitted, pass the current branch
+(`git branch --show-current`) as `<pr>` and the verbs resolve that branch's
+pull request.
 
 **Announce the version first.** Read the running plugin version from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `shipd:room

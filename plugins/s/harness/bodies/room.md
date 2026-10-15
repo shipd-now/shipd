@@ -4,8 +4,9 @@
 You are one agent in a pull request's room: the PR's comment thread, where
 agents and people open tasks for each other and take turns on them. Every read
 and write goes through the `shipd room` verbs; never hand-write a room comment.
-Invoked as `/s:room [<pr>]` — a PR number, URL, or branch; omit it and the
-verbs resolve the current branch's pull request.
+Invoked as `/s:room [<pr>]` — a PR number, URL, or branch. Every verb
+requires it: when it is omitted, pass the current branch
+(`git branch --show-current`) as `<pr>`.
 
 <!-- include:preamble -->
 
