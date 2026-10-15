@@ -24,8 +24,12 @@ from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
 sys.path.insert(0, SCRIPTS)
+ROOM_SCRIPTS = os.path.normpath(
+    os.path.join(HERE, "..", "..", "room", "scripts"))
+sys.path.insert(0, ROOM_SCRIPTS)
 
 import review_gate  # noqa: E402
+import room_schema  # noqa: E402
 import semdiff  # noqa: E402
 
 PLUGIN_S_ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
@@ -2033,6 +2037,289 @@ class MultiLocationFindingTest(unittest.TestCase):
         self.assertIn("(+2 more)", body)
         # Single-location finding should not
         self.assertNotIn("single(+", body)
+
+
+class RoomImportTest(unittest.TestCase):
+    """`review_gate.py` imports `room_schema` from the room skill's scripts
+    directory and nothing beyond the standard library otherwise."""
+
+    def _source(self):
+        with open(os.path.join(SCRIPTS, "review_gate.py")) as fh:
+            return fh.read()
+
+    def test_inserts_room_scripts_on_sys_path(self):
+        import ast
+        tree = ast.parse(self._source())
+        self.assertTrue(any(
+            isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "ROOM_SCRIPTS"
+                    for t in node.targets)
+            for node in tree.body), "no module-level ROOM_SCRIPTS")
+        self.assertEqual(
+            os.path.normpath(review_gate.ROOM_SCRIPTS), ROOM_SCRIPTS)
+        self.assertIn(ROOM_SCRIPTS, [os.path.normpath(p) for p in sys.path])
+        self.assertIn("sys.path.insert(0, ROOM_SCRIPTS)", self._source())
+
+    def test_imports_room_schema_and_stdlib_only(self):
+        import ast
+        tree = ast.parse(self._source())
+        top = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                top.update(a.name.split(".")[0] for a in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                top.add(node.module.split(".")[0])
+        self.assertIn("room_schema", top)
+        self.assertTrue(any(
+            isinstance(node, ast.Import)
+            and any(a.name == "room_schema" for a in node.names)
+            for node in tree.body), "room_schema not imported at module scope")
+        outside = sorted(
+            name for name in top - {"room_schema"}
+            if name not in sys.stdlib_module_names)
+        self.assertEqual(outside, [])
+        self.assertIs(review_gate.room_schema, room_schema)
+
+
+ROOM = {"context": "o/r#7", "agent": "semantic-review"}
+PLUGIN_MANIFEST = os.path.join(PLUGIN_S_ROOT, ".claude-plugin", "plugin.json")
+
+
+def _manifest_version():
+    with open(PLUGIN_MANIFEST, encoding="utf-8") as fh:
+        return json.load(fh)["version"]
+
+
+class RoomSummaryTest(unittest.TestCase):
+    """With a ``room``, the summary carries the gate's Agent Card then its
+    Message directly above the footer block; without one it is unchanged."""
+
+    FILES = [{"filename": "a.py", "patch": PATCH_A,
+              "additions": 12, "deletions": 3}]
+    FINDING = {"id": "f1", "severity": "high", "locations": ["z.py:1"],
+               "what": "boom", "why": "w", "fix": "x"}
+
+    def _lines(self, review, unanchored=(), **kw):
+        body = review_gate.render_summary(review, list(unanchored), **kw)
+        return body.rstrip("\n").split("\n")
+
+    def test_markers_sit_between_body_and_footer(self):
+        lines = self._lines(_review(verdict="pass"), files=self.FILES,
+                            room=ROOM)
+        self.assertEqual(lines[0], MARKER)
+        self.assertEqual([ln for ln in lines[1:] if ln.strip()][0],
+                         review_gate.BRAND_LINE)
+        self.assertEqual(lines[-1], "Reviewed 1 file, +12 -3 lines.")
+        self.assertEqual(lines[-2], "")
+        self.assertTrue(lines[-4].startswith("<!-- shipd-room-card "))
+        self.assertTrue(lines[-3].startswith("<!-- shipd-room "))
+
+    def test_without_files_the_markers_close_the_body(self):
+        lines = self._lines(_review(verdict="pass"), room=ROOM)
+        self.assertTrue(lines[-2].startswith("<!-- shipd-room-card "))
+        self.assertTrue(lines[-1].startswith("<!-- shipd-room "))
+        self.assertEqual(lines[-3], "")
+
+    def test_card_parses_back(self):
+        lines = self._lines(_review(verdict="pass"), files=self.FILES,
+                            room=ROOM)
+        card = room_schema.parse_comment(lines[-4])
+        self.assertIsInstance(card, room_schema.AgentCard)
+        self.assertEqual(card.name, "semantic-review")
+        self.assertEqual(card.skills, ("semantic-review",))
+        self.assertEqual(card.description, "shipd semantic-review gate")
+        self.assertEqual(card.version, _manifest_version())
+
+    def test_message_parses_back(self):
+        cases = [
+            (_review(verdict="pass"), "all", "success"),
+            (_review(verdict="changes-requested", findings=[self.FINDING]),
+             "all", "failure"),
+            (_review(verdict="changes-requested", findings=[self.FINDING]),
+             "none", "success"),
+        ]
+        for review, disposition, state in cases:
+            with self.subTest(verdict=review["verdict"],
+                              disposition=disposition):
+                lines = self._lines(review, [self.FINDING]
+                                    if review["findings"] else [],
+                                    disposition=disposition,
+                                    files=self.FILES, room=ROOM)
+                msg = room_schema.parse_comment(lines[-3])
+                self.assertIsInstance(msg, room_schema.Message)
+                self.assertEqual(msg.role, "agent")
+                self.assertEqual(msg.agent, "semantic-review")
+                self.assertEqual(msg.context_id, "o/r#7")
+                self.assertIsNone(msg.task_id)
+                self.assertEqual(msg.state, "completed")
+                self.assertEqual(msg.round, 1)
+                self.assertEqual(msg.metadata["verdict"], review["verdict"])
+                self.assertEqual(msg.metadata["status"], state)
+                self.assertEqual(
+                    msg.text,
+                    review_gate._status_description(review, disposition))
+
+    def test_explicit_status_state_is_carried(self):
+        lines = self._lines(_review(verdict="pass"), room=ROOM,
+                            status_state="failure")
+        msg = room_schema.parse_comment(lines[-1])
+        self.assertEqual(msg.metadata["status"], "failure")
+
+    def test_without_room_no_room_text(self):
+        body = review_gate.render_summary(
+            _review(verdict="changes-requested", findings=[self.FINDING]),
+            [self.FINDING], files=self.FILES)
+        self.assertNotIn("shipd-room", body)
+
+
+class RoomFindingTest(unittest.TestCase):
+    """With a ``room``, an anchored inline body carries one Message line that
+    opens an ``input-required`` `review-finding` task, placed above the blank
+    line before the closing finding marker; without one it is unchanged."""
+
+    def _finding(self, sev="high", locations=("a.py:5",)):
+        return {"locations": list(locations), "severity": sev,
+                "what": "boom", "why": "w", "fix": "x"}
+
+    def _data(self, msg):
+        data = [p for p in msg.parts if p.get("kind") == "data"]
+        self.assertEqual(len(data), 1)
+        return data[0]["data"]
+
+    def test_body_keeps_its_frame_around_the_room_line(self):
+        for sev in ("high", "medium", "low"):
+            with self.subTest(severity=sev):
+                f = self._finding(sev)
+                plain = review_gate._inline_body(f)
+                body = review_gate._inline_body(f, room=ROOM)
+                self.assertEqual(review_gate.parse_severity(body), sev)
+                self.assertEqual(review_gate._parse_what(body),
+                                 review_gate._parse_what(plain))
+                digest = review_gate._extract_finding_hash(body)
+                self.assertEqual(digest,
+                                 review_gate._extract_finding_hash(plain))
+                lines = body.split("\n")
+                self.assertRegex(lines[-1],
+                                 r"^<!-- shipd-finding [0-9a-f]{12} -->$")
+                self.assertEqual(lines[-2], "")
+                msg = room_schema.parse_comment(lines[-3])
+                self.assertIsInstance(msg, room_schema.Message)
+                self.assertEqual(msg.role, "agent")
+                self.assertEqual(msg.agent, "semantic-review")
+                self.assertEqual(msg.context_id, "o/r#7")
+                self.assertIsNone(msg.task_id)
+                self.assertEqual(msg.state, "input-required")
+                self.assertIsNone(msg.to)
+                self.assertEqual(msg.skill, "review-finding")
+                self.assertEqual(msg.round, 1)
+                self.assertEqual(msg.text, "boom")
+                self.assertEqual(self._data(msg), {
+                    "severity": sev, "path": "a.py", "line": 5,
+                    "hash": digest, "why": "w", "fix": "x"})
+
+    def test_suggestion_fence_precedes_the_room_line(self):
+        body = review_gate._inline_body(
+            self._finding(), (5, 5, ["    return None"]), room=ROOM)
+        self.assertLess(body.index("```suggestion"),
+                        body.index("<!-- shipd-room "))
+        self.assertLess(body.index("<!-- shipd-room "),
+                        body.index("<!-- shipd-finding "))
+
+    def test_second_location_carries_its_own_site(self):
+        f = self._finding(locations=("a.py:5", "b.py:9"))
+        body = review_gate._inline_body(f, location_index=1, room=ROOM)
+        msg = room_schema.parse_comment(body.split("\n")[-3])
+        data = self._data(msg)
+        self.assertEqual(data["path"], "b.py")
+        self.assertEqual(data["line"], 9)
+        self.assertEqual(data["hash"],
+                         review_gate._extract_finding_hash(body))
+
+    def test_task_id_is_the_inline_comment_id(self):
+        m1 = room_schema.parse_comment(
+            review_gate._inline_body(self._finding("high"), room=ROOM)
+            .split("\n")[-3])
+        m2 = room_schema.parse_comment(
+            review_gate._inline_body(self._finding("low"), room=ROOM)
+            .split("\n")[-3])
+        tasks = room_schema.build_tasks([(101, m1), (102, m2)])
+        self.assertEqual([t.id for t in tasks], [101, 102])
+        for task in tasks:
+            self.assertEqual(task.opener, "semantic-review")
+            self.assertEqual(task.state, "input-required")
+            self.assertEqual(task.skill, "review-finding")
+
+    def test_without_room_no_room_text(self):
+        self.assertNotIn("shipd-room",
+                         review_gate._inline_body(self._finding()))
+
+
+CARD_PREFIX = "<!-- shipd-room-card "
+MESSAGE_PREFIX = "<!-- shipd-room "
+
+
+class RoomPostTest(unittest.TestCase):
+    """`post` passes the room to every summary upsert and every review POST,
+    so the final summary and each anchored inline comment carry markers."""
+
+    FILES = [{"filename": "a.py", "patch": PATCH_A}]
+
+    def _findings(self):
+        return [
+            {"id": "f1", "severity": "high", "locations": ["a.py:2"],
+             "what": "first", "why": "w", "fix": "x"},
+            {"id": "f2", "severity": "medium", "locations": ["a.py:4"],
+             "what": "second", "why": "w", "fix": "x"},
+            {"id": "f3", "severity": "low", "locations": ["b.py:99"],
+             "what": "third", "why": "w", "fix": "x"},
+        ]
+
+    def _assert_summary_markers(self, body):
+        self.assertEqual(body.count(CARD_PREFIX), 1)
+        self.assertEqual(body.count(MESSAGE_PREFIX), 1)
+        parsed = room_schema.parse_comments(body)
+        self.assertIsInstance(parsed[0], room_schema.AgentCard)
+        messages = [m for m in parsed if isinstance(m, room_schema.Message)]
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].context_id, "o/r#7")
+
+    def test_pass_review_summary_carries_card_and_message(self):
+        gh = FakeGh(files=self.FILES)
+        review_gate.post("7", _review(verdict="pass"), gh)
+        self._assert_summary_markers(gh.summary_body())
+
+    def test_anchored_findings_each_open_one_task(self):
+        gh = FakeGh(files=self.FILES)
+        review_gate.post(
+            "7", _review(verdict="changes-requested",
+                         findings=self._findings()), gh)
+        self.assertEqual(len(gh.review_posts), 1)
+        review = gh.review_posts[0]
+        self.assertEqual(len(review["comments"]), 2)
+        for comment in review["comments"]:
+            self.assertEqual(comment["body"].count("shipd-room"), 1)
+        self.assertNotIn("shipd-room", review["body"])
+        self._assert_summary_markers(gh.summary_body())
+        self.assertNotIn("third", "".join(
+            c["body"] for c in review["comments"]))
+
+    def test_rejected_review_keeps_summary_markers(self):
+        gh = FakeGh(files=self.FILES, review_fail_times=1)
+        review_gate.post(
+            "7", _review(verdict="changes-requested",
+                         findings=self._findings()), gh)
+        self._assert_summary_markers(gh.summary_body())
+        self.assertEqual(len(gh.review_posts), 2)
+        self.assertEqual(gh.review_posts[1]["comments"], [])
+        self.assertNotIn("shipd-room", json.dumps(gh.review_posts[1]))
+
+    def test_repost_patches_in_place_and_keeps_markers(self):
+        gh = FakeGh(files=self.FILES)
+        review_gate.post("7", _review(verdict="pass"), gh)
+        review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertEqual(len(gh.marker_comments()), 1)
+        self.assertTrue(gh.comment_patch_calls())
+        self._assert_summary_markers(gh.summary_body())
 
 
 if __name__ == "__main__":
