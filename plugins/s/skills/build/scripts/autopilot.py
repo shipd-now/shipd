@@ -1535,6 +1535,12 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
             if not os.path.isdir(cwd):
                 return _finish(_resolve_vanished(
                     root, slug, last_session_id, "build", command_fn))
+            if outcome == "needs_human" and step_stage == "dependency":
+                # Waiting on an unmerged dependency is not a session to
+                # resume: the park carries no session id.
+                return _finish(MemberResult(
+                    outcome="needs_human", stage=step_stage,
+                    reason=step_reason))
             if outcome == "needs_human":
                 return _park(step_stage, step_reason)
             if outcome == "rejected":

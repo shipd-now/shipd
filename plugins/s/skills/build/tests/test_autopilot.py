@@ -2260,7 +2260,7 @@ class PreBuildDriftTest(AutopilotTestBase):
         member = autopilot.Member(slug="m", description="", risk="low",
                                   state="unplanned", order=0, after=["a"])
         s = _Seams()
-        result = s.drive([{"stage": "build"}], self.root, member=member)
+        result = s.drive(self.PGB, self.root, member=member)
         self.assertEqual(result.outcome, "needs_human")
         self.assertEqual(result.stage, "dependency")
         self.assertIn("a", result.reason)
