@@ -114,6 +114,24 @@ class SpecGateTestBase(unittest.TestCase):
                   encoding="utf-8") as fh:
             return fh.read()
 
+    def _git(self, *args):
+        return subprocess.run(["git", "-C", self.root, *args],
+                              capture_output=True, text=True, check=True)
+
+    def _init_git(self):
+        """Make the temp root a git work tree on branch ``main`` with the
+        current fixture committed, so ``main`` exists and equals ``HEAD``."""
+        subprocess.run(["git", "init", "-q", "-b", "main", self.root],
+                       capture_output=True, text=True, check=True)
+        self._git("config", "user.email", "test@example.com")
+        self._git("config", "user.name", "Test")
+        self._git("config", "commit.gpgsign", "false")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "baseline")
+
+    def _rev(self, ref):
+        return self._git("rev-parse", ref).stdout.strip()
+
     def cli(self, *args):
         return subprocess.run(
             ["python3", SCRIPT, "--root", self.root, *args],
@@ -485,6 +503,153 @@ class ReportShapeTest(SpecGateTestBase):
         self.assertIn("Theme: reliability", text)     # metadata preserved
         self.assertIn("Status: rejected", text)
         self.assertNotIn("Status: draft", text)
+
+
+# CLEAN_PLAN with a metadata line under ``Status:`` (no epic fixture needed).
+STAMP_PLAN = CLEAN_PLAN.replace(
+    "Status: %s\n", "Status: draft\nTheme: reliability\n")
+
+
+class StampTest(SpecGateTestBase):
+    """The plan stamp a passing gate writes (context-gate plan-stamp-write)."""
+
+    def _stamped_change(self, change="feat"):
+        self.write_plan(change, STAMP_PLAN % change)
+        self.write_delta(change, "widget", CLEAN_DELTA)
+        self.write_tasks(change, CLEAN_TASKS)
+
+    def _stamp_lines(self, text):
+        return [ln for ln in text.splitlines()
+                if ln.startswith(("Planned-at:", "Gated-hash:"))]
+
+    def test_pass_writes_both_stamp_lines_after_metadata(self):
+        self._stamped_change()
+        self._init_git()
+        sha = self._rev("main")
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 0, self.out(r))
+        self.assertIn("stamp: Planned-at", r.stdout)
+        lines = self.read_plan("feat").splitlines()
+        self.assertEqual(lines[1], "Status: ready")
+        self.assertEqual(lines[2], "Theme: reliability")
+        self.assertEqual(lines[3], "Planned-at: %s" % sha)
+        self.assertRegex(lines[4], r"^Gated-hash: [0-9a-f]{12}$")
+        self.assertEqual(lines[5], "")
+
+    def test_regate_replaces_stamp_in_place(self):
+        self._stamped_change()
+        self._init_git()
+        self.assertEqual(self.cli("feat").returncode, 0)
+        first = self._stamp_lines(self.read_plan("feat"))
+        self.write_plan("feat", self.read_plan("feat").replace(
+            "A one-sentence summary.", "A different one-sentence summary."))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 0, self.out(r))
+        text = self.read_plan("feat")
+        second = self._stamp_lines(text)
+        self.assertEqual(text.count("Planned-at:"), 1)
+        self.assertEqual(text.count("Gated-hash:"), 1)
+        self.assertEqual(first[0], second[0])
+        self.assertNotEqual(first[1], second[1])
+
+    def test_non_git_root_omits_planned_at(self):
+        self._stamped_change()
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 0, self.out(r))
+        text = self.read_plan("feat")
+        self.assertRegex(text, r"\nGated-hash: [0-9a-f]{12}\n")
+        self.assertNotIn("Planned-at", text)
+        self.assertIn("note:", r.stderr)
+        self.assertIn("stamp: Planned-at none", r.stdout)
+
+    def test_unresolvable_base_omits_planned_at(self):
+        self._stamped_change()
+        self._init_git()
+        r = self.cli("feat", "--base", "other")
+        self.assertEqual(r.returncode, 0, self.out(r))
+        text = self.read_plan("feat")
+        self.assertIn("Gated-hash:", text)
+        self.assertNotIn("Planned-at", text)
+        self.assertIn("note:", r.stderr)
+
+    def test_rejecting_run_keeps_stamp_lines(self):
+        self._stamped_change()
+        self._init_git()
+        self.assertEqual(self.cli("feat").returncode, 0)
+        before = self._stamp_lines(self.read_plan("feat"))
+        self.assertEqual(len(before), 2)
+        self.write_tasks(
+            "feat",
+            "# Tasks\n\n- [ ] 1.1 [req: widget] Wire it (TODO decide key).\n")
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        text = self.read_plan("feat")
+        self.assertIn("Status: rejected", text)
+        self.assertEqual(self._stamp_lines(text), before)
+
+
+class CheckModeTest(SpecGateTestBase):
+    """``spec_gate.py <change> --check``: every gate check plus the
+    ``Gated-hash`` mismatch check, read-only (context-gate gate-check-mode)."""
+
+    def test_clean_draft_passes_and_stays_draft(self):
+        self.make_clean_change("feat", status="draft")
+        before = self.read_plan("feat")
+        r = self.cli("feat", "--check")
+        self.assertEqual(r.returncode, 0, self.out(r))
+        self.assertIn("PASS (check)", r.stdout)
+        self.assertEqual(self.read_plan("feat"), before)
+        self.assertIn("Status: draft", self.read_plan("feat"))
+
+    def test_findings_print_without_being_written(self):
+        self.make_clean_change("feat", status="draft")
+        self.write_tasks(
+            "feat",
+            "# Tasks\n\n- [ ] 1.1 [req: widget] Wire it (TODO decide key).\n")
+        before = self.read_plan("feat")
+        r = self.cli("feat", "--check")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("REJECTED (check)", r.stdout)
+        self.assertIn("TODO", r.stdout)
+        text = self.read_plan("feat")
+        self.assertEqual(text, before)
+        self.assertNotIn("## Context insufficient", text)
+        self.assertIn("Status: draft", text)
+
+    def test_edited_after_gate_is_a_mismatch_finding(self):
+        self.make_clean_change("feat", status="draft")
+        self._init_git()
+        self.assertEqual(self.cli("feat").returncode, 0)
+        stamped = self.read_plan("feat")
+        stamp_hash = stamped.split("Gated-hash: ", 1)[1].split("\n", 1)[0]
+        edited = stamped.replace("Carefully.", "Carefully, and differently.")
+        self.write_plan("feat", edited)
+        r = self.cli("feat", "--check")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("REJECTED (check)", r.stdout)
+        self.assertIn("gated-hash mismatch", r.stdout)
+        self.assertIn(stamp_hash, r.stdout)
+        recomputed = [ln for ln in r.stdout.splitlines()
+                      if "gated-hash mismatch" in ln][0]
+        self.assertRegex(recomputed, r"content [0-9a-f]{12}")
+        self.assertNotIn("content %s" % stamp_hash, recomputed)
+        self.assertEqual(self.read_plan("feat"), edited)
+
+    def test_unstamped_ready_plan_checks_clean(self):
+        self.make_clean_change("feat", status="ready")
+        r = self.cli("feat", "--check")
+        self.assertEqual(r.returncode, 0, self.out(r))
+        self.assertNotIn("Gated-hash", self.read_plan("feat"))
+
+    def test_unknown_change_is_general_error(self):
+        r = self.cli("no-such-change", "--check")
+        self.assertEqual(r.returncode, 1, self.out(r))
+
+    def test_check_records_no_flow_snapshot(self):
+        self.make_clean_change("feat", status="draft")
+        r = self.cli("feat", "--check")
+        self.assertEqual(r.returncode, 0, self.out(r))
+        self.assertEqual(os.listdir(self.flow_dir), [])
 
 
 class MalformedConfigTest(SpecGateTestBase):

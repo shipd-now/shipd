@@ -308,8 +308,111 @@ class PlanMetadataParserTest(unittest.TestCase):
     def test_module_constants(self):
         self.assertEqual(
             sc.METADATA_KEYS,
-            ("Profile", "Epic", "Initiative", "Theme", "Fixes"))
+            ("Profile", "Epic", "Initiative", "Theme", "Fixes",
+             "Planned-at", "Gated-hash"))
         self.assertEqual(sc.PROFILES, ("full", "lite"))
+
+
+class PlanStampTest(unittest.TestCase):
+    """The plan stamp helpers: hyphenated keys parse, and ``read_plan_stamp``
+    / ``write_plan_stamp`` / ``plan_gated_hash`` (shipd-spec-format
+    plan-header-metadata-lines; context-gate plan-stamp-write)."""
+
+    SHA = "076a9effc1acd6acbf99b2c2209d1998fe5ab9fe"
+    HASH = "9851e28d228d"
+
+    def test_hyphenated_stamp_keys_parse_in_order(self):
+        pairs = sc.parse_plan_metadata(
+            "# c\nStatus: ready\nEpic: e\nPlanned-at: %s\n"
+            "Gated-hash: %s\n\n## Idea\nWhy.\n" % (self.SHA, self.HASH))
+        self.assertEqual(pairs, [("Epic", "e"), ("Planned-at", self.SHA),
+                                 ("Gated-hash", self.HASH)])
+
+    def test_stamp_constants(self):
+        self.assertEqual(sc.STAMP_KEYS, ("Planned-at", "Gated-hash"))
+        for key in sc.STAMP_KEYS:
+            self.assertIn(key, sc.METADATA_KEYS)
+        self.assertTrue(sc.PLANNED_AT_RE.match(self.SHA))
+        self.assertTrue(sc.PLANNED_AT_RE.match("076a9ef"))
+        self.assertFalse(sc.PLANNED_AT_RE.match("076a9e"))
+        self.assertTrue(sc.GATED_HASH_RE.match(self.HASH))
+        self.assertFalse(sc.GATED_HASH_RE.match("not-a-hash"))
+
+    def test_read_plan_stamp(self):
+        text = ("# c\nStatus: ready\nEpic: e\nPlanned-at: %s\n"
+                "Gated-hash: %s\n\n## Idea\nWhy.\n" % (self.SHA, self.HASH))
+        self.assertEqual(sc.read_plan_stamp(text), (self.SHA, self.HASH))
+
+    def test_read_plan_stamp_unstamped(self):
+        self.assertEqual(
+            sc.read_plan_stamp("# c\nStatus: ready\nEpic: e\n\n## Idea\n"),
+            (None, None))
+
+    def test_write_appends_after_existing_metadata(self):
+        text = "# c\nStatus: ready\nEpic: e\n\n## Idea\nWhy.\n"
+        out = sc.write_plan_stamp(text, self.SHA, self.HASH)
+        self.assertEqual(
+            out, "# c\nStatus: ready\nEpic: e\nPlanned-at: %s\n"
+                 "Gated-hash: %s\n\n## Idea\nWhy.\n" % (self.SHA, self.HASH))
+
+    def test_write_directly_after_status_without_block(self):
+        text = "# c\nStatus: ready\n\n## Idea\nWhy.\n"
+        out = sc.write_plan_stamp(text, self.SHA, self.HASH)
+        self.assertEqual(
+            out, "# c\nStatus: ready\nPlanned-at: %s\nGated-hash: %s\n"
+                 "\n## Idea\nWhy.\n" % (self.SHA, self.HASH))
+
+    def test_write_replaces_in_place(self):
+        text = ("# c\nStatus: ready\nPlanned-at: aaaaaaa\n"
+                "Gated-hash: bbbbbbbbbbbb\nEpic: e\n\n## Idea\nWhy.\n")
+        out = sc.write_plan_stamp(text, self.SHA, self.HASH)
+        self.assertEqual(
+            out, "# c\nStatus: ready\nPlanned-at: %s\nGated-hash: %s\n"
+                 "Epic: e\n\n## Idea\nWhy.\n" % (self.SHA, self.HASH))
+        self.assertEqual(out.count("Planned-at:"), 1)
+        self.assertEqual(out.count("Gated-hash:"), 1)
+
+    def test_write_none_planned_at_removes_stale(self):
+        text = ("# c\nStatus: ready\nEpic: e\nPlanned-at: aaaaaaa\n"
+                "Gated-hash: bbbbbbbbbbbb\n\n## Idea\nWhy.\n")
+        out = sc.write_plan_stamp(text, None, self.HASH)
+        self.assertNotIn("Planned-at", out)
+        self.assertEqual(
+            out, "# c\nStatus: ready\nEpic: e\nGated-hash: %s\n"
+                 "\n## Idea\nWhy.\n" % self.HASH)
+
+    def test_write_none_planned_at_on_unstamped(self):
+        out = sc.write_plan_stamp(
+            "# c\nStatus: draft\n\n## Idea\nWhy.\n", None, self.HASH)
+        self.assertNotIn("Planned-at", out)
+        self.assertEqual(sc.read_plan_stamp(out), (None, self.HASH))
+
+    BODY = "\n## Idea\n\nWhy it matters.\n\n## Implementation\n\nHow.\n"
+
+    def test_hash_ignores_status_value(self):
+        a = sc.plan_gated_hash("# c\nStatus: draft\nEpic: e\n" + self.BODY)
+        b = sc.plan_gated_hash("# c\nStatus: ready\nEpic: e\n" + self.BODY)
+        self.assertEqual(a, b)
+        self.assertTrue(sc.GATED_HASH_RE.match(a))
+
+    def test_hash_ignores_stamp_lines(self):
+        plain = "# c\nStatus: ready\nEpic: e\n" + self.BODY
+        stamped = sc.write_plan_stamp(
+            plain, self.SHA, sc.plan_gated_hash(plain))
+        self.assertEqual(sc.plan_gated_hash(stamped), sc.plan_gated_hash(plain))
+
+    def test_hash_ignores_whitespace_edits(self):
+        plain = "# c\nStatus: ready\nEpic: e\n" + self.BODY
+        messy = plain.replace("Why it matters.", "Why it matters.   ").replace(
+            "## Implementation", "\n\n## Implementation")
+        self.assertNotEqual(plain, messy)
+        self.assertEqual(sc.plan_gated_hash(messy), sc.plan_gated_hash(plain))
+
+    def test_hash_changes_with_idea_text(self):
+        plain = "# c\nStatus: ready\nEpic: e\n" + self.BODY
+        edited = plain.replace("Why it matters.", "Why it matters more.")
+        self.assertNotEqual(
+            sc.plan_gated_hash(edited), sc.plan_gated_hash(plain))
 
 
 class EpicChangesParserTest(unittest.TestCase):

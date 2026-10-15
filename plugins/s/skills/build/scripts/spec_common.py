@@ -78,12 +78,21 @@ PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$")
 
 # Plan header metadata (shipd-spec-format plan-header-metadata-lines): the optional
 # block is the contiguous run of ``<Key>: <value>`` lines immediately after the
-# ``Status:`` line, recognizing exactly these five keys; ``Profile`` accepts
+# ``Status:`` line, recognizing exactly these seven keys; ``Profile`` accepts
 # exactly these two values (absent meaning ``full``). ``Fixes`` is repeatable —
 # each line names a shipped change this plan remediates (the post-merge fix
-# linkage the delivery-metrics change-failure signal derives from).
-METADATA_KEYS = ("Profile", "Epic", "Initiative", "Theme", "Fixes")
+# linkage the delivery-metrics change-failure signal derives from). The two
+# hyphenated stamp keys (context-gate plan-stamp-write) are written only by the
+# context gate on a passing run: ``Planned-at`` is the merge-base commit the
+# plan was gated against, ``Gated-hash`` the normalized content hash the gate
+# approved. Both are hex-valued, not slugs.
+STAMP_KEYS = ("Planned-at", "Gated-hash")
+METADATA_KEYS = ("Profile", "Epic", "Initiative", "Theme", "Fixes") + STAMP_KEYS
 PROFILES = ("full", "lite")
+# Value shapes of the two stamp keys: an abbreviated-to-full git commit id, and
+# the engine's truncated content hash (``HASH_LENGTH`` lowercase hex chars).
+PLANNED_AT_RE = re.compile(r"^[0-9a-f]{7,40}$")
+GATED_HASH_RE = re.compile(r"^[0-9a-f]{%d}$" % HASH_LENGTH)
 
 # Epic header metadata (shipd-spec-format epic-header-metadata): an epic reuses the
 # plan header grammar (title / ``Status:`` / metadata block) but recognizes a
@@ -111,10 +120,11 @@ SECTION_HEADER_RE = re.compile(r"^##\s+(.*?)\s*$")
 TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-+:?$")
 
 PLAN_STATUS_LINE_RE = re.compile(r"^Status:\s*(.*?)\s*$")
-# A single ``<Key>: <value>`` metadata line: the key is one bareword (no
-# spaces), the value the trimmed remainder. Unrecognized keys still match so the
-# linter can report them; validation of key and value happens in the linter.
-METADATA_LINE_RE = re.compile(r"^([A-Za-z][A-Za-z0-9]*):\s*(.*?)\s*$")
+# A single ``<Key>: <value>`` metadata line: the key is one bareword of
+# letters, digits, and hyphens (no spaces), the value the trimmed remainder.
+# Unrecognized keys still match so the linter can report them; validation of
+# key and value happens in the linter.
+METADATA_LINE_RE = re.compile(r"^([A-Za-z][A-Za-z0-9-]*):\s*(.*?)\s*$")
 
 
 # ---------------------------------------------------------------------------
@@ -3036,6 +3046,96 @@ def parse_plan_metadata(text):
             break
         pairs.append((m.group(1), m.group(2)))
     return pairs
+
+
+def _plan_metadata_block(lines):
+    """Return ``(status_idx, end)`` for a plan's header: the index of the first
+    ``Status:`` line and the index just past its contiguous metadata block.
+    ``status_idx`` is ``None`` when the plan has no ``Status:`` line."""
+    status_idx = next((i for i, ln in enumerate(lines)
+                       if PLAN_STATUS_LINE_RE.match(ln)), None)
+    if status_idx is None:
+        return None, None
+    end = status_idx + 1
+    while end < len(lines):
+        ln = lines[end]
+        if ln.strip() == "" or ln.lstrip().startswith("#"):
+            break
+        if not METADATA_LINE_RE.match(ln):
+            break
+        end += 1
+    return status_idx, end
+
+
+def read_plan_stamp(text):
+    """Return ``(planned_at, gated_hash)`` from a plan's header metadata block
+    (context-gate plan-stamp-write), each ``None`` when its line is absent. The
+    first occurrence of each key wins."""
+    planned_at = gated_hash = None
+    for key, value in parse_plan_metadata(text):
+        if key == "Planned-at" and planned_at is None:
+            planned_at = value
+        elif key == "Gated-hash" and gated_hash is None:
+            gated_hash = value
+    return planned_at, gated_hash
+
+
+def plan_gated_hash(text):
+    """Return the plan stamp's content hash (context-gate plan-stamp-write):
+    the engine's normalized :func:`content_hash` of the plan text with the
+    first ``Status:`` line and every header-block stamp line dropped, so a
+    status move, a re-stamp, or a whitespace-only edit is not a change.
+    Callers pass text with any ``## Context insufficient`` section already
+    stripped."""
+    lines = text.splitlines()
+    status_idx, end = _plan_metadata_block(lines)
+    if status_idx is None:
+        return content_hash(text)
+    kept = []
+    for i, ln in enumerate(lines):
+        if i == status_idx:
+            continue
+        if status_idx < i < end:
+            m = METADATA_LINE_RE.match(ln)
+            if m and m.group(1) in STAMP_KEYS:
+                continue
+        kept.append(ln)
+    return content_hash("\n".join(kept))
+
+
+def write_plan_stamp(text, planned_at, gated_hash):
+    """Return ``text`` with the plan stamp written into its header metadata
+    block (context-gate plan-stamp-write). An existing stamp line is replaced
+    in place (a duplicate is dropped); a missing one is appended, ``Planned-at``
+    first, as the last line(s) of the block — directly after ``Status:`` when
+    no block exists. A ``None`` ``planned_at`` writes no ``Planned-at`` line
+    and removes a stale one. A plan with no ``Status:`` line is returned
+    unchanged."""
+    lines = text.splitlines()
+    status_idx, end = _plan_metadata_block(lines)
+    if status_idx is None:
+        return text
+    values = {"Planned-at": planned_at, "Gated-hash": gated_hash}
+    written = set()
+    block = []
+    for ln in lines[status_idx + 1:end]:
+        m = METADATA_LINE_RE.match(ln)
+        key = m.group(1) if m else None
+        if key in STAMP_KEYS:
+            if values[key] is None or key in written:
+                continue
+            block.append("%s: %s" % (key, values[key]))
+            written.add(key)
+            continue
+        block.append(ln)
+    for key in STAMP_KEYS:
+        if key not in written and values[key] is not None:
+            block.append("%s: %s" % (key, values[key]))
+    new = lines[:status_idx + 1] + block + lines[end:]
+    result = "\n".join(new)
+    if text.endswith("\n"):
+        result += "\n"
+    return result
 
 
 # ---------------------------------------------------------------------------

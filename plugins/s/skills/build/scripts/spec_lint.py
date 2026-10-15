@@ -379,8 +379,11 @@ def check_plan_metadata(root, change, errors):
     """Validate a change's ``plan.md`` optional header metadata block (see the
     shipd-spec-lint ``plan-metadata-validation`` requirement). The block is the
     contiguous ``<Key>: <value>`` run immediately after the ``Status:`` line.
-    Reports an error on an unrecognized key, on a value that is not a kebab-case
-    slug, on a ``Profile:`` value other than ``full``/``lite``, and on a plan
+    Reports an error on an unrecognized key, on a slug-valued key whose value
+    is not a kebab-case slug, on a ``Planned-at:`` value that is not a 7–40
+    character lowercase hex commit id, on a ``Gated-hash:`` value that is not a
+    12-character lowercase hex content hash (the stamp's shape only — the
+    stamped hash is never recomputed here), on a ``Profile:`` value other than ``full``/``lite``, and on a plan
     carrying both ``Epic:`` and ``Initiative:`` lines (the initiative attaches
     through the epic). A plan with no metadata block is a no-op. A missing plan
     is left to :func:`check_plan_header` to report. A malformed layered
@@ -414,6 +417,18 @@ def check_plan_metadata(root, change, errors):
             errors.append(LintError(
                 "plan.md metadata has unrecognized key '%s' (recognized keys: "
                 "%s)" % (key, ", ".join(sc.METADATA_KEYS)), path))
+            continue
+        if key == "Planned-at":
+            if not sc.PLANNED_AT_RE.match(value):
+                errors.append(LintError(
+                    "plan.md `Planned-at: %s` is not a 7–40 character "
+                    "lowercase hex commit id" % value, path))
+            continue
+        if key == "Gated-hash":
+            if not sc.GATED_HASH_RE.match(value):
+                errors.append(LintError(
+                    "plan.md `Gated-hash: %s` is not a 12-character "
+                    "lowercase hex content hash" % value, path))
             continue
         if not sc.KEBAB_RE.match(value):
             errors.append(LintError(
