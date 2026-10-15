@@ -43,9 +43,18 @@ import argparse
 import datetime
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+# The PR room's schema lives in the room skill; the gate renders its markers
+# through it, never by hand, so the import is a hard dependency.
+ROOM_SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "..", "room", "scripts"))
+sys.path.insert(0, ROOM_SCRIPTS)
+
+import room_schema  # noqa: E402
 
 PROG = "review_gate"
 CONTEXT = "semantic-review"
@@ -63,6 +72,14 @@ LEGACY_MARKER = "<!-- am-semantic-review -->"
 # The ☕ brand line that opens the summary comment's visible body — the hidden
 # MARKER above stays line 1 and unbranded, so upsert matching is untouched.
 BRAND_LINE = "**☕ shipd** semantic review"
+
+# The gate's fixed participant identity in the PR room — the status context's
+# own name, so the room and the required check name the same agent — and the
+# skill an anchored finding's task asks a picker to have.
+ROOM_AGENT = "semantic-review"
+ROOM_SKILL = "review-finding"
+PLUGIN_MANIFEST = os.path.normpath(
+    os.path.join(HERE, "..", "..", "..", ".claude-plugin", "plugin.json"))
 
 # Severity -> summary-table dot. These, the ✅/❌ verdict marker, and the ☕ of
 # BRAND_LINE are the only emoji this script emits, mirroring the skill's three
@@ -357,7 +374,8 @@ def review_footer(files):
 
 
 def render_summary(review, unanchored, disposition="all", model=None,
-                   files=None, fast_pass_outcome=None):
+                   files=None, fast_pass_outcome=None, room=None,
+                   status_state=None):
     """Render the marker-tagged summary comment body: the ☕ brand line, the
     verdict header, effort, the policy provenance lines, the
     ``# | rating | details`` findings table (or ``NO_PROBLEMS`` in its
@@ -372,7 +390,13 @@ def render_summary(review, unanchored, disposition="all", model=None,
     Provenance: a non-``all`` ``disposition`` adds a ``Disposition: <scope>``
     line so a green status over visible findings is explained on the PR, and a
     given ``model`` adds a ``Model: <tier>`` line recorded verbatim — symbolic
-    tiers are never resolved here."""
+    tiers are never resolved here.
+
+    Given a ``room`` (``{"context", "agent"}``, see ``_room``), the gate's
+    PR-room Agent Card line then its Message line follow the fast-pass line,
+    above the footer block, so the footer stays last. ``status_state`` is the
+    commit status the Message records, computed from the review when not
+    passed. Without ``room`` the body is unchanged."""
     verdict = review.get("verdict")
     findings = review.get("findings") or []
     out = [MARKER, "", BRAND_LINE, "", _verdict_header(verdict), "",
@@ -411,6 +435,9 @@ def render_summary(review, unanchored, disposition="all", model=None,
                 out.append("  - Fix: %s" % fix)
     if fast_pass_outcome:
         out += ["", fast_pass_outcome]
+    if room:
+        out += ["", _room_card_line(room),
+                _room_summary_line(room, review, status_state, disposition)]
     footer = review_footer(files)
     if footer:
         out += ["", footer]
@@ -560,7 +587,7 @@ def _suggestion(f, commentable=None):
     return start, end, lines
 
 
-def _inline_body(f, suggestion=None, location_index=0):
+def _inline_body(f, suggestion=None, location_index=0, room=None):
     """The text body of one anchored inline comment — the finding's what / why
     / fix as prose, followed by a committable ``suggestion`` fenced block when
     ``suggestion`` is the ``(start, end, lines)`` triple ``_suggestion``
@@ -578,6 +605,11 @@ def _inline_body(f, suggestion=None, location_index=0):
     When a finding has multiple locations, the inline body is appended with
     an "Also recurs at:" line naming all other sites.
 
+    Given a ``room``, one PR-room Message line (``_room_finding_line``) opens
+    an ``input-required`` task for this site, placed before the blank line
+    that precedes the closing identity marker; without one the body is
+    unchanged.
+
     No emoji."""
     sev = f.get("severity", "low")
     parts = [_sev_marker(sev) + "%s**" % (f.get("what") or "")]
@@ -594,9 +626,9 @@ def _inline_body(f, suggestion=None, location_index=0):
     locations = f.get("locations") or []
 
     # Get the path for this location
-    path = None
+    path = line = None
     if locations and location_index < len(locations):
-        path, _line = _parse_location(locations[location_index])
+        path, line = _parse_location(locations[location_index])
 
     # If there are multiple locations, append "Also recurs at:"
     if len(locations) > 1:
@@ -607,9 +639,11 @@ def _inline_body(f, suggestion=None, location_index=0):
 
     # Count total locations for the hash
     num_locations = len(locations) if locations else 1
-    parts += ["", "<!-- shipd-finding %s -->" %
-              _finding_hash(path, f.get("what"),
-                           index=location_index if num_locations > 1 else 0)]
+    digest = _finding_hash(path, f.get("what"),
+                           index=location_index if num_locations > 1 else 0)
+    if room:
+        parts += ["", _room_finding_line(room, f, path, line, digest)]
+    parts += ["", "<!-- shipd-finding %s -->" % digest]
     return "\n".join(parts)
 
 
@@ -626,6 +660,73 @@ def _status_description(review, disposition="all"):
     parts = ["%d %s" % (counts[s], s) for s in ("high", "medium", "low")
              if counts.get(s)]
     return ("%s: %s%s" % (verdict, ", ".join(parts), suffix))[:140]
+
+
+# --- PR room markers --------------------------------------------------------
+
+def _plugin_version():
+    """The plugin manifest's ``version``, read as `room.py join` reads it —
+    ``""`` on any failure, so an unreadable manifest never blocks a post."""
+    try:
+        with open(PLUGIN_MANIFEST, encoding="utf-8") as fh:
+            return str(json.load(fh).get("version") or "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def _room(repo, number):
+    """The room ``post`` threads to every renderer: the PR's context id and
+    the gate's fixed agent name."""
+    return {"context": "%s#%d" % (repo, number), "agent": ROOM_AGENT}
+
+
+def _room_card_line(room):
+    """The gate's Agent Card marker line — the first-marker read of the
+    summary sees the gate as a room participant."""
+    card = room_schema.AgentCard(
+        name=room["agent"], description="shipd semantic-review gate",
+        skills=(CONTEXT,), version=_plugin_version())
+    return room_schema.render_marker(
+        room_schema.CARD_MARKER, room_schema.card_to_dict(card))
+
+
+def _room_summary_line(room, review, state, disposition="all"):
+    """The summary's Message marker line: a ``completed`` round-1 report
+    carrying the verdict and the commit status ``state`` (computed from the
+    review when ``None``), its text the status description. No ``taskId`` —
+    the in-place PATCH keeps the comment, and so the task, stable."""
+    if state is None:
+        state = status_state(review.get("verdict"),
+                             review.get("findings") or [], disposition)
+    msg = room_schema.Message(
+        role="agent",
+        parts=({"kind": "text",
+                "text": _status_description(review, disposition)},),
+        context_id=room["context"], agent=room["agent"],
+        metadata={"round": 1, "state": "completed", "status": state,
+                  "verdict": review.get("verdict")})
+    return room_schema.render_marker(
+        room_schema.MESSAGE_MARKER, room_schema.message_to_dict(msg))
+
+
+def _room_finding_line(room, f, path, line, digest):
+    """An anchored finding's Message marker line: an ``input-required``
+    round-1 task for any agent with the `review-finding` skill, addressed to
+    no one. No ``taskId`` — the review POST returns no per-comment ids, so
+    ``build_tasks`` takes the inline comment's own id. The data part carries
+    this site's identity ``digest`` so a picker needs no prose parsing."""
+    msg = room_schema.Message(
+        role="agent",
+        parts=({"kind": "text", "text": f.get("what") or ""},
+               {"kind": "data",
+                "data": {"severity": f.get("severity", "low"), "path": path,
+                         "line": line, "hash": digest, "why": f.get("why"),
+                         "fix": f.get("fix")}}),
+        context_id=room["context"], agent=room["agent"],
+        metadata={"round": 1, "skill": ROOM_SKILL,
+                  "state": "input-required"})
+    return room_schema.render_marker(
+        room_schema.MESSAGE_MARKER, room_schema.message_to_dict(msg))
 
 
 # --- gh interactions --------------------------------------------------------
@@ -705,7 +806,8 @@ def _set_status(gh, repo, sha, state, description, target_url):
         _fail("setting commit status failed: %s" % err.strip())
 
 
-def _review_comment(f, path, line, commentable=None, location_index=0):
+def _review_comment(f, path, line, commentable=None, location_index=0,
+                    room=None):
     """One inline comment payload for an anchored finding. A finding carrying
     a committable suggestion anchors on the range that suggestion replaces —
     GitHub applies a suggestion to the lines its comment spans — and a
@@ -713,11 +815,13 @@ def _review_comment(f, path, line, commentable=None, location_index=0):
     finding keeps its location-line anchor unchanged.
 
     A suggestion is only ever attached to the comment anchored at locations[0];
-    all other comments render as prose only."""
+    all other comments render as prose only. ``room`` passes through to
+    ``_inline_body``."""
     # Suggestions only attach to the primary location (index 0)
     suggestion = _suggestion(f, commentable) if location_index == 0 else None
     comment = {"path": path, "side": "RIGHT",
-               "body": _inline_body(f, suggestion, location_index=location_index)}
+               "body": _inline_body(f, suggestion, location_index=location_index,
+                                    room=room)}
     if suggestion is None:
         comment["line"] = line
         return comment
@@ -729,17 +833,18 @@ def _review_comment(f, path, line, commentable=None, location_index=0):
     return comment
 
 
-def _post_review(gh, repo, number, sha, anchored, commentable=None):
+def _post_review(gh, repo, number, sha, anchored, commentable=None,
+                 room=None):
     """Post one COMMENT review with the ``anchored`` inline comments, each
     carrying its finding's committable suggestion where ``commentable`` — the
     per-path RIGHT-side line sets ``post`` already computed — admits one.
-    Returns True on success, False on rejection (e.g. a 422 from an
-    un-anchorable line)."""
+    Given a ``room``, every inline comment opens a PR-room task. Returns True
+    on success, False on rejection (e.g. a 422 from an un-anchorable line)."""
     comments = [
         _review_comment(f, p, ln,
                         None if commentable is None
                         else commentable.get(p, set()),
-                        location_index=idx)
+                        location_index=idx, room=room)
         for f, p, ln, idx in anchored]
     body = ("Semantic review — see the summary comment for the full report."
             if comments else
@@ -775,16 +880,19 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
               "but the review's endpoints.merge_base is %r"
               % (pr_merge_base, payload_merge_base))
     repo = _resolve_repo(gh)
+    # The PR room every summary upsert and review POST below carries.
+    room = _room(repo, number)
     files = _pr_files(gh, repo, number)
     commentable = {f.get("filename"): commentable_lines(f.get("patch") or "")
                    for f in files}
     findings = review.get("findings") or []
     anchored, unanchored = _split_findings(findings, commentable)
 
+    state = status_state(review.get("verdict"), findings, disposition)
     comment_url = _upsert_summary(
         gh, repo, number,
-        render_summary(review, unanchored, disposition, model, files))
-    state = status_state(review.get("verdict"), findings, disposition)
+        render_summary(review, unanchored, disposition, model, files,
+                       room=room, status_state=state))
     _set_status(gh, repo, sha, state,
                 _status_description(review, disposition), comment_url)
     out("summary comment: %s" % (comment_url or "(created)"))
@@ -795,14 +903,16 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
         # finding is already folded here, suggestion or not — and the same
         # sets it consulted then decide whether a suggestion's range is
         # committable, rather than a second anchoring pass over the diff.
-        if not _post_review(gh, repo, number, sha, anchored, commentable):
+        if not _post_review(gh, repo, number, sha, anchored, commentable,
+                            room=room):
             # The inline review was rejected: fold every finding into the
             # summary so nothing is lost, then retry the review with no inline.
             out("inline review rejected; folding findings into the summary")
             _upsert_summary(
                 gh, repo, number,
-                render_summary(review, findings, disposition, model, files))
-            _post_review(gh, repo, number, sha, [])
+                render_summary(review, findings, disposition, model, files,
+                               room=room, status_state=state))
+            _post_review(gh, repo, number, sha, [], room=room)
 
     # Fast-pass auto-merge logic
     fast_pass_armed = False
@@ -831,7 +941,8 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
     comment_url = _upsert_summary(
         gh, repo, number,
         render_summary(review, unanchored, disposition, model, files,
-                       fast_pass_outcome=fast_pass_outcome_line))
+                       fast_pass_outcome=fast_pass_outcome_line,
+                       room=room, status_state=state))
 
     out("semantic-review status: %s" % state)
     return {"state": state, "summary_url": comment_url,
