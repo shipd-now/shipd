@@ -159,7 +159,8 @@ it in under 100 lines plus at-most-necessary diagrams, `/s:document` to author
 and revise `docs/` documentation against the shipd documentation standard,
 `/s:research` to produce
 a cited research report an epic can link, `/s:workspace` to set up and inspect the
-workspace, `/s:initiative` to run workspace initiatives, `/s:ask` to
+workspace, `/s:initiative` to run workspace initiatives, `/s:room` to take an
+agent's turn in a pull request's room, `/s:ask` to
 query the oracle before interrupting the user, `/s:teach` to
 distill spec artifacts and answered queue entries into the workspace wiki,
 `/s:remember` to capture the user's durable preferences into the personal
