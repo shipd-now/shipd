@@ -6910,6 +6910,284 @@ class CheckBaseTest(SpecStatusTestBase):
         self.assertEqual(before, after)
 
 
+class DriftTest(SpecStatusTestBase):
+    """`drift [change] [--epic <slug>] [--base <ref>] [--json]` measures, from
+    local git alone, whether a planned change still matches the code it was
+    gated against (spec-status drift-verb, drift-epic-mode): read-only,
+    ``file-drift``/``symbol-gone``/``stale-base`` finding lines, exit 0 clean /
+    4 on findings / 1 when the plan cannot be measured."""
+
+    # Borrow the master/delta fixture helpers check-base's tests use.
+    make_master = CheckBaseTest.make_master
+    make_delta = CheckBaseTest.make_delta
+    master_hash = CheckBaseTest.master_hash
+    snapshot_content = CheckBaseTest.snapshot_content
+
+    ENGINE = ("def old_helper():\n    return 1\n\n\n"
+              "def kept():\n    return 2\n")
+
+    def setUp(self):
+        super().setUp()
+        self._write("src/engine.py", self.ENGINE)
+        self._init_git()
+
+    # -- git fixture helpers -------------------------------------------------
+
+    def _write(self, rel, text, root=None):
+        path = os.path.join(root or self.root, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def _git(self, *args, root=None):
+        r = subprocess.run(["git", "-C", root or self.root, *args],
+                           capture_output=True, text=True, check=True)
+        return r.stdout
+
+    def _init_git(self):
+        self._git("init", "-q", "-b", "main")
+        for pair in (("user.email", "test@example.com"), ("user.name", "Test")):
+            self._git("config", *pair)
+        self._write(".gitignore", ".worktrees/\n.shipd/state.json\n")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "baseline")
+
+    def _commit_all(self, msg, *paths):
+        """Commit ``paths`` (everything when none are given) and return the
+        new HEAD sha."""
+        self._git("add", *(paths or ("-A",)))
+        self._git("commit", "-q", "-m", msg)
+        return self._head()
+
+    def _head(self, root=None):
+        return self._git("rev-parse", "HEAD", root=root).strip()
+
+    def make_stamped_change(self, change, planned_at, citations, root=None):
+        """Write a ``Status: ready`` plan whose header carries ``Planned-at:
+        <planned_at>`` (omitted when ``None``) and whose ``## Implementation``
+        cites each of ``citations`` in backticks."""
+        header = "# %s\nStatus: ready\n" % change
+        if planned_at is not None:
+            header += "Planned-at: %s\n" % planned_at
+        body = ("\n## Idea\nA summary.\n\n### Motivation\nBecause.\n\n"
+                "### Details\nThe changes.\n\n### Non-goals\nNot that.\n\n"
+                "## Implementation\n"
+                + "".join("- `%s`\n" % c for c in citations))
+        self._write(os.path.join(".shipd", "planned", change, "plan.md"),
+                    header + body, root=root)
+
+    def _drift_fixture(self):
+        """A plan stamped at HEAD citing the engine file, a removed symbol, a
+        kept one, and a symbol the plan introduces — then a commit removing
+        ``old_helper``. Returns ``(stamp, removal_sha)``."""
+        stamp = self._head()
+        self.make_stamped_change(
+            "feat", stamp,
+            ["src/engine.py", "old_helper", "kept", "new_verb",
+             "src/engine.py:3-4"])
+        self._write("src/engine.py", "def kept():\n    return 2\n")
+        removal = self._commit_all("drop old_helper", "src")
+        return stamp, removal
+
+    # -- single-change form --------------------------------------------------
+
+    def test_drifted_change_reports_file_and_symbol_findings(self):
+        stamp, removal = self._drift_fixture()
+        r = self.cli("drift", "feat")
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertIn("change: feat", r.stdout)
+        self.assertIn("planned-at: %s (stamp)" % stamp, r.stdout)
+        self.assertIn("base: main %s" % removal, r.stdout)
+        self.assertIn("file-drift src/engine.py 1 (%s)" % removal[:7], r.stdout)
+        self.assertIn("symbol-gone old_helper", r.stdout)
+        self.assertNotIn("kept", r.stdout)
+        self.assertNotIn("new_verb", r.stdout)
+        # The line-suffixed citation folds into the same path: one file-drift.
+        self.assertEqual(r.stdout.count("file-drift"), 1)
+        self.assertIn("drift: 2 finding(s).", r.stdout)
+
+    def test_no_commit_since_stamp_is_clean(self):
+        self.make_stamped_change(
+            "feat", self._head(), ["src/engine.py", "old_helper"])
+        r = self.cli("drift", "feat")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("drift: clean (no findings).", r.stdout)
+        self.assertNotIn("file-drift", r.stdout)
+
+    def test_version_bump_file_is_exempt(self):
+        manifest = "plugins/s/.claude-plugin/plugin.json"
+        self._write(manifest, '{"version": "0.0.1"}\n')
+        stamp = self._commit_all("manifest", manifest)
+        # Both spellings are exempt: the bare path and the `./`-prefixed one.
+        self.make_stamped_change("feat", stamp, [manifest, "./" + manifest])
+        self._write(manifest, '{"version": "0.0.2"}\n')
+        self._commit_all("bump", manifest)
+        r = self.cli("drift", "feat")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("file-drift", r.stdout)
+
+    def test_stale_base_rides_along(self):
+        self.make_master(
+            "auth",
+            "### Requirement: Login\nid: login\n\nThe system SHALL log in.\n")
+        actual = self.master_hash("auth", "login")
+        self.make_stamped_change("feat", self._head(), [])
+        self.make_delta(
+            "feat", "auth",
+            "## MODIFIED Requirements\n\n"
+            "### Requirement: Login\nid: login\nbase: deadbeef\n\n"
+            "The system SHALL log in with MFA.\n\n"
+            "#### Scenario: It works\n"
+            "- **WHEN** a user signs in\n"
+            "- **THEN** access is granted\n")
+        r = self.cli("drift", "feat")
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertIn(
+            "stale-base auth/login (expected deadbeef, actual %s)" % actual,
+            r.stdout)
+
+    def test_unstamped_committed_plan_falls_back_to_plan_commit(self):
+        self.make_stamped_change("feat", None, ["src/engine.py"])
+        plan_sha = self._commit_all("plan", ".shipd")
+        r = self.cli("drift", "feat")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("planned-at: %s (plan-commit)" % plan_sha, r.stdout)
+
+    def test_plan_commit_stamp_never_reads_introduced_symbols_as_gone(self):
+        # The plan text at its own commit names every symbol it cites; the
+        # change's directory is left out of the search, so a symbol only the
+        # plan mentions is absent at both refs rather than "gone".
+        self._git("checkout", "-q", "-b", "change/feat")
+        self.make_stamped_change("feat", None, ["new_verb", "kept"])
+        plan_sha = self._commit_all("plan", ".shipd")
+        r = self.cli("drift", "feat")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("planned-at: %s (plan-commit)" % plan_sha, r.stdout)
+        self.assertNotIn("symbol-gone", r.stdout)
+
+    def test_unstamped_uncommitted_plan_is_an_error(self):
+        self.make_stamped_change("feat", None, ["src/engine.py"])
+        r = self.cli("drift", "feat")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("Error:", r.stderr)
+        self.assertIn("Planned-at", r.stderr)
+        self.assertIn("spec_gate.py feat", r.stderr)
+
+    def test_unknown_stamp_is_an_error(self):
+        self.make_stamped_change("feat", "0" * 40, ["src/engine.py"])
+        r = self.cli("drift", "feat")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("Error:", r.stderr)
+
+    def test_missing_plan_is_an_error(self):
+        r = self.cli("drift", "nosuch")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("Error:", r.stderr)
+
+    def test_unresolvable_base_is_an_error(self):
+        self.make_stamped_change("feat", self._head(), ["src/engine.py"])
+        r = self.cli("drift", "feat", "--base", "nosuch")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("Error:", r.stderr)
+        self.assertIn("nosuch", r.stderr)
+
+    def test_json_is_one_object(self):
+        stamp, removal = self._drift_fixture()
+        r = self.cli("drift", "feat", "--json")
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        doc = json.loads(r.stdout)
+        self.assertEqual(doc["change"], "feat")
+        self.assertIn("root", doc)
+        self.assertEqual(doc["planned_at"], stamp)
+        self.assertEqual(doc["stamp_source"], "stamp")
+        self.assertEqual(doc["base"], {"ref": "main", "sha": removal})
+        file_drift = [f for f in doc["findings"] if f["kind"] == "file-drift"]
+        self.assertEqual(file_drift, [{"kind": "file-drift",
+                                       "path": "src/engine.py",
+                                       "commits": [removal[:7]]}])
+        self.assertIn({"kind": "symbol-gone", "symbol": "old_helper"},
+                      doc["findings"])
+
+    def test_verb_never_writes(self):
+        self._drift_fixture()
+        before = self.snapshot_content()
+        self.cli("drift", "feat")
+        self.cli("drift", "feat", "--json")
+        self.assertEqual(before, self.snapshot_content())
+
+    # -- epic form (spec-status drift-epic-mode) -----------------------------
+
+    def make_drift_epic(self, slug, members):
+        """Write ``epics/<slug>/epic.md`` whose ``## Changes`` table lists
+        ``members`` in order, with an ``After`` column."""
+        table = ["| Change | Description | Code | Integration | Unknowns | "
+                 "Risk | After |",
+                 "| --- | --- | --- | --- | --- | --- | --- |"]
+        for m in members:
+            table.append("| %s | Member %s | low | low | low | low | - |"
+                         % (m, m))
+        self._write(
+            os.path.join(".shipd", "epics", slug, "epic.md"),
+            "# %s\nStatus: ready\n\n## Introduction\n\nWhy.\n\n"
+            "### Non-goals\n\n- Not that.\n\n## Decisions\n\nWhy.\n\n"
+            "## Design\n\nHow.\n\n## Changes\n\n%s\n"
+            % (slug, "\n".join(table)))
+
+    def _epic_fixture(self):
+        """Member ``a`` drifted under the root, ``b`` clean under a real
+        ``.worktrees/wt`` checkout, ``c`` unplanned."""
+        self.make_stamped_change("a", self._head(), ["src/engine.py"])
+        self._write("src/engine.py", "def kept():\n    return 2\n")
+        self._commit_all("drop old_helper", "src")
+        wt = os.path.join(self.root, ".worktrees", "wt")
+        self._git("worktree", "add", "-q", wt, "-b", "change/b")
+        self.make_stamped_change("b", self._head(), ["src/engine.py", "kept"],
+                                 root=wt)
+        self.make_drift_epic("e", ["a", "b", "c"])
+        return wt
+
+    def test_epic_measures_members_from_hosting_roots(self):
+        wt = self._epic_fixture()
+        r = self.cli("drift", "--epic", "e")
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertIn("change: a\nroot: %s\n" % self.root, r.stdout)
+        self.assertIn("\n\nchange: b\nroot: %s\n" % wt, r.stdout)
+        self.assertIn("file-drift src/engine.py 1", r.stdout)
+        self.assertIn("skipped: c (unplanned)", r.stdout)
+        self.assertIn("drift: 1 finding(s).", r.stdout)
+        self.assertNotIn("change: c", r.stdout)
+
+    def test_epic_unmeasurable_member_is_skipped_not_a_finding(self):
+        self.make_stamped_change("m", None, ["src/engine.py"])
+        self.make_drift_epic("e", ["m"])
+        r = self.cli("drift", "--epic", "e")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("skipped: m (no-stamp)", r.stdout)
+        self.assertIn("drift: clean (no findings).", r.stdout)
+
+    def test_epic_json_carries_members_and_skipped(self):
+        wt = self._epic_fixture()
+        r = self.cli("drift", "--epic", "e", "--json")
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        doc = json.loads(r.stdout)
+        self.assertEqual(doc["epic"], "e")
+        self.assertEqual(doc["base"]["ref"], "main")
+        self.assertEqual([m["change"] for m in doc["members"]], ["a", "b"])
+        self.assertEqual(doc["members"][1]["root"], wt)
+        self.assertEqual(doc["skipped"],
+                         [{"member": "c", "reason": "unplanned"}])
+
+    def test_change_and_epic_together_is_a_usage_error(self):
+        r = self.cli("drift", "a", "--epic", "e")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("usage", r.stderr)
+
+    def test_unknown_epic_is_an_error(self):
+        r = self.cli("drift", "--epic", "nosuch")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("Error:", r.stderr)
+
+
 class BaseHashTest(SpecStatusTestBase):
     """`base-hash <capability> <requirement-id>` prints a master requirement's
     content hash (spec-status base-hash-verb): read-only, resolving the master

@@ -313,6 +313,37 @@ class PlanMetadataParserTest(unittest.TestCase):
         self.assertEqual(sc.PROFILES, ("full", "lite"))
 
 
+class CitedTokensTest(unittest.TestCase):
+    """cited_paths / cited_symbols: the shared backticked-token extraction the
+    gate's path check and the drift verb read (spec-status drift-verb)."""
+
+    PATH_TEXT = ("Edit `src/a.py`, `./x/y`, see `https://e.com/p`, call "
+                 "`name`, at `src/a.py:12-14`, again `src/a.py`.")
+
+    def test_cited_paths_ordered_and_deduplicated(self):
+        self.assertEqual(sc.cited_paths(self.PATH_TEXT), ["src/a.py", "./x/y"])
+
+    def test_cited_paths_strips_line_suffix(self):
+        self.assertEqual(
+            sc.cited_paths(self.PATH_TEXT, strip_line_suffix=True),
+            ["src/a.py", "./x/y"])
+
+    def test_cited_symbols(self):
+        text = ("`old_helper` and `sc.content_hash` and `--check` and "
+                "`read_plan_stamp(text)` and `src/a.py` and `two words`")
+        self.assertEqual(
+            sc.cited_symbols(text),
+            ["old_helper", "sc.content_hash", "--check", "read_plan_stamp"])
+
+    def test_version_bump_exempt_paths(self):
+        self.assertEqual(sc.VERSION_BUMP_EXEMPT_PATHS,
+                         ("plugins/s/.claude-plugin/plugin.json",))
+
+    def test_token_regexes_live_in_spec_common(self):
+        self.assertTrue(hasattr(sc, "PATH_TOKEN_RE"))
+        self.assertTrue(hasattr(sc, "BACKTICK_RE"))
+
+
 class PlanStampTest(unittest.TestCase):
     """The plan stamp helpers: hyphenated keys parse, and ``read_plan_stamp``
     / ``write_plan_stamp`` / ``plan_gated_hash`` (shipd-spec-format
