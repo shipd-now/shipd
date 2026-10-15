@@ -2395,9 +2395,10 @@ class GateStrictModeTest(GateScriptCase):
         self.assertIn("no verdict", posts[-1].get("description", "").lower())
 
 
-class CopilotVerbTest(unittest.TestCase):
-    """``shipd copilot`` (shipd-cli copilot-verb), driven as a black box
-    against a throwaway target root — this checkout is never a target."""
+class CopilotVerbCase(unittest.TestCase):
+    """The shared harness for driving ``shipd copilot`` as a black box
+    against a throwaway target root — this checkout is never a target. It
+    defines no tests of its own, so each subclass runs only its own."""
 
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="shipd-copilot-test-")
@@ -2463,6 +2464,10 @@ class CopilotVerbTest(unittest.TestCase):
         result = self.cli("add")
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
+
+
+class CopilotVerbTest(CopilotVerbCase):
+    """``shipd copilot`` (shipd-cli copilot-verb): the four gate files."""
 
     # -- the bare report ---------------------------------------------------
 
@@ -2684,6 +2689,189 @@ class CopilotVerbTest(unittest.TestCase):
         self.install()
         self.plant(GATE_PATH, "name: someone else's gate\n")
         result = self.cli("remove", "--force")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.tree(), set())
+
+
+# The room wake set ``copilot add --room`` manages (shipd-cli
+# copilot-room-wake): the wake workflow, rendered from its template, and the
+# five plugin files bundled byte-identical under ``.github/shipd-room/`` at
+# their plugin-relative paths.
+ROOM_TEMPLATE = os.path.join(INTEGRATIONS, "room-wake.yml")
+ROOM_WORKFLOW_PATH = os.path.join(".github", "workflows", "room-wake.yml")
+ROOM_RUNTIME_DIR = os.path.join(".github", "shipd-room")
+ROOM_SOURCES = (
+    os.path.join(".claude-plugin", "plugin.json"),
+    os.path.join("skills", "room", "scripts", "room.py"),
+    os.path.join("skills", "room", "scripts", "room_schema.py"),
+    os.path.join("skills", "build", "scripts", "spec_common.py"),
+    os.path.join("skills", "build", "scripts", "cli_common.py"),
+)
+ROOM_RUNTIME = tuple(os.path.join(ROOM_RUNTIME_DIR, source)
+                     for source in ROOM_SOURCES)
+ROOM_MANAGED = (ROOM_WORKFLOW_PATH,) + ROOM_RUNTIME
+ROOM_ROOM_PY = os.path.join(ROOM_RUNTIME_DIR, "skills", "room", "scripts",
+                            "room.py")
+
+
+class CopilotRoomWakeVerbTest(CopilotVerbCase):
+    """``shipd copilot [add|remove] --room`` (shipd-cli copilot-room-wake):
+    the opt-in wake set, kept apart from the four gate files."""
+
+    def room_states(self):
+        """``{wake path: state word}`` parsed from a bare report."""
+        result = self.cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        found = {}
+        for line in result.stdout.splitlines():
+            for relative in ROOM_MANAGED:
+                if line.split()[1:2] == [relative]:
+                    found[relative] = line.split()[0]
+        return found
+
+    def install_room(self):
+        result = self.cli("add", "--room")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
+    def plugin_bytes(self, source):
+        with open(os.path.join(PLUGIN_ROOT, source), "rb") as fh:
+            return fh.read()
+
+    def installed_bytes(self, relative):
+        with open(self.path(relative), "rb") as fh:
+            return fh.read()
+
+    def test_add_room_installs_the_wake_set_only(self):
+        self.install_room()
+        self.assertEqual(self.tree(), set(ROOM_MANAGED))
+        workflow = self.contents(ROOM_WORKFLOW_PATH)
+        self.assertEqual(workflow.splitlines()[0],
+                         "# shipd-copilot v%s" % self.version)
+        self.assertNotIn("{version}", workflow)
+        for source, relative in zip(ROOM_SOURCES, ROOM_RUNTIME):
+            self.assertEqual(self.installed_bytes(relative),
+                             self.plugin_bytes(source), relative)
+        for relative in MANAGED:
+            self.assertFalse(self.exists(relative), relative)
+
+    def test_add_room_keeps_the_runtime_source_modes(self):
+        self.install_room()
+        for source, relative in zip(ROOM_SOURCES, ROOM_RUNTIME):
+            self.assertEqual(
+                os.stat(self.path(relative)).st_mode & 0o777,
+                os.stat(os.path.join(PLUGIN_ROOT, source)).st_mode & 0o777,
+                relative)
+
+    def test_bare_report_lists_the_wake_set_under_its_own_heading(self):
+        result = self.cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("room wake set:", result.stdout)
+        self.assertEqual(self.room_states(),
+                         {relative: "absent" for relative in ROOM_MANAGED})
+
+    def test_bare_report_after_add_room_is_all_installed(self):
+        self.install_room()
+        self.assertEqual(self.room_states(),
+                         {relative: "installed"
+                          for relative in ROOM_MANAGED})
+
+    def test_plain_add_leaves_the_wake_set_alone(self):
+        self.install_room()
+        self.plant(ROOM_WORKFLOW_PATH,
+                   self.contents(ROOM_WORKFLOW_PATH).replace(
+                       "# shipd-copilot v%s" % self.version,
+                       "# shipd-copilot v0.0.1"))
+        self.plant(ROOM_ROOM_PY, "# an older runtime\n")
+        before = {relative: self.installed_bytes(relative)
+                  for relative in ROOM_MANAGED}
+        self.install()
+        self.assertEqual({relative: self.installed_bytes(relative)
+                          for relative in ROOM_MANAGED}, before)
+        for relative in MANAGED:
+            self.assertTrue(self.exists(relative), relative)
+
+    def test_drifted_runtime_is_stale(self):
+        self.install_room()
+        self.plant(ROOM_ROOM_PY, self.contents(ROOM_ROOM_PY) + "\n# edit\n")
+        states = self.room_states()
+        self.assertEqual(states[ROOM_ROOM_PY], "stale")
+        self.assertEqual(states[ROOM_WORKFLOW_PATH], "stale")
+        for relative in ROOM_RUNTIME:
+            if relative != ROOM_ROOM_PY:
+                self.assertEqual(states[relative], "installed", relative)
+
+    def test_runtime_is_foreign_without_the_workflow_marker(self):
+        self.install_room()
+        self.plant(ROOM_WORKFLOW_PATH, "name: someone else's wake\n")
+        states = self.room_states()
+        for relative in ROOM_MANAGED:
+            self.assertEqual(states[relative], "foreign", relative)
+
+    def test_foreign_wake_workflow_refuses_without_force(self):
+        self.plant(ROOM_WORKFLOW_PATH, "name: someone else's wake\n")
+        result = self.cli("add", "--room")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(ROOM_WORKFLOW_PATH, result.stderr)
+        self.assertEqual(self.tree(), {ROOM_WORKFLOW_PATH})
+        self.assertEqual(self.contents(ROOM_WORKFLOW_PATH),
+                         "name: someone else's wake\n")
+
+    def test_force_writes_all_six_wake_files(self):
+        self.plant(ROOM_WORKFLOW_PATH, "name: someone else's wake\n")
+        result = self.cli("add", "--room", "--force")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.tree(), set(ROOM_MANAGED))
+        self.assertEqual(self.room_states(),
+                         {relative: "installed"
+                          for relative in ROOM_MANAGED})
+
+    def test_remove_room_prunes_the_runtime_tree(self):
+        self.install()
+        self.install_room()
+        result = self.cli("remove", "--room")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.tree(), set(MANAGED))
+        self.assertFalse(os.path.isdir(self.path(ROOM_RUNTIME_DIR)))
+
+    def test_remove_room_keeps_a_non_empty_runtime_directory(self):
+        self.install_room()
+        mine = os.path.join(ROOM_RUNTIME_DIR, "skills", "NOTES.md")
+        self.plant(mine, "mine\n")
+        self.assertEqual(self.cli("remove", "--room").returncode, 0)
+        self.assertEqual(self.tree(), {mine})
+
+    def test_remove_room_prunes_every_emptied_directory(self):
+        self.install_room()
+        mine = os.path.join(ROOM_RUNTIME_DIR, "skills", "build", "scripts",
+                            "mine.py")
+        self.plant(mine, "mine\n")
+        self.assertEqual(self.cli("remove", "--room").returncode, 0)
+        self.assertEqual(self.tree(), {mine})
+        self.assertFalse(os.path.isdir(
+            self.path(os.path.join(ROOM_RUNTIME_DIR, "skills", "room"))))
+        self.assertTrue(os.path.isdir(self.path(os.path.dirname(mine))))
+
+    def test_remove_room_refuses_a_foreign_wake_workflow(self):
+        self.install_room()
+        self.plant(ROOM_WORKFLOW_PATH, "name: someone else's wake\n")
+        result = self.cli("remove", "--room")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(ROOM_WORKFLOW_PATH, result.stderr)
+        self.assertEqual(self.tree(), set(ROOM_MANAGED))
+
+    def test_plain_remove_leaves_an_installed_wake_set(self):
+        self.install()
+        self.install_room()
+        result = self.cli("remove")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.tree(), set(ROOM_MANAGED))
+        self.assertEqual(self.room_states(),
+                         {relative: "installed"
+                          for relative in ROOM_MANAGED})
+
+    def test_remove_room_on_an_empty_root_succeeds(self):
+        result = self.cli("remove", "--room")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.tree(), set())
 

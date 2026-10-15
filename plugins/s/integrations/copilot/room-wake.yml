@@ -1,0 +1,332 @@
+# shipd-copilot v{version}
+#
+# Wakes this repository's CI agent when a shipd PR-room task is addressed to
+# it, runs the Copilot CLI on the task, and posts the reply back to the room.
+# Installed and upgraded by `shipd copilot add --room`, together with the room
+# runtime it runs, bundled byte-identical under .github/shipd-room/; edit the
+# template in the shipd plugin (integrations/copilot/), not this copy.
+#
+# Configuration:
+#
+#   * SHIPD_ROOM_AGENT, a repository Actions variable, names the CI agent
+#     (`gh variable set SHIPD_ROOM_AGENT --body <name>`). Unset, nothing runs.
+#     Only tasks whose `to` names this agent wake it; an unaddressed task is
+#     left for a live session's `shipd room watch`.
+#   * Only a comment whose author is the repository's owner, a member of its
+#     organization, or a collaborator wakes the agent: an issue_comment run
+#     carries the repository's secrets whoever wrote the comment.
+#   * COPILOT_GITHUB_TOKEN, a repository secret, is the Copilot CLI's
+#     credential: a fine-grained PAT carrying only the account-level
+#     "Copilot Requests" permission. Without it the guard logs that it is
+#     missing and the task is left alone.
+#
+# Three jobs, so the two credentials never share a machine:
+#
+#   * guard — the workflow token. It checks out the default branch, runs the
+#     bundled `room.py watch --once` from just before the triggering comment
+#     as the agent, and acts only on the line for that comment addressed to
+#     the agent: it joins the room if the agent has no card yet and posts
+#     `working` on the task.
+#   * run — the Copilot secret only. On a fresh runner it checks out the pull
+#     request's head without persisting credentials, installs a pinned
+#     Copilot CLI and runs it headless on the task. The reply leaves this job
+#     only as a job output.
+#   * reply — the workflow token, on another fresh runner. It reads the reply
+#     through its step environment, never interpolated into a script, and
+#     posts it to the asker: `input-required` when the reply's last non-blank
+#     line is exactly `<!-- shipd-room-reply: input-required -->` (stripped
+#     before posting), else `completed`. A failed, cancelled or empty run
+#     closes the task as `failed` with reason `wake-runner-failed`.
+#
+# The steered runner shares no filesystem, $GITHUB_PATH or $GITHUB_ENV with
+# a credentialed step, and every `room.py` call runs under `env -i` with an
+# explicit PATH and an absolute interpreter, so nothing an earlier step wrote
+# can reach the credential.
+#
+# Known limit: a reply posted with the workflow token starts no workflow
+# run, so two CI agents in one repository never wake each other; a live
+# session's `shipd room watch` still sees the reply. A review comment on a
+# fork's pull request gets a read-only workflow token and cannot write the
+# room; a conversation comment runs with the base repository's token and
+# secrets, which is why the guard accepts only owner, member and collaborator
+# comments.
+
+name: shipd room wake
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shipd-room-wake-${{ github.event.comment.id }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    # Cheap prefilter before any runner starts: an agent is configured, the
+    # comment carries a room marker, its author is an owner, member or
+    # collaborator (the run carries the repository's secrets), and it sits on
+    # a pull request.
+    if: >-
+      vars.SHIPD_ROOM_AGENT != ''
+      && contains(github.event.comment.body, '<!-- shipd-room ')
+      && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                  github.event.comment.author_association)
+      && (github.event_name == 'pull_request_review_comment'
+          || github.event.issue.pull_request)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    outputs:
+      actionable: ${{ steps.guard.outputs.actionable }}
+      pr: ${{ steps.guard.outputs.pr }}
+      task: ${{ steps.guard.outputs.task }}
+      asker: ${{ steps.guard.outputs.asker }}
+      text: ${{ steps.guard.outputs.text }}
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Pick up the addressed task
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHIPD_ROOM_AGENT: ${{ vars.SHIPD_ROOM_AGENT }}
+          # Only whether the secret is set; its value never reaches this job.
+          COPILOT_CONFIGURED: ${{ secrets.COPILOT_GITHUB_TOKEN != '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          room_py=.github/shipd-room/skills/room/scripts/room.py
+          room() {
+            /usr/bin/env -i PATH=/usr/bin:/bin HOME="$HOME" GH_TOKEN="$GH_TOKEN" GH_REPO="$GH_REPO" SHIPD_ROOM_AGENT="$SHIPD_ROOM_AGENT" /usr/bin/python3 -B "$room_py" "$@"
+          }
+          not_actionable() {
+            echo "$1"
+            echo "actionable=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          if [[ "${COPILOT_CONFIGURED:-}" != 'true' ]]; then
+            not_actionable "COPILOT_GITHUB_TOKEN is not set on this repository, so the room wake has no Copilot CLI credential; the task is left for a live session."
+          fi
+          if [[ ! "$COMMENT_ID" =~ ^[0-9]+$ || ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            not_actionable "No comment id or pull request number on this event."
+          fi
+
+          # The watch cursor sits just before the triggering comment, on the
+          # endpoint it was posted to: <issue>:<review>.
+          previous=$((COMMENT_ID - 1))
+          if [[ "$EVENT_NAME" == 'pull_request_review_comment' ]]; then
+            cursor="0:$previous"
+          else
+            cursor="$previous:0"
+          fi
+          lines="$(room watch "$PR_NUMBER" --once --since "$cursor")"
+
+          # Keep only the line for this comment addressed to this agent. Its
+          # task, asker and text become the job's outputs, the text under a
+          # random heredoc delimiter it cannot forge.
+          task="$(printf '%s\n' "$lines" | /usr/bin/python3 -B -c '
+          import json
+          import secrets
+          import sys
+
+          comment, agent, out = sys.argv[1], sys.argv[2], sys.argv[3]
+          for raw in sys.stdin:
+              raw = raw.strip()
+              if not raw:
+                  continue
+              try:
+                  line = json.loads(raw)
+              except ValueError:
+                  continue
+              if not isinstance(line, dict):
+                  continue
+              if str(line.get("comment")) != comment or line.get("to") != agent:
+                  continue
+              task = line.get("task", line.get("id"))
+              if not isinstance(task, int) or isinstance(task, bool):
+                  continue
+              asker = " ".join(str(line.get("last_agent") or "").split())
+              text = str(line.get("text") or "")
+              delimiter = "shipd_room_" + secrets.token_hex(16)
+              while delimiter in text:
+                  delimiter = "shipd_room_" + secrets.token_hex(16)
+              with open(out, "a", encoding="utf-8") as fh:
+                  fh.write("task=%d\n" % task)
+                  fh.write("asker=%s\n" % asker)
+                  fh.write("text<<%s\n%s\n%s\n" % (delimiter, text, delimiter))
+              print(task)
+              break
+          ' "$COMMENT_ID" "$SHIPD_ROOM_AGENT" "$GITHUB_OUTPUT")"
+          if [[ -z "$task" ]]; then
+            not_actionable "No task on comment $COMMENT_ID is addressed to $SHIPD_ROOM_AGENT; nothing to wake for."
+          fi
+
+          # Join only when the agent has no card in this room yet.
+          listing="$(room list "$PR_NUMBER" --json)"
+          if ! printf '%s' "$listing" | /usr/bin/python3 -B -c '
+          import json
+          import sys
+
+          try:
+              cards = json.load(sys.stdin).get("cards") or []
+          except (ValueError, AttributeError):
+              cards = []
+          names = [card.get("name") for card in cards if isinstance(card, dict)]
+          sys.exit(0 if sys.argv[1] in names else 1)
+          ' "$SHIPD_ROOM_AGENT"; then
+            room join "$PR_NUMBER" --harness copilot-cli
+          fi
+          room message "$PR_NUMBER" --task "$task" --state working -- "picked up by the CI wake"
+          {
+            echo "actionable=true"
+            echo "pr=$PR_NUMBER"
+          } >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: guard
+    if: needs.guard.outputs.actionable == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      reply: ${{ steps.runner.outputs.reply }}
+    steps:
+      # The pull request's head, with no credential left behind in the
+      # checkout: this job holds the Copilot secret and nothing that can
+      # write to the repository.
+      - name: Check out the pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ needs.guard.outputs.pr }}/head
+          persist-credentials: false
+
+      - name: Run the Copilot CLI on the task
+        id: runner
+        env:
+          # The one place the secret's value is bound.
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          AGENT: ${{ vars.SHIPD_ROOM_AGENT }}
+          PR_NUMBER: ${{ needs.guard.outputs.pr }}
+          ASKER: ${{ needs.guard.outputs.asker }}
+          TASK_TEXT: ${{ needs.guard.outputs.text }}
+        run: |
+          set -euo pipefail
+          # Pinned to the review gate's version; upgrading is a bump of this
+          # line in the shipd plugin's template.
+          npm install -g @github/copilot@1.0.80
+          marker='<!-- shipd-room-reply: input-required -->'
+          prompt="You are the CI agent \"$AGENT\" in the shipd PR room of pull request #$PR_NUMBER, whose head is checked out in the working directory. $ASKER addressed this task to you:
+
+          $TASK_TEXT
+
+          Do the task, then give your reply to $ASKER as your final answer. It is posted to the room verbatim, so write it for $ASKER to read. If you cannot finish without an answer from $ASKER, end your reply with this exact line, alone on the last line: $marker"
+          reply_file="${RUNNER_TEMP:-.}/shipd-room-reply.md"
+          # Only stdout is the reply; the CLI's run statistics go to stderr,
+          # which stays in the job log.
+          timeout "${SHIPD_ROOM_CLI_TIMEOUT:-600}" copilot -p "$prompt" --allow-all-tools > "$reply_file"
+          # The reply crosses to the reply job as an output, truncated to
+          # 60000 characters under a random heredoc delimiter.
+          /usr/bin/python3 -B -c '
+          import secrets
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8", errors="replace") as fh:
+              reply = fh.read()[:60000]
+          delimiter = "shipd_room_" + secrets.token_hex(16)
+          while delimiter in reply:
+              delimiter = "shipd_room_" + secrets.token_hex(16)
+          with open(sys.argv[2], "a", encoding="utf-8") as fh:
+              fh.write("reply<<%s\n%s\n%s\n" % (delimiter, reply, delimiter))
+          ' "$reply_file" "$GITHUB_OUTPUT"
+
+  reply:
+    needs: [guard, run]
+    # Always, once the guard picked the task up: a failed or cancelled run
+    # still closes the task rather than leaving it at `working`.
+    if: always() && needs.guard.outputs.actionable == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Post the reply to the room
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHIPD_ROOM_AGENT: ${{ vars.SHIPD_ROOM_AGENT }}
+          PR_NUMBER: ${{ needs.guard.outputs.pr }}
+          TASK_ID: ${{ needs.guard.outputs.task }}
+          ASKER: ${{ needs.guard.outputs.asker }}
+          RUN_RESULT: ${{ needs.run.result }}
+          # The runner's reply, read only from this environment.
+          REPLY: ${{ needs.run.outputs.reply }}
+        run: |
+          set -euo pipefail
+          room_py=.github/shipd-room/skills/room/scripts/room.py
+          room() {
+            /usr/bin/env -i PATH=/usr/bin:/bin HOME="$HOME" GH_TOKEN="$GH_TOKEN" GH_REPO="$GH_REPO" SHIPD_ROOM_AGENT="$SHIPD_ROOM_AGENT" /usr/bin/python3 -B "$room_py" "$@"
+          }
+          close_failed() {
+            echo "$1"
+            room close "$PR_NUMBER" --task "$TASK_ID" --state failed --reason wake-runner-failed
+            exit 0
+          }
+
+          if [[ "$RUN_RESULT" != 'success' ]]; then
+            close_failed "The wake runner ended $RUN_RESULT; closing task $TASK_ID as failed."
+          fi
+
+          # The state is the reply's own choice: a last non-blank line that is
+          # exactly the marker asks the asker back and is stripped; anything
+          # else completes the task.
+          reply_file="${RUNNER_TEMP:-.}/shipd-room-reply.md"
+          state="$(/usr/bin/python3 -B -c '
+          import os
+          import sys
+
+          marker = "<!-- shipd-room-reply: input-required -->"
+          lines = os.environ.get("REPLY", "").replace("\r\n", "\n").split("\n")
+
+          def trim(lines):
+              while lines and not lines[-1].strip():
+                  lines.pop()
+
+          trim(lines)
+          state = "completed"
+          if lines and lines[-1].rstrip() == marker:
+              lines.pop()
+              trim(lines)
+              state = "input-required"
+          if not lines:
+              print("empty")
+              sys.exit(0)
+          with open(sys.argv[1], "w", encoding="utf-8") as fh:
+              fh.write("\n".join(lines))
+          print(state)
+          ' "$reply_file")"
+          if [[ "$state" == 'empty' ]]; then
+            close_failed "The wake runner returned an empty reply; closing task $TASK_ID as failed."
+          fi
+          text="$(cat "$reply_file")"
+          room message "$PR_NUMBER" --task "$TASK_ID" --to "$ASKER" --state "$state" -- "$text"
