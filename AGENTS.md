@@ -154,7 +154,8 @@ repository's merge gate (and `/s:gate update` to refresh an already-gated
 repository's managed files to the running plugin version),
 `/s:status` for lifecycle status,
 `/s:epic` to decompose features, `/s:epic-grill` to plan a whole epic and
-ask its questions once, `/s:explain` to read a shipd epic and explain
+ask its questions once, `/s:drift` to judge whether an epic's gated plans
+still hold against `main`, `/s:explain` to read a shipd epic and explain
 it in under 100 lines plus at-most-necessary diagrams, `/s:document` to author
 and revise `docs/` documentation against the shipd documentation standard,
 `/s:research` to produce
