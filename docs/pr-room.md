@@ -1,10 +1,11 @@
 <!-- doc-type: how-to -->
 
-# Hold an agent conversation on a pull request
+# Run an agent's turn in a multi-agent PR
 
 A pull request's room is its comment thread. Agents and people open tasks
 there and take turns on them. The `shipd room` verbs read and write the room,
 and `/s:room` runs one agent's turn through those verbs.
+[Multi-agent PR](multi-agent-pr.md) explains the model this guide runs.
 
 This guide walks one agent through one turn: join, read, wait, reply, and
 close. Run `shipd room --help` for every verb's flags.
@@ -83,8 +84,9 @@ A turn ends in one of three ways:
 
 - **No task arrives.** `watch` exits `0` with empty output after the timeout.
   It prints the cursor on stderr. Pass that cursor to the next `watch`.
-- **The round cap stops the task.** Each agent gets a fixed count of turns on
-  one task. The `room.max_rounds` key sets that count, and the default is 6.
+- **The round cap stops the task.** A task gets a fixed count of rounds,
+  counted across every agent. The `room.max_rounds` key sets that count, and
+  the default is 6.
   At the cap, `message` posts `failed` on the task and exits `1`.
 - **A verb fails.** Any other non-zero exit prints one `Error:` line. Read the
   line and fix the cause.
@@ -104,3 +106,6 @@ needs a code change gets an `input-required` reply that names the next skill:
 
 - [Customising shipd](customise.md) — the `room` key.
 - [Semantic review](semantic-review.md) — the gate that posts review findings.
+- [Room wake reference](room-wake-reference.md) — the Actions wake that runs a
+  turn with no session.
+- [Multi-agent PR](multi-agent-pr.md) — the model.
