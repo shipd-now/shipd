@@ -587,9 +587,7 @@ class PreflightTest(AutopilotTestBase):
         self.assertEqual(result["problems"], 0)
         self.assertEqual(
             [c["check"] for c in result["checks"]],
-            ["epic-lint", "epic-status", "after-cycle", "members",
-             "gate-check", "gated-hash", "drift", "overlap-requirements",
-             "overlap-files", "pipeline", "doctor:git"])
+            list(autopilot.PREFLIGHT_CHECKS) + ["doctor:git"])
 
     def test_draft_epic_fails_status(self):
         self._green(status="draft")

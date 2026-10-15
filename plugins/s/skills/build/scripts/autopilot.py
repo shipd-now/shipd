@@ -319,16 +319,6 @@ def compute_waves(root, epic, parallel, command_fn=None):
 # Launch preflight (epic-autopilot launch-preflight)
 # ---------------------------------------------------------------------------
 
-def _pf_level(findings, failing, warning):
-    """The rubric level for a check: ``fail`` when ``failing``, ``warn`` when
-    ``warning``, else ``ok``."""
-    if failing:
-        return "fail"
-    if warning:
-        return "warn"
-    return "ok"
-
-
 def _after_reach(after_map):
     """``{slug: every slug reachable through After edges}``."""
     reach = {}
