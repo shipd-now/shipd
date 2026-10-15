@@ -3,7 +3,9 @@
 
 Given an approved epic (``ready`` or ``active``), the autopilot drives its
 unplanned member changes to shipped PRs without human interaction. Members are
-selected and ordered risk-ascending; each is driven through the resolved
+selected and ordered by the stub table's ``After`` dependency layers, then
+risk-ascending within a layer (an ``After`` cycle refuses the run); each is
+driven through the resolved
 ``autonomous-pipeline`` (skips, replacements, custom steps honored) in its own
 worktree/branch. Gate rejections park a member for human enrichment; other
 stage failures get re-driven up to the entry's fresh-attempt budget (its
@@ -11,10 +13,13 @@ stage failures get re-driven up to the entry's fresh-attempt budget (its
 ``needs-human`` with a resumable session id. Every run ends with a report —
 machine-readable JSON plus a human summary.
 
-A ``--waves`` mode computes, from on-disk state alone, the waves of members the
-in-session drive may run concurrently — plan waves over the unplanned members,
-then build waves over the ready ones whose planned delta capabilities are
-pairwise disjoint, each capped at ``--parallel N`` — and drives nothing.
+A ``--waves`` mode computes, from on-disk state and the local git refs alone,
+the waves of members the in-session drive may run concurrently — plan waves
+over the unplanned members in ``After`` dependency layers, then build waves
+over the ready ones whose planned delta capabilities are pairwise disjoint,
+each capped at ``--parallel N`` — and drives nothing. A ready member whose
+``After`` dependency has not yet merged into the base branch joins no wave and
+is reported as blocked.
 
 Standard library only. Live sessions, the gate, and external commands are all
 reached through injectable seams so the orchestration is unit-testable without
@@ -27,6 +32,7 @@ import argparse
 import dataclasses
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -149,12 +155,22 @@ def parse_members(root, epic):
 
 def select_and_order(members):
     """Split ``members`` into ``(to_drive, skipped)``. ``to_drive`` is the
-    ``unplanned`` members ordered by Risk ascending (``low`` < ``medium`` <
-    ``high``), ties broken by table order; ``skipped`` is every other member,
-    left in table order under its state."""
-    to_drive = sorted(
-        (m for m in members if m.state == "unplanned"),
-        key=lambda m: (RISK_RANK.get(m.risk, len(RISK_RANK)), m.order))
+    ``unplanned`` members in ``After`` dependency layers (:func:`_plan_layers`,
+    flattened), each layer ordered by Risk ascending (``low`` < ``medium`` <
+    ``high``) with ties broken by table order — without an ``After`` column
+    every member sits in one layer, so the order is plain risk-ascending.
+    ``skipped`` is every other member, left in table order under its state.
+
+    Raises :class:`AutopilotError` naming the cycle when the ``After`` column
+    holds a dependency cycle."""
+    cycle = sc.find_after_cycle({m.slug: m.after for m in members})
+    if cycle:
+        raise AutopilotError(
+            "After column has a dependency cycle: %s; fix the stub table "
+            "(spec_lint.py --epic <epic>)" % " -> ".join(cycle))
+    unplanned = [m for m in members if m.state == "unplanned"]
+    to_drive = [m for layer in _plan_layers(unplanned, max(len(unplanned), 1))
+                for m in layer]
     skipped = [m for m in members if m.state != "unplanned"]
     return to_drive, skipped
 
@@ -180,8 +196,7 @@ def _plan_layers(to_drive, parallel):
     algorithm). An edge runs from a member to each ``after`` slug that is
     itself unplanned; a dependency in any other state is satisfied. Each layer
     sorts risk-ascending then by table order and is chunked to ``parallel``.
-    Members left when no member is free (a cycle) each form a wave of one, in
-    table order, after every acyclic layer."""
+    A cycle never reaches here — :func:`select_and_order` refuses it first."""
     pending = {m.slug: m for m in to_drive}
     deps = {m.slug: {a for a in m.after if a in pending and a != m.slug}
             for m in to_drive}
@@ -189,7 +204,7 @@ def _plan_layers(to_drive, parallel):
     chunks = []
     while pending:
         free = sorted((pending[s] for s in pending if not deps[s]), key=key)
-        if not free:
+        if not free:  # unreachable: select_and_order refuses a cycle
             break
         for start in range(0, len(free), parallel):
             chunks.append(free[start:start + parallel])
@@ -197,25 +212,31 @@ def _plan_layers(to_drive, parallel):
             del pending[m.slug]
         for s in deps:
             deps[s] -= {m.slug for m in free}
-    for m in sorted(pending.values(), key=lambda m: m.order):
-        chunks.append([m])
     return chunks
 
 
-def compute_waves(root, epic, parallel):
+def compute_waves(root, epic, parallel, command_fn=None):
     """The waves of members the in-session drive may run concurrently, computed
-    from on-disk state alone (epic-autopilot member-wave-scheduling).
+    from on-disk state and the local git refs alone (epic-autopilot
+    member-wave-scheduling). An ``After`` cycle raises :class:`AutopilotError`
+    (via :func:`select_and_order`) before any wave is computed.
 
-    Plan waves come first: every ``unplanned`` member in
-    :func:`select_and_order`'s risk-ascending order, chunked into slices of at
-    most ``parallel``. Build waves follow over the ``ready`` members, walked
-    risk-ascending: each joins the earliest wave whose members' capabilities are
-    all disjoint from its own and whose size is below ``parallel``, else it opens
-    a new one — the shared verified library being the one write that makes two
-    members unsafe to build side by side. Members in any other state are
-    reported as skipped under their state. Wave indexes run from 1 across both
-    kinds, and the result is deterministic for a given tree.
+    Plan waves come first: the ``unplanned`` members in ``After`` dependency
+    layers (risk-ascending without the column), chunked into slices of at most
+    ``parallel``. Build waves follow over the ``ready`` members, walked
+    risk-ascending: a member with an ``After`` dependency not yet merged into
+    the base branch (:func:`_merged_into_base`, cached per dependency within
+    this call) joins no wave and is listed under ``blocked`` with its
+    ``waiting_on`` slugs; every other member joins the earliest wave whose
+    members' capabilities are all disjoint from its own and whose size is
+    below ``parallel``, else it opens a new one — the shared verified library
+    being the one write that makes two members unsafe to build side by side.
+    Members in any other state are reported as skipped under their state. Wave
+    indexes run from 1 across both kinds, and the result is deterministic for
+    a given tree and set of refs. ``command_fn`` (default
+    :func:`_run_command`) is the git seam.
     """
+    command_fn = command_fn or _run_command
     if not os.path.isfile(_epic_file(root, epic)):
         raise AutopilotError("epic not found: %s" % epic)
     members = parse_members(root, epic)
@@ -242,7 +263,19 @@ def compute_waves(root, epic, parallel):
     # Each open build wave as ``(member entries, the union of their
     # capabilities)`` — the union is what the next member must be disjoint from.
     build_waves = []
+    blocked = []
+    merged_cache = {}
+
+    def merged(dep):
+        if dep not in merged_cache:
+            merged_cache[dep] = _merged_into_base(command_fn, root, dep)
+        return merged_cache[dep]
+
     for member in ready:
+        waiting_on = [d for d in member.after if not merged(d)]
+        if waiting_on:
+            blocked.append({"member": member.slug, "waiting_on": waiting_on})
+            continue
         caps = member_capabilities(root, member.slug)
         for entries, union in build_waves:
             if len(entries) < parallel and union.isdisjoint(caps):
@@ -259,6 +292,7 @@ def compute_waves(root, epic, parallel):
         "epic": epic,
         "parallel": parallel,
         "waves": waves,
+        "blocked": blocked,
         "skipped": [{"member": m.slug, "state": m.state}
                     for m in skipped if m.state != "ready"],
     }
@@ -342,6 +376,35 @@ def _run_command(cmd, cwd):
     except OSError as exc:
         return 127, "", str(exc)
     return proc.returncode, proc.stdout or "", proc.stderr or ""
+
+
+def _merged_into_base(command_fn, root, slug):
+    """True when ``slug`` has merged into the base branch: the base branch's
+    tree — ``origin/<base>`` where that ref resolves, else ``<base>``
+    (``spec_status.DEFAULT_AMEND_BASE``) — holds a ``completed/`` entry named
+    by a leading digits-and-dashes prefix then ``-<slug>``. Read with ``git
+    ls-tree`` from ``root``; any git failure counts as not merged, so a stale
+    or missing ref blocks a dependent rather than admitting it."""
+    base = ss.DEFAULT_AMEND_BASE
+    ref = None
+    for candidate in ("origin/" + base, base):
+        rc, _out, _err = command_fn(
+            ["git", "rev-parse", "--verify", "--quiet", candidate], root)
+        if rc == 0:
+            ref = candidate
+            break
+    if ref is None:
+        return False
+    completed = os.path.relpath(
+        os.path.join(sc.specs_dir(root), "completed"), root)
+    completed = completed.replace(os.sep, "/") + "/"
+    rc, out, _err = command_fn(
+        ["git", "ls-tree", "--name-only", ref, "--", completed], root)
+    if rc != 0:
+        return False
+    pattern = re.compile(r"^[0-9][0-9-]*-%s$" % re.escape(slug))
+    return any(pattern.match(line.strip().rstrip("/").rsplit("/", 1)[-1])
+               for line in out.splitlines() if line.strip())
 
 
 def _default_gate_fn(member, cwd):
@@ -984,9 +1047,9 @@ def drive_single_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
                         session_model=None, session_fn=None, gate_fn=None,
                         command_fn=None, out=_noop, heartbeat=None):
     """Drive exactly the one epic member named by ``slug`` — independent of the
-    risk-ascending auto-selection — entering the resolved pipeline at the stage
-    matching its current lifecycle (``unplanned`` -> ``plan``, ``ready`` ->
-    ``build``), skipping the already-satisfied stages. Reuses ``drive_member``'s
+    ``member-selection-and-order`` auto-selection — entering the resolved
+    pipeline at the stage matching its current lifecycle (``unplanned`` ->
+    ``plan``, ``ready`` -> ``build``), skipping the already-satisfied stages. Reuses ``drive_member``'s
     worktree, graded stage loop, heartbeat, and park/ship semantics, so it backs
     the board's per-card ``run`` action. Returns a :class:`MemberResult`.
 
@@ -1186,7 +1249,7 @@ def run(root, epic, *, max_members=None, dry_run=False,
             % (_tier_anchor(session_model),
                "" if session_model else " (ladder top; --session-model "
                                         "names another)"))
-        out("Member order (risk ascending):")
+        out("Member order (After, then risk ascending):")
         for m in to_drive:
             out("  %s (risk %s)" % (m.slug, m.risk or "?"))
         out("Resolved pipeline:")
@@ -1342,8 +1405,9 @@ def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
 def _print_waves(result, as_json=False, out=print):
     """Render :func:`compute_waves`'s result — one JSON object for a machine
     reader, else one ``wave <index> [<stage>]:`` line per wave naming its members
-    (a build wave's members carry their capabilities) and one ``skipped:`` line
-    per undrivable member."""
+    (a build wave's members carry their capabilities), one ``blocked:`` line
+    per ready member waiting on an unmerged ``After`` dependency, and one
+    ``skipped:`` line per undrivable member."""
     if as_json:
         out(json.dumps(result))
         return
@@ -1360,6 +1424,9 @@ def _print_waves(result, as_json=False, out=print):
             parts.append("%s (%s)" % (member["slug"], detail))
         out("  wave %d [%s]: %s"
             % (wave["index"], wave["stage"], ", ".join(parts)))
+    for entry in result.get("blocked", []):
+        out("  blocked: %s (waiting on %s)"
+            % (entry["member"], ", ".join(entry["waiting_on"])))
     for entry in result["skipped"]:
         out("  skipped: %s (%s)" % (entry["member"], entry["state"]))
 

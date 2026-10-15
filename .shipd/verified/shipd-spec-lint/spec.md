@@ -241,7 +241,9 @@ recognized keys, required sections, stub table shape). The stub table check
 SHALL accept a header of the six standard columns, or the six followed by
 `After`; where `After` is present, it SHALL error on an `After` slug that is
 not kebab-case, names no other row of the table, or names the row itself,
-and SHALL NOT error on a dependency cycle. When linting a change
+and SHALL error on a dependency cycle among the rows, reporting the first
+cycle found in table order as one error naming its slugs as `a -> b -> a`.
+When linting a change
 whose plan carries `Epic:`, the linter SHALL error on an unresolvable epic
 reference and SHALL warn — never error — when the resolved epic's stub table
 lacks the change's slug. A repository with no `.shipd/epics/` directory SHALL
@@ -276,9 +278,10 @@ lint exactly as before this feature.
 - **THEN** the linter reports that `b` names itself and that `zz` is not a
   row of the table, and exits non-zero
 
-#### Scenario: A cycle is not a lint error
+#### Scenario: A cycle is a lint error
 - **WHEN** row `a` is after `b` and row `b` is after `a`
-- **THEN** the linter prints OK and exits zero
+- **THEN** the linter reports an error naming the cycle `a -> b -> a` and
+  exits non-zero
 
 ### Requirement: Initiative lint mode
 id: initiative-lint-mode
