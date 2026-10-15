@@ -3,7 +3,7 @@ name: autopilot
 description: >-
   Drive an approved epic's unplanned members to shipped PRs unattended: plan →
   gate → build → auto-merging PR per member over the configured pipeline, in
-  risk-ascending order, one worktree/branch each. Preflights the epic, confirms
+  `After`, then risk-ascending order, one worktree/branch each. Preflights the epic, confirms
   the run controls, runs the autopilot in the foreground, and relays its report
   with resume pointers for any parked members. Use when asked to "autopilot an
   epic", "deliver an epic", "ship the epic's members", or "/s:autopilot".
@@ -63,7 +63,7 @@ required argument to `/s:autopilot <epic>`.
 2. **Show the roster.** The `epic-show` output already lists every member and
    its derived state — relay it. What gets driven depends on the mode decided
    above: the **detached** run drives only the members shown as `unplanned`, in
-   risk-ascending order, and reports every other state (`ready`, `rejected`,
+   `After`, then risk-ascending order, and reports every other state (`ready`, `rejected`,
    `active`, `archived`, …) without touching them. The **in-session** drive
    additionally drives members shown as `ready` (entering at the `build`
    stage — see Entry stage per member below), so only states other than
@@ -101,8 +101,10 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> --waves
 ```
 Each `wave <index> [<stage>]:` line names the members that wave runs together
 and, for a build wave, each member's planned capabilities; the mode drives
-nothing. Surface those wave lines in the confirmation alongside the dry run's
-member list, and re-run the command with the chosen `N` whenever the user
+nothing. A `blocked: <member> (waiting on <dep>, ...)` line names a `ready`
+member held out of every build wave until its `After` dependencies merge into
+the base branch. Surface those wave and `blocked:` lines in the confirmation
+alongside the dry run's member list, and re-run the command with the chosen `N` whenever the user
 overrides the control, so the confirmed waves are the ones the run will use.
 
 Offer at least: **"Deliver all members"** (the recommended default, unlimited),
@@ -138,7 +140,9 @@ with `N` the `--parallel` value confirmed in Phase 2. It prints one object:
 {"epic": "<epic>", "parallel": N,
  "waves": [{"index": 1, "stage": "plan",
             "members": [{"slug": "<member>", "risk": "<risk>",
-                         "capabilities": ["<cap>", ...]}]}],
+                         "capabilities": ["<cap>", ...],
+                         "after": ["<dep>", ...]}]}],
+ "blocked": [{"member": "<member>", "waiting_on": ["<dep>", ...]}],
  "skipped": [{"member": "<member>", "state": "<state>"}]}
 ```
 The `waves` array, in order, is the drive's script over members. Each wave
@@ -150,7 +154,14 @@ side by side write the same verified capability. The `skipped` array is every
 member whose state is neither `unplanned` nor `ready`: left undriven and
 reported with its state.
 
-Never parse the dry run's `Member order (risk ascending):` block or its
+The `blocked` array (always present, empty when none) is every `ready` member
+whose `After` cell names a dependency that has not yet merged into the base
+branch — read from the base branch's tree (`origin/main`, else `main`), never
+from a worktree — with the unmerged slugs in `waiting_on`. A blocked member
+joins no wave; it reappears in a build wave on a later `--waves` run once its
+dependencies have merged.
+
+Never parse the dry run's `Member order (After, then risk ascending):` block or its
 `skipped:` lines for this — the dry run is the **detached** mode's preview
 only. The resolved **entry list** still comes from `pipeline-show --json` (The
 entry walk below), unchanged: the waves mode supplies grouping and order, never
@@ -232,10 +243,15 @@ The drive runs **one wave at a time**, and always the **first** wave the
 4. **Grade each member** from the repository, with the grading table below.
 5. **Advance each passing member** to its next entry in its walked slice, and
    repeat from step 2 for the members still walking.
-6. Once every member of the wave has finished its walk, **re-run the `--waves`
-   mode** with the same `--parallel N` and continue with the first wave it now
-   returns — members that have just reached `ready` reappear there in a build
-   wave. Stop when the mode returns no wave.
+6. Once every member of the wave has finished its walk, run
+   `git fetch origin main` from the main checkout (best effort — a failed fetch
+   does not stop the drive) so the merged-dependency check sees fresh refs,
+   then **re-run the `--waves` mode** with the same `--parallel N` and continue
+   with the first wave it now returns — members that have just reached `ready`
+   reappear there in a build wave, and a blocked member whose dependencies have
+   merged is released into one. Stop when the mode returns no wave; when it
+   returns no wave but a non-empty `blocked`, name each blocked member and its
+   `waiting_on` slugs in the run summary and stop.
 
 Members of one wave advance entry by entry together: each round spawns the
 current entry for every member still walking, and a passing member's next entry
@@ -503,6 +519,8 @@ When the drive ends (all members done, or stopped for the user), report:
   (a failed grade or a gate rejection).
 - **Skipped** members with their state (the non-`unplanned`/`ready` states
   from Entry stage per member above).
+- **Blocked** members, when the drive stopped with no wave left, each with the
+  `waiting_on` dependencies that have not yet merged into the base branch.
 
 ## Phase 3 — Detached run: drive the autopilot in the foreground
 

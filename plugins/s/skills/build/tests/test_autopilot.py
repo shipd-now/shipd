@@ -136,6 +136,47 @@ class SelectionTest(unittest.TestCase):
                           ("building", "active")})
 
 
+class AfterOrderTest(AutopilotTestBase):
+    """member-selection-and-order: the detached drive follows ``After`` layers,
+    risk-ascending within a layer, and refuses a dependency cycle."""
+
+    def test_declared_dependency_orders_the_drive(self):
+        _make_epic(self.root, "ep", [("a", "high"), ("b", "low")],
+                   after={"b": ["a"]})
+        to_drive, _skipped = autopilot.select_and_order(
+            autopilot.parse_members(self.root, "ep"))
+        self.assertEqual([m.slug for m in to_drive], ["a", "b"])
+
+    def test_no_after_column_keeps_risk_order(self):
+        _make_epic(self.root, "ep",
+                   [("hi", "high"), ("lo", "low"), ("mid", "medium")])
+        to_drive, _skipped = autopilot.select_and_order(
+            autopilot.parse_members(self.root, "ep"))
+        self.assertEqual([m.slug for m in to_drive], ["lo", "mid", "hi"])
+
+    def test_cycle_refuses_selection(self):
+        _make_epic(self.root, "ep", [("x", "low"), ("y", "low")],
+                   after={"x": ["y"], "y": ["x"]})
+        with self.assertRaises(autopilot.AutopilotError) as ctx:
+            autopilot.select_and_order(
+                autopilot.parse_members(self.root, "ep"))
+        self.assertIn("x -> y -> x", str(ctx.exception))
+
+    def test_dry_run_prints_after_order_label(self):
+        _make_epic(self.root, "ep", [("a", "high"), ("b", "low")],
+                   after={"b": ["a"]})
+        buf = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = buf
+        try:
+            rc = autopilot.main(["ep", "--root", self.root, "--dry-run"])
+        finally:
+            sys.stdout = old_stdout
+        self.assertEqual(rc, 0)
+        self.assertIn("Member order (After, then risk ascending):",
+                      buf.getvalue())
+
+
 # ---------------------------------------------------------------------------
 # parse_members reads risk from the stub table
 # ---------------------------------------------------------------------------
@@ -157,6 +198,67 @@ class ParseMembersTest(AutopilotTestBase):
 # ---------------------------------------------------------------------------
 # Wave computation: plan waves, capability-disjoint build waves, the CLI
 # ---------------------------------------------------------------------------
+
+class _FakeGit:
+    """A ``command_fn`` standing in for git in the merged-into-base check.
+    ``git rev-parse --verify --quiet <ref>`` answers rc 0 for every ref in
+    ``refs``; ``git ls-tree --name-only <ref> -- .shipd/completed/`` answers
+    ``listing`` (one entry per line). ``fail_all`` makes every call rc 1.
+    Every call is recorded in ``calls`` as ``(argv, cwd)``."""
+
+    def __init__(self, listing=(), refs=("origin/main", "main"),
+                 fail_all=False):
+        self.listing = list(listing)
+        self.refs = set(refs)
+        self.fail_all = fail_all
+        self.calls = []
+
+    def __call__(self, cmd, cwd):
+        self.calls.append((list(cmd), cwd))
+        if self.fail_all:
+            return 1, "", "fatal"
+        if cmd[:4] == ["git", "rev-parse", "--verify", "--quiet"]:
+            return (0, cmd[4] + "\n", "") if cmd[4] in self.refs \
+                else (1, "", "")
+        if cmd[:3] == ["git", "ls-tree", "--name-only"]:
+            if cmd[3] not in self.refs:
+                return 128, "", "fatal: not a tree"
+            return 0, "".join(e + "\n" for e in self.listing), ""
+        return 1, "", "unexpected command"
+
+
+class MergedIntoBaseTest(AutopilotTestBase):
+    """member-wave-scheduling: a dependency counts as merged exactly when the
+    base branch's tree holds a ``completed/<prefix>-<slug>`` entry."""
+
+    def test_date_prefixed_entry_is_merged(self):
+        git = _FakeGit([".shipd/completed/2026-10-15-a"])
+        self.assertTrue(autopilot._merged_into_base(git, self.root, "a"))
+        ls = [c for c, _cwd in git.calls if c[1] == "ls-tree"]
+        self.assertEqual(
+            ls, [["git", "ls-tree", "--name-only", "origin/main", "--",
+                  ".shipd/completed/"]])
+        self.assertTrue(all(cwd == self.root for _c, cwd in git.calls))
+
+    def test_suffix_match_is_not_merged(self):
+        git = _FakeGit([".shipd/completed/2026-10-15-extra-a"])
+        self.assertFalse(autopilot._merged_into_base(git, self.root, "a"))
+
+    def test_sequence_prefixed_entry_is_merged(self):
+        git = _FakeGit([".shipd/completed/001-a"])
+        self.assertTrue(autopilot._merged_into_base(git, self.root, "a"))
+
+    def test_git_failure_is_not_merged(self):
+        git = _FakeGit([".shipd/completed/001-a"], fail_all=True)
+        self.assertFalse(autopilot._merged_into_base(git, self.root, "a"))
+
+    def test_falls_back_to_local_main(self):
+        git = _FakeGit([".shipd/completed/001-a"], refs=("main",))
+        self.assertTrue(autopilot._merged_into_base(git, self.root, "a"))
+        ls = [c for c, _cwd in git.calls if c[1] == "ls-tree"]
+        self.assertEqual(len(ls), 1)
+        self.assertEqual(ls[0][3], "main")
+
 
 class WaveTest(AutopilotTestBase):
     def plant_ready(self, slug, caps, under=None):
@@ -215,12 +317,23 @@ class WaveTest(AutopilotTestBase):
         self.assertEqual([w["stage"] for w in result["waves"]],
                          ["plan", "build"])
 
-    def test_cycle_is_serialised_after_free_members(self):
+    def test_cycle_refuses_waves(self):
         _make_epic(self.root, "ep",
                    [("x", "low"), ("y", "low"), ("z", "low")],
                    after={"x": ["y"], "y": ["x"]})
-        result = autopilot.compute_waves(self.root, "ep", 3)
-        self.assertEqual(self._slugs(result), [["z"], ["x"], ["y"]])
+        with self.assertRaises(autopilot.AutopilotError) as ctx:
+            autopilot.compute_waves(self.root, "ep", 3)
+        self.assertIn("x -> y -> x", str(ctx.exception))
+        out, err = io.StringIO(), io.StringIO()
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = out, err
+        try:
+            rc = autopilot.main(["ep", "--root", self.root, "--waves"])
+        finally:
+            sys.stdout, sys.stderr = old_stdout, old_stderr
+        self.assertEqual(rc, 1)
+        self.assertIn("x -> y -> x", err.getvalue())
+        self.assertNotIn("wave", out.getvalue())
 
     def test_empty_after_column_chunks_by_risk(self):
         _make_epic(self.root, "ep", [("hi", "high"), ("lo1", "low"),
@@ -238,6 +351,65 @@ class WaveTest(AutopilotTestBase):
             autopilot.compute_waves(self.root, "ep", 3), out=lines.append)
         self.assertTrue(any("after a" in ln for ln in lines))
 
+    def test_unmerged_dependency_blocks_a_build_wave(self):
+        _make_epic(self.root, "ep", [("a", "low"), ("b", "low")],
+                   after={"b": ["a"]})
+        self.plant_ready("a", ["x"])
+        self.plant_ready("b", ["y"])
+        result = autopilot.compute_waves(self.root, "ep", 3,
+                                         command_fn=_FakeGit([]))
+        self.assertEqual(self._slugs(result), [["a"]])
+        self.assertEqual(result["waves"][0]["stage"], "build")
+        self.assertEqual(result["blocked"],
+                         [{"member": "b", "waiting_on": ["a"]}])
+        self.assertEqual(result["skipped"], [])
+
+    def test_merged_dependency_releases_its_dependent(self):
+        _make_epic(self.root, "ep", [("a", "low"), ("b", "low")],
+                   after={"b": ["a"]})
+        self.plant_ready("a", ["x"])
+        self.plant_ready("b", ["y"])
+        git = _FakeGit([".shipd/completed/2026-10-15-a"])
+        result = autopilot.compute_waves(self.root, "ep", 3, command_fn=git)
+        self.assertEqual(self._slugs(result), [["a", "b"]])
+        self.assertEqual(result["blocked"], [])
+
+    def test_suffix_match_does_not_release(self):
+        _make_epic(self.root, "ep", [("a", "low"), ("b", "low")],
+                   after={"b": ["a"]})
+        self.plant_ready("a", ["x"])
+        self.plant_ready("b", ["y"])
+        git = _FakeGit([".shipd/completed/2026-10-15-extra-a"])
+        result = autopilot.compute_waves(self.root, "ep", 3, command_fn=git)
+        self.assertEqual(result["blocked"],
+                         [{"member": "b", "waiting_on": ["a"]}])
+
+    def test_merged_check_is_cached_per_dependency(self):
+        _make_epic(self.root, "ep",
+                   [("a", "low"), ("b", "low"), ("c", "low")],
+                   after={"b": ["a"], "c": ["a"]})
+        self.plant_ready("a", ["x"])
+        self.plant_ready("b", ["y"])
+        self.plant_ready("c", ["z"])
+        git = _FakeGit([])
+        result = autopilot.compute_waves(self.root, "ep", 3, command_fn=git)
+        self.assertEqual([e["member"] for e in result["blocked"]], ["b", "c"])
+        self.assertEqual(
+            len([c for c, _cwd in git.calls if c[1] == "ls-tree"]), 1)
+
+    def test_print_waves_shows_blocked(self):
+        _make_epic(self.root, "ep", [("a", "low"), ("b", "low")],
+                   after={"b": ["a"]})
+        self.plant_ready("a", ["x"])
+        self.plant_ready("b", ["y"])
+        lines = []
+        autopilot._print_waves(
+            autopilot.compute_waves(self.root, "ep", 3,
+                                    command_fn=_FakeGit([])),
+            out=lines.append)
+        self.assertTrue(any("blocked: b (waiting on a)" in ln
+                            for ln in lines))
+
     def test_disjoint_capabilities_share_a_build_wave(self):
         _make_epic(self.root, "ep",
                    [("a", "low"), ("b", "low"), ("c", "low")])
@@ -251,6 +423,7 @@ class WaveTest(AutopilotTestBase):
         by = {m["slug"]: m for w in result["waves"] for m in w["members"]}
         self.assertEqual(by["c"]["capabilities"], ["x", "z"])
         self.assertEqual(result["skipped"], [])
+        self.assertEqual(result["blocked"], [])
 
     def test_cap_splits_a_wave(self):
         rows = [("m1", "low"), ("m2", "low"), ("m3", "low"), ("m4", "low")]
@@ -300,6 +473,7 @@ class WaveTest(AutopilotTestBase):
         self.assertEqual([[m["slug"] for m in w["members"]]
                           for w in payload["waves"]], [["a"], ["b"]])
         self.assertEqual(payload["skipped"], [])
+        self.assertEqual(payload["blocked"], [])
         # Nothing was driven: no heartbeat directory, no worktree, no report.
         self.assertFalse(
             os.path.isdir(os.path.join(self.root, ".shipd", "autopilot")))

@@ -588,8 +588,11 @@ def _check_epic_metadata(root, path, text, errors):
 
 def _check_epic_changes(text, path, errors):
     """Validate an epic's ``## Changes`` stub table: the six-column header
-    (optionally followed by ``After``, whose slugs must name other rows), at least one data row, kebab-case Change slugs unique within the
-    table, and every rating cell one of ``low``/``medium``/``high``."""
+    (optionally followed by ``After``, whose slugs must name other rows and
+    must form no dependency cycle — the first cycle in table order is
+    reported as ``a -> b -> a``), at least one data row, kebab-case Change
+    slugs unique within the table, and every rating cell one of
+    ``low``/``medium``/``high``."""
     header, rows = sc.parse_epic_changes(text)
     if header is None:
         errors.append(LintError(
@@ -641,6 +644,11 @@ def _check_epic_changes(text, path, errors):
                     errors.append(LintError(
                         "epic.md stub table row '%s' After slug '%s' names "
                         "no other row of the table" % (slug, dep), path))
+        cycle = sc.find_after_cycle(sc.parse_epic_after(text))
+        if cycle:
+            errors.append(LintError(
+                "epic.md stub table After column has a dependency cycle: %s"
+                % " -> ".join(cycle), path))
 
 
 def _is_within(path, parent):

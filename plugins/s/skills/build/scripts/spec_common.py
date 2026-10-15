@@ -3147,6 +3147,44 @@ def parse_epic_after(text):
     return result
 
 
+def find_after_cycle(after_map):
+    """Return the first dependency cycle in ``after_map`` (``{slug: [after,
+    ...]}``, as :func:`parse_epic_after` returns it) as a slug path that
+    repeats its head — ``["a", "b", "a"]``, or ``["a", "a"]`` for a
+    self-edge — or ``[]`` when the map is acyclic. The walk is depth-first
+    over the keys in insertion (table) order and follows only edges whose
+    target is itself a key of the map."""
+    done = set()
+    path = []
+    on_path = {}
+
+    def visit(slug):
+        on_path[slug] = len(path)
+        path.append(slug)
+        for dep in after_map.get(slug, []):
+            if dep not in after_map:
+                continue
+            if dep in on_path:
+                return path[on_path[dep]:] + [dep]
+            if dep in done:
+                continue
+            found = visit(dep)
+            if found:
+                return found
+        path.pop()
+        del on_path[slug]
+        done.add(slug)
+        return []
+
+    for slug in after_map:
+        if slug in done:
+            continue
+        found = visit(slug)
+        if found:
+            return found
+    return []
+
+
 # ---------------------------------------------------------------------------
 # Content hashing (design D3)
 # ---------------------------------------------------------------------------

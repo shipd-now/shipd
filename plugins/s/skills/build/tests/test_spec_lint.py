@@ -1524,10 +1524,12 @@ class EpicLintTest(unittest.TestCase):
         self.assertTrue(has(errors, "itself"))
         self.assertTrue(has(errors, "zz"))
 
-    def test_after_cycle_is_not_an_error(self):
+    def test_after_cycle_is_an_error(self):
         self._write_epic("reporting-overhaul",
                          self._after_epic(cell_a="b", cell_b="a"))
-        self.assertEqual(self._epic_errors("reporting-overhaul"), [])
+        errors = self._epic_errors("reporting-overhaul")
+        self.assertTrue(has(errors, "cycle"))
+        self.assertTrue(has(errors, "a -> b -> a"))
 
     def test_seventh_column_not_after_is_bad_header(self):
         self._write_epic("reporting-overhaul",

@@ -341,6 +341,24 @@ class EpicChangesParserTest(unittest.TestCase):
             ("Change", "Description", "Code", "Integration", "Unknowns",
              "Risk"))
 
+    def test_find_after_cycle_acyclic(self):
+        self.assertEqual(sc.find_after_cycle({"a": [], "b": ["a"]}), [])
+
+    def test_find_after_cycle_two_cycle(self):
+        self.assertEqual(sc.find_after_cycle({"a": ["b"], "b": ["a"]}),
+                         ["a", "b", "a"])
+
+    def test_find_after_cycle_self_edge(self):
+        self.assertEqual(sc.find_after_cycle({"a": ["a"]}), ["a", "a"])
+
+    def test_find_after_cycle_ignores_non_key_edge(self):
+        self.assertEqual(sc.find_after_cycle({"a": ["zz"]}), [])
+
+    def test_find_after_cycle_starts_at_first_key_on_cycle(self):
+        self.assertEqual(
+            sc.find_after_cycle({"p": [], "x": ["y"], "y": ["x"]}),
+            ["x", "y", "x"])
+
     def test_parses_header_and_rows(self):
         header, rows = sc.parse_epic_changes(self.EPIC)
         self.assertEqual(
