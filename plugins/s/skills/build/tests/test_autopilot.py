@@ -7,6 +7,7 @@ runner/gate/command seams. No test spawns a ``claude`` process — every session
 gate, and command boundary is injected.
 """
 
+import contextlib
 import io
 import json
 import os
@@ -483,6 +484,405 @@ class WaveTest(AutopilotTestBase):
 # ---------------------------------------------------------------------------
 # run(): dry-run, max-members, and report accounting (injected member driver)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Launch preflight (epic-autopilot launch-preflight)
+# ---------------------------------------------------------------------------
+
+def _make_preflight_epic(root, slug, rows, status="ready", after=None):
+    """Write a lint-clean epic: the stub table of :func:`_make_epic` under the
+    sections the epic linter requires."""
+    header = EPIC_HEADER
+    if after is not None:
+        header = (
+            "| Change | Description | Code | Integration | Unknowns | Risk "
+            "| After |\n| --- | --- | --- | --- | --- | --- | --- |\n")
+    body = ["# %s\n" % slug, "Status: %s\n" % status, "\n",
+            "## Introduction\n", "\n", "One sentence.\n", "\n",
+            "### Non-goals\n", "\n", "- Nothing more.\n", "\n",
+            "## Decisions\n", "\n", "One sentence.\n", "\n",
+            "## Design\n", "\n", "One sentence.\n", "\n",
+            "## Changes\n", "\n", header]
+    for member, risk in rows:
+        row = _member_row(member, risk)
+        if after is not None:
+            row = row.rstrip("\n") + " %s |\n" % ", ".join(
+                after.get(member, []))
+        body.append(row)
+    _write(os.path.join(root, ".shipd", "epics", slug, "epic.md"), "".join(body))
+
+
+def _plant_stamped(root, slug, status="ready", under=None,
+                   gated_hash="0123456789ab", modifies=(), cites=()):
+    """Plant a planned member at ``status`` carrying a plan stamp, ``modifies``
+    delta ``(capability, req_id, op)`` entries and ``cites`` backticked paths."""
+    host = root if under is None else os.path.join(root, ".worktrees", under)
+    base = os.path.join(host, ".shipd", "planned", slug)
+    stamp = ""
+    if gated_hash is not None:
+        stamp = "Planned-at: %s\nGated-hash: %s\n" % ("a" * 40, gated_hash)
+    _write(os.path.join(base, "plan.md"),
+           "# %s\nStatus: %s\n%s\n## Idea\n\nx\n" % (slug, status, stamp))
+    _write(os.path.join(base, "tasks.md"),
+           "## 1. Work\n\n- [ ] 1.1 [req: x] do it %s\n"
+           % " ".join("`%s`" % c for c in cites))
+    for cap, req_id, op in modifies:
+        if op == "RENAMED":
+            body = "- FROM: %s\n- TO: %s-new\n" % (req_id, req_id)
+        else:
+            body = "### Requirement: %s\nid: %s\n" % (req_id, req_id)
+            if op in ("MODIFIED", "REMOVED"):
+                body += "base: 000000000000\n"
+        _write(os.path.join(base, "specs", cap, "spec.md"),
+               "## %s Requirements\n\n%s" % (op, body))
+
+
+class _PreflightCommands:
+    """The preflight's command seam: records ``(cmd, cwd)``, answers the
+    ``--check``, ``drift`` and ``doctor`` runs from scripted results."""
+
+    def __init__(self, check=None, drift=(0, "", ""), doctor=(0, "", "")):
+        self.check = check or {}
+        self.drift = drift
+        self.doctor = doctor
+        self.calls = []
+
+    def __call__(self, cmd, cwd):
+        self.calls.append((cmd, cwd))
+        if "--check" in cmd:
+            slug = cmd[cmd.index("--check") - 3]
+            return self.check.get(slug, (0, "PASS (check)", ""))
+        if "drift" in cmd:
+            return self.drift
+        if cmd[-1] == "doctor":
+            return self.doctor
+        return 0, "", ""
+
+
+_DOCTOR_OK = (0, "ok git — found\ndoctor: ok\n", "")
+
+
+class PreflightTest(AutopilotTestBase):
+    def _run(self, slug="ep", commands=None):
+        return autopilot.compute_preflight(
+            self.root, slug, command_fn=commands or _PreflightCommands(
+                doctor=_DOCTOR_OK))
+
+    def _line(self, result, check):
+        return next(c for c in result["checks"] if c["check"] == check)
+
+    def _green(self, **kwargs):
+        _make_preflight_epic(self.root, "ep", [("a", "low"), ("b", "low")],
+                             **kwargs)
+        _plant_stamped(self.root, "a", modifies=[("cap", "r-a", "MODIFIED")],
+                       cites=["src/a.py"])
+        _plant_stamped(self.root, "b", modifies=[("cap", "r-b", "MODIFIED")],
+                       cites=["src/b.py"])
+
+    def test_green_rubric(self):
+        self._green()
+        result = self._run()
+        self.assertEqual({c["level"] for c in result["checks"]}, {"ok"})
+        self.assertFalse(result["failed"])
+        self.assertEqual(result["problems"], 0)
+        self.assertEqual(
+            [c["check"] for c in result["checks"]],
+            ["epic-lint", "epic-status", "after-cycle", "members",
+             "gate-check", "gated-hash", "drift", "overlap-requirements",
+             "overlap-files", "pipeline", "doctor:git"])
+
+    def test_draft_epic_fails_status(self):
+        self._green(status="draft")
+        line = self._line(self._run(), "epic-status")
+        self.assertEqual(line["level"], "fail")
+        self.assertIn("epic-set-status", line["detail"])
+
+    def test_lint_failure(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+        self.assertEqual(self._line(self._run(), "epic-lint")["level"], "fail")
+
+    def test_cycle_fails_but_rubric_prints(self):
+        _make_preflight_epic(self.root, "ep", [("x", "low"), ("y", "low")],
+                             after={"x": ["y"], "y": ["x"]})
+        result = self._run()
+        line = self._line(result, "after-cycle")
+        self.assertEqual(line["level"], "fail")
+        self.assertIn("x -> y -> x", line["detail"])
+        self.assertIn("doctor:git", [c["check"] for c in result["checks"]])
+        self.assertTrue(result["failed"])
+
+    def test_unplanned_and_draft_members_fail(self):
+        _make_preflight_epic(self.root, "ep", [("a", "low"), ("b", "low")])
+        _plant_stamped(self.root, "b", status="draft")
+        line = self._line(self._run(), "members")
+        self.assertEqual(line["level"], "fail")
+        self.assertIn("unplanned: ", line["detail"])
+        self.assertIn("draft: ", line["detail"])
+        self.assertIn("/s:epic-grill ep", line["detail"])
+
+    def test_rejected_member_names_plan(self):
+        _make_preflight_epic(self.root, "ep", [("a", "low")])
+        _plant_stamped(self.root, "a", status="rejected")
+        line = self._line(self._run(), "members")
+        self.assertEqual(line["level"], "fail")
+        self.assertIn("/s:plan a", line["detail"])
+
+    def test_active_member_warns(self):
+        _make_preflight_epic(self.root, "ep", [("a", "low")])
+        _plant_stamped(self.root, "a", status="active")
+        self.assertEqual(self._line(self._run(), "members")["level"], "warn")
+
+    def test_missing_epic_raises(self):
+        with self.assertRaises(autopilot.AutopilotError):
+            self._run("nosuch")
+
+    # -- gate, drift, doctor ------------------------------------------------
+
+    def test_gated_hash_mismatch_feeds_gated_hash_only(self):
+        self._green()
+        cmds = _PreflightCommands(doctor=_DOCTOR_OK, check={"a": (
+            2, "REJECTED (check): ... (1 finding(s)):\n- gated-hash mismatch: "
+               "plan.md was edited after it was gated (stamp a, content b); "
+               "re-gate with spec_gate.py a\n", "")})
+        result = self._run(commands=cmds)
+        line = self._line(result, "gated-hash")
+        self.assertEqual(line["level"], "fail")
+        self.assertIn("spec_gate.py a", line["detail"])
+        self.assertEqual(self._line(result, "gate-check")["level"], "ok")
+
+    def test_gate_finding_fails_gate_check(self):
+        self._green()
+        cmds = _PreflightCommands(doctor=_DOCTOR_OK, check={"a": (
+            2, "REJECTED (check): ... (1 finding(s)):\n- tasks.md cites "
+               "nope.py, which does not exist\n", "")})
+        line = self._line(self._run(commands=cmds), "gate-check")
+        self.assertEqual(line["level"], "fail")
+        self.assertIn("a", line["detail"])
+        self.assertIn("nope.py", line["detail"])
+
+    def test_gate_exit_other_fails(self):
+        self._green()
+        cmds = _PreflightCommands(doctor=_DOCTOR_OK,
+                                  check={"a": (1, "", "Error: boom")})
+        line = self._line(self._run(commands=cmds), "gate-check")
+        self.assertEqual(line["level"], "fail")
+        self.assertIn("exit 1", line["detail"])
+
+    def test_missing_gated_hash_warns(self):
+        _make_preflight_epic(self.root, "ep", [("a", "low")])
+        _plant_stamped(self.root, "a", gated_hash=None)
+        line = self._line(self._run(), "gated-hash")
+        self.assertEqual(line["level"], "warn")
+        self.assertIn("a", line["detail"])
+
+    def test_check_runs_from_hosting_root(self):
+        _make_preflight_epic(self.root, "ep", [("a", "low"), ("b", "low")])
+        _plant_stamped(self.root, "a")
+        _plant_stamped(self.root, "b", under="wt")
+        cmds = _PreflightCommands(doctor=_DOCTOR_OK)
+        self._run(commands=cmds)
+        wt = os.path.join(self.root, ".worktrees", "wt")
+        self.assertIn(([sys.executable, autopilot.GATE_PY, "b", "--root", wt,
+                        "--check"], wt), cmds.calls)
+        self.assertIn(([sys.executable, autopilot.GATE_PY, "a", "--root",
+                        self.root, "--check"], self.root), cmds.calls)
+
+    def test_drift_warns(self):
+        self._green()
+        payload = json.dumps({
+            "epic": "ep", "base": {"ref": "main", "sha": "x"},
+            "members": [
+                {"change": "a", "findings": [{"kind": "file-drift"},
+                                             {"kind": "file-drift"},
+                                             {"kind": "symbol-gone"}]},
+                {"change": "b", "findings": []}], "skipped": []})
+        cmds = _PreflightCommands(doctor=_DOCTOR_OK, drift=(4, payload, ""))
+        line = self._line(self._run(commands=cmds), "drift")
+        self.assertEqual(line["level"], "warn")
+        self.assertIn("a (file-drift 2, symbol-gone 1)", line["detail"])
+        self.assertIn("/s:drift ep", line["detail"])
+        self.assertNotIn("b (", line["detail"])
+        self.assertIn(([sys.executable, autopilot.STATUS_PY, "--root",
+                        self.root, "drift", "--epic", "ep", "--json"],
+                       self.root), cmds.calls)
+
+    def test_drift_error_fails_and_clean_is_ok(self):
+        self._green()
+        cmds = _PreflightCommands(doctor=_DOCTOR_OK,
+                                  drift=(1, "", "Error: unknown base"))
+        self.assertEqual(
+            self._line(self._run(commands=cmds), "drift")["level"], "fail")
+        clean = json.dumps({"epic": "ep", "members": [], "skipped": []})
+        cmds = _PreflightCommands(doctor=_DOCTOR_OK, drift=(0, clean, ""))
+        self.assertEqual(
+            self._line(self._run(commands=cmds), "drift")["level"], "ok")
+
+    def test_doctor_lines_relayed_with_prefix(self):
+        self._green()
+        cmds = _PreflightCommands(doctor=(
+            0, "ok git — found\nwarn protection — unprotected\n"
+               "doctor: 1 problem(s)\n", ""))
+        result = self._run(commands=cmds)
+        self.assertIn({"level": "ok", "check": "doctor:git",
+                       "detail": "found"}, result["checks"])
+        self.assertIn({"level": "warn", "check": "doctor:protection",
+                       "detail": "unprotected"}, result["checks"])
+        for c in result["checks"]:
+            self.assertNotIn("problem(s)", c["detail"])
+            self.assertNotEqual(c["check"], "doctor:")
+        self.assertIn(([sys.executable, autopilot.SHIPD_BIN, "doctor"],
+                       self.root), cmds.calls)
+
+    def test_doctor_fail_fails_rubric(self):
+        self._green()
+        cmds = _PreflightCommands(doctor=(
+            1, "fail gh — not authenticated\ndoctor: 1 problem(s)\n", ""))
+        result = self._run(commands=cmds)
+        self.assertEqual(self._line(result, "doctor:gh")["level"], "fail")
+        self.assertTrue(result["failed"])
+
+    def test_doctor_without_lines_fails(self):
+        self._green()
+        cmds = _PreflightCommands(doctor=(127, "", "no such file"))
+        result = self._run(commands=cmds)
+        line = self._line(result, "doctor")
+        self.assertEqual(line["level"], "fail")
+        self.assertIn("no such file", line["detail"])
+
+    # -- overlap and pipeline -----------------------------------------------
+
+    def _pair(self, a_mod=(), b_mod=(), a_cites=(), b_cites=(), after=None):
+        _make_preflight_epic(self.root, "ep", [("a", "low"), ("b", "low")],
+                             after=after)
+        _plant_stamped(self.root, "a", modifies=a_mod, cites=a_cites)
+        _plant_stamped(self.root, "b", modifies=b_mod, cites=b_cites)
+
+    def test_shared_requirement_fails(self):
+        mod = [("cap", "req-one", "MODIFIED")]
+        self._pair(a_mod=mod, b_mod=mod)
+        line = self._line(self._run(), "overlap-requirements")
+        self.assertEqual(line["level"], "fail")
+        self.assertIn("a & b: cap/req-one", line["detail"])
+
+    def test_edge_orders_pair(self):
+        mod = [("cap", "req-one", "MODIFIED")]
+        self._pair(a_mod=mod, b_mod=mod, after={"b": ["a"]})
+        self.assertEqual(
+            self._line(self._run(), "overlap-requirements")["level"], "ok")
+
+    def test_removed_and_renamed_count(self):
+        self._pair(a_mod=[("cap", "req-one", "MODIFIED")],
+                   b_mod=[("cap", "req-one", "REMOVED")])
+        self.assertEqual(
+            self._line(self._run(), "overlap-requirements")["level"], "fail")
+        self._pair(a_mod=[("cap", "req-one", "MODIFIED")],
+                   b_mod=[("cap", "req-one", "RENAMED")])
+        self.assertEqual(
+            self._line(self._run(), "overlap-requirements")["level"], "fail")
+
+    def test_transitive_path_orders(self):
+        _make_preflight_epic(
+            self.root, "ep", [("a", "low"), ("b", "low"), ("c", "low")],
+            after={"b": ["a"], "c": ["b"]})
+        mod = [("cap", "req-one", "MODIFIED")]
+        _plant_stamped(self.root, "a", modifies=mod, cites=["src/e.py"])
+        _plant_stamped(self.root, "b")
+        _plant_stamped(self.root, "c", modifies=mod, cites=["src/e.py"])
+        result = self._run()
+        self.assertEqual(self._line(result, "overlap-requirements")["level"],
+                         "ok")
+        self.assertEqual(self._line(result, "overlap-files")["level"], "ok")
+
+    def test_shared_file_warns_only(self):
+        self._pair(a_cites=["src/engine.py"], b_cites=["src/engine.py"])
+        result = self._run()
+        line = self._line(result, "overlap-files")
+        self.assertEqual(line["level"], "warn")
+        self.assertIn("a & b: src/engine.py", line["detail"])
+        self.assertFalse(result["failed"])
+        self.assertEqual(result["problems"], 1)
+
+    def test_exempt_and_artefact_paths_ignored(self):
+        self._pair(
+            a_cites=["plugins/s/.claude-plugin/plugin.json", "artefacts/x.md"],
+            b_cites=["plugins/s/.claude-plugin/plugin.json", "artefacts/x.md"])
+        self.assertEqual(self._line(self._run(), "overlap-files")["level"],
+                         "ok")
+
+    def test_draft_member_still_overlaps(self):
+        _make_preflight_epic(self.root, "ep", [("a", "low"), ("b", "low")])
+        mod = [("cap", "req-one", "MODIFIED")]
+        _plant_stamped(self.root, "a", modifies=mod)
+        _plant_stamped(self.root, "b", status="draft", modifies=mod)
+        self.assertEqual(
+            self._line(self._run(), "overlap-requirements")["level"], "fail")
+
+    def test_pipeline_ok_and_invalid(self):
+        self._green()
+        line = self._line(self._run(), "pipeline")
+        self.assertEqual(line["level"], "ok")
+        self.assertIn("6 entries", line["detail"])
+        self.assertIn("source: default", line["detail"])
+        _write(os.path.join(self.root, ".shipd-config.json"), json.dumps(
+            {"autonomous-pipeline": [{"stage": "build", "validater": False}]}))
+        line = self._line(self._run(), "pipeline")
+        self.assertEqual(line["level"], "fail")
+        self.assertIn("validater", line["detail"])
+
+    # -- CLI ----------------------------------------------------------------
+
+    def _main(self, argv):
+        fake = _PreflightCommands(doctor=_DOCTOR_OK)
+        original = autopilot._run_command
+        autopilot._run_command = fake
+        buf = io.StringIO()
+        old = sys.stdout
+        sys.stdout = buf
+        try:
+            code = autopilot.main(["ep", "--root", self.root] + argv)
+        finally:
+            sys.stdout = old
+            autopilot._run_command = original
+        return code, buf.getvalue()
+
+    def test_cli_green(self):
+        self._green()
+        code, out = self._main(["--preflight"])
+        self.assertEqual(code, 0)
+        self.assertTrue(out.rstrip().endswith("preflight: ok"))
+
+    def test_cli_failure(self):
+        _make_preflight_epic(self.root, "ep", [("a", "low")])
+        code, out = self._main(["--preflight"])
+        self.assertEqual(code, 1)
+        self.assertTrue(any(ln.startswith("fail members — ")
+                            for ln in out.splitlines()))
+        self.assertTrue(out.rstrip().endswith("preflight: 1 problem(s)"))
+
+    def test_cli_json(self):
+        _make_preflight_epic(self.root, "ep", [("a", "low")])
+        code, out = self._main(["--preflight", "--json"])
+        data = json.loads(out)
+        self.assertEqual(code, 1)
+        self.assertEqual(set(data),
+                         {"epic", "checks", "problems", "failed"})
+        self.assertTrue(data["failed"])
+
+    def test_cli_exclusive_modes(self):
+        self._green()
+        for extra in (["--waves"], ["--dry-run"], ["--member", "a"]):
+            with self.assertRaises(SystemExit) as ctx:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self._main(["--preflight"] + extra)
+            self.assertEqual(ctx.exception.code, 2)
+
+    def test_cli_writes_nothing(self):
+        self._green()
+        self._main(["--preflight"])
+        self.assertFalse(os.path.exists(
+            os.path.join(self.root, ".shipd", "autopilot")))
+        self.assertFalse(os.path.exists(os.path.join(self.root, ".worktrees")))
+
 
 class RunTest(AutopilotTestBase):
     def test_dry_run_drives_nothing(self):

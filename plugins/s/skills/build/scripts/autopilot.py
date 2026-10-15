@@ -21,6 +21,14 @@ each capped at ``--parallel N`` — and drives nothing. A ready member whose
 ``After`` dependency has not yet merged into the base branch joins no wave and
 is reported as blocked.
 
+A ``--preflight`` mode prints a read-only launch rubric — ``ok|warn|fail
+<check> — <detail>`` lines in the ``shipd doctor`` format, then ``preflight:
+ok`` or ``preflight: <n> problem(s)`` (or one JSON object with ``--json``) —
+checking the epic's lint and status, its ``After`` cycles, member planning,
+gate and gated-hash state, drift, requirement and file overlap, the pipeline,
+and relaying ``shipd doctor``; it exits non-zero on any ``fail`` and drives
+nothing.
+
 Standard library only. Live sessions, the gate, and external commands are all
 reached through injectable seams so the orchestration is unit-testable without
 spending model time.
@@ -30,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import glob
 import json
 import os
 import re
@@ -44,7 +53,7 @@ from heartbeat import RunHeartbeat  # noqa: E402
 import session_driver  # noqa: E402
 import spec_common as sc  # noqa: E402
 import spec_status as ss  # noqa: E402
-from spec_lint import lint_change  # noqa: E402
+from spec_lint import lint_change, lint_epic  # noqa: E402
 
 # The plugin root (``plugins/s``), four directories up from this script, is the
 # ``--plugin-dir`` handed to driven sessions so ``/s:*`` skills load.
@@ -56,6 +65,14 @@ WORKTREE_SH = os.path.join(SCRIPTS_DIR, "worktree.sh")
 # through here; the guarded teardown stays on the bash helper above.
 WORKTREE_PY = os.path.join(SCRIPTS_DIR, "worktree.py")
 GATE_PY = os.path.join(SCRIPTS_DIR, "spec_gate.py")
+STATUS_PY = os.path.join(SCRIPTS_DIR, "spec_status.py")
+SHIPD_BIN = os.path.join(PLUGIN_DIR, "bin", "shipd")
+# A ``shipd doctor`` report line, relayed by the launch preflight.
+DOCTOR_LINE_RE = re.compile(r"^(ok|warn|fail) (\S+) — (.*)$")
+PREFLIGHT_CHECKS = (
+    "epic-lint", "epic-status", "after-cycle", "members", "gate-check",
+    "gated-hash", "drift", "overlap-requirements", "overlap-files",
+    "pipeline")
 REVIEW_GATE_PY = os.path.join(
     PLUGIN_DIR, "skills", "review", "scripts", "review_gate.py")
 
@@ -296,6 +313,299 @@ def compute_waves(root, epic, parallel, command_fn=None):
         "skipped": [{"member": m.slug, "state": m.state}
                     for m in skipped if m.state != "ready"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Launch preflight (epic-autopilot launch-preflight)
+# ---------------------------------------------------------------------------
+
+def _pf_level(findings, failing, warning):
+    """The rubric level for a check: ``fail`` when ``failing``, ``warn`` when
+    ``warning``, else ``ok``."""
+    if failing:
+        return "fail"
+    if warning:
+        return "warn"
+    return "ok"
+
+
+def _after_reach(after_map):
+    """``{slug: every slug reachable through After edges}``."""
+    reach = {}
+    for slug in after_map:
+        seen = set()
+        stack = list(after_map.get(slug, []))
+        while stack:
+            dep = stack.pop()
+            if dep in seen:
+                continue
+            seen.add(dep)
+            stack.extend(after_map.get(dep, []))
+        reach[slug] = seen
+    return reach
+
+
+def _pf_ordered(reach, a, b):
+    """Whether the After graph orders ``a`` and ``b`` in either direction."""
+    return b in reach.get(a, ()) or a in reach.get(b, ())
+
+
+def _first_line(text):
+    for line in (text or "").splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def _member_delta_targets(hosting, slug):
+    """The ordered ``<capability>/<id>`` master requirements the member's
+    delta specs modify, remove, or rename."""
+    out = []
+    pattern = os.path.join(sc.specs_dir(hosting), "planned", slug, "specs",
+                           "*", "spec.md")
+    for path in sorted(glob.glob(pattern)):
+        cap = os.path.basename(os.path.dirname(path))
+        with open(path, encoding="utf-8") as fh:
+            delta = sc.parse_delta(fh.read())
+        ids = [r.id for r in delta.modified] + [r.id for r in delta.removed] \
+            + [r.from_id for r in delta.renamed]
+        for rid in ids:
+            target = "%s/%s" % (cap, rid)
+            if rid and target not in out:
+                out.append(target)
+    return out
+
+
+def _member_cited_paths(hosting, slug):
+    """The ordered paths the member's plan, tasks, and delta specs cite,
+    without ``artefacts/`` references and the version-bump exempt paths."""
+    base = os.path.join(sc.specs_dir(hosting), "planned", slug)
+    files = [os.path.join(base, "plan.md"), os.path.join(base, "tasks.md")]
+    files += sorted(glob.glob(os.path.join(base, "specs", "*", "spec.md")))
+    out = []
+    for path in files:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        for token in sc.cited_paths(text, strip_line_suffix=True):
+            if token.startswith("artefacts/") \
+                    or token in sc.VERSION_BUMP_EXEMPT_PATHS \
+                    or token in out:
+                continue
+            out.append(token)
+    return out
+
+
+def compute_preflight(root, epic, command_fn=None):
+    """The launch rubric for ``epic``: ordered ``ok|warn|fail`` checks
+    composed from on-disk state, local git, and the engine's own verbs
+    (epic-autopilot launch-preflight). Read-only; never calls
+    :func:`select_and_order`, so a cyclic epic still prints every check.
+    ``command_fn`` (default :func:`_run_command`) is the only seam."""
+    command_fn = command_fn or _run_command
+    if not os.path.isfile(_epic_file(root, epic)):
+        raise AutopilotError("epic not found: %s" % epic)
+    with open(_epic_file(root, epic), encoding="utf-8") as fh:
+        text = fh.read()
+    members = parse_members(root, epic)
+    hosting = {m.slug: ss._member_state_with_root(root, m.slug)[1]
+               for m in members}
+    after_map = sc.parse_epic_after(text)
+    checks = []
+
+    def add(level, check, detail):
+        checks.append({"level": level, "check": check, "detail": detail})
+
+    # epic-lint
+    errors = []
+    lint_epic(root, epic, errors)
+    if errors:
+        add("fail", "epic-lint", "%d error(s); first: %s"
+            % (len(errors), errors[0]))
+    else:
+        add("ok", "epic-lint", "epic lints clean")
+
+    # epic-status
+    status = ss.read_epic_status(root, epic)
+    if status in ("ready", "active"):
+        add("ok", "epic-status", status)
+    elif status == "draft":
+        add("fail", "epic-status",
+            "draft; approve it with spec_status.py epic-set-status %s ready"
+            % epic)
+    elif status == "complete":
+        add("fail", "epic-status", "complete; nothing left to drive")
+    else:
+        add("fail", "epic-status", "no valid Status line")
+
+    # after-cycle
+    cycle = sc.find_after_cycle(after_map)
+    if cycle:
+        add("fail", "after-cycle",
+            "After column has a dependency cycle: %s" % " -> ".join(cycle))
+    else:
+        add("ok", "after-cycle", "no dependency cycle")
+
+    # members
+    by_state = {}
+    for m in members:
+        by_state.setdefault(m.state, []).append(m.slug)
+    failing = []
+    for state in ("unplanned", "draft", "rejected"):
+        if by_state.get(state):
+            failing.append("%s: %s" % (state, ", ".join(by_state[state])))
+    mid = [s for st in ("active", "complete", "verified")
+           for s in by_state.get(st, [])]
+    counts = ", ".join("%d %s" % (len(by_state[st]), st)
+                       for st in ("ready", "archived") if by_state.get(st))
+    if failing:
+        hints = []
+        if by_state.get("unplanned") or by_state.get("draft"):
+            hints.append("run /s:epic-grill %s" % epic)
+        for slug in by_state.get("rejected", []):
+            hints.append("enrich with /s:plan %s" % slug)
+        add("fail", "members", "; ".join(failing + hints))
+    elif mid:
+        add("warn", "members",
+            "mid-build, left undriven: %s" % ", ".join(mid))
+    else:
+        add("ok", "members", counts or "no members")
+
+    # gate-check and gated-hash from one --check run per ready member
+    ready = [m.slug for m in members if m.state == "ready"]
+    other, mismatch, unstamped = [], [], []
+    for slug in ready:
+        host = hosting[slug]
+        rc, out, err = command_fn(
+            [sys.executable, GATE_PY, slug, "--root", host, "--check"], host)
+        if rc not in (0, 2):
+            other.append("%s: spec_gate.py --check exit %d %s"
+                         % (slug, rc, _first_line(err)))
+        elif rc == 2:
+            findings = [ln[2:].strip() for ln in out.splitlines()
+                        if ln.startswith("- ")]
+            rest = [f for f in findings if "gated-hash mismatch" not in f]
+            if len(rest) != len(findings):
+                mismatch.append(slug)
+            if rest:
+                other.append("%s: %s" % (slug, rest[0]))
+        try:
+            with open(os.path.join(sc.specs_dir(host), "planned", slug,
+                                   "plan.md"), encoding="utf-8") as fh:
+                if sc.read_plan_stamp(fh.read())[1] is None:
+                    unstamped.append(slug)
+        except OSError:
+            pass
+    if other:
+        add("fail", "gate-check", "; ".join(other))
+    elif ready:
+        add("ok", "gate-check",
+            "%d ready member(s) pass spec_gate.py --check" % len(ready))
+    else:
+        add("ok", "gate-check", "no ready member")
+    if mismatch:
+        add("fail", "gated-hash", "; ".join(
+            "%s: plan.md edited after it was gated; re-gate with "
+            "spec_gate.py %s" % (s, s) for s in mismatch))
+    elif unstamped:
+        add("warn", "gated-hash", "; ".join(
+            "%s: no Gated-hash stamp; gate it with spec_gate.py %s" % (s, s)
+            for s in unstamped))
+    else:
+        add("ok", "gated-hash", "%d stamped member(s) match" % len(ready))
+
+    # drift
+    rc, out, err = command_fn(
+        [sys.executable, STATUS_PY, "--root", root, "drift", "--epic", epic,
+         "--json"], root)
+    if rc == 0:
+        add("ok", "drift", "no drift since the plan stamps")
+    else:
+        payload = None
+        if rc == 4:
+            try:
+                payload = json.loads(out)
+            except ValueError:
+                payload = None
+        if payload is None:
+            add("fail", "drift", "drift verb exit %d: %s"
+                % (rc, _first_line(err) or _first_line(out)))
+        else:
+            parts = []
+            for entry in payload.get("members", []):
+                kinds = {}
+                for finding in entry.get("findings", []):
+                    kinds[finding.get("kind")] = \
+                        kinds.get(finding.get("kind"), 0) + 1
+                if kinds:
+                    parts.append("%s (%s)" % (entry.get("change"), ", ".join(
+                        "%s %d" % (k, n) for k, n in kinds.items())))
+            add("warn", "drift", "%s — judge with /s:drift %s"
+                % (", ".join(parts), epic))
+
+    # overlap-requirements and overlap-files over planned members
+    planned = [m.slug for m in members
+               if m.state not in ("unplanned", "archived")]
+    reach = _after_reach(after_map)
+    targets = {s: _member_delta_targets(hosting[s], s) for s in planned}
+    paths = {s: _member_cited_paths(hosting[s], s) for s in planned}
+    req_hits, file_hits = [], []
+    for i, a in enumerate(planned):
+        for b in planned[i + 1:]:
+            if _pf_ordered(reach, a, b):
+                continue
+            req_hits += ["%s & %s: %s" % (a, b, t)
+                         for t in targets[a] if t in targets[b]]
+            file_hits += ["%s & %s: %s" % (a, b, p)
+                          for p in paths[a] if p in paths[b]]
+    if req_hits:
+        add("fail", "overlap-requirements", "; ".join(req_hits))
+    else:
+        add("ok", "overlap-requirements",
+            "no shared master requirement among unordered members")
+    if file_hits:
+        add("warn", "overlap-files", "; ".join(file_hits))
+    else:
+        add("ok", "overlap-files",
+            "no shared cited file among unordered members")
+
+    # pipeline
+    try:
+        entries, provenance = sc.resolve_pipeline(root)
+        add("ok", "pipeline", "%d entries (source: %s)"
+            % (len(entries), provenance))
+    except sc.ConfigError as exc:
+        add("fail", "pipeline", str(exc))
+
+    # doctor relay
+    rc, out, err = command_fn([sys.executable, SHIPD_BIN, "doctor"], root)
+    relayed = 0
+    for line in out.splitlines():
+        m = DOCTOR_LINE_RE.match(line)
+        if m:
+            add(m.group(1), "doctor:" + m.group(2), m.group(3))
+            relayed += 1
+    if not relayed:
+        add("fail", "doctor", "shipd doctor exit %d: %s"
+            % (rc, _first_line(err) or _first_line(out)))
+
+    problems = sum(1 for c in checks if c["level"] != "ok")
+    return {"epic": epic, "checks": checks, "problems": problems,
+            "failed": any(c["level"] == "fail" for c in checks)}
+
+
+def _print_preflight(result, as_json=False, out=print):
+    """Render :func:`compute_preflight`'s result — one JSON object, else one
+    ``<level> <check> — <detail>`` line per check and a summary line."""
+    if as_json:
+        out(json.dumps(result))
+        return
+    for c in result["checks"]:
+        out("%s %s — %s" % (c["level"], c["check"], c["detail"]))
+    out("preflight: ok" if not result["problems"]
+        else "preflight: %d problem(s)" % result["problems"])
 
 
 # ---------------------------------------------------------------------------
@@ -1447,11 +1757,14 @@ def main(argv=None):
     parser.add_argument("--waves", action="store_true",
                         help="print the waves the in-session drive may run "
                              "concurrently; drive nothing")
+    parser.add_argument("--preflight", action="store_true",
+                        help="print the launch rubric (ok|warn|fail per "
+                             "check); drive nothing")
     parser.add_argument("--parallel", type=int, default=3,
                         help="how many members one wave may hold "
                              "(default: 3; 1 is a serial walk)")
     parser.add_argument("--json", action="store_true",
-                        help="with --waves, print the waves as one JSON object")
+                        help="with --waves or --preflight, print one JSON object")
     parser.add_argument("--timeout", type=int, default=TIMEOUT_DEFAULT,
                         help="per-session wall-clock budget in seconds")
     parser.add_argument("--max-resumes", type=int, default=MAX_RESUMES_DEFAULT,
@@ -1470,7 +1783,15 @@ def main(argv=None):
         parser.error("--waves drives nothing; it cannot be combined with "
                      "--dry-run or --member")
 
+    if args.preflight and (args.waves or args.dry_run or args.member):
+        parser.error("--preflight drives nothing; it cannot be combined "
+                     "with --waves, --dry-run or --member")
+
     try:
+        if args.preflight:
+            result = compute_preflight(os.path.abspath(args.root), args.epic)
+            _print_preflight(result, as_json=args.json)
+            return 1 if result["failed"] else 0
         if args.waves:
             _print_waves(
                 compute_waves(os.path.abspath(args.root), args.epic,
