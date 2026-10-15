@@ -199,20 +199,12 @@ def _insert_gate_section(text, findings):
 def _header_end(lines):
     """Return the index just past the plan's header metadata block: the
     ``Status:`` line plus the contiguous run of ``Key: value`` metadata lines
-    after it. Falls back to just after the title (or the top) when no
-    ``Status:`` line is present."""
-    status_idx = next((i for i, ln in enumerate(lines)
-                       if sc.PLAN_STATUS_LINE_RE.match(ln)), None)
+    after it, as :func:`spec_common.plan_metadata_block` bounds it — the same
+    boundary the plan stamp is written at. Falls back to just after the title
+    (or the top) when no ``Status:`` line is present."""
+    status_idx, end = sc.plan_metadata_block(lines)
     if status_idx is None:
         return 1 if lines else 0
-    end = status_idx + 1
-    while end < len(lines):
-        ln = lines[end]
-        if ln.strip() == "" or ln.lstrip().startswith("#"):
-            break
-        if not sc.METADATA_LINE_RE.match(ln):
-            break
-        end += 1
     return end
 
 

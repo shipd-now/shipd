@@ -3048,10 +3048,14 @@ def parse_plan_metadata(text):
     return pairs
 
 
-def _plan_metadata_block(lines):
+def plan_metadata_block(lines):
     """Return ``(status_idx, end)`` for a plan's header: the index of the first
-    ``Status:`` line and the index just past its contiguous metadata block.
-    ``status_idx`` is ``None`` when the plan has no ``Status:`` line."""
+    ``Status:`` line and the index just past its contiguous metadata block —
+    the ``<Key>: <value>`` run ended by the first blank line, heading, or
+    non-metadata line. ``status_idx`` is ``None`` when the plan has no
+    ``Status:`` line. The one boundary rule every header write shares: the
+    stamp helpers below and the gate's section insertion
+    (``spec_gate._header_end``) both read it here."""
     status_idx = next((i for i, ln in enumerate(lines)
                        if PLAN_STATUS_LINE_RE.match(ln)), None)
     if status_idx is None:
@@ -3088,7 +3092,7 @@ def plan_gated_hash(text):
     Callers pass text with any ``## Context insufficient`` section already
     stripped."""
     lines = text.splitlines()
-    status_idx, end = _plan_metadata_block(lines)
+    status_idx, end = plan_metadata_block(lines)
     if status_idx is None:
         return content_hash(text)
     kept = []
@@ -3112,7 +3116,7 @@ def write_plan_stamp(text, planned_at, gated_hash):
     and removes a stale one. A plan with no ``Status:`` line is returned
     unchanged."""
     lines = text.splitlines()
-    status_idx, end = _plan_metadata_block(lines)
+    status_idx, end = plan_metadata_block(lines)
     if status_idx is None:
         return text
     values = {"Planned-at": planned_at, "Gated-hash": gated_hash}
