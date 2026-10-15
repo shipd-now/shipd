@@ -130,6 +130,40 @@ class RunTurnTest(unittest.TestCase):
         self.assertIn(missing, failure)
 
 
+class ResultTextTest(unittest.TestCase):
+    def test_result_text_from_transcript(self):
+        self.assertEqual(
+            session_driver.result_text_from_transcript('{"result": "x"}'), "x")
+        self.assertEqual(
+            session_driver.result_text_from_transcript("not json"), "")
+        self.assertEqual(
+            session_driver.result_text_from_transcript('{"result": 3}'), "")
+
+    def test_run_turn_result_returns_text_and_run_turn_is_unchanged(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = json.dumps(
+                {"session_id": "s1", "result": '{"mode": "change"}'})
+            fake = os.path.join(tmp, "fake-claude")
+            with open(fake, "w") as fh:
+                fh.write("#!/bin/sh\nprintf '%%s' '%s'\n" % transcript)
+            os.chmod(fake, 0o755)
+            self.assertEqual(
+                session_driver.run_turn_result("p", tmp, claude_bin=fake),
+                (True, None, "s1", '{"mode": "change"}'))
+            self.assertEqual(
+                session_driver.run_turn("p", tmp, claude_bin=fake),
+                (True, None, "s1"))
+
+    def test_missing_cwd_returns_empty_text(self):
+        missing = os.path.join(
+            tempfile.gettempdir(), "session-driver-nonexistent-dir-xyz")
+        ok, failure, sid, text = session_driver.run_turn_result(
+            "p", missing, claude_bin="claude-stub-binary")
+        self.assertFalse(ok)
+        self.assertEqual(text, "")
+
+
 class FailureDetailTest(unittest.TestCase):
     """A non-zero ``claude -p`` turn must never surface a blank reason, even
     when the CLI writes its fault to stdout (JSON result) with empty stderr."""
