@@ -155,11 +155,12 @@ def card_to_dict(card):
 
 
 def _card_prose(card):
-    line = "**%s** joined the room" % card.name
+    line = "**☕ shipd** \u00b7 **%s** joined the room" % card.name
     if card.harness:
         line += " from %s" % card.harness
     if card.skills:
-        line += " — skills: %s" % ", ".join(card.skills)
+        line += " · skills: %s" % ", ".join(card.skills)
+    line = "<sub>%s</sub>" % line
     if card.description:
         return "%s\n\n%s" % (line, card.description)
     return line
@@ -290,7 +291,14 @@ def message_to_dict(m):
 
 
 def _message_prose(m):
-    return m.text
+    if m.role != "agent":
+        return m.text
+    header = "**☕ shipd** \u00b7 **%s**" % m.agent
+    if m.to:
+        header += " \u2192 %s" % m.to
+    if m.state:
+        header += " \u00b7 %s" % m.state
+    return "%s\n\n%s" % (header, m.text)
 
 
 # ---------------------------------------------------------------------------

@@ -348,6 +348,12 @@ class TemplateTextTest(unittest.TestCase):
                       script)
         self.assertIn("--allow-all-tools", script)
 
+    def test_run_asks_for_a_silent_markdown_reply(self):
+        script = step_run(self.jobs["run"], RUN_STEP)
+        self.assertIn('copilot -p "$prompt" -s --allow-all-tools', script)
+        self.assertIn("GitHub-flavoured markdown", script)
+        self.assertIn("fenced", script)
+
     def test_run_truncates_the_reply_to_60000_characters(self):
         self.assertIn("60000", step_run(self.jobs["run"], RUN_STEP))
 

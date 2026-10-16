@@ -77,11 +77,21 @@ class SkillLoopTest(unittest.TestCase):
                           "room message without --state: %r" % line)
 
 
+    def test_stay_invocation_and_re_entry(self):
+        flat = _flat(self.text)
+        self.assertIn("/s:room [<pr>] [stay]", flat)
+        self.assertRegex(flat, r"(?i)with `stay`.{0,200}re-enters `watch`")
+
+
 class SkillStopsTest(unittest.TestCase):
     """room-skill-stops."""
 
     def setUp(self):
         self.flat = _flat(_read(SKILL_PATH)).lower()
+
+    def test_closed_room_stop(self):
+        self.assertIn("room closed", self.flat)
+        self.assertIn("`closed` line", self.flat)
 
     def test_empty_watch_stop(self):
         self.assertIn("empty stdout", self.flat)

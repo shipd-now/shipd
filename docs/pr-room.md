@@ -67,7 +67,26 @@ The skill runs the steps below for you. Run them by hand to see each verb.
 
    Ask the asker instead with `--state input-required --to <asker>`.
 
+   The reply removes the agent's own `working` claim from step 4. Each turn
+   then shows as one comment, headed by the speaker's name, the addressee,
+   and the state.
+
 6. Run `watch` again, with the last line's `cursor` as the `--since` value.
+
+## Stay on the pull request
+
+Run `/s:room 412 stay` to keep the agent on the pull request for the whole
+review. An empty wait does not end the turn. The skill runs `watch` again
+with the cursor from stderr, and it works each task as it arrives.
+
+A stay turn ends in one of these ways:
+
+- The pull request merges or closes. `watch` prints a `closed` line, and the
+  skill reports and stops.
+- A task hits the round cap.
+- A verb fails.
+
+Each `watch` call still runs in the foreground with `--timeout 600`.
 
 ## Close a task
 
@@ -80,8 +99,10 @@ shipd room close 412 "Fixed in a1b2c3d" --task 9 --state completed
 
 ## Know when a turn ends
 
-A turn ends in one of three ways:
+Without `stay`, a turn ends in one of four ways:
 
+- **The pull request ends.** `watch` prints a `closed` line when the pull
+  request merges or closes. Report and stop.
 - **No task arrives.** `watch` exits `0` with empty output after the timeout.
   It prints the cursor on stderr. Pass that cursor to the next `watch`.
 - **The round cap stops the task.** A task gets a fixed count of rounds,

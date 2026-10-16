@@ -3,9 +3,10 @@ name: room
 description: >-
   Hold this agent's turn in a pull request's room: join the room with a card,
   read it, wait in the foreground for a task that is this agent's turn, reply
-  in prose with an explicit task state, and stop at an empty wait, the round
-  cap, or any failing verb. Posts prose only — it never edits, commits, or
-  pushes code; code work is handed to `/s:fix` or `/s:plan`. Use when asked
+  in prose with an explicit task state, and stop at an empty wait (or, with
+  `stay`, when the pull request closes), the round cap, or any failing verb.
+  Posts prose only — it never edits, commits, or pushes code; code work is
+  handed to `/s:fix` or `/s:plan`. Use when asked
   to join a PR's room, answer the room, or take this agent's turn on a pull
   request. Trigger phrases: "join the PR room", "answer the room", "take my
   turn in the room", "/s:room".
@@ -19,10 +20,12 @@ to join the room, read it, wait for a task that is your turn, answer it in
 prose, and stop cleanly. Every read and write goes through the `shipd room`
 verbs; you never hand-write a room comment.
 
-You are invoked as `/s:room [<pr>]`. `<pr>` is a pull request number, URL, or
-branch. Every verb requires it, so when it is omitted, pass the current branch
-(`git branch --show-current`) as `<pr>` and the verbs resolve that branch's
-pull request.
+You are invoked as `/s:room [<pr>] [stay]`. `<pr>` is a pull request number,
+URL, or branch. Every verb requires it, so when it is omitted, pass the current
+branch (`git branch --show-current`) as `<pr>` and the verbs resolve that
+branch's pull request. With `stay`, you stay on the pull request for the whole
+review: an empty wait does not end the turn, and you keep taking tasks until
+the pull request closes.
 
 **Announce the version first.** Read the running plugin version from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `shipd:room
@@ -71,7 +74,8 @@ stands, name the three sources above, and stop.
    - A `review-finding` task whose finding the PR head already addresses is
      closed, not re-litigated: `shipd room close <pr> "<one line naming the commit>" --task <id> --state completed`.
 5. **Re-enter step 3** with the `cursor` from the last NDJSON line `watch`
-   printed.
+   printed. With `stay`, also re-enter after an empty wait, using the cursor
+   `watch` printed on stderr.
 
 Every `message` call names `--state` explicitly; never lean on the verb's
 default state.
@@ -80,10 +84,16 @@ default state.
 
 End the turn and report — posting nothing further — on any of these:
 
-- **Empty wait.** `watch` exits 0 with empty stdout: no task became this
-  agent's turn within the timeout. Report "no actionable task" and the cursor
-  `watch` printed on stderr, so the user or a later run re-enters with
-  `--since <cursor>`. Do not loop back into `watch` on your own.
+- **Room closed.** `watch` printed a `closed` line (`{"closed": "merged"}` or
+  `{"closed": "closed"}`): the pull request merged or closed. Post nothing, not
+  even on a task printed before it; report, and stop.
+- **Empty wait** (a turn without `stay`). `watch` exits 0 with empty stdout: no
+  task became this agent's turn within the timeout. Report "no actionable
+  task" and the cursor `watch` printed on stderr, so the user or a later run
+  re-enters with `--since <cursor>`. Do not loop back into `watch` on your
+  own. With `stay`, the skill re-enters `watch` with that cursor, each call
+  still in the foreground with `--timeout 600`, and the turn goes on until a
+  `closed` line, the round cap, or a failing verb.
 - **Round cap.** `message` exits 1 with an `Error:` line naming the round cap.
   The verb has already posted `failed` (reason `round-cap`) on the task; report
   that the task hit the round cap and stop. Do not post again on it.
