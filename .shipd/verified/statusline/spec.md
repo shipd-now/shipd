@@ -118,7 +118,11 @@ bar followed by the integer percentage, as `<bar> <pct>%`. The bar SHALL
 fill `round(pct × 4 / 100)` cells with `█` (U+2588) and the rest with `░`
 (U+2591), so `0` renders `░░░░ 0%`, `25` renders `█░░░ 25%`, and `100`
 renders `████ 100%`; a fractional percentage SHALL truncate to its integer
-part, and a value above 100 SHALL clamp to 100. If the session JSON carries
+part, and a value above 100 SHALL clamp to 100. The context segment SHALL be
+colored by the clamped percentage: light blue (`\033[94m`, the change-name
+color) at 50 or below, orange (xterm-256 `208`) above 50, red (`196`) above
+75, darker red (`160`) above 90, and dark red (`124`) above 95, with the
+color reset after the segment so the ` · ` separators stay uncolored. If the session JSON carries
 no non-negative numeric `used_percentage`, then the context segment SHALL
 render empty. An unknown segment name SHALL be ignored.
 
@@ -236,6 +240,13 @@ render empty. An unknown segment name SHALL be ignored.
   `--line context,spec`
 - **WHEN** the statusline script runs
 - **THEN** the line begins `☕ █░░░ 25% · ` followed by the spec text
+
+#### Scenario: Context color follows the usage thresholds
+- **GIVEN** a `used_percentage` of `50`, `51`, `76`, `91`, or `96`
+- **WHEN** the statusline script runs with the context segment shown
+- **THEN** the context segment is wrapped in `\033[94m`, `\033[38;5;208m`,
+  `\033[38;5;196m`, `\033[38;5;160m`, or `\033[38;5;124m` respectively,
+  followed by `\033[0m`
 
 ### Requirement: Statusline integration
 id: statusline-integration
