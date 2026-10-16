@@ -11,6 +11,10 @@ touches the filesystem, or opens a network connection. It parses and renders
 comment bodies, folds a comment chain into Task views, and owns the task state
 machine and the round cap. Callers (the ``shipd room`` verbs, ``watch``, the
 gate) do the fetching and posting.
+
+Prose opens with a speaker heading, ``### ☕ shipd · <agent>[ · <role>][ (for
+@<login>)]``; the role and login are render arguments, so a Message marker
+never stores them, while a card marker carries its own optional ``role``.
 """
 
 import json
@@ -103,10 +107,25 @@ class AgentCard:
     skills: tuple = ()
     version: str = ""
     harness: str = ""
+    role: str = ""
     extra: dict = field(default_factory=dict)
 
 
-_CARD_KEYS = ("name", "description", "skills", "version", "harness")
+_CARD_KEYS = ("name", "description", "skills", "version", "harness", "role")
+
+# The roles `room join --role` accepts; the schema itself takes any string.
+ROLE_VALUES = ("author", "reviewer", "ci")
+
+
+def speaker_heading(agent, role="", login=""):
+    """The speaker heading text (no markdown prefix): ``☕ shipd · agent``,
+    then `` · role`` and `` (for @login)`` when those are set."""
+    heading = "\u2615 shipd \u00b7 %s" % agent
+    if role:
+        heading += " \u00b7 %s" % role
+    if login:
+        heading += " (for @%s)" % login
+    return heading
 
 
 def _str_field(d, key, what):
@@ -137,6 +156,7 @@ def card_from_dict(d):
         skills=tuple(skills),
         version=_str_field(d, "version", "agent card"),
         harness=_str_field(d, "harness", "agent card"),
+        role=_str_field(d, "role", "agent card"),
         extra={k: v for k, v in d.items() if k not in _CARD_KEYS},
     )
 
@@ -151,16 +171,19 @@ def card_to_dict(card):
         "version": card.version,
         "harness": card.harness,
     })
+    if card.role:
+        d["role"] = card.role
     return d
 
 
-def _card_prose(card):
-    line = "**☕ shipd** \u00b7 **%s** joined the room" % card.name
+def _card_prose(card, login=""):
+    heading = "### " + speaker_heading(card.name, card.role, login)
+    line = "joined the room"
     if card.harness:
         line += " from %s" % card.harness
     if card.skills:
         line += " · skills: %s" % ", ".join(card.skills)
-    line = "<sub>%s</sub>" % line
+    line = "%s\n<sub>%s</sub>" % (heading, line)
     if card.description:
         return "%s\n\n%s" % (line, card.description)
     return line
@@ -290,15 +313,17 @@ def message_to_dict(m):
     return d
 
 
-def _message_prose(m):
+def _message_prose(m, login="", role=""):
     if m.role != "agent":
         return m.text
-    header = "**☕ shipd** \u00b7 **%s**" % m.agent
-    if m.to:
-        header += " \u2192 %s" % m.to
-    if m.state:
-        header += " \u00b7 %s" % m.state
-    return "%s\n\n%s" % (header, m.text)
+    lines = ["### " + speaker_heading(m.agent, role, login)]
+    if m.to and m.state:
+        lines.append("\u2192 %s \u00b7 %s" % (m.to, m.state))
+    elif m.to:
+        lines.append("\u2192 %s" % m.to)
+    elif m.state:
+        lines.append(m.state)
+    return "%s\n\n%s" % ("\n".join(lines), m.text)
 
 
 # ---------------------------------------------------------------------------
@@ -337,18 +362,20 @@ def parse_comment(body, author=None):
     return parse_comments(body, author)[0]
 
 
-def render_comment(obj):
+def render_comment(obj, login="", role=""):
     """A room comment body: the marker on line 1, a blank line, the prose.
+    ``login`` heads the speaker heading; ``role`` heads a Message's (a card
+    uses its own ``role``). Neither is written into a Message marker.
     The object is validated first, so an invalid one raises ``SchemaError``."""
     if isinstance(obj, AgentCard):
         d = card_to_dict(obj)
         card_from_dict(d)
-        return "%s\n\n%s" % (render_marker(CARD_MARKER, d), _card_prose(obj))
+        return "%s\n\n%s" % (render_marker(CARD_MARKER, d), _card_prose(obj, login))
     if isinstance(obj, Message):
         d = message_to_dict(obj)
         message_from_dict(d)
         return "%s\n\n%s" % (render_marker(MESSAGE_MARKER, d),
-                             _message_prose(obj))
+                             _message_prose(obj, login, role))
     raise SchemaError("cannot render %r as a room comment" % (obj,))
 
 

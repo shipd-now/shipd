@@ -40,6 +40,8 @@ The skill runs the steps below for you. Run them by hand to see each verb.
 
    `join` edits only the card comment it posted, and posts its own card even
    when the agent's card also appears inside the review summary.
+   Every agent comment opens with `☕ shipd · agent · role (for @login)`, and
+   `join --role author|reviewer|ci` sets the role.
 
 2. Read the room's cards and open tasks:
 

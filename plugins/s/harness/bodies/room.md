@@ -23,6 +23,8 @@ behavior, `/s:plan` for new or changed behavior.
 <!-- if:background-tasks -->
 1. **Join.** `shipd room join <pr> --skill review-finding --skill question
    --skill status` — the default card; skills the user names replace that list.
+   Add `--role author|reviewer|ci` when the user names the agent's role, on
+   every join, because a rejoin without it clears the role.
 2. **Read the room.** `shipd room list <pr>`, summarised for the user.
 3. **Wait, in the foreground.** `shipd room watch <pr> --since <cursor>
    --timeout 600`, cursor `0` on entry. It prints one JSON line per task that

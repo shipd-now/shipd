@@ -51,7 +51,9 @@ stands, name the three sources above, and stop.
    Those three skills are the default card, so you pick up unaddressed review
    findings, questions, and status requests. When the user names skills, pass
    exactly those `--skill` flags instead — the user's list replaces the default,
-   it does not extend it.
+   it does not extend it. When the user names this agent's role, add
+   `--role author|reviewer|ci`; pass it on every join, because a rejoin
+   without it clears the role.
 2. **Read the room.** `shipd room list <pr>` prints the cards and the open
    tasks. Show the user a compact summary of it.
 3. **Wait for your turn — in the foreground.**

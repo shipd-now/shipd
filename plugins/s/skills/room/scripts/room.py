@@ -5,7 +5,8 @@ A PR room is a pull request's comment thread used as a message bus between
 agents (see ``room_schema``). This script is the harness-agnostic surface an
 agent drives to take part in one:
 
-  join <pr>      post or refresh this agent's own card comment
+  join <pr>      post or refresh this agent's own card comment (``--role``
+                 sets its role: author, reviewer, or ci)
   list <pr>      the room's cards and tasks
   message <pr>   open a task (``--new``) or advance one (``--task ID``)
   close <pr>     post a task's terminal message
@@ -15,6 +16,9 @@ Every GitHub read and write goes through one injectable ``gh`` runner,
 ``gh(args, input=None) -> (rc, stdout, stderr)``, defaulting to the ``gh``
 CLI, so the test suite drives the verbs against a fake and reaches no
 network. Comment bodies are only ever built by ``room_schema.render_comment``.
+
+Every comment a verb posts opens with a speaker heading naming the agent,
+its card's role, and the GitHub login read once per verb from ``gh api user``.
 
 Mutating verbs print one JSON object on stdout and one human line on stderr;
 a fatal outcome is one ``Error: <reason>`` line and exit ``1``; invalid
@@ -373,9 +377,42 @@ def _drop_claim(gh, repo, claim_id):
                          % claim_id)
 
 
-def _post_message(gh, repo, number, message):
+def _login(gh, memo):
+    """The posting GitHub login from ``gh api user``, read once per verb and
+    kept in ``memo``. A failed read or an empty login warns once and yields
+    ``""``, so the heading drops its ``(for @login)`` segment."""
+    if "login" in memo:
+        return memo["login"]
+    login = ""
+    rc, out, err = gh(["api", "user"])
+    if rc == 0:
+        try:
+            data = json.loads(out or "null")
+            login = str(data.get("login") or "") \
+                if isinstance(data, dict) else ""
+        except ValueError:
+            login = ""
+    if not login:
+        sys.stderr.write(
+            "warning: could not read the GitHub login (gh api user%s); "
+            "posting without a '(for @login)' heading\n"
+            % (": %s" % (err or "").strip() if rc != 0 and (err or "").strip()
+               else ""))
+    memo["login"] = login
+    return login
+
+
+def _card_role(cards, name):
+    """The role on ``name``'s card, or ``""`` when it has none."""
+    for card in cards:
+        if card.name == name:
+            return card.role
+    return ""
+
+
+def _post_message(gh, repo, number, message, login="", role=""):
     try:
-        body = room_schema.render_comment(message)
+        body = room_schema.render_comment(message, login=login, role=role)
     except room_schema.SchemaError as exc:
         raise RoomError(str(exc))
     return _post(gh, repo, number, body)
@@ -419,9 +456,9 @@ def cmd_join(opts, parser, gh):
     card = room_schema.AgentCard(
         name=agent, description=opts.description or "",
         skills=tuple(opts.skill or ()), version=_plugin_version(),
-        harness=opts.harness or "")
+        harness=opts.harness or "", role=opts.role or "")
     try:
-        body = room_schema.render_comment(card)
+        body = room_schema.render_comment(card, login=_login(gh, {}))
     except room_schema.SchemaError as exc:
         raise RoomError(str(exc))
     if agent in owned:
@@ -493,6 +530,8 @@ def cmd_message(opts, parser, gh):
     repo, number, context = _resolve_room(gh, opts.pr)
     cards, tasks, _raw, comments = _read_room(gh, repo, number)
     _require_card(cards, agent, context)
+    memo = {}
+    role = _card_role(cards, agent)
     metadata = {}
     if opts.new:
         requested = opts.state or (
@@ -514,7 +553,8 @@ def cmd_message(opts, parser, gh):
                 context, agent, "round cap (%d) reached" % max_rounds,
                 task.id, {"state": "failed", "reason": "round-cap",
                           "round": rnd})
-            _post_message(gh, repo, number, capped)
+            _post_message(gh, repo, number, capped, _login(gh, memo),
+                          role)
             raise RoomError("round cap reached on task %s — posted failed "
                             "(round-cap)" % task.id)
         task_id = task.id
@@ -525,7 +565,7 @@ def cmd_message(opts, parser, gh):
         metadata["to"] = opts.to
     resp = _post_message(gh, repo, number,
                          _message(context, agent, opts.text, task_id,
-                                  metadata))
+                                  metadata), _login(gh, memo), role)
     _drop_claim(gh, repo, claim_id)
     opened = task_id if task_id is not None else (resp or {}).get("id")
     _emit(_reply_result(resp, opened, state, rnd))
@@ -553,7 +593,8 @@ def cmd_close(opts, parser, gh):
         if opts.reason:
             text += " — %s" % opts.reason
     resp = _post_message(gh, repo, number,
-                         _message(context, agent, text, task.id, metadata))
+                         _message(context, agent, text, task.id, metadata),
+                         _login(gh, {}), _card_role(cards, agent))
     _drop_claim(gh, repo, claim_id)
     _emit(_reply_result(resp, task.id, state, rnd))
     sys.stderr.write("closed task %s as %s in %s\n" % (task.id, state,
@@ -604,7 +645,7 @@ def _watch_line(task, comment, context, cursor):
 
 
 def _cap_task(gh, repo, number, context, agent, card, task, max_rounds,
-              warned):
+              warned, memo):
     """Close a task at the round cap: post ``failed``/``round-cap`` on it
     when ``agent`` has a card, else warn that someone must join to close
     it — once per task per watch, tracked in the ``warned`` id set. Either
@@ -619,7 +660,7 @@ def _cap_task(gh, repo, number, context, agent, card, task, max_rounds,
         context, agent, "round cap (%d) reached" % max_rounds, task.id,
         {"state": "failed", "reason": "round-cap",
          "round": room_schema.next_round(task, agent)})
-    _post_message(gh, repo, number, capped)
+    _post_message(gh, repo, number, capped, _login(gh, memo), card.role)
     sys.stderr.write("task %s: round cap reached — posted failed "
                      "(round-cap)\n" % task.id)
 
@@ -643,6 +684,7 @@ def cmd_watch(opts, gh, sleep, clock, parser):
     repo, number, context = _resolve_room(gh, opts.pr)
     cursor = opts.since
     warned = set()
+    memo = {}
     start = clock()
     while True:
         comments = _read_comments(gh, repo, number)
@@ -653,7 +695,7 @@ def cmd_watch(opts, gh, sleep, clock, parser):
         for task in actionable_tasks(tasks, agent, skills):
             if room_schema.at_round_cap(task, agent, max_rounds):
                 _cap_task(gh, repo, number, context, agent, card, task,
-                          max_rounds, warned)
+                          max_rounds, warned, memo)
                 continue
             comment = _last_comment(comments, task)
             if comment is not None and _is_new(comment, cursor):
@@ -746,6 +788,9 @@ def build_parser():
                    help="a line describing this agent")
     p.add_argument("--harness", default="",
                    help="the harness driving this agent")
+    p.add_argument("--role", default="", choices=("",) + room_schema.ROLE_VALUES,
+                   help="the agent's role: %s" % ", ".join(
+                       room_schema.ROLE_VALUES))
     p.set_defaults(func=cmd_join)
 
     p = sub.add_parser("list", parents=[common],

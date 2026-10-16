@@ -846,9 +846,21 @@ def _post_review(gh, repo, number, sha, anchored, commentable=None,
                         else commentable.get(p, set()),
                         location_index=idx, room=room)
         for f, p, ln, idx in anchored]
-    body = ("Semantic review — see the summary comment for the full report."
-            if comments else
-            "Semantic review posted — see the summary comment.")
+    rc, out, _err = gh(["api", "user"])
+    login = ""
+    if rc == 0:
+        try:
+            data = json.loads(out or "null")
+            login = str(data.get("login") or "") \
+                if isinstance(data, dict) else ""
+        except ValueError:
+            login = ""
+    heading = "### " + room_schema.speaker_heading(ROOM_AGENT, "reviewer",
+                                                    login)
+    pointer = ("Semantic review: %d inline comments. Full report in the "
+               "summary comment." % len(comments) if comments else
+               "Semantic review posted. Full report in the summary comment.")
+    body = "%s\n%s" % (heading, pointer)
     payload = json.dumps({"commit_id": sha, "event": REVIEW_EVENT,
                           "body": body, "comments": comments})
     rc, _out, _err = gh(["api", "repos/%s/pulls/%d/reviews" % (repo, number),

@@ -45,7 +45,9 @@ class FakeGh:
 
     def __init__(self, number=7, repo="o/r", comments=None,
                  review_comments=None, pages=1, fail=None, state="OPEN",
-                 delete_fail=False):
+                 delete_fail=False, login="bot", user_fail=False):
+        self.login = login
+        self.user_fail = user_fail
         self.number = number
         self.state = state
         self.delete_fail = delete_fail
@@ -68,6 +70,10 @@ class FakeGh:
         pages = [items[i * size:(i + 1) * size] for i in range(count)] \
             if size else [[] for _ in range(count)]
         return json.dumps(pages)
+
+    def user_calls(self):
+        """How many times ``gh api user`` was read."""
+        return sum(1 for args, _inp in self.calls if args == ["api", "user"])
 
     def posts(self):
         """The parsed bodies of every recorded POST, in order."""
@@ -110,6 +116,10 @@ class FakeGh:
             return 0, json.dumps({"nameWithOwner": self.repo}), ""
         if args[0] != "api":
             raise AssertionError("unexpected gh call: %r" % (args,))
+        if args == ["api", "user"]:
+            if self.user_fail:
+                return 1, "", "HTTP 401: Bad credentials"
+            return 0, json.dumps({"login": self.login}), ""
         issue_list = "repos/%s/issues/%d/comments?per_page=100" % (
             self.repo, self.number)
         review_list = "repos/%s/pulls/%d/comments?per_page=100" % (
@@ -183,11 +193,11 @@ def _run(argv, gh, env=None, seams=None):
 
 
 def card_comment(comment_id, name, skills=(), harness="", version="",
-                 description="", login="bot"):
+                 description="", login="bot", role=""):
     """An issue comment carrying an agent card marker."""
     card = room_schema.AgentCard(name=name, skills=tuple(skills),
                                  harness=harness, version=version,
-                                 description=description)
+                                 description=description, role=role)
     return {"id": comment_id, "user": {"login": login},
             "body": room_schema.render_comment(card),
             "html_url": "https://example/%d" % comment_id}
@@ -374,6 +384,34 @@ class JoinTest(RoomTestBase):
         self.assertEqual(data["comment"], gh.comments[-1]["id"])
         self.assertEqual(data["url"], gh.comments[-1]["html_url"])
         self.assertIn("joined %s as codex-a" % CONTEXT, err)
+
+    def test_join_with_a_role_heads_and_marks_the_card(self):
+        gh = FakeGh()
+        code, _out, err = self.room(gh, "join", "7", "--agent", "codex-a",
+                                    "--role", "author")
+        self.assertEqual(code, 0, err)
+        body = gh.posts()[0]
+        self.assertEqual(first_marker(body).role, "author")
+        self.assertIn('"role":"author"', body.splitlines()[0])
+        self.assertIn("### \u2615 shipd \u00b7 codex-a \u00b7 author "
+                      "(for @bot)", body)
+        self.assertEqual(gh.user_calls(), 1)
+
+    def test_unknown_role_is_a_usage_error(self):
+        gh = FakeGh()
+        code, _out, _err = self.room(gh, "join", "7", "--agent", "codex-a",
+                                     "--role", "boss")
+        self.assertEqual(code, 2)
+        self.assertEqual(gh.posts(), [])
+
+    def test_rejoin_without_a_role_clears_it(self):
+        gh = FakeGh()
+        self.room(gh, "join", "7", "--agent", "codex-a", "--role", "author")
+        code, _out, err = self.room(gh, "join", "7", "--agent", "codex-a")
+        self.assertEqual(code, 0, err)
+        body = gh.patches()[0][1]
+        self.assertNotIn('"role"', body.splitlines()[0])
+        self.assertEqual(first_marker(body).role, "")
 
     def test_second_join_patches_the_same_comment(self):
         gh = FakeGh()
@@ -593,6 +631,26 @@ class MessageTest(RoomTestBase):
         self.assertEqual(data["state"], "input-required")
         self.assertEqual(data["round"], 1)
         self.assertEqual(data["url"], gh.comments[-1]["html_url"])
+
+    def test_message_heads_with_the_cards_role_and_reads_login_once(self):
+        gh = FakeGh(comments=[card_comment(1, "codex-a", role="author"),
+                              card_comment(2, "claude-b")])
+        code, _out, err = self.room(gh, "message", "7", "--new", "--to",
+                                    "claude-b", "hi", "--agent", "codex-a")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            gh.posts()[0].split("\n", 2)[2].splitlines()[0],
+            "### \u2615 shipd \u00b7 codex-a \u00b7 author (for @bot)")
+        self.assertEqual(gh.user_calls(), 1)
+
+    def test_card_without_a_role_drops_the_role_segment(self):
+        gh = FakeGh(comments=_joined())
+        code, _out, err = self.room(gh, "message", "7", "--new", "--to",
+                                    "claude-b", "hi", "--agent", "codex-a")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            gh.posts()[0].split("\n", 2)[2].splitlines()[0],
+            "### \u2615 shipd \u00b7 codex-a (for @bot)")
 
     def test_unaddressed_opener_is_submitted(self):
         gh = FakeGh(comments=_joined())
@@ -814,6 +872,17 @@ class CloseTest(RoomTestBase):
         self.assertEqual(data["state"], "completed")
         self.assertEqual(data["round"], 2)
         self.assertEqual(data["comment"], gh.comments[-1]["id"])
+
+    def test_failed_login_read_still_posts_with_a_warning(self):
+        gh = self._room()
+        gh.user_fail = True
+        code, _out, err = self.room(gh, "close", "7", "--task", "10",
+                                    "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        self.assertIn("warning:", err)
+        body = gh.posts()[0]
+        self.assertIn("### \u2615 shipd \u00b7 claude-b", body)
+        self.assertNotIn("(for @", body)
 
     def test_close_with_a_reason_at_the_cap_still_posts(self):
         gh = self._room(round=6)
@@ -1221,6 +1290,22 @@ class WatchRoundCapTest(WatchTestBase):
         self.assertIn("task 10: round cap reached — posted failed "
                       "(round-cap)", err)
         self.assertIn("watch: no actionable task on %s" % CONTEXT, err)
+
+    def test_cap_post_is_headed_and_reads_login_once(self):
+        gh = FakeGh(comments=[card_comment(1, "claude-b", role="reviewer"),
+                              self._capped(),
+                              msg_comment(11, "codex-a", text="again?",
+                                          state="input-required", round=6,
+                                          to="claude-b")])
+        code, _out, err = self.watch(gh, "--agent", "claude-b", "--once",
+                                     "--max-rounds", "6")
+        self.assertEqual(code, 0, err)
+        posts = gh.posts()
+        self.assertEqual(len(posts), 2, posts)
+        for body in posts:
+            self.assertIn("### \u2615 shipd \u00b7 claude-b \u00b7 reviewer "
+                          "(for @bot)", body)
+        self.assertEqual(gh.user_calls(), 1)
 
     def test_cap_without_a_card_is_a_warning(self):
         gh = FakeGh(comments=[self._capped()])

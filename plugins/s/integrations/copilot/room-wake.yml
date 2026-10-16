@@ -190,7 +190,7 @@ jobs:
           names = [card.get("name") for card in cards if isinstance(card, dict)]
           sys.exit(0 if sys.argv[1] in names else 1)
           ' "$SHIPD_ROOM_AGENT"; then
-            room join "$PR_NUMBER" --harness copilot-cli
+            room join "$PR_NUMBER" --harness copilot-cli --role ci
           fi
           room message "$PR_NUMBER" --task "$task" --state working -- "picked up by the CI wake"
           {
