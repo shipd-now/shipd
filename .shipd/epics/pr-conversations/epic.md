@@ -83,9 +83,11 @@ Success criteria:
   `ticket_pattern` match in the branch name; with no ticket, `{ticket}` and the
   whitespace after it drop out. The existing `pr-mode` key is unchanged.
 - **Verbs resolve the repository the same way everywhere.** Every room verb
-  accepts a pull request URL or `--repo <owner/name>`, and resolves the
-  repository through one function, so a verb never succeeds against one
-  repository and the next fails against another.
+  already resolves through one function, `_resolve_room`, which reads the
+  repository from `gh repo view` in the working directory, so a verb run
+  outside the checkout fails. Every room verb accepts a pull request URL or
+  `--repo <owner/name>`, and that function takes the repository from them
+  first and falls back to the working directory.
 - **A merge does not strand a conversation.** The reviewer's agent merges only
   when the room holds no task in `working` or `input-required`. When `watch`
   sees the pull request closed, its `closed` line lists any such tasks, and the
