@@ -393,6 +393,66 @@ class JoinTest(RoomTestBase):
         self.assertEqual(code, 0, err)
         self.assertEqual(len(json.loads(out)["cards"]), 1)
 
+    def _summary_comment(self, comment_id, name, marker):
+        base = card_comment(comment_id, name)
+        base["body"] = base["body"] + "\n" + marker + "\nReview summary.\n"
+        return base
+
+    def _assert_summary_left_alone(self, marker):
+        summary = self._summary_comment(6206725970, "semantic-review", marker)
+        original = summary["body"]
+        gh = FakeGh(number=14, comments=[summary])
+        code, out, err = self.room(gh, "join", "14", "--agent",
+                                   "semantic-review")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(gh.patches(), [])
+        self.assertEqual(gh.deletes(), [])
+        posts = gh.posts()
+        self.assertEqual(len(posts), 1)
+        self.assertTrue(posts[0].splitlines()[0].startswith(
+            "<!-- shipd-room-card "))
+        self.assertEqual(first_marker(posts[0]).name, "semantic-review")
+        new_id = gh.comments[-1]["id"]
+        self.assertNotEqual(new_id, 6206725970)
+        self.assertEqual(json.loads(out)["comment"], new_id)
+        self.assertEqual(gh.comments[0]["body"], original)
+        return gh, new_id
+
+    def test_join_leaves_the_review_summary_alone(self):
+        gh, new_id = self._assert_summary_left_alone(
+            "<!-- shipd-semantic-review -->")
+        code, out, err = self.room(gh, "join", "14", "--agent",
+                                   "semantic-review")
+        self.assertEqual(code, 0, err)
+        patches = gh.patches()
+        self.assertEqual(len(patches), 1)
+        self.assertEqual(patches[0][0], new_id)
+        self.assertEqual(len(gh.posts()), 1)
+
+    def test_join_leaves_the_legacy_summary_alone(self):
+        self._assert_summary_left_alone("<!-- am-semantic-review -->")
+
+    def test_card_with_a_second_room_marker_is_not_owned(self):
+        mixed = card_comment(1001, "codex-a")
+        mixed["body"] += "\n" + msg_comment(1002, "codex-a")["body"]
+        gh = FakeGh(comments=[mixed])
+        code, _out, err = self.room(gh, "join", "7", "--agent", "codex-a")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(gh.patches(), [])
+        self.assertEqual(len(gh.posts()), 1)
+
+    def test_join_edits_the_owned_card_not_a_foreign_one(self):
+        owned = card_comment(1001, "codex-a")
+        foreign = self._summary_comment(1002, "codex-a",
+                                        "<!-- shipd-semantic-review -->")
+        gh = FakeGh(comments=[owned, foreign])
+        code, _out, err = self.room(gh, "join", "7", "--agent", "codex-a")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(gh.posts(), [])
+        patches = gh.patches()
+        self.assertEqual(len(patches), 1)
+        self.assertEqual(patches[0][0], 1001)
+
     def test_no_agent_name_is_a_usage_error(self):
         gh = FakeGh()
         code, out, err = self.room(gh, "join", "7")

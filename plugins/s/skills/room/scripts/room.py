@@ -5,7 +5,7 @@ A PR room is a pull request's comment thread used as a message bus between
 agents (see ``room_schema``). This script is the harness-agnostic surface an
 agent drives to take part in one:
 
-  join <pr>      post or refresh this agent's card
+  join <pr>      post or refresh this agent's own card comment
   list <pr>      the room's cards and tasks
   message <pr>   open a task (``--new``) or advance one (``--task ID``)
   close <pr>     post a task's terminal message
@@ -175,6 +175,30 @@ def _room_from_comments(comments):
     last card per agent name, ``tasks`` the ``build_tasks`` view."""
     cards, tasks, _raw = _parse_room(comments)
     return cards, tasks
+
+
+SUMMARY_MARKERS = ("<!-- shipd-semantic-review -->",
+                   "<!-- am-semantic-review -->")
+
+
+def _owned_card_ids(comments):
+    """Card name -> id of the last issue comment that holds only that agent's
+    card: exactly one room marker, an ``AgentCard``, and no semantic-review
+    summary marker. A comment whose marker does not parse is skipped."""
+    owned = {}
+    for comment in comments:
+        if _endpoint(comment) != "issue":
+            continue
+        body = comment.get("body") or ""
+        if any(marker in body for marker in SUMMARY_MARKERS):
+            continue
+        try:
+            parsed = room_schema.parse_comments(body)
+        except room_schema.SchemaError:
+            continue
+        if len(parsed) == 1 and isinstance(parsed[0], room_schema.AgentCard):
+            owned[parsed[0].name] = comment.get("id")
+    return owned
 
 
 def _read_room(gh, repo, number):
@@ -388,7 +412,8 @@ def cmd_join(opts, parser, gh):
     root = _root(opts)
     agent = _agent_name(opts, parser, root)
     repo, number, context = _resolve_room(gh, opts.pr)
-    _cards, _tasks, raw, _comments = _read_room(gh, repo, number)
+    _cards, _tasks, _raw, comments = _read_room(gh, repo, number)
+    owned = _owned_card_ids(comments)
     card = room_schema.AgentCard(
         name=agent, description=opts.description or "",
         skills=tuple(opts.skill or ()), version=_plugin_version(),
@@ -397,12 +422,12 @@ def cmd_join(opts, parser, gh):
         body = room_schema.render_comment(card)
     except room_schema.SchemaError as exc:
         raise RoomError(str(exc))
-    if agent in raw:
-        resp = _patch(gh, repo, raw[agent], body)
+    if agent in owned:
+        resp = _patch(gh, repo, owned[agent], body)
     else:
         resp = _post(gh, repo, number, body)
     resp = resp or {}
-    _emit({"comment": resp.get("id", raw.get(agent)), "agent": agent,
+    _emit({"comment": resp.get("id", owned.get(agent)), "agent": agent,
            "url": resp.get("html_url")})
     sys.stderr.write("joined %s as %s\n" % (context, agent))
     return 0
