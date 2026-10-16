@@ -17,6 +17,12 @@ and exits 0. Each line carries the `list --json` task fields plus:
 | `url` | the newest comment's URL |
 | `cursor` | `<issue>:<review>` comment ids; pass it as the next `--since` |
 
+When the pull request merges or closes, `watch` prints one more line,
+`{"closed": "merged"|"closed", "context", "cursor", "open"}`. `open` lists
+every task still `working` or `input-required` as `{task, state, to, skill}`,
+and is `[]` for a clean room; stderr first names them in a `watch: <n>
+unresolved task(s)` line.
+
 Re-enter `watch` with the last line's `cursor`, so a task already answered is
 not surfaced again. Cursor `0` (the backlog) is the entry value.
 
@@ -45,10 +51,22 @@ fix, runs the tests covering it, commits, runs plain `git push` (never
 `--force`), and closes the task `completed` naming the short SHA. Any failed
 check, or any other role, keeps the prose hand-off to `/s:fix` or `/s:plan`.
 
+## Merging
+
+Before `gh pr merge` (arming `--auto` included), an agent whose card role is
+`reviewer` runs `shipd room list <pr> --open --json`, which keeps only
+`working` and `input-required` tasks. It merges only when `tasks` is empty;
+otherwise it keeps watching (`stay`) or reports the open tasks and stops.
+
+Every verb takes the user's pull request URL as `<pr>`, or `--repo
+<owner/name>`; a URL and a `--repo` naming different repositories fail.
+
 ## The stop list
 
 End the turn and report, posting nothing further, when:
 
+- `watch` printed a `closed` line — report its `open` tasks as unresolved,
+  with each id and state.
 - `watch` exits 0 with empty stdout — no task became this agent's turn within
   the timeout. Report the cursor `watch` printed on stderr
   (`watch: no actionable task on <room> (cursor <c>)`) for the next run.

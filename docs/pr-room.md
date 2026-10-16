@@ -8,15 +8,16 @@ and `/s:room` runs one agent's turn through those verbs.
 [Multi-agent PR](multi-agent-pr.md) explains the model this guide runs.
 
 This guide walks one agent through one turn: join, read, wait, reply, and
-close. Run `shipd room --help` for every verb's flags.
+close. Run `shipd room --help` for every verb's flags. Every verb takes a pull
+request URL as `<pr>`, or `--repo <owner/name>`, so it needs no checkout of
+that repository. A URL and a `--repo` naming different repositories fail.
 
 ## Before you start
 
 - The repository has an open pull request, and you have signed in to `gh`.
 - The agent has a name. The verbs read it from `--agent`, then from the
   `SHIPD_ROOM_AGENT` environment variable, then from the `room.agent` key.
-- No name resolves from any of the three sources? The verbs stop with a usage
-  error. Set one before you continue.
+- No name resolves? The verbs stop with a usage error. Set one first.
 
 [Customising shipd](customise.md) documents the `room` key and its two
 members, `agent` and `max_rounds`.
@@ -39,8 +40,8 @@ The skill runs the steps below for you. Run them by hand to see each verb.
    ```
 
    `join` edits only the card comment it posted, and posts its own card even
-   when the agent's card also appears inside the review summary.
-   Every agent comment opens with `☕ shipd · agent · role (for @login)`, and
+   when the agent's card also appears inside the review summary. Every agent
+   comment opens with `☕ shipd · agent · role (for @login)`, and
    `join --role author|reviewer|ci` sets the role.
 
 2. Read the room's cards and open tasks:
@@ -73,8 +74,7 @@ The skill runs the steps below for you. Run them by hand to see each verb.
    Ask the asker instead with `--state input-required --to <asker>`.
 
    The reply removes the agent's own `working` claim from step 4. Each turn
-   then shows as one comment, headed by the speaker's name, the addressee,
-   and the state.
+   then shows as one comment, headed by the speaker, addressee, and state.
 
 6. Run `watch` again, with the last line's `cursor` as the `--since` value.
 
@@ -88,8 +88,7 @@ A stay turn ends in one of these ways:
 
 - The pull request merges or closes. `watch` prints a `closed` line, and the
   skill reports and stops.
-- A task hits the round cap.
-- A verb fails.
+- A task hits the round cap, or a verb fails.
 
 Each `watch` call still runs in the foreground with `--timeout 600`.
 
@@ -107,28 +106,34 @@ shipd room close 412 "Fixed in a1b2c3d" --task 9 --state completed
 Without `stay`, a turn ends in one of four ways:
 
 - **The pull request ends.** `watch` prints a `closed` line when the pull
-  request merges or closes. Report and stop.
+  request merges or closes. Its `open` array lists tasks still `working` or
+  `input-required`. Report them as unresolved, then stop.
 - **No task arrives.** `watch` exits `0` with empty output after the timeout.
   It prints the cursor on stderr. Pass that cursor to the next `watch`.
 - **The round cap stops the task.** A task gets a fixed count of rounds,
   counted across every agent. The `room.max_rounds` key sets that count, and
-  the default is 6.
-  At the cap, `message` posts `failed` on the task and exits `1`.
+  the default is 6. At the cap, `message` posts `failed` and exits `1`.
 - **A verb fails.** Any other non-zero exit prints one `Error:` line. Read the
   line and fix the cause.
 
 Run `watch` in the foreground only. A wait in the background answers a turn
 after the agent has stopped listening.
 
+## Merge from a clear room
+
+Before `gh pr merge`, a `reviewer` agent runs `shipd room list 412 --open
+--json`. It merges only when `tasks` is empty. Otherwise it keeps watching
+(`stay`), or reports the open tasks and stops.
+
 ## Keep the room to prose
 
 `/s:room` posts prose, with one exception. An agent whose card role is
 `author` commits a finding's fix to its own pull request, then closes the task
-naming the commit. It must be the PR's author, because the role is
-self-declared, and the head must be in the same repository. It needs the PR
-head branch checked out and a clean tree.
-It runs the tests that cover the change and pushes without `--force`. Any
-failed check falls back to the prose hand-off.
+naming the commit. It must be the PR's author, because agents declare the
+role themselves, and the head must be in the same repository. It needs the PR
+head branch checked out and a clean tree. It runs the tests that cover the
+change and pushes without `--force`. Any failed check falls back to the prose
+hand-off.
 
 Every other role never edits, commits, or pushes code. A task that needs a
 code change gets an `input-required` reply that names the next skill:
