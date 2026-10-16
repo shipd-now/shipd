@@ -205,8 +205,10 @@ def _read_room(gh, repo, number):
     """Read the room once: ``(cards, tasks, raw, comments)``.
 
     ``cards`` and ``tasks`` are as ``_room_from_comments`` builds them,
-    ``raw`` maps a card name to the issue comment id holding it, for the join
-    upsert, and ``comments`` is the raw comment list that was read."""
+    ``raw`` maps a card name to the last issue comment holding that card,
+    which may be a foreign comment such as the review summary; ``join`` does
+    not use it (see ``_owned_card_ids``). ``comments`` is the raw comment list
+    that was read."""
     comments = _read_comments(gh, repo, number)
     cards, tasks, raw = _parse_room(comments)
     return cards, tasks, raw, comments
