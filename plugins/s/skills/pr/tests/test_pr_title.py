@@ -36,6 +36,11 @@ class RenderTest(unittest.TestCase):
             pr_title.render_title("{ticket} {summary}", "Add x", "", ""),
             "Add x")
 
+    def test_missing_ticket_drops_wrapping_brackets(self):
+        self.assertEqual(
+            pr_title.render_title("[{ticket}] {summary}", "Add x", None, ""),
+            "Add x")
+
     def test_no_pattern_or_no_match_finds_nothing(self):
         self.assertIsNone(pr_title.find_ticket(None, "change/ABC-1-x"))
         self.assertIsNone(pr_title.find_ticket(PATTERN, "change/add-x"))

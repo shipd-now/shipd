@@ -13,7 +13,7 @@ Large pull requests stall in review, and parallel work collides in one checkout.
 | Roadmap group | Tactical execution |
 | Runtime | 5 minutes |
 | Prerequisites | [Episode 1](01-core-loop.md); a repository with shipd installed |
-| Commands shown | `shipd worktree`, `shipd list`, `shipd status`, `git push`, `gh pr create`, `gh pr merge --auto --squash` |
+| Commands shown | `shipd worktree`, `shipd list`, `shipd status`, `git push`, `/s:pr`, `gh pr merge --auto --squash` |
 
 ## Script
 
@@ -37,7 +37,7 @@ Large pull requests stall in review, and parallel work collides in one checkout.
 
 ### 3:00–4:15 Ship through a pull request
 
-**On screen:** The terminal runs `git push -u origin change/add-login-flow`, then `gh pr create --fill`, then `gh pr merge --auto --squash --delete-branch`. The browser shows a pull request with two required checks.
+**On screen:** The terminal runs `git push -u origin change/add-login-flow`, then `/s:pr`, then `gh pr merge --auto --squash --delete-branch`. The browser shows a pull request with two required checks.
 
 **Narration:** You never push to main. You push the change branch and open a pull request. Auto-merge waits on two required checks, `ci` and `semantic-review`. It also waits until no review thread stays unresolved.
 

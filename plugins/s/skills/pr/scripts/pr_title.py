@@ -45,12 +45,14 @@ def change_slug(branch):
 
 
 def render_title(template, summary, ticket, change):
-    """Render ``template``. A missing ticket drops ``{ticket}`` and the
-    whitespace after it; the result has single spaces and no edge space."""
+    """Render ``template``. A missing ticket drops ``{ticket}`` (with any
+    bracket pair wrapping it) and the whitespace after
+    it; the result has single spaces and no edge space."""
     if ticket:
         title = template.replace("{ticket}", ticket)
     else:
-        title = re.sub(r"\{ticket\}\s*", "", template)
+        title = re.sub(r"[\[(<]\s*\{ticket\}\s*[\])>]\s*|\{ticket\}\s*",
+                       "", template)
     title = title.replace("{change}", change or "")
     title = title.replace("{summary}", summary or "")
     return re.sub(r"\s+", " ", title).strip()

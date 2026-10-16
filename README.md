@@ -333,7 +333,7 @@ See [`.shipd/README.md`](.shipd/README.md) for the full entry grammar.
 
 The config also carries **how changes ship** — an optional `pr-mode` key, either
 `auto` (the default when no layer declares it: today's auto-merging PR) or
-`draft`. Under `draft`, build opens the change's PR with `gh pr create --draft`
+`draft`. Under `draft`, build opens the change's PR with `/s:pr --draft`
 and arms no auto-merge, still posting the semantic-review gate but running no
 merge watch and no post-merge close-out, so the worktree stays put and a human
 reviews and merges; the epic autopilot records such a member `drafted` with its
