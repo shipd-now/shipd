@@ -8,8 +8,9 @@ The template comes from ``spec_common.resolve_pr``. The ticket is ``--ticket``,
 else the first ``ticket_pattern`` match in the branch name. With no ticket,
 ``{ticket}`` and the whitespace after it drop out. ``{change}`` is the slug of
 a ``change/<slug>`` branch, else empty. Repeated whitespace collapses. The
-title prints on stdout; an empty title or a config error is one
-``Error: <reason>`` line and exit ``1``. Stdlib only.
+title is branded through ``spec_common.brand_subject`` (it starts with
+``BRAND_PREFIX`` exactly once) and prints on stdout; an empty title or a
+config error is one ``Error: <reason>`` line and exit ``1``. Stdlib only.
 """
 
 import argparse
@@ -86,7 +87,7 @@ def main(argv=None):
     if not title:
         cli_common.err("the rendered title is empty")
         return 1
-    print(title)
+    print(spec_common.brand_subject(title))
     return 0
 
 

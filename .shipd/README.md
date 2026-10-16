@@ -456,6 +456,11 @@ it. A `title` with an unknown placeholder or no `{summary}`, or a
 `title` and `ticket_pattern` are ignored. The `pr` key is separate from
 `pr-mode`: it shapes the title, `pr-mode` decides how the pull request ships.
 
+Every title `/s:pr` renders, and every commit shipd writes in a shipd worktree
+or through the engine, starts with `☕ Shipd: ` (never doubled). The brand is
+not configurable. A repository with its own `commit-msg` hook or a
+`core.hooksPath` gets a note and unbranded commits.
+
 ### Guardrails — the rulebook and the `guardrails` key
 
 The plugin ships a **guardrail hook** that runs around every `Edit` and `Write`
