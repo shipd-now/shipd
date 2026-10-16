@@ -135,7 +135,7 @@ and push, and run it only on the user's approval:
 git add .github/skills/code-review \
         .github/workflows/copilot-code-review.yml \
         .github/workflows/copilot-review-gate.yml
-git commit -m "Install the shipd Copilot code-review skill"
+git commit -m "$(python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/brand.py" subject "Install the shipd Copilot code-review skill")"
 git push
 ```
 
@@ -341,7 +341,7 @@ no consent round:
 git add .github/skills/code-review \
         .github/workflows/copilot-code-review.yml \
         .github/workflows/copilot-review-gate.yml
-git commit -m "Refresh the shipd Copilot code-review skill"
+git commit -m "$(python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/brand.py" subject "Refresh the shipd Copilot code-review skill")"
 git push
 ```
 

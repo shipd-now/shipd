@@ -60,6 +60,7 @@ SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
+import brand  # noqa: E402
 import cli_common as cc  # noqa: E402
 import spec_common as sc  # noqa: E402
 
@@ -391,6 +392,15 @@ def cmd_create(argv):
         ["bash", WORKTREE_SH, name, *flags], cwd=root).returncode
     if code != 0:
         return code
+
+    # Install the commit-branding hook on fresh, attached, and reused
+    # worktrees alike; its outcome never changes the exit code
+    # (shipd-brand commit-brand-hook-install).
+    try:
+        sys.stdout.write(brand.install_hook(root) + "\n")
+    except Exception as exc:  # noqa: BLE001 - never fail a create
+        sys.stdout.write(
+            "note: commit branding skipped \u2014 %s\n" % exc)
 
     # A reused worktree was set up when it was created; only a fresh create or
     # a branch attach is a new checkout needing setup.

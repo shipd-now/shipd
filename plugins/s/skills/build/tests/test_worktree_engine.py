@@ -181,6 +181,32 @@ class CreatePathTest(WorktreeEngineTestBase):
         self.assertIn("post-worktree: running echo one >> ran.txt", out)
         self.assertIn("post-worktree: running echo two >> ran.txt", out)
 
+    def test_create_installs_hook_and_worktree_commit_is_branded(self):
+        # commit-brand-hook-install: Create installs the hook and a worktree
+        # commit is branded.
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        hook = os.path.join(self.root, ".git", "hooks", "commit-msg")
+        self.assertIn("# shipd-managed commit-msg hook", self.read(hook))
+        wt = self.worktree_path("my-change")
+        self.write(os.path.join(wt, "x.txt"), "x\n")
+        self.git("add", "x.txt", cwd=wt)
+        self.git("commit", "-q", "-m", "add x", cwd=wt)
+        subject = self.git("log", "-1", "--format=%s", cwd=wt).stdout.strip()
+        self.assertEqual(subject, "\u2615 Shipd: add x")
+
+    def test_foreign_commit_msg_hook_is_never_clobbered(self):
+        # commit-brand-hook-install: A foreign hook is never clobbered.
+        hooks = os.path.join(self.root, ".git", "hooks")
+        os.makedirs(hooks, exist_ok=True)
+        hook = os.path.join(hooks, "commit-msg")
+        self.write(hook, "#!/bin/sh\nexit 0\n")
+        r = self.run_engine("my-change")
+        self.assertEqual(r.returncode, 0, self.combined(r))
+        self.assertEqual(self.read(hook), "#!/bin/sh\nexit 0\n")
+        self.assertIn("note: commit branding skipped \u2014 ",
+                      self.combined(r))
+
     def test_scripts_see_the_shipd_environment(self):
         # post-worktree-execution: Scripts see the shipd environment.
         self.set_hooks(

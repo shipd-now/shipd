@@ -172,7 +172,7 @@ one of those is a re-decomposition, not an amendment; say so and stop.
 
    ```
    git -C <store repo root> add <store content dir>/epics/<slug>/epic.md
-   git -C <store repo root> commit -m "shipd: amend epic <slug>"
+   git -C <store repo root> commit -m "$(python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/brand.py" subject "shipd: amend epic <slug>")"
    git -C <store repo root> rev-parse --short HEAD
    ```
 

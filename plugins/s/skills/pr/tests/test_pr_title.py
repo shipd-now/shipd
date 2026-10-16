@@ -77,27 +77,33 @@ class CliTest(unittest.TestCase):
         r = self._run(self.CONFIG, "--summary", "Add x",
                       "--branch", "change/ABC-12-add-x")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.strip(), "ABC-12 Add x")
+        self.assertEqual(r.stdout.strip(), "\u2615 Shipd: ABC-12 Add x")
 
     def test_no_ticket_drops_the_placeholder(self):
         r = self._run(self.CONFIG, "--summary", "Add x",
                       "--branch", "change/add-x")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.strip(), "Add x")
+        self.assertEqual(r.stdout.strip(), "\u2615 Shipd: Add x")
 
     def test_flag_beats_branch(self):
         r = self._run(self.CONFIG, "--summary", "Add x", "--ticket", "XY-9",
                       "--branch", "change/ABC-12-add-x")
-        self.assertEqual(r.stdout.strip(), "XY-9 Add x")
+        self.assertEqual(r.stdout.strip(), "\u2615 Shipd: XY-9 Add x")
 
     def test_default_template_is_the_summary(self):
         r = self._run(None, "--summary", "Add x", "--branch", "change/add-x")
-        self.assertEqual(r.stdout.strip(), "Add x")
+        self.assertEqual(r.stdout.strip(), "\u2615 Shipd: Add x")
 
     def test_change_placeholder_uses_the_branch_slug(self):
         r = self._run({"pr": {"title": "{change}: {summary}"}},
                       "--summary", "Add x", "--branch", "change/add-x")
-        self.assertEqual(r.stdout.strip(), "add-x: Add x")
+        self.assertEqual(r.stdout.strip(), "\u2615 Shipd: add-x: Add x")
+
+    def test_printed_title_carries_the_brand_once(self):
+        r = self._run(None, "--summary", "Add x")
+        self.assertEqual(r.stdout.strip(), "\u2615 Shipd: Add x")
+        r = self._run(None, "--summary", "\u2615 Shipd: Add x")
+        self.assertEqual(r.stdout.strip(), "\u2615 Shipd: Add x")
 
     def test_empty_title_exits_1(self):
         r = self._run(None, "--summary", "   ")
