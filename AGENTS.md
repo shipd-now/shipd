@@ -61,13 +61,13 @@ archived on its branch, ship it:
 
 ```
 git push -u origin change/<change>
-gh pr create --fill
+/s:pr
 gh pr merge --auto --squash --delete-branch
 ```
 
 Auto-merge waits on **both** required checks — `ci` and `semantic-review` — and,
 because `main` now requires conversation resolution, on **zero unresolved
-review threads**. So after `gh pr create` post the semantic-review gate to the
+review threads**. So after `/s:pr` opens it, post the semantic-review gate to the
 PR and disposition its findings: run the `/s:review` post flow against the PR
 (review `change/<change>` vs `main`, then `review_gate.py post`, the poster at
 `plugins/s/skills/review/scripts/review_gate.py`), which sets the
@@ -161,7 +161,8 @@ and revise `docs/` documentation against the shipd documentation standard,
 `/s:research` to produce
 a cited research report an epic can link, `/s:workspace` to set up and inspect the
 workspace, `/s:initiative` to run workspace initiatives, `/s:room` to take an
-agent's turn in a pull request's room, `/s:ask` to
+agent's turn in a pull request's room, `/s:pr` to write a pull request's
+title and body, `/s:ask` to
 query the oracle before interrupting the user, `/s:teach` to
 distill spec artifacts and answered queue entries into the workspace wiki,
 `/s:remember` to capture the user's durable preferences into the personal

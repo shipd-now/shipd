@@ -217,7 +217,7 @@ When the target is a genuine epic, proceed:
    Fix and re-run until it exits `0` and prints `OK`. Never ship on a non-zero
    lint.
 4. **Ship the edit** through the repository's PR workflow: commit on the
-   `change/initiative-set-<epic>` branch, push, open a PR, and let it auto-merge
+   `change/initiative-set-<epic>` branch, push, open the PR with `/s:pr`, and let it auto-merge
    (`gh pr merge --auto --squash --delete-branch`). Report the PR with its full
    clickable URL.
 

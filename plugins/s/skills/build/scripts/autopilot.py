@@ -981,8 +981,10 @@ def _stage_prompt(stage, member, entry, model_anchor=None, pr_mode="auto",
                 "epic. Investigate, spec it, and promote it to Status: ready."
                 % member)
     elif stage == "build":
-        ship = ("open its draft PR (draft mode — do not enable auto-merge)"
-                if pr_mode == "draft" else "open its auto-merging PR")
+        ship = ("open its draft PR with `/s:pr --draft` (draft mode — do "
+                "not enable auto-merge)"
+                if pr_mode == "draft"
+                else "open its auto-merging PR with `/s:pr`")
         base = ("Run /s:build for the change `%s`: implement every task, then "
                 "merge and archive it and %s.\n\n"
                 "If a sub-agent escalates a QUESTION: that the spec artifacts "

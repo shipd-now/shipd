@@ -146,7 +146,7 @@ say that is what happened:
 ```bash
 git switch -c shipd-gate-install
 git push -u origin shipd-gate-install
-gh pr create --fill
+/s:pr
 ```
 
 **The fallback stops at the pull request — it does not arm auto-merge here.**
@@ -352,7 +352,7 @@ request, and say that is what happened:
 ```bash
 git switch -c shipd-gate-update
 git push -u origin shipd-gate-update
-gh pr create --fill
+/s:pr
 ```
 
 Unlike setup's fallback, **attempt auto-merge here**: this repository
