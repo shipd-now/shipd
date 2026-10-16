@@ -414,6 +414,7 @@ RECOGNIZED_CONFIG_KEYS = (
     "lint",
     "memory_dir",
     "post-worktree-scripts",
+    "pr",
     "pr-mode",
     "room",
     "store_autocommit",
@@ -1131,6 +1132,74 @@ def resolve_pr_mode(root):
             % (PR_MODE_KEY, " or ".join(PR_MODES),
                prov.get(PR_MODE_KEY, "default"), raw))
     return raw
+
+
+# ---------------------------------------------------------------------------
+# PR title (shipd-config pr-config-key)
+# ---------------------------------------------------------------------------
+
+# The config key holding the PR title template and the ticket pattern.
+PR_KEY = "pr"
+
+# The title template used when no layer declares `pr.title`.
+DEFAULT_PR_TITLE = "{summary}"
+
+# The only placeholders a `pr.title` template may use; it must contain
+# `{summary}`.
+PR_TITLE_PLACEHOLDERS = ("ticket", "summary", "change")
+
+
+def resolve_pr(root):
+    """Resolve the PR title settings for ``root`` (shipd-config
+    pr-config-key) as ``(title, ticket_pattern)``.
+
+    Reads the ``pr`` key from ``root``'s layered configuration (via
+    :func:`resolve_config`). Returns ``(DEFAULT_PR_TITLE, None)`` when no
+    layer declares it; a declared object supplies ``title`` (a string using
+    only the :data:`PR_TITLE_PLACEHOLDERS` and containing ``{summary}``) and
+    ``ticket_pattern`` (a string holding a compilable regular expression),
+    each defaulting when absent. A value that is not an object, or a member of
+    the wrong shape, raises :class:`ConfigError` naming ``pr``, the member,
+    and the config file that supplied it. Other members are ignored.
+    Stdlib-only."""
+    config, prov = resolve_config(root)
+    if PR_KEY not in config:
+        return DEFAULT_PR_TITLE, None
+    raw = config[PR_KEY]
+    source = prov.get(PR_KEY, "default")
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            "`%s` must be an object with `title` and `ticket_pattern` "
+            "members (from %s), got %r" % (PR_KEY, source, raw))
+    title = DEFAULT_PR_TITLE
+    if "title" in raw:
+        title = raw["title"]
+        if not isinstance(title, str):
+            raise ConfigError(
+                "`%s.title` must be a string (from %s), got %r"
+                % (PR_KEY, source, title))
+        names = re.findall(r"\{([^{}]*)\}", title)
+        bad = [n for n in names if n not in PR_TITLE_PLACEHOLDERS]
+        if bad or "summary" not in names:
+            raise ConfigError(
+                "`%s.title` must contain {summary} and use only the "
+                "placeholders %s (from %s), got %r"
+                % (PR_KEY, ", ".join("{%s}" % n for n in PR_TITLE_PLACEHOLDERS),
+                   source, title))
+    pattern = None
+    if "ticket_pattern" in raw:
+        pattern = raw["ticket_pattern"]
+        if not isinstance(pattern, str):
+            raise ConfigError(
+                "`%s.ticket_pattern` must be a string (from %s), got %r"
+                % (PR_KEY, source, pattern))
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ConfigError(
+                "`%s.ticket_pattern` must be a valid regular expression "
+                "(from %s): %s" % (PR_KEY, source, exc))
+    return title, pattern
 
 
 # ---------------------------------------------------------------------------

@@ -640,11 +640,12 @@ git push -u origin change/<change-name>
 ### Auto mode (the default) — an auto-merging PR
 
 ```
-gh pr create --fill
+/s:pr
 gh pr merge --auto --squash --delete-branch
 PR_URL=$(gh pr view --json url -q .url)
 ```
-`gh pr merge --auto` enables auto-merge so the PR squashes and its branch is
+`/s:pr` writes the title and the `## ☕ Shipd Pull Request` body and opens
+the PR; it never pushes or arms auto-merge. `gh pr merge --auto` enables auto-merge so the PR squashes and its branch is
 deleted once `ci` is green. If the repo rejects auto-merge, merge manually only
 after `ci` passes and say so in the report. Keep `PR_URL` for Phase 7.
 
@@ -679,7 +680,7 @@ to ask) parks the member needs-human.
 ### Draft mode (`pr-mode: draft`) — a draft PR a human merges
 
 ```
-gh pr create --fill --draft
+/s:pr --draft
 PR_URL=$(gh pr view --json url -q .url)
 ```
 **Arm no auto-merge**: run no `gh pr merge --auto`, and do not merge the PR
@@ -897,7 +898,7 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
    **only when the status line actually changes**. Then:
    - **Status line changed** → commit the epic file on the
      `change/epic-close-<slug>` branch and ship it as an auto-merging PR
-     (`git push -u origin …` → `gh pr create --fill` →
+     (`git push -u origin …` → `/s:pr` →
      `gh pr merge --auto --squash --delete-branch`), reporting the full PR URL.
    - **Status unchanged** (no-op sync — nothing written, no warning) → remove
      the worktree with no PR:

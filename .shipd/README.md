@@ -421,7 +421,7 @@ autopilot's members. **Metadata PRs keep auto-merging regardless**: epic-close
 status derivations and initiative tagging are unaffected by the mode.
 
 Under `draft`, a shipping change opens its PR **as a draft**
-(`gh pr create --fill --draft`) and **no auto-merge is armed**. The
+(`/s:pr --draft`) and **no auto-merge is armed**. The
 semantic-review gate is still posted and its findings still dispositioned, but
 the merge watch and the merged close-out (worktree pruning, the `main` pull,
 the epic derivation) do not run: **the open draft PR is the terminal state**,
@@ -429,6 +429,32 @@ reported with its full URL, with the worktree and branch left in place and
 merging left to a human. Such a member is recorded with the terminal outcome
 `drafted`, which the delivery board lanes under `review` with a `◇ drafted`
 badge — awaiting a human, never laned as shipped on the board.
+
+### PR title — the `pr` key
+
+`.shipd-config.json` MAY declare a `pr` key: an object whose `title` member is
+the template `/s:pr` renders every pull request title from, and whose
+`ticket_pattern` member is a regular expression that finds a ticket id.
+
+```json
+{ "pr": { "title": "{ticket} {summary}", "ticket_pattern": "[A-Z]+-[0-9]+" } }
+```
+
+The template may use `{summary}`, `{ticket}`, and `{change}`, and it must
+contain `{summary}`. `{summary}` is the change's one-sentence summary, trimmed
+to about 60 characters. `{ticket}` is the `--ticket` value, else the first
+match of `ticket_pattern` in the branch name. `{change}` is the slug of a
+`change/<slug>` branch. When there is no ticket, `{ticket}` and the whitespace
+after it drop out of the title.
+
+**When no layer declares the key the title is `{summary}`** and no ticket is
+looked for. Like every top-level key, `pr` merges **nearest-wins-wholesale**,
+so declaring it once at a **workspace root** governs every member repo beneath
+it. A `title` with an unknown placeholder or no `{summary}`, or a
+`ticket_pattern` that is not a valid regular expression, is an error naming
+`pr`, the member, and the config file that supplied it. Members other than
+`title` and `ticket_pattern` are ignored. The `pr` key is separate from
+`pr-mode`: it shapes the title, `pr-mode` decides how the pull request ships.
 
 ### Guardrails — the rulebook and the `guardrails` key
 

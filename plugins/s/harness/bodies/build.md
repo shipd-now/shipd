@@ -100,7 +100,7 @@ against a lint-clean change, and only inside that change's own branch.
    ```sh
    git add -A && git commit -m "<what shipped>"
    git push -u origin change/<change>
-   gh pr create --fill                            # add --draft in draft mode
+   /s:pr                                          # add --draft in draft mode
    gh pr merge --auto --squash --delete-branch    # auto mode only
    ```
    Then post the semantic review onto the pull request with `/s:review` and
