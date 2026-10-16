@@ -101,19 +101,26 @@ SHALL it print nothing and exit zero. The prefix glyph SHALL be bare U+2615
 paths directly — it SHALL NOT resolve layered configuration, so a repo or
 worktree with a renamed content directory is not scanned.
 
-Every line the script prints SHALL end with two trailing segments, each
-joined by ` · `. The directory segment SHALL render the resolved workspace
-directory, with a leading `$HOME` replaced by `~` (the bare home directory
-renders as `~`); a directory outside `$HOME` SHALL render unchanged. The
-context segment SHALL render the session JSON's
-`context_window.used_percentage` as a four-cell bar followed by the integer
-percentage, as `<bar> <pct>%`. The bar SHALL fill `round(pct × 4 / 100)`
-cells with `█` (U+2588) and the rest with `░` (U+2591), so `0` renders
-`░░░░ 0%`, `25` renders `█░░░ 25%`, and `100` renders `████ 100%`; a
-fractional percentage SHALL truncate to its integer part, and a value
-above 100 SHALL clamp to 100. If the session JSON carries no non-negative
-numeric `used_percentage`, then the context segment SHALL be omitted, and
-the directory segment SHALL still render.
+The script SHALL compose its output from three named segments: `spec` (the
+spec text this requirement defines above, from the change name through any
+tasks bracket, or the `no active specs` / `<n> specs · none selected` text),
+`directory`, and `context`. Each `--line <seg>[,<seg>...]` argument SHALL
+declare one output line, in argument order, whose segments render in the
+listed order joined by ` · `. With no `--line` argument, the layout SHALL be
+a single line `spec,context`. The first printed line SHALL begin with `☕ `
+and later lines SHALL carry no prefix. A segment that renders empty SHALL
+be skipped, and a line whose segments all render empty SHALL not be printed.
+The directory segment SHALL render the resolved workspace directory, with a
+leading `$HOME` replaced by `~` (the bare home directory renders as `~`); a
+directory outside `$HOME` SHALL render unchanged. The context segment SHALL
+render the session JSON's `context_window.used_percentage` as a four-cell
+bar followed by the integer percentage, as `<bar> <pct>%`. The bar SHALL
+fill `round(pct × 4 / 100)` cells with `█` (U+2588) and the rest with `░`
+(U+2591), so `0` renders `░░░░ 0%`, `25` renders `█░░░ 25%`, and `100`
+renders `████ 100%`; a fractional percentage SHALL truncate to its integer
+part, and a value above 100 SHALL clamp to 100. If the session JSON carries
+no non-negative numeric `used_percentage`, then the context segment SHALL
+render empty. An unknown segment name SHALL be ignored.
 
 #### Scenario: Active worktree change is rendered from the main checkout
 - **GIVEN** a workspace whose own `.shipd/planned/` is empty and a worktree
@@ -194,10 +201,15 @@ the directory segment SHALL still render.
 - **THEN** its changes are not scanned and no configuration is resolved
 
 #### Scenario: Directory under home renders relative to tilde
-- **GIVEN** a shipd workspace at `$HOME/projects/workspaces/understand`
+- **GIVEN** a shipd workspace at `$HOME/projects/workspaces/understand` and
+  the argument `--line spec,directory`
 - **WHEN** the statusline script runs with that directory as `current_dir`
 - **THEN** the line ends with `· ~/projects/workspaces/understand`
-  followed only by any context segment
+
+#### Scenario: The default layout omits the directory
+- **WHEN** the statusline script runs with no `--line` argument and a
+  `used_percentage` of `25`
+- **THEN** it prints one line, `☕ <spec> · █░░░ 25%`, with no directory
 
 #### Scenario: Context usage renders a four-cell bar
 - **GIVEN** session JSON whose `context_window.used_percentage` is `0`,
@@ -207,23 +219,32 @@ the directory segment SHALL still render.
   respectively
 
 #### Scenario: Missing context usage omits the context segment
-- **GIVEN** session JSON with no `context_window` object
+- **GIVEN** session JSON with no `context_window` object and no `--line`
+  argument
 - **WHEN** the statusline script runs in a shipd workspace
-- **THEN** the line ends with the directory segment and contains no `%`
+- **THEN** the line is `☕ <spec>` and contains no `%`
 
-#### Scenario: Trailing segments follow the no-active-specs line
-- **GIVEN** a shipd workspace with no live change and a `used_percentage`
-  of `50`
+#### Scenario: A second line carries the directory
+- **GIVEN** a shipd workspace with no live change, a `used_percentage` of
+  `50`, and the arguments `--line spec,context --line directory`
 - **WHEN** the statusline script runs
-- **THEN** it prints `☕ no active specs · <dir> · ██░░ 50%`
+- **THEN** it prints `☕ no active specs · ██░░ 50%` and then `<dir>` on a
+  second line
+
+#### Scenario: Context first sits beside the coffee cup
+- **GIVEN** a shipd workspace, a `used_percentage` of `25`, and the argument
+  `--line context,spec`
+- **WHEN** the statusline script runs
+- **THEN** the line begins `☕ █░░░ 25% · ` followed by the spec text
 
 ### Requirement: Statusline integration
 id: statusline-integration
 
 The statusline SHALL be a self-contained bash script compatible with macOS
 bash 3.2, invokable as a Claude Code `statusLine` command from the project
-settings, and SHALL read only local files — it MUST NOT invoke network calls
-or spawn language runtimes. The project's `.claude/settings.json` SHALL
+settings, and SHALL read only local files — its own rendering MUST NOT
+invoke network calls or spawn language runtimes. A command chained with
+`--then` is the user's own statusline and is exempt from that constraint. The project's `.claude/settings.json` SHALL
 register it via a project-relative command.
 
 #### Scenario: Registered in project settings
@@ -235,3 +256,30 @@ register it via a project-relative command.
 - **WHEN** the statusline script executes
 - **THEN** it completes using only file reads in the workspace, with no
   network access and no Python/Node process spawned
+
+### Requirement: Chained statusline
+id: statusline-chain
+
+When the statusline script is invoked with the two leading arguments
+`--then <command>`, it SHALL, after printing its own output, run `<command>`
+through `bash -c` with the same session JSON on its stdin, so the chained
+command's output follows shipd's. The chained command SHALL run on every
+exit path, including when shipd's own output is empty because the workspace
+has no `.shipd/` directory. Without `--then`, the script's output SHALL be
+unchanged.
+
+#### Scenario: Chained command renders after shipd's line
+- **GIVEN** a shipd workspace and the arguments `--then 'cat'`
+- **WHEN** the statusline script runs with session JSON on stdin
+- **THEN** the first output line is shipd's `☕` line and the remaining
+  output is the session JSON itself
+
+#### Scenario: Chained command still runs in a non-shipd workspace
+- **GIVEN** a workspace with no `.shipd/` directory and the arguments
+  `--then 'echo theirs'`
+- **WHEN** the statusline script runs
+- **THEN** the output is exactly `theirs`
+
+#### Scenario: No chain leaves output unchanged
+- **WHEN** the statusline script runs without `--then`
+- **THEN** its output carries only shipd's line
