@@ -271,7 +271,7 @@ The repository SHALL keep the coffee-cup vector brand as `icon.svg` at the repos
 ### Requirement: Harness mode documentation
 id: harness-mode-docs
 
-The `README.md` SHALL document harness mode inside its installation documentation: the interactive `shipd install` finish, animated wordmark, harness multi-select over the registry's fifteen harnesses, `~/.shipd/harnesses.json` selection record, user-global generation, closing read-only `shipd doctor` preflight, headless degradation, and re-run path. Its explicitly labeled harness-mode subsection SHALL cover repo-level `shipd harness add` and `remove`, ownership and overwrite safety, `--user`, skipped unsupported surfaces, the four-feature scaling model, `shipd-` command names, and registry inspection verbs. The CLI verb list SHALL include `harness`; the brand note and `docs/getting-started.md` harness guidance SHALL remain present.
+The `README.md` SHALL document harness mode inside its installation documentation: the interactive `shipd install` finish, animated wordmark, harness multi-select over the registry's fifteen harnesses, `~/.shipd/harnesses.json` selection record, user-global generation, closing setup check that shows one progress line, installs missing local tooling, and lists only the remaining problems with a fix each, headless degradation, and re-run path. Its explicitly labeled harness-mode subsection SHALL cover repo-level `shipd harness add` and `remove`, ownership and overwrite safety, `--user`, skipped unsupported surfaces, the four-feature scaling model, `shipd-` command names, and registry inspection verbs. The CLI verb list SHALL include `harness`; the brand note and `docs/getting-started.md` harness guidance SHALL remain present.
 
 #### Scenario: Install finish is documented
 - **WHEN** a reader finishes the README's install-mode documentation
@@ -279,7 +279,7 @@ The `README.md` SHALL document harness mode inside its installation documentatio
 
 #### Scenario: The closing preflight is documented
 - **WHEN** a reader finishes the README's install finish paragraph
-- **THEN** it states that a confirmed finish runs the read-only `shipd doctor` preflight and that headless and aborted paths do not
+- **THEN** it states that a confirmed finish runs the setup check, installs missing local tooling, lists each remaining problem with its fix, and that headless and aborted paths do not
 
 #### Scenario: Repo-level installation is documented
 - **WHEN** a reader reaches the README's harness-mode subsection

@@ -1184,30 +1184,45 @@ def check_fast_pass(context, run=_gh_run):
             "SHIPD_FAST_PASS is off on %s" % context["nwo"])
 
 
+def check_steps(root):
+    """Every preflight check as an ordered ``(name, thunk)`` pair, required
+    ones first; calling a thunk runs that one check and returns its
+    ``(level, name, detail)`` triple. The four GitHub-side checks close the
+    list and share one repository context, resolved lazily, once, by the
+    first of them to run — so a caller driving the thunks one at a time sees
+    real progress, and the whole preflight makes at most two ``gh`` calls
+    beyond the per-check probes."""
+    memo = []
+
+    def context():
+        if not memo:
+            memo.append(gh_context())
+        return memo[0]
+
+    return [("python", lambda: check_python()),
+            ("git", lambda: check_git()),
+            ("config", lambda: check_config(root)),
+            ("pipeline", lambda: check_pipeline(root)),
+            ("schema", lambda: check_schema(root)),
+            ("wiki", lambda: check_wiki(root)),
+            ("store", lambda: check_store(root)),
+            ("store-sync", lambda: check_store_sync(root)),
+            ("local-state", lambda: check_local_state(root)),
+            ("gh", lambda: check_gh()),
+            ("difft", lambda: check_difft()),
+            ("textual", lambda: check_textual(root)),
+            ("snapshot", lambda: check_snapshot(PLUGIN_ROOT)),
+            ("statusline", lambda: check_statusline()),
+            ("protection", lambda: check_protection(context())),
+            ("automerge", lambda: check_automerge(root, context())),
+            ("copilot-secret", lambda: check_copilot_secret(root, context())),
+            ("fast-pass", lambda: check_fast_pass(context()))]
+
+
 def default_checks(root):
     """Every preflight check, required ones first, as ``(level, name, detail)``
-    triples. The four GitHub-side checks close the list and share one resolved
-    repository context, so the whole preflight makes at most two ``gh`` calls
-    beyond the per-check probes."""
-    context = gh_context()
-    return [check_python(),
-            check_git(),
-            check_config(root),
-            check_pipeline(root),
-            check_schema(root),
-            check_wiki(root),
-            check_store(root),
-            check_store_sync(root),
-            check_local_state(root),
-            check_gh(),
-            check_difft(),
-            check_textual(root),
-            check_snapshot(PLUGIN_ROOT),
-            check_statusline(),
-            check_protection(context),
-            check_automerge(root, context),
-            check_copilot_secret(root, context),
-            check_fast_pass(context)]
+    triples — :func:`check_steps` run in order."""
+    return [thunk() for _name, thunk in check_steps(root)]
 
 
 def doctor_report(results):
@@ -2669,33 +2684,105 @@ def _cmd_harness_files(opts):
 # install (install-tui install-verb)
 # ---------------------------------------------------------------------------
 
-# The finish hook's own two constants: the heading it prints before the
-# checks run, and the pointer line naming the flow that works through
-# whatever the preflight finds.
+# The heading the finish's progress line opens with, and the per-check fix
+# hints it prints under each problem still standing.
 INSTALL_FINISH_HEADING = "Checking your setup:"
-INSTALL_FINISH_POINTER = "Work through these with `/s:doctor`."
+
+FINISH_FIXES = {
+    "difft": "brew install difftastic (or cargo install difftastic)",
+    "statusline": "shipd statusline install",
+    "protection": "an admin of the repository runs /s:gate",
+    "automerge": "an admin of the repository enables auto-merge (/s:doctor)",
+    "gh": "gh auth login",
+    "local-state": "shipd init",
+}
 
 
-def doctor_finish(handle, root=None, checks=None):
-    """Close a confirmed ``install`` selection with the same read-only
-    preflight ``doctor`` runs, writing straight to ``handle`` — the terminal
-    the rest of the flow just reported on — rather than returning an exit
-    code, which must never reach the verb's own.
+def _finish_fix(name, detail):
+    """The one-line fix hint the install finish prints under a check."""
+    if name == "textual":
+        _, _, hint = detail.rpartition("; ")
+        return "python3 -m " + hint
+    return FINISH_FIXES.get(name, "run /s:doctor")
 
-    ``checks`` defaults to :func:`default_checks` and ``root`` to
-    ``os.getcwd()``; both are overridable so a test can drive this with
-    fabricated results and never touch the ambient environment.
+
+def _finish_reason(name, detail):
+    """The reason the finish prints for a check: for a check with an
+    automated remedy, the detail with its own remedy clause stripped."""
+    if name in AUTOMATED_REMEDIES:
+        detail = detail.split("; ", 1)[0].split(" \u2014 run ", 1)[0]
+    return detail
+
+
+def _finish_remedy(name, detail, run):
+    """Run check ``name``'s automated remedy silently through ``run``;
+    ``None`` on success, else the failure reason — the last non-blank line of
+    stderr (else stdout), or ``unknown error``."""
+    argv = _remedy_argv(name, detail)
+    if argv is None:
+        return None
+    try:
+        rc, out, err = run(argv)
+    except OSError as exc:
+        rc, out, err = 1, "", str(exc)
+    if rc == 0:
+        return None
+    for stream in (err, out):
+        lines = [ln.strip() for ln in (stream or "").splitlines()
+                 if ln.strip()]
+        if lines:
+            return lines[-1]
+    return "unknown error"
+
+
+def doctor_finish(handle, root=None, steps=None, run=default_run):
+    """Close a confirmed ``install`` selection with the preflight: one
+    progress line rewritten in place while the checks run, the automated
+    local remedies run silently for what is missing (then those checks
+    re-run), and a summary plus a ``fix:`` line per problem still standing.
+    Writes straight to ``handle`` and returns ``None`` — its verdict must
+    never reach the verb's exit code.
+
+    ``steps`` defaults to :func:`check_steps` and ``root`` to
+    ``os.getcwd()``; ``run`` is the remedy subprocess seam. All are
+    overridable so a test can drive this with fabricated checks.
     """
-    checks = checks or default_checks
+    steps = steps or check_steps
     root = os.getcwd() if root is None else root
-    handle.write("\n%s\n\n" % INSTALL_FINISH_HEADING)
-    handle.flush()
-    results = checks(root)
-    lines, _code = doctor_report(results)
-    for line in lines:
-        handle.write("%s\n" % line)
-    if any(level != "ok" for level, _name, _detail in results):
-        handle.write("\n%s\n" % INSTALL_FINISH_POINTER)
+
+    def line(text):
+        handle.write("\r\033[K" + text)
+        handle.flush()
+
+    handle.write("\n")
+    pairs = steps(root)
+    total = len(pairs)
+    results = []
+    for index, (name, thunk) in enumerate(pairs, 1):
+        line("%s [%d/%d] %s" % (INSTALL_FINISH_HEADING, index, total, name))
+        results.append(thunk())
+    failures = {}
+    for index, (level, name, detail) in enumerate(results):
+        if level == "ok" or name not in AUTOMATED_REMEDIES:
+            continue
+        line("Installing: %s \u2026" % name)
+        reason = _finish_remedy(name, detail, run)
+        if reason is not None:
+            failures[name] = reason
+        fresh = dict(steps(root))
+        if name in fresh:
+            results[index] = fresh[name]()
+    line("")
+    handle.write("\u2713 %d of %d checks ok\n"
+                 % (sum(1 for r in results if r[0] == "ok"), total))
+    for level, name, detail in results:
+        if level == "ok":
+            continue
+        shown = _finish_reason(name, detail)
+        if name in failures:
+            shown += " (automatic install failed: %s)" % failures[name]
+        handle.write("%s %s \u2014 %s\n" % (level, name, shown))
+        handle.write("     fix: %s\n" % _finish_fix(name, detail))
     handle.flush()
     return None
 
