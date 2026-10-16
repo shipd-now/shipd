@@ -3906,6 +3906,85 @@ class ResolveRoomTest(unittest.TestCase):
             self.assertEqual(self._resolve(root, home), ("x", 6))
 
 
+class ResolvePrTest(unittest.TestCase):
+    """resolve_pr: the layered `pr` key holding the PR title template and the
+    ticket pattern (shipd-config pr-config-key). Stdlib-only. ``$HOME`` is
+    always overridden to an empty directory."""
+
+    def _write_config(self, d, payload):
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, sc.CONFIG_FILENAME), "w",
+                  encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        return d
+
+    def _resolve(self, root, home):
+        with imports_blocked("pipeline_schema"), \
+                home_set_to(os.path.realpath(home)):
+            return sc.resolve_pr(root)
+
+    def _assert_bad(self, payload, member):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"pr": payload})
+            with self.assertRaises(sc.ConfigError) as cm:
+                self._resolve(root, home)
+            msg = str(cm.exception)
+            self.assertIn("pr", msg)
+            if member:
+                self.assertIn(member, msg)
+            self.assertIn(os.path.join(root, sc.CONFIG_FILENAME), msg)
+
+    def test_key_constants(self):
+        self.assertEqual(sc.PR_KEY, "pr")
+        self.assertIn("pr", sc.RECOGNIZED_CONFIG_KEYS)
+
+    def test_absent_key_yields_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            self.assertEqual(
+                self._resolve(os.path.realpath(tmp), home),
+                ("{summary}", None))
+
+    def test_workspace_layer_governs_a_member_repo(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "repo")
+            self._write_config(ws, {"workspace": {}, "pr": {
+                "title": "{ticket} {summary}",
+                "ticket_pattern": "[A-Z]+-[0-9]+"}})
+            os.makedirs(repo, exist_ok=True)
+            self.assertEqual(self._resolve(repo, home),
+                             ("{ticket} {summary}", "[A-Z]+-[0-9]+"))
+
+    def test_title_without_summary_errors(self):
+        self._assert_bad({"title": "{ticket}"}, "title")
+
+    def test_unknown_placeholder_errors(self):
+        self._assert_bad({"title": "{oops} {summary}"}, "title")
+
+    def test_non_string_title_errors(self):
+        self._assert_bad({"title": 5}, "title")
+
+    def test_uncompilable_pattern_errors(self):
+        self._assert_bad({"ticket_pattern": "("}, "ticket_pattern")
+
+    def test_non_string_pattern_errors(self):
+        self._assert_bad({"ticket_pattern": 3}, "ticket_pattern")
+
+    def test_non_object_value_errors(self):
+        self._assert_bad("{summary}", None)
+
+    def test_unknown_members_are_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"pr": {"extra": 1}})
+            self.assertEqual(self._resolve(root, home), ("{summary}", None))
+
+
 class ResolveModelTierTest(unittest.TestCase):
     """The stdlib model-tier authority the pipeline's consumers resolve a
     `model`/`subagent_model` option through (epic-autopilot

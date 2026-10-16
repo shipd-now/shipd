@@ -41,6 +41,7 @@ repo's own `.shipd/` copy may be behind it.
 | `memory_dir` | Root of the personal memory store. Default `~/.shipd-memory`. |
 | `valid_themes` | The theme vocabulary the linter accepts in an artifact's `Theme:` header. |
 | `autonomous-pipeline` | Which steps a delivery runs. See "The delivery steps" below. |
+| `pr` | The pull request title: `title`, a template using `{summary}` (required), `{ticket}`, and `{change}` (default `{summary}`), and `ticket_pattern`, a regular expression that finds a ticket id in the branch name. See the content directory's `README.md`. |
 | `pr-mode` | How a change's PR ships: `auto` (default) or `draft`. See the content directory's `README.md`. |
 | `room` | The PR room verbs: `agent`, the name posted under when `--agent` and `SHIPD_ROOM_AGENT` are unset (no default), and `max_rounds`, the turn cap per task. Default 6. |
 | `guardrails` | The guardrail hook's kill-switches. See [docs/guardrails.md](guardrails.md). |

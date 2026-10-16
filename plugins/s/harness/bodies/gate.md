@@ -34,7 +34,7 @@ Copilot reads skills and workflows from the PR's **head branch** — files left
 on disk are invisible to the review. Propose the commit and push of those four
 paths; run it only on approval. If the push is rejected — usually a protected
 current branch — fall back to a `shipd-gate-install` branch and a pull request
-(`gh pr create --fill`), say so, and report the PR's full URL, never just its
+(open it with `/s:pr`), say so, and report the PR's full URL, never just its
 number. Do **not** arm auto-merge there — whether the repository allows it is
 step 4's setting; arm it (`gh pr merge --auto --squash --delete-branch`) only
 once that step ran or auto-merge is already allowed, else say the PR waits for

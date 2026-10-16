@@ -39,7 +39,7 @@ venn-beta
 
 - **Spec, build, ship** — the pipeline, one change end to end: s:onboard,
   s:doctor, s:duck, s:plan, s:fix, s:review, s:drive, s:gate, s:status,
-  s:document, s:worktree-hooks
+  s:document, s:worktree-hooks, s:pr
 - **Epics, driven** — orchestration across many changes: s:epic, s:prd,
   s:initiative, s:workspace, s:explain, s:epic-grill, s:room
 - **Decisions that stick** — memory that outlives a change: s:remember,
@@ -71,6 +71,7 @@ venn-beta
 | `/s:memory` | List the preferences captured in the personal memory store. | `/s:memory` |
 | `/s:onboard [next\|back]` | Run the guided nine-step shipd tour. | `/s:onboard next` |
 | `/s:plan` | Converge context into an execution-ready spec, then stop. | `/s:plan Add a --json flag to the export command` |
+| `/s:pr [--ticket <id>] [--draft] [--base <ref>]` | Write a pull request's title and body, then create or update it. | `/s:pr --ticket ABC-12` |
 | `/s:prd [slug]` | Interview for a workspace PRD — the outcomes an idea should deliver — before an epic decomposes it. | `/s:prd Add self-serve billing` |
 | `/s:remember` | Capture a durable user preference into the personal memory store. | `/s:remember I prefer terse commit messages` |
 | `/s:research` | Turn a question into a cited research report an epic can link. | `/s:research What are common approaches to rate limiting?` |

@@ -756,6 +756,7 @@ Next steps:
   # run the shipd lifecycle here (/s:plan -> /s:build, including merge/archive)
   # then ship it as a PR:
   git push -u origin $BRANCH
-  gh pr create --fill
+  # then open it with /s:pr (add --draft in draft mode):
+  /s:pr
   gh pr merge --auto --squash --delete-branch
 EOF

@@ -2663,6 +2663,7 @@ class DraftPrModeTest(AutopilotTestBase):
         build_prompt = next(p for st, _m, p in s.sessions if st == "build")
         self.assertIn("draft PR", build_prompt)
         self.assertIn("do not enable auto-merge", build_prompt)
+        self.assertIn("/s:pr --draft", build_prompt)
         self.assertNotIn("auto-merging PR", build_prompt)
 
     def test_auto_mode_build_prompt_is_unchanged(self):
@@ -2670,6 +2671,8 @@ class DraftPrModeTest(AutopilotTestBase):
         s.drive(self.PGB, self.root)
         build_prompt = next(p for st, _m, p in s.sessions if st == "build")
         self.assertIn("auto-merging PR", build_prompt)
+        self.assertIn("`/s:pr`", build_prompt)
+        self.assertNotIn("--draft", build_prompt)
 
     def test_targeted_drive_resolves_the_mode(self):
         self._declare_draft()
