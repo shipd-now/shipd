@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # shipd status line for Claude Code.
 # Shows a live spec: name, lifecycle status, and task progress. Scans the
-# workspace root's .shipd/planned/ plus one level of .worktrees/*/.shipd/planned/,
-# so a change developed inside a worktree still surfaces here.
+# resolved content directory's planned/ plus, with no store, one level of
+# .worktrees/*/<dir>/planned/, so a change developed inside a worktree still surfaces here.
 #
 # Input: Claude Code session JSON on stdin (uses workspace.current_dir).
 # Arguments (all optional, any order):
@@ -11,28 +11,38 @@
 #                            first printed line carries the "☕ " prefix. With
 #                            no --line the layout is one line "spec,context".
 #   --then <command>         after shipd's own output (on every exit path,
-#                            including the silent non-shipd one) run <command>
-#                            through `bash -c` with the same session JSON on
-#                            stdin, so the user's own statusline follows ours.
+#                            including the no-content-directory one) run
+#                            <command> through `bash -c` with the same session
+#                            JSON on stdin, so the user's own statusline
+#                            follows ours.
+#   --print-content-dir      print only the resolved content directory (or
+#                            nothing) and exit 0; used by `shipd doctor` to
+#                            compare against the engine's folder.
 #
 # Segments:
 #   spec       "<name> · <status> · <done>/<total>", with position "(1 of X)"
 #              and aggregate "(<total> of <Y>)" brackets when more than one
 #              change is live; "no active specs" for a shipd project with no
-#              live change; "<n> specs · none selected" when none is pickable.
+#              live change; "<n> specs · none selected" when none is pickable;
+#              "no specs" when no content directory resolves.
 #   directory  workspace relative to ~ (uncolored).
 #   context    "<bar> <pct>%" from context_window.used_percentage, a four-cell
 #              █/░ bar (uncolored); empty when the session JSON has none.
-# Empty segments are skipped; a line with no segments is not printed. Output is
-# nothing at all when the workspace has no .shipd/ directory.
+# Empty segments are skipped; a line with no segments is not printed.
+#
+# Content directory: resolved from the session directory W the way the engine
+# does, with local file reads only. `.shipd-config.json` is read in W and each
+# ancestor (nearest declaring file wins per key) then ~/.shipd-config.json:
+# `store_root` (a leading ~ expands; a relative value joins the declaring
+# file's directory) and `dir` (default .shipd). The main checkout comes from
+# the nearest `.git` (a linked worktree's `.git` file names it). With a store
+# the content directory is the first existing of <store>/<main checkout
+# relative to the registry root> and <store>/<main checkout basename>; without
+# one it is W/<dir>. Nothing resolving prints "no specs".
 #
 # Note: macOS ships bash 3.2, so we avoid `mapfile`, `set -u`, associative
 # arrays, and `$'\uXXXX'` throughout this script. No Python/Node is spawned.
 #
-# The default content directory `.shipd` is assumed literally: this script does
-# NOT resolve `.shipd-config.json`, so a repo (or worktree) that renames its
-# content directory is not scanned (a documented statusline limitation).
-
 # ANSI colors (segment-colored; the " · " separator stays uncolored).
 NAME_COLOR=$'\033[94m'   # light blue
 RESET=$'\033[0m'
@@ -134,14 +144,14 @@ EOF
 }
 
 # True when an autopilot run is live: some heartbeat file under the workspace
-# root's `.shipd/autopilot/*-heartbeat.json` has a modification time within 3600 s
+# resolved content directory's `autopilot/*-heartbeat.json` has a modification time within 3600 s
 # of now (2× the default session budget, so a long silent stage keeps the dot
 # while a crashed run's stale file loses it) and records a `running` run state.
 # The heartbeat delta pins the value vocabulary (`running`) but not the key
 # name, so both `state` and `run_state` are tolerated.
 run_is_live() {
   now=$(date +%s)
-  for f in "$workspace"/.shipd/autopilot/*-heartbeat.json; do
+  for f in "$C"/autopilot/*-heartbeat.json; do
     [ -f "$f" ] || continue
     age=$((now - $(mtime_of "$f")))
     [ "$age" -le 3600 ] || continue
@@ -156,12 +166,15 @@ run_is_live() {
 # shifted past. No --line means the default single line "spec,context".
 lines=()
 chain=""
+print_cd=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --line)
       if [ "$#" -ge 2 ]; then lines[${#lines[@]}]="$2"; shift; fi ;;
     --then)
       if [ "$#" -ge 2 ]; then chain="$2"; shift; fi ;;
+    --print-content-dir)
+      print_cd=1 ;;
   esac
   shift
 done
@@ -188,11 +201,114 @@ if [ -z "$workspace" ]; then
   workspace="$PWD"
 fi
 
-# A shipd project is any workspace carrying a `.shipd/` directory. Without one the
-# statusline stays silent (non-shipd repo); with one it always reports.
-if [ ! -d "$workspace/.shipd" ]; then
+# --- Content-directory resolution ------------------------------------------
+# Value of a top-level-looking JSON string key in a file (first match).
+read_key() {
+  sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null \
+    | head -n 1
+}
+
+# Fold one config file (args: file, its directory) into the nearest-wins
+# settings: store_root (with its declaring directory), dir, registry root.
+scan_config() {
+  cf="$1"; cfd="$2"
+  if [ -z "$cfg_store" ]; then
+    v=$(read_key "$cf" store_root)
+    if [ -n "$v" ]; then cfg_store="$v"; cfg_store_base="$cfd"; fi
+  fi
+  if [ -z "$cfg_dir" ]; then
+    cfg_dir=$(read_key "$cf" dir)
+  fi
+  if [ -z "$cfg_reg" ] \
+    && grep -Eq '"workspace"[[:space:]]*:[[:space:]]*\{' "$cf" 2>/dev/null; then
+    cfg_reg="$cfd"
+  fi
+}
+
+# Set C to the resolved content directory (empty when none resolves).
+resolve_content_dir() {
+  C=""
+  cfg_store=""; cfg_store_base=""; cfg_dir=""; cfg_reg=""
+  home_seen=0
+  wd="${workspace%/}"
+  [ -n "$wd" ] || wd="/"
+  d="$wd"
+  while :; do
+    [ "$d" = "$HOME" ] && home_seen=1
+    if [ "$d" = "/" ]; then cf="/.shipd-config.json"; else cf="$d/.shipd-config.json"; fi
+    [ -f "$cf" ] && scan_config "$cf" "$d"
+    [ "$d" = "/" ] && break
+    nd="${d%/*}"
+    [ -n "$nd" ] || nd="/"
+    [ "$nd" = "$d" ] && break
+    d="$nd"
+  done
+  if [ "$home_seen" -eq 0 ] && [ -n "$HOME" ] && [ -f "$HOME/.shipd-config.json" ]; then
+    scan_config "$HOME/.shipd-config.json" "$HOME"
+  fi
+
+  if [ -z "$cfg_store" ]; then
+    cd_name="${cfg_dir:-.shipd}"
+    if [ -d "$wd/$cd_name" ]; then C="$wd/$cd_name"; fi
+    return 0
+  fi
+
+  # Store path: expand a leading ~, join a relative value onto its file's dir.
+  store="$cfg_store"
+  case "$store" in
+    "~")   store="$HOME" ;;
+    "~/"*) store="$HOME/${store#"~/"}" ;;
+  esac
+  case "$store" in
+    /*) ;;
+    *)  store="$cfg_store_base/$store" ;;
+  esac
+  while [ "${#store}" -gt 1 ] && [ "${store%/}" != "$store" ]; do
+    store="${store%/}"
+  done
+
+  # Main checkout: nearest .git directory, or the .git file's main checkout.
+  main=""
+  d="$wd"
+  while :; do
+    if [ -d "$d/.git" ]; then
+      main="$d"; break
+    elif [ -f "$d/.git" ]; then
+      gl=""
+      IFS= read -r gl < "$d/.git" 2>/dev/null
+      gl="${gl#gitdir: }"
+      case "$gl" in
+        */.git/worktrees/*) main="${gl%/.git/worktrees/*}" ;;
+        *) main="$d" ;;
+      esac
+      break
+    fi
+    [ "$d" = "/" ] && break
+    nd="${d%/*}"
+    [ -n "$nd" ] || nd="/"
+    [ "$nd" = "$d" ] && break
+    d="$nd"
+  done
+  [ -n "$main" ] || main="$wd"
+
+  if [ -n "$cfg_reg" ]; then
+    case "$main" in
+      "$cfg_reg"/*)
+        rel="${main#"$cfg_reg"/}"
+        if [ -d "$store/$rel" ]; then C="$store/$rel"; return 0; fi ;;
+    esac
+  fi
+  if [ -d "$store/${main##*/}" ]; then C="$store/${main##*/}"; fi
+  return 0
+}
+
+if [ "$print_cd" -eq 1 ]; then
+  chain=""
+  resolve_content_dir
+  [ -n "$C" ] && printf '%s\n' "$C"
   exit 0
 fi
+resolve_content_dir
 
 # --- Trailing segments: directory relative to ~, and context-usage bar -----
 dir_seg="$workspace"
@@ -271,9 +387,17 @@ EOF
   done
 }
 
+# No content directory resolves: report rather than vanishing.
+if [ -z "$C" ]; then
+  spec_seg="no specs"
+  render_lines
+  exit 0
+fi
+
 # --- Collect candidate changes -------------------------------------------
 # Parallel arrays (bash 3.2: no associative arrays). Candidates come from the
-# root's .shipd/planned/ plus one level of .worktrees/*/.shipd/planned/.
+# resolved content directory's planned/ plus, with no store, one level of
+# .worktrees/*/<dir>/planned/.
 cand_dir=()
 cand_name=()
 cand_status=()
@@ -312,12 +436,14 @@ add_candidate() {
   cand_mtime[$i]="$mt"
 }
 
-for d in "$workspace"/.shipd/planned/*/; do
+for d in "$C"/planned/*/; do
   add_candidate "$d" 1
 done
-for d in "$workspace"/.worktrees/*/.shipd/planned/*/; do
-  add_candidate "$d" 0
-done
+if [ -z "$cfg_store" ]; then
+  for d in "${workspace%/}"/.worktrees/*/"${cfg_dir:-.shipd}"/planned/*/; do
+    add_candidate "$d" 0
+  done
+fi
 
 X=${#cand_dir[@]}
 
@@ -347,7 +473,7 @@ done
 # (3) no active: fall back to the root's recorded selection when it resolves
 # to a root candidate.
 if [ "$pick" -lt 0 ]; then
-  state_file="$workspace/.shipd/state.json"
+  state_file="$C/state.json"
   if [ -f "$state_file" ]; then
     selected=$(sed -n 's/.*"current_spec"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" | head -n 1)
     if [ -n "$selected" ]; then

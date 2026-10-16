@@ -2187,6 +2187,105 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual((before.st_size, before.st_mtime),
                          (after.st_size, after.st_mtime))
 
+    # -- statusline content-directory comparison (doctor-verb) --------------
+
+    REGISTERED = {"statusLine": {
+        "type": "command",
+        "command": "bash /plugins/s/integrations/statusline.sh"}}
+
+    def statusline_probe(self, root, settings=None):
+        """``check_statusline`` at ``root`` under the throwaway HOME, so
+        neither the engine nor the script reads this machine's config."""
+        path = self.settings_with(json.dumps(settings or self.REGISTERED))
+        with unittest.mock.patch.dict(os.environ, {"HOME": self.home}):
+            return shipd.check_statusline(path, root=root)
+
+    def write_json(self, path, obj):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(obj, fh)
+
+    def test_matching_content_directories_stay_ok(self):
+        repo = os.path.join(self.tmp, "ws", "app")
+        os.makedirs(os.path.join(repo, ".git"))
+        os.makedirs(os.path.join(repo, ".shipd", "planned"))
+        level, name, _detail = self.statusline_probe(repo)
+        self.assertEqual((level, name), ("ok", "statusline"))
+
+    def test_matching_store_content_directories_stay_ok(self):
+        ws = os.path.join(self.tmp, "ws")
+        repo = os.path.join(ws, "app")
+        os.makedirs(os.path.join(repo, ".git"))
+        self.write_json(os.path.join(ws, ".shipd-config.json"),
+                        {"store_root": "store"})
+        os.makedirs(os.path.join(ws, "store", "app", "planned"))
+        level, name, _detail = self.statusline_probe(repo)
+        self.assertEqual((level, name), ("ok", "statusline"))
+
+    def test_stale_in_repo_directory_under_a_store_warns_naming_both(self):
+        ws = os.path.join(self.tmp, "ws")
+        repo = os.path.join(ws, "app")
+        os.makedirs(os.path.join(repo, ".git"))
+        # The engine reads the store folder; the (stubbed) script reads the
+        # stale in-repo directory.
+        self.write_json(os.path.join(ws, ".shipd-config.json"),
+                        {"store_root": "store"})
+        os.makedirs(os.path.join(ws, "store", "app", "planned"))
+        os.makedirs(os.path.join(repo, ".shipd", "planned"))
+        with unittest.mock.patch.object(
+                shipd, "_statusline_content_dir",
+                return_value=os.path.join(repo, ".shipd")):
+            level, name, detail = self.statusline_probe(repo)
+        self.assertEqual((level, name), ("warn", "statusline"))
+        self.assertIn(os.path.join(repo, ".shipd"), detail)
+        self.assertIn(os.path.join(ws, "store", "app"), detail)
+
+    def test_script_resolving_nothing_warns_naming_nothing(self):
+        repo = os.path.join(self.tmp, "ws", "app")
+        os.makedirs(os.path.join(repo, ".git"))
+        os.makedirs(os.path.join(repo, ".shipd", "planned"))
+        with unittest.mock.patch.object(
+                shipd, "_statusline_content_dir", return_value=None):
+            level, name, detail = self.statusline_probe(repo)
+        self.assertEqual((level, name), ("warn", "statusline"))
+        self.assertIn("reads nothing", detail)
+        self.assertIn(os.path.join(repo, ".shipd"), detail)
+
+    def test_missing_engine_directory_keeps_the_registration_verdict(self):
+        ws = os.path.join(self.tmp, "ws")
+        repo = os.path.join(ws, "app")
+        os.makedirs(os.path.join(repo, ".git"))
+        os.makedirs(os.path.join(repo, ".shipd", "planned"))
+        self.write_json(os.path.join(ws, ".shipd-config.json"),
+                        {"store_root": "store"})
+        level, name, _detail = self.statusline_probe(repo)
+        self.assertEqual((level, name), ("ok", "statusline"))
+
+    def test_probe_timeout_keeps_the_registration_verdict(self):
+        repo = os.path.join(self.tmp, "ws", "app")
+        os.makedirs(os.path.join(repo, ".shipd", "planned"))
+        with unittest.mock.patch.object(
+                shipd, "_statusline_content_dir",
+                side_effect=subprocess.TimeoutExpired("bash", 5)):
+            level, name, _detail = self.statusline_probe(repo)
+        self.assertEqual((level, name), ("ok", "statusline"))
+
+    def test_probe_oserror_keeps_the_registration_verdict(self):
+        repo = os.path.join(self.tmp, "ws", "app")
+        os.makedirs(os.path.join(repo, ".shipd", "planned"))
+        with unittest.mock.patch.object(
+                shipd, "_statusline_content_dir", side_effect=OSError("x")):
+            level, name, _detail = self.statusline_probe(repo)
+        self.assertEqual((level, name), ("ok", "statusline"))
+
+    def test_config_error_keeps_the_registration_verdict(self):
+        repo = os.path.join(self.tmp, "ws", "app")
+        os.makedirs(repo)
+        self.write_json(os.path.join(repo, ".shipd-config.json"),
+                        {"dir": "../escape"})
+        level, name, _detail = self.statusline_probe(repo)
+        self.assertEqual((level, name), ("ok", "statusline"))
+
     def test_default_checks_probe_statusline_after_snapshot(self):
         names = self.probed_check_names(self.tmp)
         self.assertEqual(names.index("statusline"),

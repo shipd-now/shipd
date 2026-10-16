@@ -61,11 +61,13 @@ exit 1
 class StatuslineTestBase(unittest.TestCase):
     def setUp(self):
         self.workspace = tempfile.mkdtemp(prefix="statusline-test-")
+        self.home = tempfile.mkdtemp(prefix="statusline-home-")
         self.changes_dir = os.path.join(
             self.workspace, ".shipd", "planned")
 
     def tearDown(self):
         shutil.rmtree(self.workspace, ignore_errors=True)
+        shutil.rmtree(self.home, ignore_errors=True)
 
     # --- fixture helpers --------------------------------------------------
     def make_change(self, name, plan=None, tasks=None):
@@ -134,13 +136,10 @@ class StatuslineTestBase(unittest.TestCase):
         if context is not NO_CONTEXT:
             payload_obj["context_window"] = {"used_percentage": context}
         payload = json.dumps(payload_obj)
-        env = None
-        if path_prepend is not None or home is not None:
-            env = dict(os.environ)
+        env = dict(os.environ)
+        env["HOME"] = home if home is not None else self.home
         if path_prepend is not None:
             env["PATH"] = path_prepend + os.pathsep + env.get("PATH", "")
-        if home is not None:
-            env["HOME"] = home
         return subprocess.run(
             ["bash", SCRIPT] + list(args), input=payload,
             capture_output=True, text=True, env=env)
@@ -153,19 +152,19 @@ class StatuslineTestBase(unittest.TestCase):
         return strip_ansi(r.stdout).strip()
 
 
-class SilenceTest(StatuslineTestBase):
-    def test_silent_outside_spec_repo(self):
-        # No .shipd/planned directory at all -> nothing, exit 0.
+class NoSpecsTest(StatuslineTestBase):
+    def test_no_specs_outside_spec_repo(self):
+        # No content directory at all -> "no specs", exit 0.
         r = self.run_line()
-        self.assertEqual(r.stdout, "")
+        self.assertEqual(strip_ansi(r.stdout).strip(), COFFEE + " no specs")
         self.assertEqual(r.returncode, 0)
 
-    def test_silent_when_workspace_missing_dir_falls_back_and_stays_silent(self):
-        # A plain temp dir with no .shipd/planned -> silent.
+    def test_plain_dir_reports_no_specs(self):
         plain = tempfile.mkdtemp(prefix="statusline-plain-")
         try:
             r = self.run_line(workspace=plain)
-            self.assertEqual(r.stdout, "")
+            self.assertEqual(
+                strip_ansi(r.stdout).strip(), COFFEE + " no specs")
             self.assertEqual(r.returncode, 0)
         finally:
             shutil.rmtree(plain, ignore_errors=True)
@@ -275,13 +274,7 @@ class SelectionFallbackTest(StatuslineTestBase):
 
 
 class RenamedDirTest(StatuslineTestBase):
-    """The statusline reads the literal default `.shipd/planned` and never resolves
-    `.shipd-config.json`, so a repo that renames its content directory renders
-    nothing (statusline-rendering: renamed content dir is out of scope)."""
-
-    def test_renamed_content_dir_renders_nothing(self):
-        # Config renames the content dir to `specs`, and the change lives there;
-        # there is no `.shipd/planned`, so the statusline stays silent.
+    def test_renamed_content_dir_is_scanned(self):
         with open(os.path.join(self.workspace, ".shipd-config.json"), "w",
                   encoding="utf-8") as fh:
             json.dump({"dir": "specs"}, fh)
@@ -289,9 +282,156 @@ class RenamedDirTest(StatuslineTestBase):
         os.makedirs(cdir)
         with open(os.path.join(cdir, "plan.md"), "w", encoding="utf-8") as fh:
             fh.write("# dark-mode\nStatus: active\n")
-        r = self.run_line()
-        self.assertEqual(r.stdout, "")
+        line = self.rendered()
+        self.assertIn("dark-mode", line)
+        self.assertIn("active", line)
+
+
+class StoreResolutionTest(StatuslineTestBase):
+    """Content-directory resolution through `store_root`, the registry path,
+    the main checkout, and linked worktrees (statusline-content-resolution)."""
+
+    def write(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def config(self, directory, obj):
+        self.write(os.path.join(directory, ".shipd-config.json"),
+                   json.dumps(obj))
+
+    def plan(self, content_dir, name, status="active"):
+        self.write(os.path.join(content_dir, "planned", name, "plan.md"),
+                   "# %s\nStatus: %s\n" % (name, status))
+
+    def run_in(self, directory, *args):
+        return self.run_line(workspace=directory, args=args)
+
+    def test_relative_store_root_resolves_against_config_file(self):
+        ws = self.workspace
+        self.config(ws, {"store_root": ".shipd"})
+        os.makedirs(os.path.join(ws, "app", ".git"))
+        self.plan(os.path.join(ws, ".shipd", "app"), "x")
+        r = self.run_in(os.path.join(ws, "app"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("x", strip_ansi(r.stdout))
+        self.assertIn("active", strip_ansi(r.stdout))
+
+    def test_stale_in_repo_shipd_is_ignored_under_a_store(self):
+        ws = self.workspace
+        self.config(ws, {"store_root": "store"})
+        os.makedirs(os.path.join(ws, "app", ".git"))
+        self.plan(os.path.join(ws, "app", ".shipd"), "stale")
+        self.plan(os.path.join(ws, "store", "app"), "fresh")
+        line = self.rendered(workspace=os.path.join(ws, "app"))
+        self.assertIn("fresh", line)
+        self.assertNotIn("stale", line)
+
+    def test_tilde_store_root_expands_home(self):
+        self.config(self.workspace, {"store_root": "~/stores"})
+        os.makedirs(os.path.join(self.workspace, "app", ".git"))
+        self.plan(os.path.join(self.home, "stores", "app"), "viahome")
+        line = self.rendered(workspace=os.path.join(self.workspace, "app"))
+        self.assertIn("viahome", line)
+
+    def test_home_config_supplies_store_root(self):
+        self.config(self.home, {"store_root": "stores"})
+        os.makedirs(os.path.join(self.workspace, "app", ".git"))
+        self.plan(os.path.join(self.home, "stores", "app"), "homecfg")
+        line = self.rendered(workspace=os.path.join(self.workspace, "app"))
+        self.assertIn("homecfg", line)
+
+    def test_registry_path_preferred_over_basename(self):
+        ws = self.workspace
+        self.config(ws, {"workspace": {"repos": []}, "store_root": "store"})
+        app = os.path.join(ws, "teams", "a", "app")
+        os.makedirs(os.path.join(app, ".git"))
+        os.makedirs(os.path.join(ws, "store", "teams", "a", "app"))
+        os.makedirs(os.path.join(ws, "store", "app"))
+        r = self.run_in(app, "--print-content-dir")
+        self.assertEqual(
+            r.stdout.strip(), os.path.join(ws, "store", "teams", "a", "app"))
+
+    def test_basename_used_when_registry_path_missing(self):
+        ws = self.workspace
+        self.config(ws, {"workspace": {"repos": []}, "store_root": "store"})
+        app = os.path.join(ws, "teams", "a", "app")
+        os.makedirs(os.path.join(app, ".git"))
+        os.makedirs(os.path.join(ws, "store", "app"))
+        r = self.run_in(app, "--print-content-dir")
+        self.assertEqual(r.stdout.strip(), os.path.join(ws, "store", "app"))
+
+    def test_linked_worktree_resolves_main_checkout_folder(self):
+        ws = self.workspace
+        self.config(ws, {"store_root": "store"})
+        app = os.path.join(ws, "app")
+        os.makedirs(os.path.join(app, ".git", "worktrees", "w1"))
+        os.makedirs(os.path.join(ws, "store", "app"))
+        wt = os.path.join(app, ".worktrees", "w1")
+        self.write(os.path.join(wt, ".git"),
+                   "gitdir: %s\n" % os.path.join(app, ".git", "worktrees", "w1"))
+        from_main = self.run_in(app, "--print-content-dir").stdout
+        from_wt = self.run_in(wt, "--print-content-dir").stdout
+        self.assertEqual(from_wt, from_main)
+        self.assertEqual(from_wt.strip(), os.path.join(ws, "store", "app"))
+
+    def test_subdirectory_resolves_nearest_git(self):
+        ws = self.workspace
+        self.config(ws, {"store_root": "store"})
+        os.makedirs(os.path.join(ws, "app", ".git"))
+        os.makedirs(os.path.join(ws, "app", "src", "deep"))
+        os.makedirs(os.path.join(ws, "store", "app"))
+        r = self.run_in(os.path.join(ws, "app", "src", "deep"),
+                        "--print-content-dir")
+        self.assertEqual(r.stdout.strip(), os.path.join(ws, "store", "app"))
+
+    def test_workspace_root_shows_its_own_folder(self):
+        ws = self.workspace
+        self.config(ws, {"workspace": {"repos": []}, "store_root": "store"})
+        os.makedirs(os.path.join(ws, ".git"))
+        own = os.path.join(ws, "store", os.path.basename(ws))
+        self.plan(own, "rootchange")
+        self.plan(os.path.join(ws, "store", "other"), "elsewhere")
+        line = self.rendered(workspace=ws)
+        self.assertIn("rootchange", line)
+        self.assertNotIn("elsewhere", line)
+
+    def test_missing_store_folder_shows_no_specs_quietly(self):
+        ws = self.workspace
+        self.config(ws, {"store_root": "store"})
+        os.makedirs(os.path.join(ws, "app", ".git"))
+        r = self.run_in(os.path.join(ws, "app"))
         self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stderr, "")
+        self.assertEqual(strip_ansi(r.stdout).strip(), COFFEE + " no specs")
+
+    def test_no_specs_then_chain_runs(self):
+        r = self.run_in(self.workspace, "--then", "echo theirs")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            strip_ansi(r.stdout), COFFEE + " no specs\ntheirs\n")
+
+    def test_print_content_dir_prints_only_the_directory(self):
+        os.makedirs(self.changes_dir)
+        r = self.run_in(self.workspace, "--print-content-dir")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            r.stdout, os.path.join(self.workspace, ".shipd") + "\n")
+
+    def test_print_content_dir_empty_when_unresolved(self):
+        r = self.run_in(self.workspace, "--print-content-dir")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, "")
+
+    def test_nearest_config_wins_for_dir(self):
+        ws = self.workspace
+        self.config(ws, {"dir": "outer"})
+        sub = os.path.join(ws, "sub")
+        self.config(sub, {"dir": "inner"})
+        os.makedirs(os.path.join(sub, "inner"))
+        os.makedirs(os.path.join(sub, "outer"))
+        r = self.run_in(sub, "--print-content-dir")
+        self.assertEqual(r.stdout.strip(), os.path.join(sub, "inner"))
 
 
 class WorktreeAwareTest(StatuslineTestBase):
@@ -370,10 +510,9 @@ class WorktreeAwareTest(StatuslineTestBase):
         self.assertIn(COFFEE, line)
         self.assertIn("no active specs", line)
 
-    def test_no_am_dir_prints_nothing(self):
-        # Workspace with no `.shipd/` at all -> silent, exit 0.
+    def test_no_am_dir_prints_no_specs(self):
         r = self.run_line()
-        self.assertEqual(r.stdout, "")
+        self.assertEqual(strip_ansi(r.stdout).strip(), COFFEE + " no specs")
         self.assertEqual(r.returncode, 0)
 
     def test_active_pick_survives_gnu_stat_semantics(self):
@@ -695,7 +834,8 @@ class LayoutAndChainTest(StatuslineTestBase):
     def test_then_runs_in_non_shipd_workspace(self):
         r = self.run_line(args=("--then", "echo theirs"))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout, "theirs\n")
+        self.assertEqual(
+            strip_ansi(r.stdout), COFFEE + " no specs\ntheirs\n")
 
     def test_default_layout_has_no_directory(self):
         os.makedirs(self.changes_dir)

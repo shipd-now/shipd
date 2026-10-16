@@ -869,7 +869,47 @@ def check_snapshot(plugin_root):
     return ("ok", "snapshot", "%s is the newest installed snapshot" % newest)
 
 
-def check_statusline(settings_path=None):
+STATUSLINE_PROBE_TIMEOUT = 5
+
+
+def _statusline_content_dir(root):
+    """The content directory the shipd statusline script resolves for
+    ``root`` (its ``--print-content-dir`` mode, fed the session JSON the real
+    statusline receives), or ``None`` when it resolves nothing. Raises
+    ``OSError`` / ``subprocess.TimeoutExpired`` when the probe cannot run."""
+    script = PLUGIN_ROOT / "integrations" / "statusline.sh"
+    payload = json.dumps({"workspace": {"current_dir": root}})
+    proc = subprocess.run(
+        ["bash", str(script), "--print-content-dir"], input=payload,
+        capture_output=True, text=True, timeout=STATUSLINE_PROBE_TIMEOUT)
+    if proc.returncode != 0:
+        raise OSError("statusline probe exited %d" % proc.returncode)
+    out = proc.stdout.strip()
+    return out or None
+
+
+def _statusline_mismatch(root):
+    """A warning detail when the statusline script reads a different content
+    directory than the engine does at ``root``, else ``None``. Any probe
+    failure (timeout, OSError, ConfigError) yields ``None`` so the plain
+    registration verdict stands."""
+    try:
+        _load_engine()
+        engine = sc.specs_dir(root)
+        if not os.path.isdir(engine):
+            return None
+        seen = _statusline_content_dir(root)
+    except (OSError, subprocess.SubprocessError, sc.ConfigError):
+        return None
+    if seen and os.path.realpath(seen) == os.path.realpath(engine):
+        return None
+    return ("the statusline reads %s but the engine reads %s — the "
+            "statusline shows a stale or missing spec folder; check "
+            "`store_root`, `dir`, and any leftover in-repo content directory"
+            % (seen or "nothing", engine))
+
+
+def check_statusline(settings_path=None, root=None):
     """Whether the shipd statusline is registered in Claude Code's user
     settings. Read-only, and a warning at worst: the statusline only surfaces
     state, so nothing in the workflow is blocked without it. Settings that do
@@ -884,6 +924,9 @@ def check_statusline(settings_path=None):
                 % error)
     command = _registered_command(data)
     if command and _is_shipd_statusline(command):
+        mismatch = _statusline_mismatch(root or os.getcwd())
+        if mismatch:
+            return ("warn", "statusline", mismatch)
         return ("ok", "statusline", "registered in %s: %s" % (path, command))
     if command:
         return ("warn", "statusline",
@@ -1218,7 +1261,7 @@ def check_steps(root):
             ("difft", lambda: check_difft()),
             ("textual", lambda: check_textual(root)),
             ("snapshot", lambda: check_snapshot(PLUGIN_ROOT)),
-            ("statusline", lambda: check_statusline()),
+            ("statusline", lambda: check_statusline(root=root)),
             ("protection", lambda: check_protection(context())),
             ("automerge", lambda: check_automerge(root, context())),
             ("copilot-secret", lambda: check_copilot_secret(root, context())),
