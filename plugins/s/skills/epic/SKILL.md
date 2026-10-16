@@ -160,7 +160,7 @@ one of those is a re-decomposition, not an amendment; say so and stop.
    the flow under the rule above with nothing committed.
 
 6. **Ship it as a PR — in the in-repo case**, per the repository's workflow:
-   commit the epic edit on `change/epic-amend-<slug>`, push, `gh pr create`,
+   commit the epic edit on `change/epic-amend-<slug>`, push, open the PR with `/s:pr`,
    post the semantic-review gate, and let it auto-merge. Report the PR with its
    **full clickable URL**. Never edit a live epic on `main` and never push
    directly.

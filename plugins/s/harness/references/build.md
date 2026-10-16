@@ -54,7 +54,7 @@ without its token blocks.
 ## Shipping modes
 
 **auto** (no `pr-mode` line, or `pr-mode = "auto"`) — open the pull request
-with `gh pr create --fill` and arm `gh pr merge --auto --squash
+with `/s:pr` and arm `gh pr merge --auto --squash
 --delete-branch`. Arming auto-merge is not proof of merge: read
 `mergeStateStatus` once afterwards.
 
@@ -68,7 +68,7 @@ A non-trivial conflict is a blocker to surface, not something to resolve by
 guessing.
 
 **draft** (`pr-mode = "draft"`) — open the pull request with
-`gh pr create --fill --draft` and arm **no** auto-merge. The open draft is the
+`/s:pr --draft` and arm **no** auto-merge. The open draft is the
 terminal state: read no merge state, reconcile nothing, run no watch and no
 close-out, and leave the worktree and the branch in place for the human who
 merges it. The review gate still posts, so the reviewer sees a disposed
