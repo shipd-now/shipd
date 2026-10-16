@@ -17,6 +17,11 @@ Every GitHub read and write goes through one injectable ``gh`` runner,
 CLI, so the test suite drives the verbs against a fake and reaches no
 network. Comment bodies are only ever built by ``room_schema.render_comment``.
 
+A finding task is one whose opening comment was read from the review-comment
+endpoint (only the semantic-review gate opens tasks there). Its messages —
+``message``, ``close``, and the round-cap posts — reply on that review thread
+(``in_reply_to`` the task id); every other task stays on issue comments.
+
 Every comment a verb posts opens with a speaker heading naming the agent,
 its card's role, and the GitHub login read once per verb from ``gh api user``.
 
@@ -246,6 +251,25 @@ def _post(gh, repo, number, body):
         input=json.dumps({"body": body}), what="posting a room comment")
 
 
+def _finding_root(comments, task):
+    """``task.id`` when the comment whose id is ``task.id`` was read from the
+    review endpoint (a finding task's thread root), else ``None``."""
+    for comment in comments:
+        if comment.get("id") == task.id:
+            return task.id if _endpoint(comment) == "review" else None
+    return None
+
+
+def _post_reply(gh, repo, number, thread, body):
+    """Reply on the review thread rooted at comment ``thread``; the parsed
+    response (``id``, ``html_url``)."""
+    return _gh_json(
+        gh, ["api", "-X", "POST",
+             "repos/%s/pulls/%d/comments" % (repo, number), "--input", "-"],
+        input=json.dumps({"body": body, "in_reply_to": thread}),
+        what="posting a room reply on thread %s" % thread)
+
+
 def _patch(gh, repo, comment_id, body):
     """Edit an issue comment in place; the parsed response."""
     return _gh_json(
@@ -335,21 +359,22 @@ def _emit(obj):
     sys.stdout.write(json.dumps(obj) + "\n")
 
 
-def _delete(gh, repo, comment_id):
-    """Delete an issue comment."""
+def _delete(gh, repo, comment_id, endpoint="issue"):
+    """Delete an issue comment, or a review comment for ``"review"``."""
+    path = "pulls" if endpoint == "review" else "issues"
     rc, _out, err = gh(["api", "-X", "DELETE",
-                        "repos/%s/issues/comments/%s" % (repo, comment_id)])
+                        "repos/%s/%s/comments/%s" % (repo, path, comment_id)])
     if rc != 0:
         raise RoomError("deleting room comment %s failed: %s"
                         % (comment_id, (err or "").strip() or "exit %d" % rc))
 
 
 def _own_claim(comments, task, agent):
-    """The id of ``task``'s last comment when it is an issue comment whose
-    Message for the task was posted by ``agent`` at ``working``; else
+    """``(id, endpoint)`` of ``task``'s last comment when its Message for the
+    task was posted by ``agent`` at ``working`` (on either endpoint); else
     ``None``."""
     last = _last_comment(comments, task)
-    if last is None or _endpoint(last) != "issue":
+    if last is None:
         return None
     try:
         parsed = room_schema.parse_comments(
@@ -361,20 +386,71 @@ def _own_claim(comments, task, agent):
         if (isinstance(obj, room_schema.Message)
                 and obj.task_id == task.id and obj.agent == agent
                 and obj.state == "working"):
-            return last.get("id")
+            return last.get("id"), _endpoint(last)
     return None
 
 
-def _drop_claim(gh, repo, claim_id):
-    """Delete the claim comment after the reply is posted; a failure is a
-    warning, because the reply stands."""
-    if claim_id is None:
+def _drop_claim(gh, repo, claim):
+    """Delete the claim comment (``(id, endpoint)`` from ``_own_claim``)
+    after the reply is posted; a failure is a warning, because the reply
+    stands."""
+    if claim is None:
         return
+    claim_id, endpoint = claim
     try:
-        _delete(gh, repo, claim_id)
+        _delete(gh, repo, claim_id, endpoint)
     except RoomError:
         sys.stderr.write("warning: could not remove claim comment %s\n"
                          % claim_id)
+
+
+THREAD_LOOKUP_QUERY = """
+query($owner:String!, $name:String!, $number:Int!) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$number) {
+      reviewThreads(first:100) {
+        nodes { id isResolved comments(first:1) { nodes { databaseId } } }
+      }
+    }
+  }
+}
+"""
+
+
+def _resolve_finding_thread(gh, repo, number, task_id):
+    """Resolve the review thread rooted at finding task ``task_id`` with the
+    mutation ``review_gate.py resolve`` uses. A thread already resolved is
+    left alone; a missing thread or a failed call is one warning, because
+    the reply already stands."""
+    owner, _sep, name = repo.partition("/")
+    warning = ("warning: could not resolve the review thread for task %s\n"
+               % task_id)
+    rc, out, _err = gh(["api", "graphql", "-f", "query=%s" % THREAD_LOOKUP_QUERY,
+                        "-f", "owner=%s" % owner, "-f", "name=%s" % name,
+                        "-F", "number=%d" % number])
+    thread = None
+    if rc == 0:
+        try:
+            data = json.loads(out or "null")
+            nodes = (data["data"]["repository"]["pullRequest"]
+                     ["reviewThreads"]["nodes"])
+            for node in nodes:
+                first = (node.get("comments") or {}).get("nodes") or []
+                if first and first[0].get("databaseId") == task_id:
+                    thread = node
+                    break
+        except (ValueError, KeyError, TypeError, AttributeError):
+            thread = None
+    if thread is None:
+        sys.stderr.write(warning)
+        return
+    if thread.get("isResolved"):
+        return
+    rc, _out, _err = gh(["api", "graphql", "-f",
+                         "query=%s" % room_schema.RESOLVE_THREAD_MUTATION,
+                         "-f", "threadId=%s" % thread.get("id")])
+    if rc != 0:
+        sys.stderr.write(warning)
 
 
 def _login(gh, memo):
@@ -410,11 +486,14 @@ def _card_role(cards, name):
     return ""
 
 
-def _post_message(gh, repo, number, message, login="", role=""):
+def _post_message(gh, repo, number, message, login="", role="",
+                  thread=None):
     try:
         body = room_schema.render_comment(message, login=login, role=role)
     except room_schema.SchemaError as exc:
         raise RoomError(str(exc))
+    if thread is not None:
+        return _post_reply(gh, repo, number, thread, body)
     return _post(gh, repo, number, body)
 
 
@@ -542,6 +621,7 @@ def cmd_message(opts, parser, gh):
             metadata["skill"] = opts.skill
         task_id = None
         claim_id = None
+        thread = None
     else:
         task = _find_task(tasks, opts.task, context)
         requested = opts.state or ("input-required" if opts.to else "working")
@@ -554,10 +634,11 @@ def cmd_message(opts, parser, gh):
                 task.id, {"state": "failed", "reason": "round-cap",
                           "round": rnd})
             _post_message(gh, repo, number, capped, _login(gh, memo),
-                          role)
+                          role, thread=_finding_root(comments, task))
             raise RoomError("round cap reached on task %s — posted failed "
                             "(round-cap)" % task.id)
         task_id = task.id
+        thread = _finding_root(comments, task)
         claim_id = (_own_claim(comments, task, agent)
                     if state != "working" else None)
     metadata.update({"state": state, "round": rnd})
@@ -565,8 +646,11 @@ def cmd_message(opts, parser, gh):
         metadata["to"] = opts.to
     resp = _post_message(gh, repo, number,
                          _message(context, agent, opts.text, task_id,
-                                  metadata), _login(gh, memo), role)
+                                  metadata), _login(gh, memo), role,
+                         thread=thread)
     _drop_claim(gh, repo, claim_id)
+    if state == "completed" and thread is not None:
+        _resolve_finding_thread(gh, repo, number, thread)
     opened = task_id if task_id is not None else (resp or {}).get("id")
     _emit(_reply_result(resp, opened, state, rnd))
     sys.stderr.write("posted %s on task %s in %s\n" % (state, opened, context))
@@ -594,8 +678,12 @@ def cmd_close(opts, parser, gh):
             text += " — %s" % opts.reason
     resp = _post_message(gh, repo, number,
                          _message(context, agent, text, task.id, metadata),
-                         _login(gh, {}), _card_role(cards, agent))
+                         _login(gh, {}), _card_role(cards, agent),
+                         thread=_finding_root(comments, task))
     _drop_claim(gh, repo, claim_id)
+    thread = _finding_root(comments, task)
+    if state == "completed" and thread is not None:
+        _resolve_finding_thread(gh, repo, number, thread)
     _emit(_reply_result(resp, task.id, state, rnd))
     sys.stderr.write("closed task %s as %s in %s\n" % (task.id, state,
                                                        context))
@@ -645,7 +733,7 @@ def _watch_line(task, comment, context, cursor):
 
 
 def _cap_task(gh, repo, number, context, agent, card, task, max_rounds,
-              warned, memo):
+              warned, memo, comments=()):
     """Close a task at the round cap: post ``failed``/``round-cap`` on it
     when ``agent`` has a card, else warn that someone must join to close
     it — once per task per watch, tracked in the ``warned`` id set. Either
@@ -660,7 +748,8 @@ def _cap_task(gh, repo, number, context, agent, card, task, max_rounds,
         context, agent, "round cap (%d) reached" % max_rounds, task.id,
         {"state": "failed", "reason": "round-cap",
          "round": room_schema.next_round(task, agent)})
-    _post_message(gh, repo, number, capped, _login(gh, memo), card.role)
+    _post_message(gh, repo, number, capped, _login(gh, memo), card.role,
+                  thread=_finding_root(comments, task))
     sys.stderr.write("task %s: round cap reached — posted failed "
                      "(round-cap)\n" % task.id)
 
@@ -695,7 +784,7 @@ def cmd_watch(opts, gh, sleep, clock, parser):
         for task in actionable_tasks(tasks, agent, skills):
             if room_schema.at_round_cap(task, agent, max_rounds):
                 _cap_task(gh, repo, number, context, agent, card, task,
-                          max_rounds, warned, memo)
+                          max_rounds, warned, memo, comments)
                 continue
             comment = _last_comment(comments, task)
             if comment is not None and _is_new(comment, cursor):

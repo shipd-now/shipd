@@ -24,6 +24,14 @@ from dataclasses import dataclass, field
 MESSAGE_MARKER = "shipd-room"
 CARD_MARKER = "shipd-room-card"
 
+# The GraphQL mutation that resolves a review thread; owned here so the room
+# verbs and ``review_gate.py resolve`` send the same text.
+RESOLVE_THREAD_MUTATION = """
+mutation($threadId:ID!) {
+  resolveReviewThread(input:{threadId:$threadId}) { thread { isResolved } }
+}
+"""
+
 STATES = (
     "submitted",
     "working",

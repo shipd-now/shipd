@@ -42,6 +42,12 @@ class ModuleContractTests(unittest.TestCase):
         self.assertEqual(room_schema.CARD_MARKER, "shipd-room-card")
 
 
+class ResolveMutationTests(unittest.TestCase):
+    def test_resolve_thread_mutation_text(self):
+        self.assertIn("resolveReviewThread(input:{threadId:$threadId})",
+                      room_schema.RESOLVE_THREAD_MUTATION)
+
+
 CONTEXT = "acme/widgets#7"
 
 

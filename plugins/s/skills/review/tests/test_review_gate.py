@@ -1200,6 +1200,16 @@ def threads_from(gh, tid):
 
 
 class ResolveTest(unittest.TestCase):
+    def test_mutation_is_owned_by_room_schema(self):
+        self.assertFalse(hasattr(review_gate, "_RESOLVE_MUTATION"))
+        gh = FakeGh(review_threads=[_thread(1, author="gate-bot", replies=1)])
+        review_gate.resolve("7", gh)
+        queries = [a[a.index("-f") + 1] for a, _i in gh.calls
+                   if "graphql" in a and "resolveReviewThread" in " ".join(a)]
+        self.assertTrue(queries)
+        for q in queries:
+            self.assertEqual(q, "query=%s" % room_schema.RESOLVE_THREAD_MUTATION)
+
     def test_resolves_gate_thread_with_a_reply(self):
         threads = [_thread(1, author="gate-bot", replies=1)]
         gh = FakeGh(review_threads=threads)
