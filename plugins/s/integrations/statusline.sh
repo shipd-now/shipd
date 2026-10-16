@@ -223,7 +223,18 @@ if [ -n "$ctx_pct" ]; then
     fi
     c=$((c + 1))
   done
-  ctx_seg="${bar} ${ctx_pct}%"
+  if [ "$ctx_pct" -gt 95 ]; then
+    ctx_color=$'\033[38;5;124m'
+  elif [ "$ctx_pct" -gt 90 ]; then
+    ctx_color=$'\033[38;5;160m'
+  elif [ "$ctx_pct" -gt 75 ]; then
+    ctx_color=$'\033[38;5;196m'
+  elif [ "$ctx_pct" -gt 50 ]; then
+    ctx_color=$'\033[38;5;208m'
+  else
+    ctx_color="$NAME_COLOR"
+  fi
+  ctx_seg="${ctx_color}${bar} ${ctx_pct}%${RESET}"
 fi
 
 # Print the layout: per --line, map segment names to their text, skip empty

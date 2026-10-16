@@ -641,6 +641,45 @@ class TrailingSegmentsTest(StatuslineTestBase):
             line.endswith("1/2 · ████ 100%"), line)
 
 
+class ContextColorTest(StatuslineTestBase):
+    BLUE = "\033[94m"
+    ORANGE = "\033[38;5;208m"
+    RED = "\033[38;5;196m"
+    DARKER = "\033[38;5;160m"
+    DARK = "\033[38;5;124m"
+    RESET = "\033[0m"
+
+    def raw(self, pct):
+        os.makedirs(self.changes_dir)
+        r = self.run_line(context=pct)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_thresholds_pick_color(self):
+        for pct, color in ((50, self.BLUE), (51, self.ORANGE),
+                           (76, self.RED), (91, self.DARKER),
+                           (96, self.DARK)):
+            shutil.rmtree(self.changes_dir, ignore_errors=True)
+            out = self.raw(pct)
+            self.assertIn("%s%%" % pct, strip_ansi(out))
+            self.assertTrue(
+                out.rstrip("\n").endswith("%d%%%s" % (pct, self.RESET)), out)
+            self.assertIn(color, out.split(" · ")[-1], (pct, out))
+
+    def test_boundaries_stay_in_lower_band(self):
+        for pct, color in ((75, self.ORANGE), (95, self.DARKER)):
+            shutil.rmtree(self.changes_dir, ignore_errors=True)
+            out = self.raw(pct)
+            self.assertIn(color, out.split(" · ")[-1], (pct, out))
+
+    def test_no_percentage_emits_no_context_codes(self):
+        os.makedirs(self.changes_dir)
+        r = self.run_line()
+        for code in (self.ORANGE, self.RED, self.DARKER, self.DARK):
+            self.assertNotIn(code, r.stdout)
+        self.assertNotIn(" · ", r.stdout)
+
+
 class LayoutAndChainTest(StatuslineTestBase):
     def test_then_cat_prints_shipd_line_then_session_json(self):
         os.makedirs(self.changes_dir)
