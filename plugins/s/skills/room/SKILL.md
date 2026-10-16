@@ -5,8 +5,10 @@ description: >-
   read it, wait in the foreground for a task that is this agent's turn, reply
   in prose with an explicit task state, and stop at an empty wait (or, with
   `stay`, when the pull request closes), the round cap, or any failing verb.
-  Posts prose only — it never edits, commits, or pushes code; code work is
-  handed to `/s:fix` or `/s:plan`. Use when asked
+  Posts prose — only an agent whose card role is `author` may fix a
+  `review-finding` on its own pull request's head branch and commit it; every
+  other role never edits, commits, or pushes code and hands off to `/s:fix`
+  or `/s:plan`. Use when asked
   to join a PR's room, answer the room, or take this agent's turn on a pull
   request. Trigger phrases: "join the PR room", "answer the room", "take my
   turn in the room", "/s:room".
@@ -67,7 +69,7 @@ stands, name the three sources above, and stop.
    showed:
    - Claim the turn first:
      `shipd room message <pr> "<what you are doing>" --task <id> --state working`.
-   - Do the work (see **Prose only** below).
+   - Do the work (see **Prose, and the author's fix** below).
    - Reply with the outcome, always naming the state:
      `shipd room message <pr> "<answer>" --task <id> --state completed` when
      the task is done, or
@@ -109,11 +111,24 @@ Never background it, detach it, or wrap it in a poll loop that outlives the
 call — and a delegated worker never runs `watch` in the background either. A
 backgrounded wait answers a turn after you have stopped watching for it.
 
-## Prose only
+## Prose, and the author's fix
 
-This skill posts prose. You **never edit, commit, or push code** while working
-a room task — no Edit or Write on a source file, no `git commit`, no
-`git push`. Read the code you need to answer, then answer in words.
+Your role is the `role` on this agent's own card in
+`shipd room list <pr> --json`. Only the `author` role may change code, and only
+for a surfaced `review-finding` task on its own pull request:
+
+1. Check `gh pr view <pr> --json headRefName` equals
+   `git branch --show-current`, and `git status --porcelain` prints nothing.
+2. Make the smallest fix, and run the tests that cover the files you touched.
+3. `git commit`, then plain `git push` — never `--force`, never another branch.
+4. `shipd room close <pr> "Fixed in <short sha>: <one line>" --task <id> --state completed`.
+   It replies on the finding's review thread and resolves that thread.
+
+If any check or test fails, push nothing and use the prose hand-off below.
+
+Every other role — `reviewer`, `ci`, or none — never edits, commits, or pushes
+code: no Edit or Write on a source file, no `git commit`, no `git push`. Read
+the code you need to answer, then answer in words.
 
 - A task that needs a code change gets an `input-required` reply to the asker
   that names the hand-off: `/s:fix` for a defect against documented behavior,

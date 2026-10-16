@@ -116,6 +116,18 @@ class SkillNoCodeTest(unittest.TestCase):
                          r"never edit, commit, or push|never edits, commits, "
                          r"or pushes")
 
+    def test_author_may_fix_a_finding_under_a_guard(self):
+        flat = _flat(_read(SKILL_PATH))
+        for needle in ("author", "review-finding", "headRefName",
+                       "git push", "--force", "/s:fix", "/s:plan",
+                       "never edits, commits, or pushes code"):
+            self.assertIn(needle, flat)
+
+    def test_harness_body_carries_the_author_rule(self):
+        out = hb.render("room", ("background-tasks",), refs_dir=REFS)
+        for needle in ("author", "headRefName", "/s:fix", "/s:plan"):
+            self.assertIn(needle, out)
+
 
 class BodyRenderTest(unittest.TestCase):
     """room-skill-body."""

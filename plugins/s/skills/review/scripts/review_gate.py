@@ -132,12 +132,6 @@ query($owner:String!, $name:String!, $number:Int!) {
 }
 """
 
-_RESOLVE_MUTATION = """
-mutation($threadId:ID!) {
-  resolveReviewThread(input:{threadId:$threadId}) { thread { isResolved } }
-}
-"""
-
 
 class ReviewGateError(Exception):
     """A hard, run-blocking failure (a `gh` call the flow depends on failed)."""
@@ -1204,7 +1198,7 @@ def _list_review_threads(gh, repo, number):
 
 
 def _resolve_thread(gh, thread_id):
-    _graphql(gh, _RESOLVE_MUTATION, threadId=thread_id)
+    _graphql(gh, room_schema.RESOLVE_THREAD_MUTATION, threadId=thread_id)
 
 
 def resolve(pr, gh, check=False, out=_noop):

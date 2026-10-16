@@ -52,8 +52,8 @@ Each comment holds one hidden marker with the JSON for its card or Message.
 Prose follows the marker. People read the prose, and the `shipd room` verbs
 read the JSON.
 
-Room traffic uses issue comments only. A review thread can block a merge until
-someone resolves it, so the room never opens one.
+Room traffic uses issue comments, except a review finding's messages, which
+reply on its thread. A `completed` reply resolves that thread for the merge.
 
 ## Who acts when
 

@@ -45,7 +45,9 @@ class FakeGh:
 
     def __init__(self, number=7, repo="o/r", comments=None,
                  review_comments=None, pages=1, fail=None, state="OPEN",
-                 delete_fail=False, login="bot", user_fail=False):
+                 delete_fail=False, login="bot", user_fail=False,
+                 threads=None):
+        self.threads = [dict(t) for t in (threads or [])]
         self.login = login
         self.user_fail = user_fail
         self.number = number
@@ -80,6 +82,50 @@ class FakeGh:
         return [json.loads(inp)["body"] for args, inp in self.calls
                 if "POST" in args]
 
+    def graphql_calls(self):
+        """``(kind, variables)`` for every recorded ``gh api graphql`` call,
+        ``kind`` being ``lookup`` or ``mutation``."""
+        out = []
+        for args, _inp in self.calls:
+            if args[:2] == ["api", "graphql"]:
+                fields = self._fields(args)
+                kind = ("mutation" if "resolveReviewThread" in
+                        fields.get("query", "") else "lookup")
+                out.append((kind, fields))
+        return out
+
+    def mutations(self):
+        """The ``threadId`` of every resolve mutation, in order."""
+        return [f["threadId"] for kind, f in self.graphql_calls()
+                if kind == "mutation"]
+
+    @staticmethod
+    def _fields(args):
+        fields = {}
+        for i, arg in enumerate(args):
+            if arg in ("-f", "-F") and i + 1 < len(args):
+                key, _, val = args[i + 1].partition("=")
+                fields[key] = val
+        return fields
+
+    def issue_posts(self):
+        """The bodies of every POST on the issues endpoint, in order."""
+        return [json.loads(inp)["body"] for args, inp in self.calls
+                if "POST" in args and any(
+                    a.startswith("repos/") and "/issues/" in a
+                    for a in args)]
+
+    def review_posts(self):
+        """``(in_reply_to, body)`` of every POST on the pulls endpoint."""
+        out = []
+        for args, inp in self.calls:
+            if "POST" in args and any(
+                    a.startswith("repos/") and "/pulls/" in a
+                    for a in args):
+                payload = json.loads(inp)
+                out.append((payload.get("in_reply_to"), payload["body"]))
+        return out
+
     def deletes(self):
         """The comment ids of every recorded DELETE, in order."""
         out = []
@@ -88,6 +134,11 @@ class FakeGh:
                 path = next(a for a in args if a.startswith("repos/"))
                 out.append(int(path.rsplit("/", 1)[1]))
         return out
+
+    def delete_paths(self):
+        """The API path of every recorded DELETE, in order."""
+        return [next(a for a in args if a.startswith("repos/"))
+                for args, _inp in self.calls if "DELETE" in args]
 
     def patches(self):
         """``(comment_id, body)`` for every recorded PATCH, in order."""
@@ -120,6 +171,18 @@ class FakeGh:
             if self.user_fail:
                 return 1, "", "HTTP 401: Bad credentials"
             return 0, json.dumps({"login": self.login}), ""
+        if args[:2] == ["api", "graphql"]:
+            fields = self._fields(args)
+            if "resolveReviewThread" in fields.get("query", ""):
+                for thread in self.threads:
+                    if thread["id"] == fields.get("threadId"):
+                        thread["isResolved"] = True
+                        return 0, json.dumps({"data": {
+                            "resolveReviewThread": {"thread": {
+                                "isResolved": True}}}}), ""
+                return 1, "", "no such thread"
+            return 0, json.dumps({"data": {"repository": {"pullRequest": {
+                "reviewThreads": {"nodes": self.threads}}}}}), ""
         issue_list = "repos/%s/issues/%d/comments?per_page=100" % (
             self.repo, self.number)
         review_list = "repos/%s/pulls/%d/comments?per_page=100" % (
@@ -138,11 +201,30 @@ class FakeGh:
             comment_id = int(path.rsplit("/", 1)[1])
             if self.delete_fail:
                 return 1, "", "HTTP 403: Forbidden"
-            self.comments = [c for c in self.comments
-                             if c["id"] != comment_id]
+            if "/pulls/comments/" in path:
+                self.review_comments = [c for c in self.review_comments
+                                        if c["id"] != comment_id]
+            else:
+                self.comments = [c for c in self.comments
+                                 if c["id"] != comment_id]
             return 0, "", ""
         payload = json.loads(input)
         if method == "POST":
+            review_path = "repos/%s/pulls/%d/comments" % (self.repo,
+                                                          self.number)
+            if review_path in args:
+                comment = {
+                    "id": self._next_id,
+                    "user": {"login": "bot"},
+                    "body": payload["body"],
+                    "in_reply_to_id": payload.get("in_reply_to"),
+                    "html_url": "https://github.com/%s/pull/%d"
+                                "#discussion_r%d" % (
+                                    self.repo, self.number, self._next_id),
+                }
+                self._next_id += 1
+                self.review_comments.append(comment)
+                return 0, json.dumps(comment), ""
             assert "repos/%s/issues/%d/comments" % (
                 self.repo, self.number) in args, args
             comment = {
@@ -214,6 +296,14 @@ def msg_comment(comment_id, agent, text="hi", task_id=None, login="bot",
     return {"id": comment_id, "user": {"login": login},
             "body": room_schema.render_comment(message),
             "html_url": "https://example/%d" % comment_id}
+
+
+def review_msg_comment(comment_id, agent, text="hi", task_id=None,
+                       login="bot", **metadata):
+    """A review comment carrying a Message marker (a finding task's opener
+    or a reply on its thread)."""
+    return msg_comment(comment_id, agent, text=text, task_id=task_id,
+                       login=login, **metadata)
 
 
 def human_comment(comment_id, text, login="person"):
@@ -1340,3 +1430,194 @@ class WatchRoundCapTest(WatchTestBase):
         self.assertEqual(code, 0, err)
         self.assertEqual([l["task"] for l in self.lines(out)], [11])
         self.assertEqual(len(gh.posts()), 1)
+
+
+class FindingThreadReplyTest(RoomTestBase):
+    """room-finding-thread-reply: a finding task's messages reply on its
+    review thread; every other task stays on issue comments."""
+
+    def _finding(self, **extra):
+        return review_msg_comment(
+            900, "semantic-review", text="finding", state="input-required",
+            round=1, to="claude-b", skill="review-finding", **extra)
+
+    def _gh(self, claim=False, **kwargs):
+        review = [self._finding()]
+        if claim:
+            review.append(review_msg_comment(
+                950, "claude-b", text="on it", task_id=900,
+                state="working", round=1))
+        return FakeGh(comments=[card_comment(2, "claude-b"),
+                                card_comment(3, "semantic-review")],
+                      review_comments=review, **kwargs)
+
+    def test_working_claim_replies_on_the_thread(self):
+        gh = self._gh()
+        code, _out, err = self.room(gh, "message", "7", "--task", "900",
+                                    "--state", "working", "looking",
+                                    "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(gh.issue_posts(), [])
+        posts = gh.review_posts()
+        self.assertEqual(len(posts), 1, posts)
+        self.assertEqual(posts[0][0], 900)
+        self.assertEqual(first_marker(posts[0][1]).task_id, 900)
+        self.assertTrue(any(
+            "repos/o/r/pulls/7/comments" in args
+            for args, _inp in gh.calls if "POST" in args))
+
+    def test_reply_drops_the_claim_through_the_pulls_endpoint(self):
+        gh = self._gh(claim=True)
+        code, _out, err = self.room(
+            gh, "message", "7", "--task", "900", "--state", "input-required",
+            "--to", "semantic-review", "why?", "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        kinds = [("POST" if "POST" in args else "DELETE")
+                 for args, _inp in gh.calls
+                 if "POST" in args or "DELETE" in args]
+        self.assertEqual(kinds, ["POST", "DELETE"])
+        self.assertEqual(len(gh.review_posts()), 1)
+        self.assertEqual(gh.delete_paths(), ["repos/o/r/pulls/comments/950"])
+
+    def test_issue_task_reply_stays_on_issue_comments(self):
+        gh = FakeGh(comments=_joined(msg_comment(
+            10, "codex-a", text="please check", state="input-required",
+            round=1, to="claude-b")))
+        code, _out, err = self.room(gh, "message", "7", "--task", "10",
+                                    "--state", "working", "ok",
+                                    "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(gh.review_posts(), [])
+        self.assertEqual(len(gh.issue_posts()), 1)
+        self.assertTrue(any(
+            "repos/o/r/issues/7/comments" in args
+            for args, _inp in gh.calls if "POST" in args))
+
+    def test_message_round_cap_posts_failed_on_the_thread(self):
+        gh = FakeGh(
+            comments=[card_comment(2, "claude-b")],
+            review_comments=[review_msg_comment(
+                900, "semantic-review", text="finding",
+                state="input-required", round=6, to="claude-b",
+                skill="review-finding")])
+        code, _out, err = self.room(gh, "message", "7", "--task", "900",
+                                    "again", "--agent", "claude-b",
+                                    "--max-rounds", "6")
+        self.assertEqual(code, 1)
+        self.assertEqual(gh.issue_posts(), [])
+        posts = gh.review_posts()
+        self.assertEqual(len(posts), 1, posts)
+        self.assertEqual(posts[0][0], 900)
+        self.assertEqual(first_marker(posts[0][1]).metadata["reason"],
+                         "round-cap")
+
+    def test_watch_round_cap_posts_failed_on_the_thread(self):
+        gh = FakeGh(
+            comments=[card_comment(2, "claude-b")],
+            review_comments=[review_msg_comment(
+                900, "semantic-review", text="finding",
+                state="input-required", round=1, to="claude-b",
+                skill="review-finding")])
+        code, _out, err = _watch(["7", "--agent", "claude-b", "--once",
+                                  "--max-rounds", "1", "--root", self.root],
+                                 gh)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(gh.issue_posts(), [])
+        posts = gh.review_posts()
+        self.assertEqual(len(posts), 1, posts)
+        self.assertEqual(posts[0][0], 900)
+        self.assertEqual(first_marker(posts[0][1]).metadata["state"],
+                         "failed")
+
+
+def _thread(thread_id, root_id, resolved=False):
+    return {"id": thread_id, "isResolved": resolved,
+            "comments": {"nodes": [{"databaseId": root_id}]}}
+
+
+class FindingThreadResolveTest(RoomTestBase):
+    """room-finding-thread-resolve: a completed message on a finding task
+    resolves its review thread; a failed resolve warns and exits 0."""
+
+    def _gh(self, threads=None, fail=None, issue_task=False):
+        if issue_task:
+            return FakeGh(comments=_joined(msg_comment(
+                10, "codex-a", text="please check", state="input-required",
+                round=1, to="claude-b")), threads=threads or [], fail=fail)
+        return FakeGh(
+            comments=[card_comment(2, "claude-b")],
+            review_comments=[review_msg_comment(
+                900, "semantic-review", text="finding",
+                state="input-required", round=1, to="claude-b",
+                skill="review-finding")],
+            threads=[_thread("PRRT_1", 900)] if threads is None else threads,
+            fail=fail)
+
+    def test_close_completed_replies_then_resolves(self):
+        gh = self._gh()
+        code, out, err = self.room(gh, "close", "7", "--task", "900",
+                                   "Fixed in abc1234", "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(gh.review_posts()), 1)
+        self.assertEqual([k for k, _f in gh.graphql_calls()],
+                         ["lookup", "mutation"])
+        self.assertEqual(gh.mutations(), ["PRRT_1"])
+        self.assertEqual(json.loads(out)["state"], "completed")
+        lookup = gh.graphql_calls()[0][1]
+        self.assertEqual((lookup["owner"], lookup["name"], lookup["number"]),
+                         ("o", "r", "7"))
+        self.assertEqual(lookup["query"], room.THREAD_LOOKUP_QUERY)
+        last = [args for args, _inp in gh.calls][-1]
+        self.assertIn("graphql", last)
+
+    def test_message_completed_resolves(self):
+        gh = self._gh()
+        code, _out, err = self.room(gh, "message", "7", "--task", "900",
+                                    "--state", "completed", "done",
+                                    "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(gh.mutations(), ["PRRT_1"])
+
+    def test_canceled_does_not_resolve(self):
+        gh = self._gh()
+        code, _out, err = self.room(gh, "close", "7", "--task", "900",
+                                    "--state", "canceled",
+                                    "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(gh.review_posts()), 1)
+        self.assertEqual(gh.mutations(), [])
+
+    def test_already_resolved_thread_gets_no_mutation(self):
+        gh = self._gh(threads=[_thread("PRRT_1", 900, resolved=True)])
+        code, _out, err = self.room(gh, "close", "7", "--task", "900",
+                                    "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(gh.mutations(), [])
+        self.assertNotIn("warning", err)
+
+    def test_failed_mutation_warns_and_exits_zero(self):
+        gh = self._gh(fail=["api", "graphql", "-f",
+                            "query=%s" % room_schema.RESOLVE_THREAD_MUTATION])
+        code, out, err = self.room(gh, "close", "7", "--task", "900",
+                                   "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        self.assertIn("warning: could not resolve the review thread for "
+                      "task 900", err)
+        self.assertEqual(json.loads(out)["task"], 900)
+
+    def test_no_matching_thread_warns_and_exits_zero(self):
+        gh = self._gh(threads=[_thread("PRRT_9", 123)])
+        code, out, err = self.room(gh, "close", "7", "--task", "900",
+                                   "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        self.assertIn("warning: could not resolve the review thread for "
+                      "task 900", err)
+        self.assertEqual(gh.mutations(), [])
+        self.assertEqual(json.loads(out)["state"], "completed")
+
+    def test_issue_task_completed_makes_no_graphql_call(self):
+        gh = self._gh(issue_task=True)
+        code, _out, err = self.room(gh, "close", "7", "--task", "10",
+                                    "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(gh.graphql_calls(), [])

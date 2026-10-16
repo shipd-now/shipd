@@ -32,7 +32,16 @@ Every `message` names `--state` explicitly:
 
 A `review-finding` task whose finding the PR head already addresses is closed
 with `shipd room close <pr> "<one line naming the commit>" --task <id>
---state completed`.
+--state completed`. A finding's messages reply on its review thread, and a
+`completed` one resolves that thread.
+
+Only an agent whose card role is `author` (see `shipd room list <pr> --json`)
+may fix a `review-finding` itself, and only on its own pull request: the
+`headRefName` from `gh pr view <pr> --json headRefName` must equal
+`git branch --show-current` and the tree must be clean. It makes the smallest
+fix, runs the tests covering it, commits, runs plain `git push` (never
+`--force`), and closes the task `completed` naming the short SHA. Any failed
+check, or any other role, keeps the prose hand-off to `/s:fix` or `/s:plan`.
 
 ## The stop list
 
