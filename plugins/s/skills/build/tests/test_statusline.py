@@ -23,6 +23,8 @@ SCRIPT = os.path.normpath(
 
 # U+2615 HOT BEVERAGE — emoji presentation by default, no variation selector.
 COFFEE = "☕"
+# Sentinel: the session JSON carries no context_window object at all.
+NO_CONTEXT = object()
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -126,19 +128,27 @@ class StatuslineTestBase(unittest.TestCase):
             json.dump({"current_spec": name}, fh)
 
     # --- driver -----------------------------------------------------------
-    def run_line(self, workspace=None, path_prepend=None):
-        payload = json.dumps(
-            {"workspace": {"current_dir": workspace or self.workspace}})
+    def run_line(self, workspace=None, path_prepend=None, home=None,
+                 context=NO_CONTEXT):
+        payload_obj = {"workspace": {"current_dir": workspace or self.workspace}}
+        if context is not NO_CONTEXT:
+            payload_obj["context_window"] = {"used_percentage": context}
+        payload = json.dumps(payload_obj)
         env = None
-        if path_prepend is not None:
+        if path_prepend is not None or home is not None:
             env = dict(os.environ)
+        if path_prepend is not None:
             env["PATH"] = path_prepend + os.pathsep + env.get("PATH", "")
+        if home is not None:
+            env["HOME"] = home
         return subprocess.run(
             ["bash", SCRIPT], input=payload,
             capture_output=True, text=True, env=env)
 
-    def rendered(self, workspace=None, path_prepend=None):
-        r = self.run_line(workspace=workspace, path_prepend=path_prepend)
+    def rendered(self, workspace=None, path_prepend=None, home=None,
+                 context=NO_CONTEXT):
+        r = self.run_line(workspace=workspace, path_prepend=path_prepend,
+                          home=home, context=context)
         self.assertEqual(r.returncode, 0, r.stderr)
         return strip_ansi(r.stdout).strip()
 
@@ -211,7 +221,8 @@ class RenderTest(StatuslineTestBase):
         line = self.rendered()
         self.assertIn("no-tasks", line)
         self.assertIn("ready", line)
-        self.assertNotIn("/", line)
+        # Drop the trailing directory segment, which legitimately has "/".
+        self.assertNotIn("/", line.rsplit(" · ", 1)[0])
 
 
 class SelectionFallbackTest(StatuslineTestBase):
@@ -549,6 +560,87 @@ class RunDotTest(StatuslineTestBase):
         self.make_heartbeat("e", '{"state": "running"}')
         line = self.rendered()
         self.assertNotIn(self.DOT, line)
+
+
+class TrailingSegmentsTest(StatuslineTestBase):
+    def home_workspace(self, rel=None):
+        # self.workspace doubles as HOME; an optional subdir is the workspace.
+        ws = self.workspace
+        if rel:
+            ws = os.path.join(self.workspace, rel)
+            os.makedirs(os.path.join(ws, ".shipd", "planned"))
+        return ws
+
+    def test_directory_under_home_renders_tilde(self):
+        ws = self.home_workspace("projects/workspaces/understand")
+        line = self.rendered(workspace=ws, home=self.workspace)
+        self.assertTrue(
+            line.endswith("· ~/projects/workspaces/understand"), line)
+
+    def test_bare_home_renders_tilde(self):
+        os.makedirs(self.changes_dir)
+        line = self.rendered(home=self.workspace)
+        self.assertTrue(line.endswith("· ~"), line)
+
+    def test_directory_outside_home_renders_unchanged(self):
+        os.makedirs(self.changes_dir)
+        other = tempfile.mkdtemp(prefix="statusline-home-")
+        try:
+            line = self.rendered(home=other)
+        finally:
+            shutil.rmtree(other, ignore_errors=True)
+        self.assertTrue(line.endswith("· " + self.workspace), line)
+
+    def test_percentages_render_bars(self):
+        os.makedirs(self.changes_dir)
+        for pct, bar in ((0, "░░░░ 0%"), (25, "█░░░ 25%"),
+                         (50, "██░░ 50%"), (100, "████ 100%")):
+            line = self.rendered(context=pct)
+            self.assertTrue(line.endswith(" · " + bar), line)
+
+    def test_fractional_percentage_truncates(self):
+        os.makedirs(self.changes_dir)
+        line = self.rendered(context=37.9)
+        self.assertTrue(line.endswith("█░░░ 37%"), line)
+
+    def test_over_100_clamps(self):
+        os.makedirs(self.changes_dir)
+        line = self.rendered(context=250)
+        self.assertTrue(line.endswith("████ 100%"), line)
+
+    def test_missing_context_window_omits_segment(self):
+        os.makedirs(self.changes_dir)
+        line = self.rendered()
+        self.assertNotIn("%", line)
+        self.assertTrue(line.endswith("· " + self.workspace), line)
+
+    def test_null_percentage_omits_segment(self):
+        os.makedirs(self.changes_dir)
+        line = self.rendered(context=None)
+        self.assertNotIn("%", line)
+        self.assertTrue(line.endswith("· " + self.workspace), line)
+
+    def test_trails_no_active_specs_line(self):
+        os.makedirs(self.changes_dir)
+        line = self.rendered(context=50)
+        self.assertEqual(
+            line, "%s no active specs · %s · ██░░ 50%%" % (
+                COFFEE, self.workspace))
+
+    def test_trails_none_selected_line(self):
+        self.make_change("alpha", plan="# alpha\nStatus: draft\n")
+        self.make_change("beta", plan="# beta\nStatus: draft\n")
+        line = self.rendered(context=25)
+        self.assertEqual(
+            line, "%s 2 specs · none selected · %s · █░░░ 25%%" % (
+                COFFEE, self.workspace))
+
+    def test_trails_rendered_spec_line(self):
+        self.make_change("only", plan="# only\nStatus: active\n",
+                         tasks="- [x] 1 a\n- [ ] 2 b\n")
+        line = self.rendered(context=100)
+        self.assertTrue(
+            line.endswith("1/2 · %s · ████ 100%%" % self.workspace), line)
 
 
 if __name__ == "__main__":
