@@ -121,6 +121,14 @@ class InstallHookTest(BrandTestBase):
         self.assertTrue(r.stdout.startswith("refreshed:"), r.stdout)
         self.assertNotIn("stale", self.read(self.hook_path()))
 
+    def test_refresh_replaces_hook_atomically(self):
+        self.brand("install-hook", "--root", self.root)
+        before = os.stat(self.hook_path()).st_ino
+        hooks = os.path.dirname(self.hook_path())
+        self.brand("install-hook", "--root", self.root)
+        self.assertNotEqual(os.stat(self.hook_path()).st_ino, before)
+        self.assertEqual([n for n in os.listdir(hooks) if ".tmp" in n], [])
+
     def test_foreign_hook_skipped(self):
         os.makedirs(os.path.dirname(self.hook_path()), exist_ok=True)
         with open(self.hook_path(), "w") as fh:

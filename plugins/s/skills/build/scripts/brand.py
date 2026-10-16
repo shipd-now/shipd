@@ -108,10 +108,21 @@ def install_hook(root):
             if MARKER not in lines[:3]:
                 return skipped("a commit-msg hook already exists")
         os.makedirs(hooks, exist_ok=True)
-        with open(target, "w", encoding="utf-8") as fh:
-            fh.write(hook_text())
-        os.chmod(target, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP
-                 | stat.S_IROTH | stat.S_IXOTH)
+        # Write beside the target and rename over it, so a commit racing a
+        # refresh reads the old hook or the new one whole, never a torn one.
+        tmp = "%s.tmp%d" % (target, os.getpid())
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write(hook_text())
+            os.chmod(tmp, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP
+                     | stat.S_IROTH | stat.S_IXOTH)
+            os.replace(tmp, target)
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
     except OSError as exc:
         return skipped(str(exc))
     return "%s %s" % ("refreshed:" if existed else "installed:", target)
