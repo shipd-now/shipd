@@ -352,9 +352,10 @@ runs from a plugin cache snapshot that is not the newest version
 directory in the cache; when the binary runs from a repository checkout,
 the check SHALL report dev mode as `ok`), and `statusline` (when the
 Claude Code user settings file — default `~/.claude/settings.json` — is
-absent or carries no `statusLine` key, probed read-only; the warning
-detail SHALL name `shipd statusline install` as the remedy, and a
-present registration SHALL report `ok`). The `pip install` hint on the
+absent, carries no `statusLine` key, or registers a command that does not
+contain `integrations/statusline.sh`, probed read-only; the warning detail
+SHALL name `shipd statusline install` as the remedy, and a registration
+containing `integrations/statusline.sh` SHALL report `ok`). The `pip install` hint on the
 `textual` detail SHALL name `-r requirements.txt` when a
 `requirements.txt` exists at the working-directory root, and the pinned
 package specifier (`'textual>=8.2.8,<9'`)
@@ -469,8 +470,14 @@ report, exiting on the re-run's own outcome rather than the first pass's.
 
 #### Scenario: Registered statusline reports ok
 - **WHEN** `shipd doctor` runs against a settings file whose `statusLine`
-  key holds a command
+  command contains `integrations/statusline.sh`
 - **THEN** the `statusline` check line begins `ok`
+
+#### Scenario: A foreign statusline warns
+- **WHEN** `shipd doctor` runs against a settings file whose `statusLine`
+  command does not contain `integrations/statusline.sh`
+- **THEN** a `warn statusline — ` line names the registered command and
+  `shipd statusline install` as the remedy
 
 #### Scenario: Resolvable pipeline reports its provenance
 - **WHEN** `shipd doctor` runs in a repo whose effective pipeline resolves
@@ -580,10 +587,18 @@ from a repository checkout, `bash <plugin-root>/integrations/statusline.sh`
 with the absolute resolved plugin root; when the binary runs from a plugin
 cache snapshot, a shell command that at render time lists the snapshot's
 parent directory, orders the version directories with `sort -V`, and runs
-the newest snapshot's `integrations/statusline.sh`. If the settings file
-already carries a `statusLine` entry whose command differs, then `install`
-SHALL refuse with exit `1` naming the existing command unless `--force` is
-given; an identical existing registration SHALL succeed idempotently. If
+the newest snapshot's `integrations/statusline.sh`. A registered command is
+shipd's when it contains the text `integrations/statusline.sh`. If the
+settings file already carries a `statusLine` entry whose command is not
+shipd's, then `install` SHALL register `<cmd> --then <existing>`, with the
+existing command shell-quoted as one argument, so shipd's line renders first
+and the existing statusline renders after it. It SHALL print `added
+statusline above existing statusline` naming the existing command, and exit
+`0`. With `--force`, `install` SHALL instead replace the entry with `<cmd>`
+alone. If the entry is already shipd's, then `install` SHALL write `<cmd>`
+followed by the `--then` argument the entry already carries, if any, so a
+re-run never chains shipd beneath itself; a result identical to the existing
+entry SHALL succeed idempotently with the file unchanged. If
 the settings file exists but does not parse as JSON, then the verb SHALL
 report an error and exit `1` without writing. On success `install` SHALL
 print the registered command and note that it takes effect in the next
@@ -600,11 +615,18 @@ session.
 - **THEN** the rewritten file carries the same unrelated keys unchanged plus
   the `statusLine` entry
 
-#### Scenario: Different existing registration refuses without force
+#### Scenario: A foreign statusline is chained beneath shipd's
 - **WHEN** `install` runs against a settings file whose `statusLine.command`
-  differs and `--force` is absent
-- **THEN** the verb exits `1` naming the existing command and the file is
-  unchanged; with `--force` the entry is replaced and the exit code is `0`
+  is `node /x/claude-statusline.mjs` and `--force` is absent
+- **THEN** the entry becomes `<cmd> --then 'node /x/claude-statusline.mjs'`,
+  the output carries `added statusline above existing statusline`, and the
+  exit code is `0`; with `--force` the entry is `<cmd>` alone
+
+#### Scenario: An older shipd registration is upgraded in place
+- **WHEN** `install` runs against an entry `bash /old/integrations/statusline.sh
+  --then 'echo theirs'`
+- **THEN** the entry becomes `<cmd> --then 'echo theirs'`, carrying exactly
+  one `integrations/statusline.sh`
 
 #### Scenario: Identical registration is idempotent
 - **WHEN** `install` runs twice with the same settings path
@@ -1325,3 +1347,53 @@ untouched.
   gate
 - **THEN** the six wake files and the emptied `.github/shipd-room` tree are
   gone, the four gate files remain, and the exit code is `0`
+
+### Requirement: Statusline layout setting
+id: statusline-layout
+
+The user-level `~/.shipd-config.json` SHALL carry the statusline layout under
+the key `statusline` as `{"lines": [[<seg>, ...], ...]}`, where each inner
+list is one output line and each `<seg>` is one of `spec`, `directory`, or
+`context`. When the key is absent the layout SHALL be `[["spec",
+"context"]]`. `shipd statusline install` SHALL render the layout into the
+registered command as one `--line <seg>,<seg>` argument per line, placed
+before any `--then` argument. The `install` verb SHALL accept repeatable
+`--show <seg>` (append the segment to the end of the first line when the
+layout lacks it) and `--hide <seg>` (remove it from every line, dropping a
+line left empty), and SHALL save the resulting layout to
+`~/.shipd-config.json` before registering, preserving every other key. A
+`shipd statusline layout` verb SHALL print the saved layout one line per
+output line when bare, and when given one or more `<seg>,<seg>` arguments
+SHALL save them as the layout, one argument per line, and re-register the
+statusline when shipd's statusline is registered. A segment name outside the
+three, a segment named twice, or a layout with no segment SHALL be refused
+with exit `2` naming the problem, writing nothing. A malformed `statusline`
+value in the config file SHALL make both verbs exit `1` naming the key,
+writing nothing.
+
+#### Scenario: Install renders the default layout
+- **WHEN** `shipd statusline install` runs with no `statusline` key saved
+- **THEN** the registered command carries `--line spec,context`
+
+#### Scenario: Show appends and persists
+- **WHEN** `shipd statusline install --show directory` runs with no saved
+  layout
+- **THEN** `~/.shipd-config.json` holds
+  `{"lines": [["spec", "context", "directory"]]}` and the registered command
+  carries `--line spec,context,directory`
+
+#### Scenario: Layout verb sets two lines
+- **WHEN** `shipd statusline layout spec,context directory` runs with
+  shipd's statusline registered
+- **THEN** the config holds `[["spec", "context"], ["directory"]]` and the
+  registered command carries `--line spec,context --line directory`, keeping
+  any `--then` argument
+
+#### Scenario: Context first is saved in order
+- **WHEN** `shipd statusline layout context,spec` runs
+- **THEN** the config holds `[["context", "spec"]]`
+
+#### Scenario: An unknown segment is refused
+- **WHEN** `shipd statusline layout spec,clock` runs
+- **THEN** the exit code is `2`, the message names `clock`, and neither file
+  changes

@@ -5,13 +5,26 @@
 # so a change developed inside a worktree still surfaces here.
 #
 # Input: Claude Code session JSON on stdin (uses workspace.current_dir).
-# Output: single line "☕ <name> · <status> · <done>/<total>", with position
-#         "(1 of X)" and aggregate "(<total> of <Y>)" brackets when more than
-#         one change is live; "☕ no active specs" for a shipd project with no
-#         live change; nothing at all when the workspace has no .shipd/ directory.
-#         Every line ends with " · <dir>" (workspace relative to ~) and, when the
-#         session JSON carries context_window.used_percentage, " · <bar> <pct>%"
-#         (a four-cell █/░ bar). Both trailing segments are uncolored.
+# Arguments (all optional, any order):
+#   --line <seg>[,<seg>...]  declare one output line (repeatable); segments are
+#                            spec, directory, context, joined by " · ". The
+#                            first printed line carries the "☕ " prefix. With
+#                            no --line the layout is one line "spec,context".
+#   --then <command>         after shipd's own output (on every exit path,
+#                            including the silent non-shipd one) run <command>
+#                            through `bash -c` with the same session JSON on
+#                            stdin, so the user's own statusline follows ours.
+#
+# Segments:
+#   spec       "<name> · <status> · <done>/<total>", with position "(1 of X)"
+#              and aggregate "(<total> of <Y>)" brackets when more than one
+#              change is live; "no active specs" for a shipd project with no
+#              live change; "<n> specs · none selected" when none is pickable.
+#   directory  workspace relative to ~ (uncolored).
+#   context    "<bar> <pct>%" from context_window.used_percentage, a four-cell
+#              █/░ bar (uncolored); empty when the session JSON has none.
+# Empty segments are skipped; a line with no segments is not printed. Output is
+# nothing at all when the workspace has no .shipd/ directory.
 #
 # Note: macOS ships bash 3.2, so we avoid `mapfile`, `set -u`, associative
 # arrays, and `$'\uXXXX'` throughout this script. No Python/Node is spawned.
@@ -139,8 +152,35 @@ run_is_live() {
   return 1
 }
 
+# Arguments: repeatable --line <segs> and --then <command>. Anything else is
+# shifted past. No --line means the default single line "spec,context".
+lines=()
+chain=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --line)
+      if [ "$#" -ge 2 ]; then lines[${#lines[@]}]="$2"; shift; fi ;;
+    --then)
+      if [ "$#" -ge 2 ]; then chain="$2"; shift; fi ;;
+  esac
+  shift
+done
+if [ "${#lines[@]}" -eq 0 ]; then
+  lines[0]="spec,context"
+fi
+
 # Read stdin JSON and extract workspace.current_dir.
 input=$(cat)
+
+# Run the chained command (the user's own statusline) after shipd's output,
+# with the same session JSON on stdin. Installed as an EXIT trap so every
+# `exit` path runs it, including the silent non-shipd one.
+run_chain() {
+  if [ -n "$chain" ]; then
+    printf '%s' "$input" | bash -c "$chain"
+  fi
+}
+trap run_chain EXIT
 workspace=$(printf '%s' "$input" | sed -n 's/.*"current_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
 
 # Fallback to current working directory if stdin didn't provide one.
@@ -163,7 +203,7 @@ if [ -n "$HOME" ]; then
     dir_seg="~/${workspace#"$HOME"/}"
   fi
 fi
-suffix=" · ${dir_seg}"
+ctx_seg=""
 
 # used_percentage: integer part only (a fractional value truncates, null never
 # matches), clamped to 100. The bar fills round(pct * 4 / 100) cells; glyphs
@@ -183,8 +223,42 @@ if [ -n "$ctx_pct" ]; then
     fi
     c=$((c + 1))
   done
-  suffix="${suffix} · ${bar} ${ctx_pct}%"
+  ctx_seg="${bar} ${ctx_pct}%"
 fi
+
+# Print the layout: per --line, map segment names to their text, skip empty
+# and unknown ones, join with " · ", skip an empty line, and prefix the first
+# printed line with the coffee cup.
+render_lines() {
+  printed=0
+  for spec_line in "${lines[@]}"; do
+    joined=""
+    IFS=',' read -r -a segs <<EOF
+$spec_line
+EOF
+    for seg in "${segs[@]}"; do
+      case "$seg" in
+        spec)      text="$spec_seg" ;;
+        directory) text="$dir_seg" ;;
+        context)   text="$ctx_seg" ;;
+        *)         text="" ;;
+      esac
+      [ -n "$text" ] || continue
+      if [ -n "$joined" ]; then
+        joined="${joined} · ${text}"
+      else
+        joined="$text"
+      fi
+    done
+    [ -n "$joined" ] || continue
+    if [ "$printed" -eq 0 ]; then
+      printf '%s %s\n' "$COFFEE" "$joined"
+      printed=1
+    else
+      printf '%s\n' "$joined"
+    fi
+  done
+}
 
 # --- Collect candidate changes -------------------------------------------
 # Parallel arrays (bash 3.2: no associative arrays). Candidates come from the
@@ -238,7 +312,8 @@ X=${#cand_dir[@]}
 
 # A shipd project with no live change reports rather than vanishing.
 if [ "$X" -eq 0 ]; then
-  printf '%s no active specs%s\n' "$COFFEE" "$suffix"
+  spec_seg="no active specs"
+  render_lines
   exit 0
 fi
 
@@ -285,7 +360,8 @@ fi
 
 # (5) several candidates, none pickable.
 if [ "$pick" -lt 0 ]; then
-  printf '%s %s specs %s none selected%s\n' "$COFFEE" "$X" "·" "$suffix"
+  spec_seg="$X specs · none selected"
+  render_lines
   exit 0
 fi
 
@@ -349,4 +425,6 @@ if [ "$have_tasks" -eq 1 ]; then
   out="${out}${sep}${tasks_seg}"
 fi
 
-printf '%s %s%s\n' "$COFFEE" "$out" "$suffix"
+spec_seg="$out"
+render_lines
+exit 0

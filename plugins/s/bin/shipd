@@ -179,7 +179,8 @@ verbs:
                              (also: remove, prune-branches, hooks)
   room <verb> <pr> [args]    the PR room: join, list, message, close, watch
   doctor                     preflight this environment for shipd
-  statusline [install]       report or register the shipd statusline
+  statusline [install|layout]
+                             register the shipd statusline, or lay out its segments
   copilot [add|remove]       maintain the Copilot code-review skill in a repo
   vendor [add|remove]        maintain a vendored per-repo shipd install
   harness [list|show|add|remove|status]
@@ -882,8 +883,13 @@ def check_statusline(settings_path=None):
                 "%s — fix the file, then run `shipd statusline install`"
                 % error)
     command = _registered_command(data)
-    if command:
+    if command and _is_shipd_statusline(command):
         return ("ok", "statusline", "registered in %s: %s" % (path, command))
+    if command:
+        return ("warn", "statusline",
+                "registers a different statusline (%s) in %s — run `shipd "
+                "statusline install` to add shipd's above it"
+                % (command, path))
     return ("warn", "statusline",
             "not registered in %s — run `shipd statusline install` to add the "
             "shipd statusline" % path)
@@ -1475,7 +1481,93 @@ def _default_settings():
     return Path.home() / ".claude" / "settings.json"
 
 
-def statusline_command(plugin_root):
+SHIPD_STATUSLINE_MARK = "integrations/statusline.sh"
+STATUSLINE_SEGMENTS = ("spec", "directory", "context")
+DEFAULT_STATUSLINE_LINES = [["spec", "context"]]
+
+
+def _is_shipd_statusline(command):
+    """Whether ``command`` runs shipd's own statusline script, from any
+    checkout or snapshot path."""
+    return isinstance(command, str) and SHIPD_STATUSLINE_MARK in command
+
+
+def _chained_command(command):
+    """The command after ``--then`` in a registered statusline command, or
+    ``None`` when there is none (or the command does not tokenize)."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    if "--then" in tokens:
+        index = tokens.index("--then")
+        if index + 1 < len(tokens):
+            return tokens[index + 1]
+    return None
+
+
+def _default_config():
+    """The global shipd config file the statusline layout is saved in."""
+    return Path.home() / ".shipd-config.json"
+
+
+def _validate_layout(lines):
+    """Return ``lines`` normalised, or raise ``ValueError`` naming the
+    problem: each line a non-empty list of known, non-repeating segments."""
+    if not isinstance(lines, list) or not lines:
+        raise ValueError("a layout needs at least one line")
+    seen = set()
+    out = []
+    for line in lines:
+        if not isinstance(line, list) or not line:
+            raise ValueError("a layout line needs at least one segment")
+        for seg in line:
+            if seg not in STATUSLINE_SEGMENTS:
+                raise ValueError("unknown segment %r (known: %s)"
+                                 % (seg, ", ".join(STATUSLINE_SEGMENTS)))
+            if seg in seen:
+                raise ValueError("segment %r appears more than once" % seg)
+            seen.add(seg)
+        out.append(list(line))
+    return out
+
+
+def _load_statusline_layout(path):
+    """``(lines, error)``: the saved layout, the default when the file or key
+    is absent, or ``(None, reason)`` when the file or its ``statusline`` key
+    is malformed."""
+    data, error = _read_settings(path)
+    if error is not None:
+        return None, error
+    if "statusline" not in data:
+        return [list(l) for l in DEFAULT_STATUSLINE_LINES], None
+    entry = data["statusline"]
+    try:
+        if not isinstance(entry, dict):
+            raise ValueError("it is not an object")
+        return _validate_layout(entry.get("lines")), None
+    except ValueError as exc:
+        return None, "malformed `statusline` key in %s: %s" % (path, exc)
+
+
+def _save_statusline_layout(path, lines):
+    """Write ``lines`` under the ``statusline`` key, keeping every other key.
+    Returns an error string, or ``None``."""
+    data, error = _read_settings(path)
+    if error is not None:
+        return error
+    entry = data.get("statusline")
+    entry = dict(entry) if isinstance(entry, dict) else {}
+    entry["lines"] = lines
+    data["statusline"] = entry
+    try:
+        _write_settings(path, data)
+    except OSError as exc:
+        return "cannot write %s: %s" % (path, exc)
+    return None
+
+
+def statusline_command(plugin_root, lines=None):
     """The statusline command this installation would register.
 
     From a repository checkout the resolved script path is stable, so it is
@@ -1488,9 +1580,13 @@ def statusline_command(plugin_root):
     """
     root = Path(plugin_root)
     if not VERSION_DIR_RE.match(root.name):
-        return "bash %s" % (root / "integrations" / "statusline.sh")
-    return ('bash "$(ls -d %s/*/integrations/statusline.sh '
-            '| sort -V | tail -n 1)"' % shlex.quote(str(root.parent)))
+        base = "bash %s" % (root / "integrations" / "statusline.sh")
+    else:
+        base = ('bash "$(ls -d %s/*/integrations/statusline.sh '
+                '| sort -V | tail -n 1)"' % shlex.quote(str(root.parent)))
+    for line in lines or ():
+        base += " --line %s" % ",".join(line)
+    return base
 
 
 def _read_settings(path):
@@ -1542,56 +1638,150 @@ def _registered_command(data):
     return entry.get("command") if isinstance(entry, dict) else None
 
 
+def _parse_layout_args(raw):
+    """Layout lines from CLI words: each word one line, segments comma
+    separated. Raises ``ValueError`` on any invalid layout."""
+    return _validate_layout([[p.strip() for p in word.split(",")]
+                             for word in raw])
+
+
 def cmd_statusline(args):
-    """Report or register the shipd statusline. The one mutating verb in this
-    binary, and only under the explicit ``install`` word."""
+    """Report or register the shipd statusline, or lay out its segments. The
+    mutating actions are only the explicit ``install`` and ``layout`` words."""
     parser = argparse.ArgumentParser(
         prog="shipd statusline",
         description="Report or register the shipd statusline in Claude Code's "
-                    "user settings. Bare, it reports and changes nothing.")
+                    "user settings, above any statusline already there. Bare, "
+                    "it reports and changes nothing.")
     parser.add_argument(
-        "action", nargs="?", choices=["install"],
-        help="install: write the registration (default: report only)")
+        "action", nargs="?", choices=["install", "layout"],
+        help="install: write the registration; layout: show or set the "
+             "segments per line (default: report only)")
+    parser.add_argument(
+        "lines", nargs="*",
+        help="layout: one word per line, segments comma separated")
     parser.add_argument(
         "--settings", default=None,
         help="settings file to use (default: ~/.claude/settings.json)")
     parser.add_argument(
+        "--config", default=None,
+        help="shipd config file holding the layout "
+             "(default: ~/.shipd-config.json)")
+    parser.add_argument(
         "--force", action="store_true",
         help="replace a different existing registration")
+    parser.add_argument(
+        "--show", action="append", default=[], metavar="SEG",
+        help="install: add a segment to the layout")
+    parser.add_argument(
+        "--hide", action="append", default=[], metavar="SEG",
+        help="install: remove a segment from the layout")
     opts = parser.parse_args(args)
 
     path = opts.settings or str(_default_settings())
-    command = statusline_command(PLUGIN_ROOT)
+    config = opts.config or str(_default_config())
+    layout, error = _load_statusline_layout(config)
+    if error is not None:
+        _err(error)
+        return 1
+
+    if opts.action == "layout":
+        if not opts.lines:
+            for n, line in enumerate(layout, 1):
+                print("line %d: %s" % (n, " · ".join(line)))
+            return 0
+        try:
+            new = _parse_layout_args(opts.lines)
+        except ValueError as exc:
+            _err(str(exc))
+            return 2
+        if new != layout:
+            error = _save_statusline_layout(config, new)
+            if error is not None:
+                _err(error)
+                return 1
+        layout = new
+        print("statusline layout saved in %s" % config)
+        for n, line in enumerate(layout, 1):
+            print("line %d: %s" % (n, " · ".join(line)))
+    elif opts.action == "install" and (opts.show or opts.hide):
+        new = [list(l) for l in layout]
+        for seg in opts.show:
+            if seg not in STATUSLINE_SEGMENTS:
+                _err("unknown segment %r (known: %s)"
+                     % (seg, ", ".join(STATUSLINE_SEGMENTS)))
+                return 2
+            if not any(seg in l for l in new):
+                new[0].append(seg)
+        for seg in opts.hide:
+            if seg not in STATUSLINE_SEGMENTS:
+                _err("unknown segment %r (known: %s)"
+                     % (seg, ", ".join(STATUSLINE_SEGMENTS)))
+                return 2
+            new = [[x for x in l if x != seg] for l in new]
+            new = [l for l in new if l]
+        try:
+            new = _validate_layout(new)
+        except ValueError as exc:
+            _err(str(exc))
+            return 2
+        if new != layout:
+            error = _save_statusline_layout(config, new)
+            if error is not None:
+                _err(error)
+                return 1
+        layout = new
+
+    command = statusline_command(PLUGIN_ROOT, layout)
     data, error = _read_settings(path)
     if error is not None:
         _err(error)
         return 1
     current = _registered_command(data)
+    foreign = current is not None and not _is_shipd_statusline(current)
 
-    if opts.action != "install":
+    if opts.action is None:
         if current is None:
             print("statusline: not registered in %s" % path)
         else:
             print("statusline: registered in %s" % path)
             print("  current: %s" % current)
-        print("  this install would register: %s" % command)
+        if foreign:
+            print("  this install would add the shipd statusline above it")
+        else:
+            print("  this install would register: %s" % command)
         if current != command:
             print("Run `shipd statusline install` to register it.")
         return 0
 
-    if current is not None and current != command and not opts.force:
-        _err("%s already registers a different statusline: %s — pass --force "
-             "to replace it" % (path, current))
-        return 1
+    if opts.action == "layout" and not (
+            current is not None and not foreign):
+        # Nothing of shipd's is registered: the layout is saved, and the
+        # next install renders it.
+        return 0
 
-    data["statusLine"] = {"type": "command", "command": command}
-    try:
-        _write_settings(path, data)
-    except OSError as exc:
-        _err("cannot write %s: %s" % (path, exc))
-        return 1
-    print("statusline registered in %s" % path)
-    print("  %s" % command)
+    target = command
+    if current is not None and not opts.force:
+        if foreign:
+            target = command + " --then " + shlex.quote(current)
+        else:
+            chained = _chained_command(current)
+            if chained is not None:
+                target = command + " --then " + shlex.quote(chained)
+
+    if target != current:
+        data["statusLine"] = {"type": "command", "command": target}
+        try:
+            _write_settings(path, data)
+        except OSError as exc:
+            _err("cannot write %s: %s" % (path, exc))
+            return 1
+    if foreign and not opts.force:
+        print("added statusline above existing statusline")
+        print("  existing: %s" % current)
+    else:
+        print("statusline registered in %s" % path)
+    print("  %s" % target)
     print("It takes effect in the next Claude Code session.")
     return 0
 

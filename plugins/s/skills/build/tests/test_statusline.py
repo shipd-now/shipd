@@ -129,7 +129,7 @@ class StatuslineTestBase(unittest.TestCase):
 
     # --- driver -----------------------------------------------------------
     def run_line(self, workspace=None, path_prepend=None, home=None,
-                 context=NO_CONTEXT):
+                 context=NO_CONTEXT, args=()):
         payload_obj = {"workspace": {"current_dir": workspace or self.workspace}}
         if context is not NO_CONTEXT:
             payload_obj["context_window"] = {"used_percentage": context}
@@ -142,13 +142,13 @@ class StatuslineTestBase(unittest.TestCase):
         if home is not None:
             env["HOME"] = home
         return subprocess.run(
-            ["bash", SCRIPT], input=payload,
+            ["bash", SCRIPT] + list(args), input=payload,
             capture_output=True, text=True, env=env)
 
     def rendered(self, workspace=None, path_prepend=None, home=None,
-                 context=NO_CONTEXT):
+                 context=NO_CONTEXT, args=()):
         r = self.run_line(workspace=workspace, path_prepend=path_prepend,
-                          home=home, context=context)
+                          home=home, context=context, args=args)
         self.assertEqual(r.returncode, 0, r.stderr)
         return strip_ansi(r.stdout).strip()
 
@@ -221,8 +221,7 @@ class RenderTest(StatuslineTestBase):
         line = self.rendered()
         self.assertIn("no-tasks", line)
         self.assertIn("ready", line)
-        # Drop the trailing directory segment, which legitimately has "/".
-        self.assertNotIn("/", line.rsplit(" · ", 1)[0])
+        self.assertNotIn("/", line)
 
 
 class SelectionFallbackTest(StatuslineTestBase):
@@ -573,20 +572,23 @@ class TrailingSegmentsTest(StatuslineTestBase):
 
     def test_directory_under_home_renders_tilde(self):
         ws = self.home_workspace("projects/workspaces/understand")
-        line = self.rendered(workspace=ws, home=self.workspace)
+        line = self.rendered(workspace=ws, home=self.workspace,
+                             args=("--line", "spec,directory"))
         self.assertTrue(
             line.endswith("· ~/projects/workspaces/understand"), line)
 
     def test_bare_home_renders_tilde(self):
         os.makedirs(self.changes_dir)
-        line = self.rendered(home=self.workspace)
+        line = self.rendered(home=self.workspace,
+                             args=("--line", "spec,directory"))
         self.assertTrue(line.endswith("· ~"), line)
 
     def test_directory_outside_home_renders_unchanged(self):
         os.makedirs(self.changes_dir)
         other = tempfile.mkdtemp(prefix="statusline-home-")
         try:
-            line = self.rendered(home=other)
+            line = self.rendered(home=other,
+                                 args=("--line", "spec,directory"))
         finally:
             shutil.rmtree(other, ignore_errors=True)
         self.assertTrue(line.endswith("· " + self.workspace), line)
@@ -611,36 +613,81 @@ class TrailingSegmentsTest(StatuslineTestBase):
     def test_missing_context_window_omits_segment(self):
         os.makedirs(self.changes_dir)
         line = self.rendered()
-        self.assertNotIn("%", line)
-        self.assertTrue(line.endswith("· " + self.workspace), line)
+        self.assertEqual(line, "%s no active specs" % COFFEE)
 
     def test_null_percentage_omits_segment(self):
         os.makedirs(self.changes_dir)
         line = self.rendered(context=None)
-        self.assertNotIn("%", line)
-        self.assertTrue(line.endswith("· " + self.workspace), line)
+        self.assertEqual(line, "%s no active specs" % COFFEE)
 
     def test_trails_no_active_specs_line(self):
         os.makedirs(self.changes_dir)
         line = self.rendered(context=50)
         self.assertEqual(
-            line, "%s no active specs · %s · ██░░ 50%%" % (
-                COFFEE, self.workspace))
+            line, "%s no active specs · ██░░ 50%%" % COFFEE)
 
     def test_trails_none_selected_line(self):
         self.make_change("alpha", plan="# alpha\nStatus: draft\n")
         self.make_change("beta", plan="# beta\nStatus: draft\n")
         line = self.rendered(context=25)
         self.assertEqual(
-            line, "%s 2 specs · none selected · %s · █░░░ 25%%" % (
-                COFFEE, self.workspace))
+            line, "%s 2 specs · none selected · █░░░ 25%%" % COFFEE)
 
     def test_trails_rendered_spec_line(self):
         self.make_change("only", plan="# only\nStatus: active\n",
                          tasks="- [x] 1 a\n- [ ] 2 b\n")
         line = self.rendered(context=100)
         self.assertTrue(
-            line.endswith("1/2 · %s · ████ 100%%" % self.workspace), line)
+            line.endswith("1/2 · ████ 100%"), line)
+
+
+class LayoutAndChainTest(StatuslineTestBase):
+    def test_then_cat_prints_shipd_line_then_session_json(self):
+        os.makedirs(self.changes_dir)
+        r = self.run_line(args=("--then", "cat"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out_lines = strip_ansi(r.stdout).split("\n")
+        self.assertTrue(out_lines[0].startswith(COFFEE), out_lines[0])
+        rest = "\n".join(out_lines[1:])
+        self.assertEqual(
+            json.loads(rest),
+            {"workspace": {"current_dir": self.workspace}})
+
+    def test_then_runs_in_non_shipd_workspace(self):
+        r = self.run_line(args=("--then", "echo theirs"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "theirs\n")
+
+    def test_default_layout_has_no_directory(self):
+        os.makedirs(self.changes_dir)
+        line = self.rendered(context=25)
+        self.assertEqual(line, "%s no active specs · █░░░ 25%%" % COFFEE)
+        self.assertNotIn(self.workspace, line)
+
+    def test_line_spec_directory_ends_with_directory(self):
+        os.makedirs(self.changes_dir)
+        line = self.rendered(home=self.workspace, context=25,
+                             args=("--line", "spec,directory"))
+        self.assertEqual(line, "%s no active specs · ~" % COFFEE)
+
+    def test_two_lines_second_is_directory_without_cup(self):
+        os.makedirs(self.changes_dir)
+        r = self.run_line(context=50, args=(
+            "--line", "spec,context", "--line", "directory"))
+        out_lines = strip_ansi(r.stdout).rstrip("\n").split("\n")
+        self.assertEqual(out_lines, [
+            "%s no active specs · ██░░ 50%%" % COFFEE, self.workspace])
+
+    def test_context_first_sits_beside_the_cup(self):
+        os.makedirs(self.changes_dir)
+        line = self.rendered(context=25, args=("--line", "context,spec"))
+        self.assertTrue(
+            line.startswith("%s █░░░ 25%% · " % COFFEE), line)
+
+    def test_unknown_segment_ignored_and_empty_line_skipped(self):
+        os.makedirs(self.changes_dir)
+        r = self.run_line(args=("--line", "bogus", "--line", "context"))
+        self.assertEqual(r.stdout, "")
 
 
 if __name__ == "__main__":

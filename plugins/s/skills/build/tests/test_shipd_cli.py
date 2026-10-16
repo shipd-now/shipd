@@ -946,9 +946,15 @@ class StatuslineVerbTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="shipd-statusline-test-")
         self.settings = os.path.join(self.tmp, "claude", "settings.json")
+        self.config = os.path.join(self.tmp, "shipd-config.json")
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def command(self, lines=shipd.DEFAULT_STATUSLINE_LINES):
+        """The command a default-layout install registers from the fake
+        checkout."""
+        return shipd.statusline_command(self.checkout(), lines)
 
     # -- runners -----------------------------------------------------------
 
@@ -964,7 +970,8 @@ class StatuslineVerbTest(unittest.TestCase):
         return out.getvalue(), err.getvalue(), code
 
     def install(self, *args, plugin_root=None):
-        return self.run_verb("install", "--settings", self.settings, *args,
+        return self.run_verb("install", "--settings", self.settings,
+                             "--config", self.config, *args,
                              plugin_root=plugin_root)
 
     def checkout(self):
@@ -1033,8 +1040,8 @@ class StatuslineVerbTest(unittest.TestCase):
         self.assertEqual(code, 0)
         entry = self.registration()
         self.assertEqual(entry["type"], "command")
-        self.assertEqual(entry["command"],
-                         shipd.statusline_command(self.checkout()))
+        self.assertEqual(entry["command"], self.command())
+        self.assertTrue(entry["command"].endswith("--line spec,context"))
         self.assertIn(entry["command"], out)
 
     def test_install_creates_the_parent_directory(self):
@@ -1053,24 +1060,47 @@ class StatuslineVerbTest(unittest.TestCase):
         self.assertEqual(data["env"], {"FOO": "bar"})
         self.assertEqual(data["statusLine"]["type"], "command")
 
-    def test_differing_registration_refuses_without_force(self):
+    def foreign_settings(self, command="bash /elsewhere"):
         self.write_settings(json.dumps(
-            {"statusLine": {"type": "command", "command": "bash /elsewhere"}}))
-        before = self.read_settings()
-        _out, err, code = self.install()
-        self.assertEqual(code, 1)
-        self.assertIn("bash /elsewhere", err)
-        self.assertEqual(self.read_settings(), before)
-
-    def test_force_replaces_a_differing_registration(self):
-        self.write_settings(json.dumps(
-            {"statusLine": {"type": "command", "command": "bash /elsewhere"},
+            {"statusLine": {"type": "command", "command": command},
              "model": "opus"}))
-        _out, _err, code = self.install("--force")
+
+    def test_foreign_registration_is_chained_below_shipd(self):
+        self.foreign_settings()
+        out, _err, code = self.install()
         self.assertEqual(code, 0)
         self.assertEqual(self.registration()["command"],
-                         shipd.statusline_command(self.checkout()))
+                         self.command() + " --then 'bash /elsewhere'")
+        self.assertIn("added statusline above existing statusline", out)
+        self.assertIn("bash /elsewhere", out)
         self.assertEqual(json.loads(self.read_settings())["model"], "opus")
+
+    def test_force_replaces_a_differing_registration(self):
+        self.foreign_settings()
+        _out, _err, code = self.install("--force")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.registration()["command"], self.command())
+        self.assertEqual(json.loads(self.read_settings())["model"], "opus")
+
+    def test_older_shipd_entry_is_upgraded_keeping_its_then_tail(self):
+        old = ("bash /old/checkout/plugins/s/integrations/statusline.sh "
+               "--then 'node /x/theirs.mjs --flag'")
+        self.foreign_settings(old)
+        out, _err, code = self.install()
+        self.assertEqual(code, 0)
+        command = self.registration()["command"]
+        self.assertEqual(
+            command, self.command() + " --then 'node /x/theirs.mjs --flag'")
+        self.assertEqual(command.count("integrations/statusline.sh"), 1)
+        self.assertNotIn("added statusline above", out)
+
+    def test_rerun_after_chaining_is_byte_identical(self):
+        self.foreign_settings()
+        self.install()
+        after_first = self.read_settings()
+        _out, _err, code = self.install()
+        self.assertEqual(code, 0)
+        self.assertEqual(self.read_settings(), after_first)
 
     def test_existing_settings_keep_their_permission_mode(self):
         # The atomic write renames a temp file over the original, and
@@ -1102,23 +1132,116 @@ class StatuslineVerbTest(unittest.TestCase):
     # -- the bare report ---------------------------------------------------
 
     def test_bare_verb_creates_nothing(self):
-        out, _err, code = self.run_verb("--settings", self.settings)
+        out, _err, code = self.run_verb("--settings", self.settings,
+                                        "--config", self.config)
         self.assertEqual(code, 0)
         self.assertFalse(os.path.exists(self.settings))
-        self.assertIn(shipd.statusline_command(self.checkout()), out)
+        self.assertFalse(os.path.exists(self.config))
+        self.assertIn(self.command(), out)
 
     def test_bare_verb_leaves_an_existing_file_byte_identical(self):
         self.write_settings(json.dumps(
             {"statusLine": {"type": "command", "command": "bash /elsewhere"},
              "model": "opus"}))
         before = self.read_settings()
-        out, _err, code = self.run_verb("--settings", self.settings)
+        out, _err, code = self.run_verb("--settings", self.settings,
+                                        "--config", self.config)
         self.assertEqual(code, 0)
         self.assertEqual(self.read_settings(), before)
-        # The report names both the live registration and what this install
-        # would register, so a mismatch is visible without mutating anything.
+        # The report names the live registration and that this install would
+        # add shipd's statusline above it, without mutating anything.
         self.assertIn("bash /elsewhere", out)
-        self.assertIn(shipd.statusline_command(self.checkout()), out)
+        self.assertIn("would add the shipd statusline above it", out)
+
+    # -- the layout --------------------------------------------------------
+
+    def layout(self, *args):
+        return self.run_verb("layout", "--settings", self.settings,
+                             "--config", self.config, *args)
+
+    def saved_lines(self):
+        with open(self.config, encoding="utf-8") as fh:
+            return json.load(fh)["statusline"]["lines"]
+
+    def test_default_layout_renders_spec_and_context(self):
+        self.install()
+        self.assertTrue(
+            self.registration()["command"].endswith("--line spec,context"))
+        self.assertFalse(os.path.exists(self.config))
+
+    def test_show_directory_saves_and_renders_it(self):
+        _out, _err, code = self.install("--show", "directory")
+        self.assertEqual(code, 0)
+        self.assertTrue(self.registration()["command"].endswith(
+            "--line spec,context,directory"))
+        self.assertEqual(self.saved_lines(), [["spec", "context", "directory"]])
+
+    def test_show_appends_to_the_first_line(self):
+        with open(self.config, "w", encoding="utf-8") as fh:
+            json.dump({"statusline": {"lines": [["spec"], ["directory"]]}}, fh)
+        _out, _err, code = self.install("--show", "context")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.saved_lines(),
+                         [["spec", "context"], ["directory"]])
+
+    def test_hide_context_removes_it(self):
+        _out, _err, code = self.install("--hide", "context")
+        self.assertEqual(code, 0)
+        self.assertTrue(
+            self.registration()["command"].endswith("--line spec"))
+        self.assertEqual(self.saved_lines(), [["spec"]])
+
+    def test_layout_with_lines_saves_and_reregisters_keeping_then(self):
+        self.foreign_settings()
+        self.install()
+        _out, _err, code = self.layout("spec,context", "directory")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.saved_lines(),
+                         [["spec", "context"], ["directory"]])
+        command = self.registration()["command"]
+        self.assertEqual(
+            command,
+            self.command([["spec", "context"], ["directory"]])
+            + " --then 'bash /elsewhere'")
+
+    def test_layout_keeps_other_config_keys(self):
+        with open(self.config, "w", encoding="utf-8") as fh:
+            json.dump({"dir": ".custom"}, fh)
+        self.layout("context,spec")
+        with open(self.config, encoding="utf-8") as fh:
+            data = json.load(fh)
+        self.assertEqual(data["dir"], ".custom")
+        self.assertEqual(data["statusline"]["lines"], [["context", "spec"]])
+
+    def test_bare_layout_prints_the_lines(self):
+        self.layout("spec,context", "directory")
+        out, _err, code = self.layout()
+        self.assertEqual(code, 0)
+        self.assertIn("line 1: spec · context", out)
+        self.assertIn("line 2: directory", out)
+
+    def test_bare_layout_prints_the_default(self):
+        out, _err, code = self.layout()
+        self.assertEqual(code, 0)
+        self.assertIn("line 1: spec · context", out)
+
+    def test_unknown_or_duplicate_segment_exits_2_writing_nothing(self):
+        for words in (("spec,nope",), ("spec", "spec,context"), ("",)):
+            _out, err, code = self.layout(*words)
+            self.assertEqual(code, 2, words)
+            self.assertTrue(err)
+        _out, _err, code = self.install("--show", "nope")
+        self.assertEqual(code, 2)
+        self.assertFalse(os.path.exists(self.config))
+        self.assertFalse(os.path.exists(self.settings))
+
+    def test_malformed_statusline_key_exits_1(self):
+        with open(self.config, "w", encoding="utf-8") as fh:
+            json.dump({"statusline": {"lines": "spec"}}, fh)
+        _out, err, code = self.install()
+        self.assertEqual(code, 1)
+        self.assertIn("statusline", err)
+        self.assertFalse(os.path.exists(self.settings))
 
     # -- dispatch ----------------------------------------------------------
 
@@ -2036,10 +2159,19 @@ class DoctorCheckTest(unittest.TestCase):
     def test_registered_statusline_is_ok_naming_its_command(self):
         path = self.settings_with(json.dumps(
             {"statusLine": {"type": "command",
-                            "command": "bash /plugins/s/statusline.sh"}}))
+                            "command": "bash /plugins/s/integrations/"
+                                       "statusline.sh --line spec"}}))
         level, name, detail = shipd.check_statusline(path)
         self.assertEqual((level, name), ("ok", "statusline"))
-        self.assertIn("bash /plugins/s/statusline.sh", detail)
+        self.assertIn("bash /plugins/s/integrations/statusline.sh", detail)
+
+    def test_foreign_statusline_warns_naming_it_and_the_install_fix(self):
+        path = self.settings_with(json.dumps(
+            {"statusLine": {"type": "command", "command": "node /x/theirs.mjs"}}))
+        level, name, detail = shipd.check_statusline(path)
+        self.assertEqual((level, name), ("warn", "statusline"))
+        self.assertIn("node /x/theirs.mjs", detail)
+        self.assertIn("shipd statusline install", detail)
 
     def test_unparseable_settings_only_warn(self):
         path = self.settings_with("{not json")

@@ -103,7 +103,7 @@ venn-beta
 | `lint [change] [--epic EPIC] [--initiative INITIATIVE] [--workspace] [--wiki]` | Structurally validate specs and change deltas. | `shipd lint` |
 | `worktree <change> [--fresh]` | Create the change's worktree, then run the configured post-worktree-scripts. | `shipd worktree add-login-flow` |
 | `doctor [--fix]` | Preflight this environment for shipd; `--fix` provisions local tooling automatically. | `shipd doctor --fix` |
-| `statusline [install] [--settings FILE] [--force]` | Report or register the shipd statusline. | `shipd statusline` |
+| `statusline [install\|layout] [--show SEG] [--hide SEG] [--force]` | Register the shipd statusline above any existing one, and choose its segments and lines. | `shipd statusline` |
 | `copilot [add\|remove] [--force]` | Maintain the Copilot code-review skill — the `/s:gate` merge gate — in a repo. | `shipd copilot` |
 | `vendor [add\|remove] [--force]` | Maintain a vendored per-repo shipd install. | `shipd vendor` |
 | `harness [list\|show\|add\|remove\|status] [ids...] [--all] [--user] [--force]` | The harness registry, and the generated `/s:` command files in a repo or in your home; `--all` acts on every harness in it. | `shipd harness list` |
