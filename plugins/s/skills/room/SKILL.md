@@ -117,8 +117,11 @@ Your role is the `role` on this agent's own card in
 `shipd room list <pr> --json`. Only the `author` role may change code, and only
 for a surfaced `review-finding` task on its own pull request:
 
-1. Check `gh pr view <pr> --json headRefName` equals
-   `git branch --show-current`, and `git status --porcelain` prints nothing.
+1. The role is self-declared, so also check
+   `gh pr view <pr> --json author,headRefName,isCrossRepository`: the
+   `author.login` equals `gh api user --jq .login`, `isCrossRepository` is
+   `false`, and `headRefName` equals `git branch --show-current`. Check
+   `git status --porcelain` prints nothing.
 2. Make the smallest fix, and run the tests that cover the files you touched.
 3. `git commit`, then plain `git push` — never `--force`, never another branch.
 4. `shipd room close <pr> "Fixed in <short sha>: <one line>" --task <id> --state completed`.

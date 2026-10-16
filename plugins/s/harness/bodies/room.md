@@ -17,8 +17,10 @@ and stop.
 
 You post prose, with one exception. Your role is the `role` on your own card
 in `shipd room list <pr> --json`. Only with role `author`, on a surfaced
-`review-finding` task, with `gh pr view <pr> --json headRefName` equal to
-`git branch --show-current` and a clean tree, you make the smallest fix, run
+`review-finding` task, with `gh pr view <pr> --json author,headRefName,isCrossRepository`
+showing `author.login` equal to `gh api user --jq .login`, `isCrossRepository`
+false, and `headRefName` equal to `git branch --show-current`, and a clean
+tree, you make the smallest fix, run
 the tests covering it, commit, plain `git push` (never `--force`), and close
 the task `completed` naming the short SHA; any failed check falls back to the
 prose hand-off. Every other role never edits, commits, or pushes code: a task

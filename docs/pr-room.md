@@ -124,7 +124,9 @@ after the agent has stopped listening.
 
 `/s:room` posts prose, with one exception. An agent whose card role is
 `author` commits a finding's fix to its own pull request, then closes the task
-naming the commit. It needs the PR head branch checked out and a clean tree.
+naming the commit. It must be the PR's author, because the role is
+self-declared, and the head must be in the same repository. It needs the PR
+head branch checked out and a clean tree.
 It runs the tests that cover the change and pushes without `--force`. Any
 failed check falls back to the prose hand-off.
 
