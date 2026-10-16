@@ -1,6 +1,6 @@
 <!-- doc-type: how-to -->
 
-# Episode 4: Epics and `/s:epic-grill`
+# Episode 5: Epics and `/s:epic-grill`
 
 ## Introduction
 
@@ -12,7 +12,7 @@ An assistant that agrees with every design lets a weak plan through. This episod
 |---|---|
 | Roadmap group | Spec authoring and pressure testing |
 | Runtime | 5 minutes |
-| Prerequisites | A PRD for the feature, and the core loop from episodes 1 and 3 |
+| Prerequisites | A PRD for the feature, and the core loop from episodes 2 and 4 |
 | Commands shown | `/s:epic`, `/s:epic-grill`, `/s:autopilot` |
 
 ## Script
@@ -49,7 +49,7 @@ An assistant that agrees with every design lets a weak plan through. This episod
 
 ## Next
 
-Episode 5 covers the answerer that spares you most questions: [The oracle and the supersession gate](05-oracle-and-supersession-gate.md).
+Episode 6 covers the answerer that spares you most questions: [The oracle and the supersession gate](06-oracle-and-supersession-gate.md).
 
 ## Sources
 

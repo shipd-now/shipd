@@ -1,6 +1,6 @@
 <!-- doc-type: how-to -->
 
-# Episode 2: Git worktrees and small PRs
+# Episode 3: Git worktrees and small PRs
 
 ## Introduction
 
@@ -12,7 +12,7 @@ Large pull requests stall in review, and parallel work collides in one checkout.
 |---|---|
 | Roadmap group | Tactical execution |
 | Runtime | 5 minutes |
-| Prerequisites | [Episode 1](01-core-loop.md); a repository with shipd installed |
+| Prerequisites | [Episode 2](02-plan-and-specs.md); a repository with shipd installed |
 | Commands shown | `shipd worktree`, `shipd list`, `shipd status`, `git push`, `gh pr create`, `gh pr merge --auto --squash` |
 
 ## Script
@@ -55,7 +55,7 @@ Large pull requests stall in review, and parallel work collides in one checkout.
 
 ## Next
 
-[Episode 3](03-prds-and-guardrails.md) shows how a PRD and guardrails steer what your changes build.
+[Episode 4](04-prds-and-guardrails.md) shows how a PRD and guardrails steer what your changes build.
 
 ## Sources
 

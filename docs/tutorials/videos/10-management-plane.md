@@ -1,13 +1,13 @@
 <!-- doc-type: how-to -->
 
-# Episode 9: The management plane (commercial)
+# Episode 10: The management plane (commercial)
 
 ## Introduction
 
 Engineering managers need to see where a feature stands without reading every
 repository. This episode shows the management plane, a dashboard over
 team-shared workspaces. It is the one commercial part of the series. Episodes
-1 to 8 cover open-source shipd, and this episode covers what the commercial
+1 to 9 cover open-source shipd, and this episode covers what the commercial
 product ships today. It is for managers and for engineers who report to them.
 
 ## At a glance
@@ -16,15 +16,15 @@ product ships today. It is for managers and for engineers who report to them.
 |---|---|
 | Roadmap group | Verification and governance |
 | Runtime | 5 minutes |
-| Prerequisites | A team-shared workspace; episodes 1 to 8 |
+| Prerequisites | A team-shared workspace; episodes 1 to 9 |
 | Commands shown | None; the episode shows the `shipd-app` dashboard |
 
 ## Script
 
 ### 0:00–0:50 The open-source line
 
-**On screen:** A slide splits the series in two. Episodes 1 to 8 sit under
-"open source". Episode 9 sits under "commercial".
+**On screen:** A slide splits the series in two. Episodes 1 to 9 sit under
+"open source". Episode 10 sits under "commercial".
 
 **Narration:** Everything so far runs on open-source shipd. The docs describe
 the plugin, the engine, and the workflows, and you can use them freely. The management
@@ -70,8 +70,8 @@ in the repo.
 
 ## Takeaways
 
-- Episodes 1 to 8 cover open-source shipd, and the management plane is
-  commercial.
+- Episodes 1 to 9 are open source, and episode 10, the management plane,
+  is commercial.
 - The dashboard is a read-only delivery view that derives its status from
   git.
 - Wiki edits and comments land in the workspace repo as git commits.

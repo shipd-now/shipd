@@ -1,6 +1,6 @@
 <!-- doc-type: how-to -->
 
-# Episode 7: Member maps and headless runs
+# Episode 8: Member maps and headless runs
 
 ## Introduction
 
@@ -12,7 +12,7 @@ A workspace materializes its member repos on every machine, which can leave a se
 |---|---|
 | Roadmap group | Verification and governance |
 | Runtime | 5 minutes |
-| Prerequisites | A workspace with at least one member repo, as in episode 6 |
+| Prerequisites | A workspace with at least one member repo, as in episode 7 |
 | Commands shown | `/s:workspace map`, `workspace-map set`, `workspace-map remove`, `shipd workspace`, `workspace-show` |
 
 ## Script
@@ -55,7 +55,7 @@ A workspace materializes its member repos on every machine, which can leave a se
 
 ## Next
 
-Episode 8 moves from workspaces to the pipeline that checks every pull request: [CI and Copilot review](08-ci-and-copilot-review.md).
+Episode 9 moves from workspaces to the pipeline that checks every pull request: [CI and Copilot review](09-ci-and-copilot-review.md).
 
 ## Sources
 

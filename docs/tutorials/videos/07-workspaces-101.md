@@ -1,6 +1,6 @@
 <!-- doc-type: how-to -->
 
-# Episode 6: Workspaces 101
+# Episode 7: Workspaces 101
 
 ## Introduction
 
@@ -16,7 +16,7 @@ who work on one job across several repositories.
 |---|---|
 | Roadmap group | Verification and governance |
 | Runtime | 5 minutes |
-| Prerequisites | shipd installed; episodes 1 to 5 |
+| Prerequisites | shipd installed; episodes 1 to 6 |
 | Commands shown | `shipd workspace init`, `shipd wiki init`, `shipd workspace sync`, `/s:workspace clone` |
 
 ## Script
@@ -86,7 +86,7 @@ into that wiki. Work inside a member repo keeps its own worktree per change.
 
 ## Next
 
-Episode 7 covers [Member maps and headless runs](07-advanced-workspaces.md).
+Episode 8 covers [Member maps and headless runs](08-advanced-workspaces.md).
 
 ## Sources
 

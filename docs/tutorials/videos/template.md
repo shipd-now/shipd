@@ -27,7 +27,7 @@ Each episode runs five minutes and holds four to six beats. The
 6. Write `## Takeaways` as three dot-points. Each point states one fact the
    viewer keeps.
 7. Write `## Next` as one sentence that links the next episode file. In
-   episode 9, link `index.md`.
+   episode 10, link `index.md`.
 8. Write `## Sources` as a list of links to the docs and specs that ground
    every claim. Read each source before you write the beat that relies on it.
 9. Check the file. Run `python3 plugins/s/skills/document/scripts/docs_lint.py`
