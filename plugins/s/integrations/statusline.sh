@@ -9,6 +9,9 @@
 #         "(1 of X)" and aggregate "(<total> of <Y>)" brackets when more than
 #         one change is live; "☕ no active specs" for a shipd project with no
 #         live change; nothing at all when the workspace has no .shipd/ directory.
+#         Every line ends with " · <dir>" (workspace relative to ~) and, when the
+#         session JSON carries context_window.used_percentage, " · <bar> <pct>%"
+#         (a four-cell █/░ bar). Both trailing segments are uncolored.
 #
 # Note: macOS ships bash 3.2, so we avoid `mapfile`, `set -u`, associative
 # arrays, and `$'\uXXXX'` throughout this script. No Python/Node is spawned.
@@ -151,6 +154,38 @@ if [ ! -d "$workspace/.shipd" ]; then
   exit 0
 fi
 
+# --- Trailing segments: directory relative to ~, and context-usage bar -----
+dir_seg="$workspace"
+if [ -n "$HOME" ]; then
+  if [ "$workspace" = "$HOME" ]; then
+    dir_seg="~"
+  elif [ "${workspace#"$HOME"/}" != "$workspace" ]; then
+    dir_seg="~/${workspace#"$HOME"/}"
+  fi
+fi
+suffix=" · ${dir_seg}"
+
+# used_percentage: integer part only (a fractional value truncates, null never
+# matches), clamped to 100. The bar fills round(pct * 4 / 100) cells; glyphs
+# are raw UTF-8 bytes ($'\uXXXX' is bash 4.2+ only).
+ctx_pct=$(printf '%s' "$input" | sed -n 's/.*"used_percentage"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1)
+if [ -n "$ctx_pct" ]; then
+  ctx_pct=$((10#$ctx_pct))
+  [ "$ctx_pct" -gt 100 ] && ctx_pct=100
+  filled=$(( (ctx_pct * 4 + 50) / 100 ))
+  bar=""
+  c=0
+  while [ "$c" -lt 4 ]; do
+    if [ "$c" -lt "$filled" ]; then
+      bar="${bar}$(printf '\xe2\x96\x88')"
+    else
+      bar="${bar}$(printf '\xe2\x96\x91')"
+    fi
+    c=$((c + 1))
+  done
+  suffix="${suffix} · ${bar} ${ctx_pct}%"
+fi
+
 # --- Collect candidate changes -------------------------------------------
 # Parallel arrays (bash 3.2: no associative arrays). Candidates come from the
 # root's .shipd/planned/ plus one level of .worktrees/*/.shipd/planned/.
@@ -203,7 +238,7 @@ X=${#cand_dir[@]}
 
 # A shipd project with no live change reports rather than vanishing.
 if [ "$X" -eq 0 ]; then
-  printf '%s no active specs\n' "$COFFEE"
+  printf '%s no active specs%s\n' "$COFFEE" "$suffix"
   exit 0
 fi
 
@@ -250,7 +285,7 @@ fi
 
 # (5) several candidates, none pickable.
 if [ "$pick" -lt 0 ]; then
-  printf '%s %s specs %s none selected\n' "$COFFEE" "$X" "·"
+  printf '%s %s specs %s none selected%s\n' "$COFFEE" "$X" "·" "$suffix"
   exit 0
 fi
 
@@ -314,4 +349,4 @@ if [ "$have_tasks" -eq 1 ]; then
   out="${out}${sep}${tasks_seg}"
 fi
 
-printf '%s %s\n' "$COFFEE" "$out"
+printf '%s %s%s\n' "$COFFEE" "$out" "$suffix"

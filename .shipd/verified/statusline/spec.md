@@ -101,6 +101,20 @@ SHALL it print nothing and exit zero. The prefix glyph SHALL be bare U+2615
 paths directly — it SHALL NOT resolve layered configuration, so a repo or
 worktree with a renamed content directory is not scanned.
 
+Every line the script prints SHALL end with two trailing segments, each
+joined by ` · `. The directory segment SHALL render the resolved workspace
+directory, with a leading `$HOME` replaced by `~` (the bare home directory
+renders as `~`); a directory outside `$HOME` SHALL render unchanged. The
+context segment SHALL render the session JSON's
+`context_window.used_percentage` as a four-cell bar followed by the integer
+percentage, as `<bar> <pct>%`. The bar SHALL fill `round(pct × 4 / 100)`
+cells with `█` (U+2588) and the rest with `░` (U+2591), so `0` renders
+`░░░░ 0%`, `25` renders `█░░░ 25%`, and `100` renders `████ 100%`; a
+fractional percentage SHALL truncate to its integer part, and a value
+above 100 SHALL clamp to 100. If the session JSON carries no non-negative
+numeric `used_percentage`, then the context segment SHALL be omitted, and
+the directory segment SHALL still render.
+
 #### Scenario: Active worktree change is rendered from the main checkout
 - **GIVEN** a workspace whose own `.shipd/planned/` is empty and a worktree
   `.worktrees/w1/.shipd/planned/dark-mode-toggle/` at status `active` with 3
@@ -178,6 +192,30 @@ worktree with a renamed content directory is not scanned.
 - **GIVEN** a repo whose config renames the content directory to `specs`
 - **WHEN** the statusline script runs
 - **THEN** its changes are not scanned and no configuration is resolved
+
+#### Scenario: Directory under home renders relative to tilde
+- **GIVEN** a shipd workspace at `$HOME/projects/workspaces/understand`
+- **WHEN** the statusline script runs with that directory as `current_dir`
+- **THEN** the line ends with `· ~/projects/workspaces/understand`
+  followed only by any context segment
+
+#### Scenario: Context usage renders a four-cell bar
+- **GIVEN** session JSON whose `context_window.used_percentage` is `0`,
+  `25`, or `100`
+- **WHEN** the statusline script runs
+- **THEN** the line ends with `░░░░ 0%`, `█░░░ 25%`, or `████ 100%`
+  respectively
+
+#### Scenario: Missing context usage omits the context segment
+- **GIVEN** session JSON with no `context_window` object
+- **WHEN** the statusline script runs in a shipd workspace
+- **THEN** the line ends with the directory segment and contains no `%`
+
+#### Scenario: Trailing segments follow the no-active-specs line
+- **GIVEN** a shipd workspace with no live change and a `used_percentage`
+  of `50`
+- **WHEN** the statusline script runs
+- **THEN** it prints `☕ no active specs · <dir> · ██░░ 50%`
 
 ### Requirement: Statusline integration
 id: statusline-integration
