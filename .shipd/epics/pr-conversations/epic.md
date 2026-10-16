@@ -1,5 +1,5 @@
 # pr-conversations
-Status: ready
+Status: complete
 Theme: developer-experience
 
 ## Introduction
@@ -124,3 +124,10 @@ parallel.
 | room-threaded-findings | Finding replies post on the inline thread and a completed reply resolves it; the author's agent may commit fixes to its own pull request | high | high | medium | high | room-speaker-identity |
 | room-turn-hygiene | One repository resolver for every verb, merge only with no open tasks, and the `closed` line lists open tasks | medium | medium | low | medium | room-threaded-findings |
 | pr-writer-skill | `/s:pr` writes a titled, branded, standard-checked pull request; the `pr` config key; build and autopilot call it | medium | medium | medium | medium | |
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 2 | 586 |
+| **Total** | 2 | 586 |
