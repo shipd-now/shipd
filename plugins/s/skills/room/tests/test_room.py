@@ -44,8 +44,11 @@ class FakeGh:
     """
 
     def __init__(self, number=7, repo="o/r", comments=None,
-                 review_comments=None, pages=1, fail=None):
+                 review_comments=None, pages=1, fail=None, state="OPEN",
+                 delete_fail=False):
         self.number = number
+        self.state = state
+        self.delete_fail = delete_fail
         self.repo = repo
         self.comments = [dict(c) for c in (comments or [])]
         self.review_comments = [dict(c) for c in (review_comments or [])]
@@ -71,6 +74,15 @@ class FakeGh:
         return [json.loads(inp)["body"] for args, inp in self.calls
                 if "POST" in args]
 
+    def deletes(self):
+        """The comment ids of every recorded DELETE, in order."""
+        out = []
+        for args, _inp in self.calls:
+            if "DELETE" in args:
+                path = next(a for a in args if a.startswith("repos/"))
+                out.append(int(path.rsplit("/", 1)[1]))
+        return out
+
     def patches(self):
         """``(comment_id, body)`` for every recorded PATCH, in order."""
         out = []
@@ -91,6 +103,7 @@ class FakeGh:
         if args[:2] == ["pr", "view"]:
             return 0, json.dumps({
                 "number": self.number,
+                "state": self.state,
                 "url": "https://github.com/%s/pull/%d" % (self.repo,
                                                           self.number)}), ""
         if args[:2] == ["repo", "view"]:
@@ -110,6 +123,14 @@ class FakeGh:
                 return 0, self._slurp(self.review_comments), ""
             raise AssertionError("unexpected gh api read: %r" % (args,))
         method = args[args.index("-X") + 1]
+        if method == "DELETE":
+            path = next(a for a in args if a.startswith("repos/"))
+            comment_id = int(path.rsplit("/", 1)[1])
+            if self.delete_fail:
+                return 1, "", "HTTP 403: Forbidden"
+            self.comments = [c for c in self.comments
+                             if c["id"] != comment_id]
+            return 0, "", ""
         payload = json.loads(input)
         if method == "POST":
             assert "repos/%s/issues/%d/comments" % (
@@ -649,6 +670,65 @@ class MessageTest(RoomTestBase):
                       "room join" % CONTEXT, err)
 
 
+class ClaimReplyTest(RoomTestBase):
+    """room-message-verb and room-close-verb: a reply on a task the agent
+    claimed with ``working`` posts, then deletes its own claim comment."""
+
+    def _room(self, claimer="claude-b", delete_fail=False):
+        return FakeGh(delete_fail=delete_fail, comments=_joined(
+            msg_comment(10, "codex-a", text="please check",
+                        state="input-required", round=1, to="claude-b"),
+            msg_comment(30, claimer, text="picked up", task_id=10,
+                        state="working", round=1)))
+
+    def test_reply_posts_then_deletes_own_claim(self):
+        gh = self._room()
+        code, out, err = self.room(gh, "message", "7", "--task", "10",
+                                   "--state", "completed", "done",
+                                   "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(gh.posts()), 1)
+        self.assertEqual(gh.deletes(), [30])
+        kinds = [("POST" if "POST" in a else "DELETE")
+                 for a, _i in gh.calls if "-X" in a]
+        self.assertEqual(kinds, ["POST", "DELETE"])
+        self.assertEqual(json.loads(out)["comment"], gh.comments[-1]["id"])
+        self.assertNotIn(30, [c["id"] for c in gh.comments])
+
+    def test_another_agents_claim_is_kept(self):
+        gh = self._room(claimer="codex-a")
+        code, _out, err = self.room(gh, "message", "7", "--task", "10",
+                                    "--state", "completed", "done",
+                                    "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(gh.posts()), 1)
+        self.assertEqual(gh.deletes(), [])
+
+    def test_failed_delete_warns_and_exits_zero(self):
+        gh = self._room(delete_fail=True)
+        code, _out, err = self.room(gh, "message", "7", "--task", "10",
+                                    "--state", "completed", "done",
+                                    "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(gh.posts()), 1)
+        self.assertIn("warning: could not remove claim comment 30", err)
+
+    def test_close_over_own_claim_deletes_it(self):
+        gh = FakeGh(comments=_joined(
+            card_comment(3, "copilot-ci"),
+            msg_comment(10, "codex-a", text="please check",
+                        state="input-required", round=1, to="copilot-ci"),
+            msg_comment(30, "copilot-ci", text="picked up by the CI wake",
+                        task_id=10, state="working", round=1)))
+        code, _out, err = self.room(gh, "close", "7", "--task", "10",
+                                    "--state", "failed", "--reason",
+                                    "wake-runner-failed",
+                                    "--agent", "copilot-ci")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(gh.posts()), 1)
+        self.assertEqual(gh.deletes(), [30])
+
+
 class CloseTest(RoomTestBase):
     """room-close-verb: the terminal message, with no round cap."""
 
@@ -778,7 +858,7 @@ class RoomReadSplitTest(unittest.TestCase):
 
     def test_room_from_comments_matches_read_room(self):
         gh = self._gh()
-        cards, tasks, _raw = room._read_room(gh, "o/r", 7)
+        cards, tasks, _raw, _comments = room._read_room(gh, "o/r", 7)
         got_cards, got_tasks = room._room_from_comments(
             room._read_comments(self._gh(), "o/r", 7))
         self.assertEqual(got_cards, cards)
@@ -985,6 +1065,36 @@ class WatchTest(WatchTestBase):
         self.assertEqual(len(_reads(gh, "issues")), 3)
         self.assertEqual(len(_reads(gh, "pulls")), 3)
         self.assertIn("watch: no actionable task on %s" % CONTEXT, err)
+
+    def test_merged_pull_request_closes_the_watch(self):
+        for state, word in (("MERGED", "merged"), ("CLOSED", "closed")):
+            gh = FakeGh(comments=self._two_tasks(), state=state)
+            sleep = FakeSleep()
+            code, out, err = self.watch(gh, "--agent", "codex-b",
+                                        sleep=sleep)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(self.lines(out), [
+                {"closed": word, "context": CONTEXT, "cursor": "11:0"}])
+            self.assertEqual(err.splitlines()[-1],
+                             "watch: %s is %s; the room is closed"
+                             % (CONTEXT, word))
+            self.assertEqual(sleep.calls, [])
+
+    def test_surfaced_task_prints_before_the_closed_line(self):
+        gh = FakeGh(comments=self._two_tasks(), state="MERGED")
+        code, out, err = self.watch(gh, "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        lines = self.lines(out)
+        self.assertEqual(len(lines), 2, out)
+        self.assertEqual(lines[0]["task"], 10)
+        self.assertEqual(lines[1]["closed"], "merged")
+
+    def test_open_pull_request_keeps_the_timeout_behavior(self):
+        gh = FakeGh(comments=self._two_tasks(), state="OPEN")
+        code, out, err = self.watch(gh, "--agent", "codex-b", "--once")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "")
+        self.assertIn("watch: no actionable task", err)
 
     def test_failed_read_is_fatal(self):
         gh = FakeGh(comments=self._two_tasks(),

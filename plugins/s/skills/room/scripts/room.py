@@ -178,12 +178,14 @@ def _room_from_comments(comments):
 
 
 def _read_room(gh, repo, number):
-    """Read the room once: ``(cards, tasks, raw)``.
+    """Read the room once: ``(cards, tasks, raw, comments)``.
 
-    ``cards`` and ``tasks`` are as ``_room_from_comments`` builds them, and
+    ``cards`` and ``tasks`` are as ``_room_from_comments`` builds them,
     ``raw`` maps a card name to the issue comment id holding it, for the join
-    upsert."""
-    return _parse_room(_read_comments(gh, repo, number))
+    upsert, and ``comments`` is the raw comment list that was read."""
+    comments = _read_comments(gh, repo, number)
+    cards, tasks, raw = _parse_room(comments)
+    return cards, tasks, raw, comments
 
 
 def _last_comment(comments, task):
@@ -303,6 +305,48 @@ def _emit(obj):
     sys.stdout.write(json.dumps(obj) + "\n")
 
 
+def _delete(gh, repo, comment_id):
+    """Delete an issue comment."""
+    rc, _out, err = gh(["api", "-X", "DELETE",
+                        "repos/%s/issues/comments/%s" % (repo, comment_id)])
+    if rc != 0:
+        raise RoomError("deleting room comment %s failed: %s"
+                        % (comment_id, (err or "").strip() or "exit %d" % rc))
+
+
+def _own_claim(comments, task, agent):
+    """The id of ``task``'s last comment when it is an issue comment whose
+    Message for the task was posted by ``agent`` at ``working``; else
+    ``None``."""
+    last = _last_comment(comments, task)
+    if last is None or _endpoint(last) != "issue":
+        return None
+    try:
+        parsed = room_schema.parse_comments(
+            last.get("body") or "",
+            author=(last.get("user") or {}).get("login"))
+    except room_schema.SchemaError:
+        return None
+    for obj in parsed:
+        if (isinstance(obj, room_schema.Message)
+                and obj.task_id == task.id and obj.agent == agent
+                and obj.state == "working"):
+            return last.get("id")
+    return None
+
+
+def _drop_claim(gh, repo, claim_id):
+    """Delete the claim comment after the reply is posted; a failure is a
+    warning, because the reply stands."""
+    if claim_id is None:
+        return
+    try:
+        _delete(gh, repo, claim_id)
+    except RoomError:
+        sys.stderr.write("warning: could not remove claim comment %s\n"
+                         % claim_id)
+
+
 def _post_message(gh, repo, number, message):
     try:
         body = room_schema.render_comment(message)
@@ -344,7 +388,7 @@ def cmd_join(opts, parser, gh):
     root = _root(opts)
     agent = _agent_name(opts, parser, root)
     repo, number, context = _resolve_room(gh, opts.pr)
-    _cards, _tasks, raw = _read_room(gh, repo, number)
+    _cards, _tasks, raw, _comments = _read_room(gh, repo, number)
     card = room_schema.AgentCard(
         name=agent, description=opts.description or "",
         skills=tuple(opts.skill or ()), version=_plugin_version(),
@@ -396,7 +440,7 @@ def _task_dict(task):
 def cmd_list(opts, parser, gh):
     _agent_name(opts, parser, _root(opts))
     repo, number, context = _resolve_room(gh, opts.pr)
-    cards, tasks, _raw = _read_room(gh, repo, number)
+    cards, tasks, _raw, _comments = _read_room(gh, repo, number)
     if opts.json:
         _emit({"context": context,
                "cards": [room_schema.card_to_dict(c) for c in cards],
@@ -420,7 +464,7 @@ def cmd_message(opts, parser, gh):
     root = _root(opts)
     agent = _agent_name(opts, parser, root)
     repo, number, context = _resolve_room(gh, opts.pr)
-    cards, tasks, _raw = _read_room(gh, repo, number)
+    cards, tasks, _raw, comments = _read_room(gh, repo, number)
     _require_card(cards, agent, context)
     metadata = {}
     if opts.new:
@@ -431,6 +475,7 @@ def cmd_message(opts, parser, gh):
         if opts.skill:
             metadata["skill"] = opts.skill
         task_id = None
+        claim_id = None
     else:
         task = _find_task(tasks, opts.task, context)
         requested = opts.state or ("input-required" if opts.to else "working")
@@ -446,12 +491,15 @@ def cmd_message(opts, parser, gh):
             raise RoomError("round cap reached on task %s — posted failed "
                             "(round-cap)" % task.id)
         task_id = task.id
+        claim_id = (_own_claim(comments, task, agent)
+                    if state != "working" else None)
     metadata.update({"state": state, "round": rnd})
     if opts.to:
         metadata["to"] = opts.to
     resp = _post_message(gh, repo, number,
                          _message(context, agent, opts.text, task_id,
                                   metadata))
+    _drop_claim(gh, repo, claim_id)
     opened = task_id if task_id is not None else (resp or {}).get("id")
     _emit(_reply_result(resp, opened, state, rnd))
     sys.stderr.write("posted %s on task %s in %s\n" % (state, opened, context))
@@ -462,12 +510,13 @@ def cmd_close(opts, parser, gh):
     root = _root(opts)
     agent = _agent_name(opts, parser, root)
     repo, number, context = _resolve_room(gh, opts.pr)
-    cards, tasks, _raw = _read_room(gh, repo, number)
+    cards, tasks, _raw, comments = _read_room(gh, repo, number)
     _require_card(cards, agent, context)
     task = _find_task(tasks, opts.task, context)
     requested = opts.state or "completed"
     state = _transition(task.id, task.state, requested)
     rnd = room_schema.next_round(task, agent)
+    claim_id = _own_claim(comments, task, agent)
     metadata = {"state": state, "round": rnd}
     if opts.reason:
         metadata["reason"] = opts.reason
@@ -478,6 +527,7 @@ def cmd_close(opts, parser, gh):
             text += " — %s" % opts.reason
     resp = _post_message(gh, repo, number,
                          _message(context, agent, text, task.id, metadata))
+    _drop_claim(gh, repo, claim_id)
     _emit(_reply_result(resp, task.id, state, rnd))
     sys.stderr.write("closed task %s as %s in %s\n" % (task.id, state,
                                                        context))
@@ -547,6 +597,15 @@ def _cap_task(gh, repo, number, context, agent, card, task, max_rounds,
                      "(round-cap)\n" % task.id)
 
 
+def _pr_closed(gh, number):
+    """``"merged"`` or ``"closed"`` when the pull request has ended, else
+    ``None``."""
+    data = _gh_json(gh, ["pr", "view", str(number), "--json", "state"],
+                    what="gh pr view %s" % number)
+    state = (data or {}).get("state") if isinstance(data, dict) else None
+    return {"MERGED": "merged", "CLOSED": "closed"}.get(state)
+
+
 def cmd_watch(opts, gh, sleep, clock, parser):
     if not opts.interval > 0:
         parser.error("--interval must be greater than 0, got %s"
@@ -573,10 +632,19 @@ def cmd_watch(opts, gh, sleep, clock, parser):
             if comment is not None and _is_new(comment, cursor):
                 surfaced.append((task, comment))
         cursor = _advance(cursor, comments)
+        ended = _pr_closed(gh, number)
+        for task, comment in surfaced:
+            sys.stdout.write(
+                _watch_line(task, comment, context, cursor) + "\n")
+        if ended:
+            sys.stdout.write(json.dumps(
+                {"closed": ended, "context": context,
+                 "cursor": _cursor_text(cursor)}) + "\n")
+            sys.stdout.flush()
+            sys.stderr.write("watch: %s is %s; the room is closed\n"
+                             % (context, ended))
+            return 0
         if surfaced:
-            for task, comment in surfaced:
-                sys.stdout.write(
-                    _watch_line(task, comment, context, cursor) + "\n")
             sys.stdout.flush()
             return 0
         if opts.once:

@@ -70,7 +70,9 @@ class MarkerFormatTests(unittest.TestCase):
         msg = _agent_msg(text="the prose")
         lines = room_schema.render_comment(msg).split("\n")
         self.assertEqual(lines[1], "")
-        self.assertEqual("\n".join(lines[2:]), "the prose")
+        self.assertEqual(lines[2], "**☕ shipd** · **a** · submitted")
+        self.assertEqual(lines[3], "")
+        self.assertEqual("\n".join(lines[4:]), "the prose")
 
     def test_marker_below_severity_line_parses(self):
         msg = _agent_msg(text="finding")
@@ -135,18 +137,18 @@ class AgentCardTests(unittest.TestCase):
         self.assertEqual(kind, room_schema.CARD_MARKER)
         self.assertEqual(
             rendered.split("\n", 2)[2],
-            "**codex-reviewer** joined the room from codex "
-            "— skills: review-finding")
+            "<sub>**☕ shipd** · **codex-reviewer** joined the room from codex "
+            "· skills: review-finding</sub>")
         self.assertEqual(room_schema.parse_comment(rendered), card)
 
     def test_card_prose_minimal_and_with_description(self):
         self.assertEqual(
             room_schema._card_prose(room_schema.AgentCard(name="x")),
-            "**x** joined the room")
+            "<sub>**☕ shipd** · **x** joined the room</sub>")
         self.assertEqual(
             room_schema._card_prose(room_schema.AgentCard(
                 name="x", skills=("a", "b"), description="does things")),
-            "**x** joined the room — skills: a, b\n\ndoes things")
+            "<sub>**☕ shipd** · **x** joined the room · skills: a, b</sub>\n\ndoes things")
 
     def test_nameless_card_raises(self):
         body = '<!-- shipd-room-card {"harness":"codex"} -->'
@@ -175,6 +177,28 @@ class AgentCardTests(unittest.TestCase):
 
 
 class MessageTests(unittest.TestCase):
+    def test_agent_prose_opens_with_speaker_header(self):
+        msg = _agent_msg(text="done", agent="copilot-ci", task_id=3,
+                         state="completed", to="builder")
+        rendered = room_schema.render_comment(msg)
+        self.assertEqual(rendered.split("\n", 2)[2],
+                         "**☕ shipd** · **copilot-ci** \u2192 builder \u00b7 completed"
+                         "\n\ndone")
+        self.assertEqual(room_schema.parse_comment(rendered).text, "done")
+
+    def test_header_without_to_or_state(self):
+        msg = room_schema.Message(
+            role="agent", parts=({"kind": "text", "text": "x"},),
+            context_id=CONTEXT, agent="copilot-ci")
+        self.assertEqual(room_schema._message_prose(msg),
+                         "**☕ shipd** · **copilot-ci**\n\nx")
+
+    def test_user_message_has_no_header(self):
+        msg = room_schema.Message(
+            role="user", parts=({"kind": "text", "text": "hi"},),
+            context_id=None, agent="someone")
+        self.assertEqual(room_schema._message_prose(msg), "hi")
+
     def _rendered_dict(self, msg):
         import json
         _, raw = _marker_json(room_schema.render_comment(msg))
@@ -253,7 +277,8 @@ class MessageTests(unittest.TestCase):
             context_id=CONTEXT, agent="a",
             metadata={"state": "submitted"})
         rendered = room_schema.render_comment(msg)
-        self.assertEqual(rendered.split("\n", 2)[2], "visible")
+        self.assertEqual(rendered.split("\n", 2)[2],
+                         "**☕ shipd** · **a** · submitted\n\nvisible")
         parsed = room_schema.parse_comment(rendered)
         self.assertEqual(len(parsed.parts), 2)
         self.assertEqual(parsed, msg)
