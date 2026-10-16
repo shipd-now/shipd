@@ -73,6 +73,14 @@ class FakeGh:
             if size else [[] for _ in range(count)]
         return json.dumps(pages)
 
+    def pr_views(self):
+        """The args of every recorded ``gh pr view`` call."""
+        return [a for a, _inp in self.calls if a[:2] == ["pr", "view"]]
+
+    def repo_views(self):
+        """The args of every recorded ``gh repo view`` call."""
+        return [a for a, _inp in self.calls if a[:2] == ["repo", "view"]]
+
     def user_calls(self):
         """How many times ``gh api user`` was read."""
         return sum(1 for args, _inp in self.calls if args == ["api", "user"])
@@ -428,6 +436,58 @@ class GhSeamTest(RoomTestBase):
         self.assertIn("#102", out)
         self.assertNotIn("#101", out)
 
+    def test_url_resolves_with_no_repository_lookup(self):
+        gh = FakeGh()
+        code, out, err = _watch(["https://github.com/o/r/pull/7", "--once",
+                                 "--agent", "codex-a", "--root", self.root],
+                                gh)
+        self.assertEqual(code, 0, err)
+        self.assertIn("watch: no actionable task on %s" % CONTEXT, err)
+        self.assertEqual(gh.repo_views(), [])
+        self.assertTrue(gh.pr_views())
+        for args in gh.pr_views():
+            self.assertEqual(args[args.index("--repo") + 1], "o/r")
+
+    def test_flag_supplies_the_repository(self):
+        gh = FakeGh()
+        code, out, err = self.room(gh, "list", "7", "--repo", "o/r",
+                                   "--json", "--agent", "codex-a")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["context"], CONTEXT)
+        self.assertEqual(gh.repo_views(), [])
+        for args in gh.pr_views():
+            self.assertEqual(args[args.index("--repo") + 1], "o/r")
+
+    def test_neither_falls_back_to_the_working_directory(self):
+        gh = FakeGh()
+        code, out, err = self.room(gh, "list", "7", "--agent", "codex-a")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(gh.repo_views()), 1)
+        for args in gh.pr_views():
+            self.assertNotIn("--repo", args)
+
+    def test_url_and_flag_naming_different_repositories_are_refused(self):
+        gh = FakeGh()
+        code, out, err = self.room(
+            gh, "list", "https://github.com/o/r/pull/7", "--repo", "x/y",
+            "--agent", "codex-a")
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        lines = err.splitlines()
+        self.assertEqual(len(lines), 1, err)
+        self.assertTrue(lines[0].startswith("Error: "), err)
+        self.assertIn("o/r", err)
+        self.assertIn("x/y", err)
+        self.assertEqual(_reads(gh, "issues"), [])
+        self.assertEqual(_reads(gh, "pulls"), [])
+
+    def test_url_and_flag_naming_the_same_repository_agree(self):
+        gh = FakeGh()
+        code, out, err = self.room(
+            gh, "list", "https://github.com/o/r/pull/7", "--repo", "O/R",
+            "--agent", "codex-a")
+        self.assertEqual(code, 0, err)
+
     def test_module_imports_only_stdlib_and_named_siblings(self):
         with open(MODULE_PATH, encoding="utf-8") as fh:
             source = fh.read()
@@ -671,6 +731,35 @@ class ListTest(RoomTestBase):
         self.assertEqual(code, 0, err)
         self.assertIn("to -  round 1  last codex-a  skill review-finding",
                       out)
+
+    def _mixed(self):
+        return FakeGh(comments=[
+            msg_comment(10, "codex-a", state="completed", to="claude-b"),
+            msg_comment(11, "codex-a", state="working", to="claude-b"),
+            msg_comment(12, "codex-a", state="input-required",
+                        to="claude-b"),
+        ])
+
+    def test_open_keeps_only_unfinished_tasks(self):
+        code, out, err = self.room(self._mixed(), "list", "7", "--open",
+                                   "--json", "--agent", "codex-a")
+        self.assertEqual(code, 0, err)
+        self.assertEqual([t["id"] for t in json.loads(out)["tasks"]],
+                         [11, 12])
+        code, out, err = self.room(self._mixed(), "list", "7", "--open",
+                                   "--agent", "codex-a")
+        self.assertEqual(code, 0, err)
+        self.assertIn("#11 ", out)
+        self.assertIn("#12 ", out)
+        self.assertNotIn("#10 ", out)
+
+    def test_a_clean_room_lists_no_open_task(self):
+        gh = FakeGh(comments=[
+            msg_comment(10, "codex-a", state="completed", to="claude-b")])
+        code, out, err = self.room(gh, "list", "7", "--open", "--json",
+                                   "--agent", "codex-a")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["tasks"], [])
 
     def test_human_comments_are_not_tasks(self):
         gh = FakeGh(comments=[human_comment(100, "looks good"),
@@ -1287,17 +1376,50 @@ class WatchTest(WatchTestBase):
 
     def test_merged_pull_request_closes_the_watch(self):
         for state, word in (("MERGED", "merged"), ("CLOSED", "closed")):
-            gh = FakeGh(comments=self._two_tasks(), state=state)
+            gh = FakeGh(comments=[msg_comment(
+                10, "codex-a", state="completed", to="claude-b")],
+                state=state)
             sleep = FakeSleep()
             code, out, err = self.watch(gh, "--agent", "codex-b",
                                         sleep=sleep)
             self.assertEqual(code, 0, err)
             self.assertEqual(self.lines(out), [
-                {"closed": word, "context": CONTEXT, "cursor": "11:0"}])
+                {"closed": word, "context": CONTEXT, "cursor": "10:0",
+                 "open": []}])
             self.assertEqual(err.splitlines()[-1],
                              "watch: %s is %s; the room is closed"
                              % (CONTEXT, word))
+            self.assertNotIn("unresolved", err)
             self.assertEqual(sleep.calls, [])
+
+    def test_closed_line_lists_unresolved_tasks(self):
+        gh = FakeGh(comments=[
+            msg_comment(10, "codex-a", state="input-required",
+                        to="claude-b", skill="review-finding"),
+            msg_comment(11, "codex-a", state="completed", to="claude-b"),
+        ], state="MERGED")
+        code, out, err = self.watch(gh, "--agent", "codex-b")
+        self.assertEqual(code, 0, err)
+        line = self.lines(out)[-1]
+        self.assertEqual(line["open"], [{
+            "task": 10, "state": "input-required", "to": "claude-b",
+            "skill": "review-finding"}])
+        errs = err.splitlines()
+        self.assertEqual(errs[-2],
+                         "watch: 1 unresolved task(s): #10 input-required")
+        self.assertEqual(errs[-1],
+                         "watch: %s is merged; the room is closed" % CONTEXT)
+
+    def test_state_read_carries_the_repository(self):
+        gh = FakeGh()
+        code, out, err = _watch(["https://github.com/o/r/pull/7", "--once",
+                                 "--agent", "codex-a", "--root", self.root],
+                                gh)
+        self.assertEqual(code, 0, err)
+        states = [a for a in gh.pr_views() if "state" in a]
+        self.assertEqual(len(states), 1)
+        self.assertEqual(states[0][:3], ["pr", "view", "7"])
+        self.assertEqual(states[0][states[0].index("--repo") + 1], "o/r")
 
     def test_surfaced_task_prints_before_the_closed_line(self):
         gh = FakeGh(comments=self._two_tasks(), state="MERGED")

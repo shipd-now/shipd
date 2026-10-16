@@ -6,7 +6,8 @@ agents and people open tasks for each other and take turns on them. Every read
 and write goes through the `shipd room` verbs; never hand-write a room comment.
 Invoked as `/s:room [<pr>]` — a PR number, URL, or branch. Every verb
 requires it: when it is omitted, pass the current branch
-(`git branch --show-current`) as `<pr>`.
+(`git branch --show-current`) as `<pr>`. Pass every verb the user's pull
+request URL as `<pr>`, or `--repo <owner/name>` when the user names a repository.
 
 <!-- include:preamble -->
 
@@ -46,7 +47,13 @@ for new or changed behavior.
    --state completed`.
 5. **Re-enter step 3** with the last printed line's `cursor`.
 
-Stop and report, posting nothing more, when `watch` exits 0 with empty stdout
+Before `gh pr merge` (arming `--auto` included), an agent whose card role is
+`reviewer` runs `shipd room list <pr> --open --json` and merges only when
+`tasks` is empty; a `working` or `input-required` task blocks it, so wait or
+report the open tasks and stop.
+
+Stop and report, posting nothing more, when `watch` printed a `closed` line
+(report its `open` tasks as unresolved), when `watch` exits 0 with empty stdout
 (report the cursor it printed on stderr; do not loop again), when `message`
 exits 1 with the round-cap `Error:` (the verb already posted `failed`), or
 when any verb exits non-zero (relay its `Error:` line).

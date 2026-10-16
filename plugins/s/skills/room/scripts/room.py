@@ -33,6 +33,7 @@ arguments exit ``2`` with usage text.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -54,6 +55,7 @@ PLUGIN_MANIFEST = os.path.normpath(
 
 AGENT_ENV = "SHIPD_ROOM_AGENT"
 CLOSE_STATES = ("completed", "canceled", "failed")
+OPEN_STATES = ("working", "input-required")
 
 
 class RoomError(Exception):
@@ -90,16 +92,36 @@ def _gh_json(gh, args, input=None, what=None):
         raise RoomError("%s returned invalid JSON: %s" % (label, exc))
 
 
-def _resolve_room(gh, pr):
+_PR_URL = re.compile(r"^https?://[^/]+/([^/]+/[^/]+)/pull/(\d+)")
+
+
+def _resolve_room(gh, pr, repo=None):
     """``(repo, number, context)`` for ``pr``; the context id is
-    ``<owner>/<repo>#<number>``."""
-    pr_data = _gh_json(gh, ["pr", "view", str(pr), "--json", "number,url"],
-                       what="gh pr view %s" % pr)
-    repo_data = _gh_json(gh, ["repo", "view", "--json", "nameWithOwner"],
-                         what="gh repo view")
+    ``<owner>/<repo>#<number>``. The repository comes from a pull request
+    URL first, then ``repo`` (``--repo``), else ``gh repo view`` in the
+    working directory; a URL and ``repo`` naming different repositories
+    raise ``RoomError``."""
+    ref = str(pr)
+    match = _PR_URL.match(ref)
+    if match:
+        url_repo = match.group(1)
+        if repo and repo.lower() != url_repo.lower():
+            raise RoomError("pull request URL names %s but --repo names %s"
+                            % (url_repo, repo))
+        repo, ref = url_repo, match.group(2)
+    args = ["pr", "view", ref, "--json", "number,url"]
+    if repo:
+        args += ["--repo", repo]
+    pr_data = _gh_json(gh, args, what="gh pr view %s" % pr)
+    if not repo:
+        repo_data = _gh_json(gh, ["repo", "view", "--json", "nameWithOwner"],
+                             what="gh repo view")
+        try:
+            repo = repo_data["nameWithOwner"]
+        except (KeyError, TypeError):
+            raise RoomError("could not resolve the pull request for %s" % pr)
     try:
         number = int(pr_data["number"])
-        repo = repo_data["nameWithOwner"]
     except (KeyError, TypeError, ValueError):
         raise RoomError("could not resolve the pull request for %s" % pr)
     return repo, number, "%s#%d" % (repo, number)
@@ -529,7 +551,7 @@ def actionable_tasks(tasks, agent, skills=()):
 def cmd_join(opts, parser, gh):
     root = _root(opts)
     agent = _agent_name(opts, parser, root)
-    repo, number, context = _resolve_room(gh, opts.pr)
+    repo, number, context = _resolve_room(gh, opts.pr, opts.repo)
     _cards, _tasks, _raw, comments = _read_room(gh, repo, number)
     owned = _owned_card_ids(comments)
     card = room_schema.AgentCard(
@@ -582,8 +604,10 @@ def _task_dict(task):
 
 def cmd_list(opts, parser, gh):
     _agent_name(opts, parser, _root(opts))
-    repo, number, context = _resolve_room(gh, opts.pr)
+    repo, number, context = _resolve_room(gh, opts.pr, opts.repo)
     cards, tasks, _raw, _comments = _read_room(gh, repo, number)
+    if opts.open:
+        tasks = [t for t in tasks if t.state in OPEN_STATES]
     if opts.json:
         _emit({"context": context,
                "cards": [room_schema.card_to_dict(c) for c in cards],
@@ -606,7 +630,7 @@ def _reply_result(resp, task_id, state, rnd):
 def cmd_message(opts, parser, gh):
     root = _root(opts)
     agent = _agent_name(opts, parser, root)
-    repo, number, context = _resolve_room(gh, opts.pr)
+    repo, number, context = _resolve_room(gh, opts.pr, opts.repo)
     cards, tasks, _raw, comments = _read_room(gh, repo, number)
     _require_card(cards, agent, context)
     memo = {}
@@ -660,7 +684,7 @@ def cmd_message(opts, parser, gh):
 def cmd_close(opts, parser, gh):
     root = _root(opts)
     agent = _agent_name(opts, parser, root)
-    repo, number, context = _resolve_room(gh, opts.pr)
+    repo, number, context = _resolve_room(gh, opts.pr, opts.repo)
     cards, tasks, _raw, comments = _read_room(gh, repo, number)
     _require_card(cards, agent, context)
     task = _find_task(tasks, opts.task, context)
@@ -754,10 +778,11 @@ def _cap_task(gh, repo, number, context, agent, card, task, max_rounds,
                      "(round-cap)\n" % task.id)
 
 
-def _pr_closed(gh, number):
+def _pr_closed(gh, repo, number):
     """``"merged"`` or ``"closed"`` when the pull request has ended, else
     ``None``."""
-    data = _gh_json(gh, ["pr", "view", str(number), "--json", "state"],
+    data = _gh_json(gh, ["pr", "view", str(number), "--json", "state",
+                     "--repo", repo],
                     what="gh pr view %s" % number)
     state = (data or {}).get("state") if isinstance(data, dict) else None
     return {"MERGED": "merged", "CLOSED": "closed"}.get(state)
@@ -770,7 +795,7 @@ def cmd_watch(opts, gh, sleep, clock, parser):
     root = _root(opts)
     agent = _agent_name(opts, parser, root)
     max_rounds = _max_rounds(opts, root)
-    repo, number, context = _resolve_room(gh, opts.pr)
+    repo, number, context = _resolve_room(gh, opts.pr, opts.repo)
     cursor = opts.since
     warned = set()
     memo = {}
@@ -790,15 +815,22 @@ def cmd_watch(opts, gh, sleep, clock, parser):
             if comment is not None and _is_new(comment, cursor):
                 surfaced.append((task, comment))
         cursor = _advance(cursor, comments)
-        ended = _pr_closed(gh, number)
+        ended = _pr_closed(gh, repo, number)
         for task, comment in surfaced:
             sys.stdout.write(
                 _watch_line(task, comment, context, cursor) + "\n")
         if ended:
+            unresolved = [t for t in tasks if t.state in OPEN_STATES]
             sys.stdout.write(json.dumps(
                 {"closed": ended, "context": context,
-                 "cursor": _cursor_text(cursor)}) + "\n")
+                 "cursor": _cursor_text(cursor),
+                 "open": [{"task": t.id, "state": t.state, "to": t.to,
+                           "skill": t.skill} for t in unresolved]}) + "\n")
             sys.stdout.flush()
+            if unresolved:
+                sys.stderr.write("watch: %d unresolved task(s): %s\n" % (
+                    len(unresolved), ", ".join(
+                        "#%s %s" % (t.id, t.state) for t in unresolved)))
             sys.stderr.write("watch: %s is %s; the room is closed\n"
                              % (context, ended))
             return 0
@@ -859,6 +891,9 @@ def build_parser():
         "--root", help="the directory whose layered config is read "
                        "(default: the working directory)")
     common.add_argument(
+        "--repo", help="the repository as owner/name (default: the pull "
+                       "request URL's, else the working directory's)")
+    common.add_argument(
         "--max-rounds", type=_positive_int, dest="max_rounds",
         help="the turn cap per task (default: room.max_rounds, else 6)")
 
@@ -887,6 +922,8 @@ def build_parser():
     p.add_argument("pr", help="pull request number, URL, or branch")
     p.add_argument("--json", action="store_true",
                    help="emit one JSON object instead of text")
+    p.add_argument("--open", action="store_true",
+                   help="list only tasks still working or input-required")
     p.set_defaults(func=cmd_list)
 
     p = sub.add_parser("message", parents=[common],

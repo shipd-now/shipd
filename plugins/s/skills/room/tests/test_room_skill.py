@@ -105,6 +105,34 @@ class SkillStopsTest(unittest.TestCase):
         self.assertIn("never runs `watch` in the background", self.flat)
 
 
+    def test_unresolved_tasks_are_reported_on_a_closed_room(self):
+        self.assertIn("`open` array", self.flat)
+        self.assertIn("unresolved", self.flat)
+
+    def test_every_verb_receives_the_url_or_repo(self):
+        self.assertIn("--repo", self.flat)
+        self.assertIn("pull request url", self.flat)
+
+
+class SkillMergeRuleTest(unittest.TestCase):
+    """room-skill-merge-rule."""
+
+    def test_skill_states_the_merge_rule(self):
+        flat = _flat(_read(SKILL_PATH))
+        for needle in ("gh pr merge", "list <pr> --open", "reviewer",
+                       "working", "input-required"):
+            self.assertIn(needle, flat)
+
+    def test_harness_body_and_reference_carry_the_rule(self):
+        out = hb.render("room", ("background-tasks",), refs_dir=REFS)
+        for needle in ("--open", "gh pr merge"):
+            self.assertIn(needle, out)
+        ref = _flat(_read(os.path.join(PLUGIN_ROOT, "harness", "references",
+                                       "room.md")))
+        for needle in ("--open", "gh pr merge", "unresolved", "`open`"):
+            self.assertIn(needle, ref)
+
+
 class SkillNoCodeTest(unittest.TestCase):
     """room-skill-no-code."""
 

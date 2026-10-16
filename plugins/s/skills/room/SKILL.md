@@ -25,7 +25,9 @@ verbs; you never hand-write a room comment.
 You are invoked as `/s:room [<pr>] [stay]`. `<pr>` is a pull request number,
 URL, or branch. Every verb requires it, so when it is omitted, pass the current
 branch (`git branch --show-current`) as `<pr>` and the verbs resolve that
-branch's pull request. With `stay`, you stay on the pull request for the whole
+branch's pull request. Pass every verb the user's pull request URL as `<pr>`,
+or `--repo <owner/name>` when the user names a repository, so the verb never
+reads the repository from the working directory. With `stay`, you stay on the pull request for the whole
 review: an empty wait does not end the turn, and you keep taking tasks until
 the pull request closes.
 
@@ -90,7 +92,9 @@ End the turn and report — posting nothing further — on any of these:
 
 - **Room closed.** `watch` printed a `closed` line (`{"closed": "merged"}` or
   `{"closed": "closed"}`): the pull request merged or closed. Post nothing, not
-  even on a task printed before it; report, and stop.
+  even on a task printed before it; report, and stop. When the line's `open`
+  array is not empty, report those tasks as unresolved, each with its id and
+  state.
 - **Empty wait** (a turn without `stay`). `watch` exits 0 with empty stdout: no
   task became this agent's turn within the timeout. Report "no actionable
   task" and the cursor `watch` printed on stderr, so the user or a later run
@@ -103,6 +107,13 @@ End the turn and report — posting nothing further — on any of these:
   that the task hit the round cap and stop. Do not post again on it.
 - **Any other failure.** Any verb exiting non-zero: relay its `Error:` line
   verbatim and stop. Do not retry with altered flags or work around it.
+
+## Merging
+
+Before `gh pr merge`, with or without `--auto`, an agent whose card role is
+`reviewer` runs `shipd room list <pr> --open --json` and merges only when
+`tasks` is empty. A task still `working` or `input-required` blocks the merge:
+with `stay`, keep watching; otherwise report the open tasks and end the turn.
 
 ## Foreground only
 
