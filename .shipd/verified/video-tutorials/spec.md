@@ -12,15 +12,19 @@ The repository SHALL carry `docs/tutorials/videos/template.md`, a `how-to` doc t
 ### Requirement: Episode scripts follow the template
 id: video-episode-scripts
 
-The repository SHALL carry nine episode scripts, `01-core-loop.md` to `09-management-plane.md`, under `docs/tutorials/videos/`. Each script SHALL declare `how-to`, SHALL carry the template's sections in the template's order, and SHALL open its `## Script` with a beat starting at `0:00`.
+The repository SHALL carry ten episode scripts under `docs/tutorials/videos/`: `01-install-and-build.md`, `02-plan-and-specs.md`, `03-worktrees-and-small-prs.md`, `04-prds-and-guardrails.md`, `05-epics-and-epic-grill.md`, `06-oracle-and-supersession-gate.md`, `07-workspaces-101.md`, `08-advanced-workspaces.md`, `09-ci-and-copilot-review.md`, and `10-management-plane.md`. Each script SHALL declare `how-to`, SHALL carry the template's sections in the template's order, and SHALL open its `## Script` with a beat starting at `0:00`. Episode 1 SHALL show installing shipd and shipping a change with `/s:build` from a prose request; episode 2 SHALL show `/s:plan` and the artifacts it writes.
 
 #### Scenario: Every episode carries the template's sections
 - **WHEN** a reader lists the level-2 headings of any episode script
 - **THEN** they read `Introduction`, `At a glance`, `Script`, `Takeaways`, `Next`, `Sources`, in that order
 
-#### Scenario: Episode 4 keeps the spotlight beats
-- **WHEN** a reader opens `04-epics-and-epic-grill.md`
+#### Scenario: Episode 5 keeps the spotlight beats
+- **WHEN** a reader opens `05-epics-and-epic-grill.md`
 - **THEN** its beats start at `0:00`, `1:00`, `2:30`, and `4:00`, and the last beat ends at `5:00`
+
+#### Scenario: Episode 1 installs before it builds
+- **WHEN** a reader opens `01-install-and-build.md`
+- **THEN** its `Commands shown` row names the install command and `/s:build`, and no beat shows `/s:plan`
 
 ### Requirement: Scripts match documented behavior
 id: video-scripts-grounded
@@ -28,14 +32,14 @@ id: video-scripts-grounded
 Each episode script SHALL describe shipd only as its `## Sources` docs and specs describe it, and SHALL use each glossary term of the documentation standard in its one defined meaning.
 
 #### Scenario: An epic is never a group of PRDs
-- **WHEN** episode 4 describes an epic
+- **WHEN** episode 5 describes an epic
 - **THEN** it calls the epic a decomposition of one feature into member changes, and a PRD the input that precedes it
 
 ### Requirement: Series overview
 id: video-series-overview
 
-The repository SHALL carry `docs/tutorials/videos/index.md`, a `concept` doc that lists the nine episodes in the roadmap's three groups, links each episode file, and states that episodes 1–8 cover open-source shipd while episode 9 covers the commercial management plane.
+The repository SHALL carry `docs/tutorials/videos/index.md`, a `concept` doc that lists the ten episodes in the roadmap's three groups, links each episode file, and states that episodes 1–9 cover open-source shipd while episode 10 covers the commercial management plane.
 
 #### Scenario: Overview links every episode
 - **WHEN** a reader opens `index.md`
-- **THEN** it links all nine episode files and `docs_lint.py` exits 0 on it
+- **THEN** it links all ten episode files and `docs_lint.py` exits 0 on it

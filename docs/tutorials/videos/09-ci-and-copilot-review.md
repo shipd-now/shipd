@@ -1,6 +1,6 @@
 <!-- doc-type: how-to -->
 
-# Episode 8: CI and Copilot review
+# Episode 9: CI and Copilot review
 
 ## Introduction
 
@@ -12,7 +12,7 @@ A merge needs a check that a person cannot skip, and a spec library needs a chec
 |---|---|
 | Roadmap group | Verification and governance |
 | Runtime | 5 minutes |
-| Prerequisites | [Episode 2](02-worktrees-and-small-prs.md); a GitHub repository with a paid Copilot plan |
+| Prerequisites | [Episode 3](03-worktrees-and-small-prs.md); a GitHub repository with a paid Copilot plan |
 | Commands shown | `/s:review`, `shipd copilot add`, `gh secret set`, `shipd doctor` |
 
 ## Script
@@ -55,7 +55,7 @@ A merge needs a check that a person cannot skip, and a spec library needs a chec
 
 ## Next
 
-[Episode 9](09-management-plane.md) shows the commercial management plane that reads this delivery state.
+[Episode 10](10-management-plane.md) shows the commercial management plane that reads this delivery state.
 
 ## Sources
 

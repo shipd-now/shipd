@@ -1,6 +1,6 @@
 <!-- doc-type: how-to -->
 
-# Episode 3: PRDs and guardrails
+# Episode 4: PRDs and guardrails
 
 ## Introduction
 
@@ -17,7 +17,7 @@ and want the code to follow house rules.
 |---|---|
 | Roadmap group | Spec authoring and pressure testing |
 | Runtime | 5 minutes |
-| Prerequisites | A workspace; episodes 1 and 2 |
+| Prerequisites | A workspace; episodes 1 to 3 |
 | Commands shown | `shipd workspace init`, `/s:prd`, a rule file in `.shipd/rules/` |
 
 ## Script
@@ -87,8 +87,8 @@ rules ship with the plugin. They catch comments that narrate the edit.
 
 ## Next
 
-Episode 4 turns an approved PRD into an epic with
-[Epics and `/s:epic-grill`](04-epics-and-epic-grill.md).
+Episode 5 turns an approved PRD into an epic with
+[Epics and `/s:epic-grill`](05-epics-and-epic-grill.md).
 
 ## Sources
 

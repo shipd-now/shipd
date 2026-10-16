@@ -1,6 +1,6 @@
 <!-- doc-type: how-to -->
 
-# Episode 5: The oracle and the supersession gate
+# Episode 6: The oracle and the supersession gate
 
 ## Introduction
 
@@ -12,7 +12,7 @@ A planner interrupts you for decisions the team already made, and a plan can go 
 |---|---|
 | Roadmap group | Verification and governance |
 | Runtime | 5 minutes |
-| Prerequisites | [Episode 1](01-core-loop.md); a workspace with a wiki for the oracle |
+| Prerequisites | [Episode 2](02-plan-and-specs.md); a workspace with a wiki for the oracle |
 | Commands shown | `/s:ask`, `/s:teach`, `/s:build`, `spec_status.py check-base` |
 
 ## Script
@@ -55,7 +55,7 @@ A planner interrupts you for decisions the team already made, and a plan can go 
 
 ## Next
 
-[Episode 6](06-workspaces-101.md) shows how a workspace holds the wiki that the oracle reads.
+[Episode 7](07-workspaces-101.md) shows how a workspace holds the wiki that the oracle reads.
 
 ## Sources
 

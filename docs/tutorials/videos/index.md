@@ -2,7 +2,7 @@
 
 # The shipd video series
 
-The shipd video series teaches the spec-driven workflow in nine episodes of
+The shipd video series teaches the spec-driven workflow in ten episodes of
 five minutes each. Each episode has a script that lists what the viewer sees
 and what the presenter says. Every script follows the same structure, which
 [the template](template.md) defines.
@@ -22,26 +22,27 @@ question about the work.
 
 ### Tactical execution
 
-1. [The core loop: `/s:plan` then `/s:build`](01-core-loop.md)
-2. [Git worktrees and small PRs](02-worktrees-and-small-prs.md)
+1. [Install shipd and ship a change](01-install-and-build.md)
+2. [Plan a change and read its specs](02-plan-and-specs.md)
+3. [Git worktrees and small PRs](03-worktrees-and-small-prs.md)
 
 ### Spec authoring and pressure testing
 
-3. [PRDs and guardrails](03-prds-and-guardrails.md)
-4. [Epics and `/s:epic-grill`](04-epics-and-epic-grill.md)
+4. [PRDs and guardrails](04-prds-and-guardrails.md)
+5. [Epics and `/s:epic-grill`](05-epics-and-epic-grill.md)
 
 ### Verification and governance
 
-5. [The oracle and the supersession gate](05-oracle-and-supersession-gate.md)
-6. [Workspaces 101](06-workspaces-101.md)
-7. [Member maps and headless runs](07-advanced-workspaces.md)
-8. [CI and Copilot review](08-ci-and-copilot-review.md)
-9. [The management plane (commercial)](09-management-plane.md)
+6. [The oracle and the supersession gate](06-oracle-and-supersession-gate.md)
+7. [Workspaces 101](07-workspaces-101.md)
+8. [Member maps and headless runs](08-advanced-workspaces.md)
+9. [CI and Copilot review](09-ci-and-copilot-review.md)
+10. [The management plane (commercial)](10-management-plane.md)
 
 ## The open-source boundary
 
-Episodes 1 to 8 cover open-source shipd: the plugin, the engine, and the
-documented workflows. Episode 9 covers the management plane, which is
+Episodes 1 to 9 cover open-source shipd: the plugin, the engine, and the
+documented workflows. Episode 10 covers the management plane, which is
 commercial. The management plane reports delivery across repositories, and
 the episode describes only what the product ships today.
 
