@@ -2006,6 +2006,10 @@ class DoctorCheckTest(unittest.TestCase):
                           "textual", "snapshot", "statusline", "protection",
                           "automerge", "copilot-secret", "fast-pass"])
 
+    def test_check_steps_names_match_default_checks_in_order(self):
+        names = [name for name, _thunk in shipd.check_steps(self.tmp)]
+        self.assertEqual(names, self.probed_check_names(self.tmp))
+
     # -- statusline --------------------------------------------------------
 
     def settings_with(self, text):
@@ -2704,45 +2708,157 @@ class DoctorCommandTest(unittest.TestCase):
 
 
 class DoctorFinishTest(unittest.TestCase):
-    """``doctor_finish`` closes the install verb's confirmed finish with the
-    same read-only preflight ``doctor`` runs, writing straight to a handle
-    rather than returning an exit code."""
+    """``doctor_finish`` closes the install verb's confirmed finish: one
+    rewritten progress line, silent automatic local remedies, then a summary
+    and a line plus ``fix:`` per remaining problem. Driven only through
+    fabricated steps and a fake ``run`` — no real remedy ever runs."""
 
-    def finish(self, results, root="/tmp/doctor-finish-unused"):
+    DIFFT_WARN = ("warn", "difft", "not found — the semantic review cannot "
+                  "run at all")
+
+    def steps_for(self, *results, rechecked=None):
+        """A ``steps(root)`` factory: each call returns fresh
+        ``(name, thunk)`` pairs. A check named in ``rechecked`` returns its
+        mapped result on every call after the first."""
+        rechecked = rechecked or {}
+        calls = {}
+
+        def make(result):
+            name = result[1]
+
+            def thunk():
+                calls[name] = calls.get(name, 0) + 1
+                if calls[name] > 1 and name in rechecked:
+                    return rechecked[name]
+                return result
+            return name, thunk
+
+        def steps(_root):
+            return [make(r) for r in results]
+        steps.calls = calls
+        return steps
+
+    def finish(self, steps, run=None):
+        ran = []
+
+        def fake_run(argv):
+            ran.append(argv)
+            return run(argv) if run else (0, "", "")
+
         handle = io.StringIO()
-        outcome = shipd.doctor_finish(handle, root=root,
-                                      checks=lambda _root: list(results))
-        return handle.getvalue(), outcome
+        outcome = shipd.doctor_finish(handle, root="/tmp/unused",
+                                      steps=steps, run=fake_run)
+        return handle.getvalue(), outcome, ran
 
-    def test_an_all_ok_set_has_the_heading_and_no_pointer(self):
-        text, outcome = self.finish([("ok", "python", "3.13.0"),
-                                     ("ok", "git", "found")])
-        self.assertIn(shipd.INSTALL_FINISH_HEADING, text)
-        self.assertIn("ok python — 3.13.0", text)
-        self.assertIn("ok git — found", text)
-        self.assertIn("doctor: ok", text)
+    def test_an_all_ok_set_writes_progress_and_a_summary_only(self):
+        text, outcome, ran = self.finish(self.steps_for(
+            ("ok", "python", "3.13.0"), ("ok", "git", "found")))
+        self.assertIn("Checking your setup: [1/2] python", text)
+        self.assertIn("Checking your setup: [2/2] git", text)
+        self.assertIn("\r", text)
+        self.assertIn("\033[K", text)
+        self.assertIn("\u2713 2 of 2 checks ok", text)
+        self.assertNotIn("ok python", text)
+        self.assertNotIn("3.13.0", text)
+        self.assertEqual(ran, [])
+        self.assertIsNone(outcome)
+
+    def test_a_successful_difft_remedy_runs_once_and_leaves_no_trace(self):
+        steps = self.steps_for(
+            ("ok", "python", "3.13.0"), self.DIFFT_WARN,
+            rechecked={"difft": ("ok", "difft", "found")})
+        text, outcome, ran = self.finish(steps)
+        self.assertEqual(len(ran), 1)
+        self.assertEqual(ran[0][-2:], ["doctor", "--fix"])
+        self.assertEqual(steps.calls["difft"], 2)
+        self.assertIn("Installing: difft", text)
+        self.assertIn("\u2713 2 of 2 checks ok", text)
         self.assertNotIn("/s:doctor", text)
+        self.assertNotIn("semdiff doctor", text)
+        self.assertNotIn("warn difft", text)
         self.assertIsNone(outcome)
 
-    def test_a_failing_check_writes_its_line_and_the_pointer(self):
-        text, outcome = self.finish([("fail", "git", "not on PATH"),
-                                     ("ok", "python", "3.13.0")])
+    def test_a_failed_remedy_reports_its_reason_and_a_fix(self):
+        text, outcome, ran = self.finish(
+            self.steps_for(self.DIFFT_WARN),
+            run=lambda argv: (1, "", "noise\nbrew: not found\n\n"))
+        self.assertEqual(len(ran), 1)
+        self.assertIn("warn difft — ", text)
+        self.assertIn("automatic install failed: brew: not found", text)
+        self.assertIn("     fix: brew install difftastic", text)
+        self.assertIn("\u2713 0 of 1 checks ok", text)
+        self.assertNotIn("/s:doctor", text)
+        self.assertNotIn("semdiff doctor", text)
+        self.assertIsNone(outcome)
+
+    def test_a_still_failing_difft_drops_its_own_remedy_clause(self):
+        warn = ("warn", "difft", "not found — the semantic review cannot run "
+                "at all; run /s:doctor or `semdiff doctor --fix` to install it")
+        text, _o, _r = self.finish(
+            self.steps_for(warn), run=lambda argv: (1, "", "brew: not found"))
+        self.assertIn("warn difft — not found — the semantic review cannot "
+                      "run at all (automatic install failed", text)
+        self.assertNotIn("/s:doctor", text)
+        self.assertNotIn("semdiff doctor", text)
+
+    def test_the_first_progress_line_follows_a_newline(self):
+        text, _o, _r = self.finish(self.steps_for(("ok", "git", "found")))
+        self.assertTrue(text.startswith("\n\r"))
+
+    def test_a_remedy_that_cannot_start_reports_the_error(self):
+        def boom(argv):
+            raise OSError("no such interpreter")
+        text, _outcome, _ran = self.finish(
+            self.steps_for(self.DIFFT_WARN), run=boom)
+        self.assertIn("automatic install failed: no such interpreter", text)
+
+    def test_a_silent_failed_remedy_reports_unknown_error(self):
+        text, _outcome, _ran = self.finish(
+            self.steps_for(self.DIFFT_WARN), run=lambda argv: (2, "", ""))
+        self.assertIn("automatic install failed: unknown error", text)
+
+    def test_a_textual_failure_carries_the_pip_hint_as_its_fix(self):
+        warn = ("warn", "textual",
+                "not importable; pip install 'textual>=8.2.8,<9'")
+        text, _outcome, ran = self.finish(
+            self.steps_for(warn), run=lambda argv: (1, "", "no network"))
+        self.assertEqual(ran[0][1], "-m")
+        self.assertIn("fix: python3 -m pip install 'textual>=8.2.8,<9'", text)
+
+    def test_a_statusline_failure_names_the_statusline_install_fix(self):
+        warn = ("warn", "statusline", "not registered")
+        text, _outcome, _ran = self.finish(
+            self.steps_for(warn), run=lambda argv: (1, "", "denied"))
+        self.assertIn("fix: shipd statusline install", text)
+
+    def test_a_protection_warning_runs_no_remedy_and_gets_a_fix(self):
+        warn = ("warn", "protection", "main of o/r is not protected")
+        text, outcome, ran = self.finish(self.steps_for(warn))
+        self.assertEqual(ran, [])
+        self.assertIn("warn protection — main of o/r is not protected", text)
+        self.assertIn("     fix: an admin of the repository runs /s:gate",
+                      text)
+        self.assertIsNone(outcome)
+
+    def test_an_unlisted_check_falls_back_to_the_doctor_skill(self):
+        text, _outcome, _ran = self.finish(
+            self.steps_for(("warn", "wiki", "odd")))
+        self.assertIn("fix: run /s:doctor", text)
+
+    def test_a_failing_check_writes_its_line_and_fix_and_returns_none(self):
+        text, outcome, ran = self.finish(self.steps_for(
+            ("fail", "git", "not on PATH"), ("ok", "python", "3.13.0")))
+        self.assertEqual(ran, [])
         self.assertIn("fail git — not on PATH", text)
-        self.assertIn("doctor: 1 problem(s)", text)
-        self.assertIn("/s:doctor", text)
+        self.assertIn("fix: ", text)
+        self.assertIn("\u2713 1 of 2 checks ok", text)
         self.assertIsNone(outcome)
 
-    def test_a_warning_alone_also_writes_the_pointer(self):
-        text, outcome = self.finish([("ok", "python", "3.13.0"),
-                                     ("warn", "gh", "not on PATH")])
-        self.assertIn("doctor: 1 problem(s)", text)
-        self.assertIn("/s:doctor", text)
-        self.assertIsNone(outcome)
-
-    def test_checks_and_root_default_to_the_doctor_verbs_own(self):
+    def test_steps_and_root_default_to_the_doctor_verbs_own(self):
         fake = unittest.mock.Mock(
-            side_effect=lambda root: [("ok", "python", "3.13.0")])
-        with unittest.mock.patch.object(shipd, "default_checks", fake):
+            side_effect=lambda root: [("python", lambda: (
+                "ok", "python", "3.13.0"))])
+        with unittest.mock.patch.object(shipd, "check_steps", fake):
             handle = io.StringIO()
             outcome = shipd.doctor_finish(handle)
         fake.assert_called_once_with(os.getcwd())
