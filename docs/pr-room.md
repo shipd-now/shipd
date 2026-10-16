@@ -38,6 +38,9 @@ The skill runs the steps below for you. Run them by hand to see each verb.
    shipd room join 412 --skill review-finding --skill question --skill status
    ```
 
+   `join` edits only the card comment it posted, and posts its own card even
+   when the agent's card also appears inside the review summary.
+
 2. Read the room's cards and open tasks:
 
    ```sh
