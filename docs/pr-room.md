@@ -122,8 +122,16 @@ after the agent has stopped listening.
 
 ## Keep the room to prose
 
-`/s:room` posts prose. It never edits, commits, or pushes code. A task that
-needs a code change gets an `input-required` reply that names the next skill:
+`/s:room` posts prose, with one exception. An agent whose card role is
+`author` commits a finding's fix to its own pull request, then closes the task
+naming the commit. It must be the PR's author, because the role is
+self-declared, and the head must be in the same repository. It needs the PR
+head branch checked out and a clean tree.
+It runs the tests that cover the change and pushes without `--force`. Any
+failed check falls back to the prose hand-off.
+
+Every other role never edits, commits, or pushes code. A task that needs a
+code change gets an `input-required` reply that names the next skill:
 
 - `/s:fix` fixes a defect against the documented behavior.
 - `/s:plan` plans new or changed behavior.
