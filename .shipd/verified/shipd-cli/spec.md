@@ -354,8 +354,14 @@ the check SHALL report dev mode as `ok`), and `statusline` (when the
 Claude Code user settings file — default `~/.claude/settings.json` — is
 absent, carries no `statusLine` key, or registers a command that does not
 contain `integrations/statusline.sh`, probed read-only; the warning detail
-SHALL name `shipd statusline install` as the remedy, and a registration
-containing `integrations/statusline.sh` SHALL report `ok`). The `pip install` hint on the
+SHALL name `shipd statusline install` as the remedy; for a registration
+containing `integrations/statusline.sh`, the check SHALL run the binary's own
+`integrations/statusline.sh --print-content-dir` with the working directory
+as `current_dir`, and, when the engine's resolved content directory exists
+and differs from the script's output, warn naming both directories; a
+registration containing `integrations/statusline.sh` whose script resolves
+the engine's content directory, or where that directory does not exist,
+SHALL report `ok`). The `pip install` hint on the
 `textual` detail SHALL name `-r requirements.txt` when a
 `requirements.txt` exists at the working-directory root, and the pinned
 package specifier (`'textual>=8.2.8,<9'`)
@@ -535,6 +541,13 @@ report, exiting on the re-run's own outcome rather than the first pass's.
 #### Scenario: Fix exits on the state after repair
 - **WHEN** `shipd doctor --fix` repairs every failing check
 - **THEN** the printed report is the re-run's and the exit code is `0`
+
+#### Scenario: A statusline that cannot see the engine's store warns
+- **GIVEN** a registered shipd statusline and a working directory whose
+  engine content directory exists but which the statusline script resolves
+  differently
+- **WHEN** `shipd doctor` runs
+- **THEN** a `warn statusline — ` line names both directories
 
 ### Requirement: List JSON output
 id: list-json

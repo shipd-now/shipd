@@ -199,11 +199,12 @@ never moves, creates, or deletes anything on your behalf.
 
 ### Known limitations
 
-- **The worktree guard and the statusline do not see an external store.**
-  `worktree.sh remove`'s check for work in progress and `statusline.sh` read
-  in-repo `planned/` content only. With an external store they report nothing
-  to protect or display — the same documented blind spot a renamed content
-  directory has today.
+- **The worktree guard does not see an external store.**
+  `worktree.sh remove` checks for work in progress in in-repo `planned/`
+  content only. With an external store it reports nothing to protect. The
+  statusline does resolve the store: it probes the registry path, then the
+  checkout name. It cannot follow a member that the machine-local member map
+  relocates, and shows `no specs` for it.
 - **Basename collisions are yours to avoid, for an undeclared repo.** Two
   such repos sharing a checkout name resolve one store folder — undetected.
   A declared registry member never collides this way: its manifest path

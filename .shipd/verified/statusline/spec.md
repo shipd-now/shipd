@@ -63,8 +63,10 @@ id: statusline-rendering
 
 A statusline script SHALL read the Claude Code session JSON on stdin,
 resolve the workspace directory from `workspace.current_dir` (falling back
-to the working directory), and collect live changes from both the workspace
-root's `.shipd/planned/` and `.worktrees/*/.shipd/planned/` (one level deep). It
+to the working directory), resolve its content directory per the statusline-content-resolution
+requirement, and collect live changes from that directory's `planned/`, plus,
+when no `store_root` is declared, `.worktrees/*/<dir>/planned/` (one level
+deep). It
 SHALL print exactly one line rendering the picked spec as
 `☕ <change> · <status> · <done>/<total>`, where `<status>` comes from the
 plan status header (`?` when missing or invalid) and `<done>/<total>` are
@@ -82,7 +84,7 @@ resolved relative to the candidate's own content directory
 `<base>/.shipd/planned/<change>/`) and `<total>` is that table's member row
 count; if the epic file is missing or the change has no row in its table,
 then the marker SHALL degrade to the literal `(EPIC)`. While a heartbeat
-file matching `.shipd/autopilot/*-heartbeat.json` in the workspace root has a
+file matching `autopilot/*-heartbeat.json` in the resolved content directory has a
 modification time within 3600 seconds and records a run state of
 `running`, and the picked change's status is `active`, the status segment
 SHALL be prefixed with a solid dot glyph (U+25CF) colored from an 8-step
@@ -93,13 +95,11 @@ dot. When more than one change is live (X > 1), the name segment SHALL
 render `<change> (1 of X)` and the tasks segment SHALL render
 `<done>/<total> (<total> of <Y>)`, where Y is the summed checkbox totals of
 every live change carrying a `tasks.md`. When several changes are live and
-none is pickable, it SHALL print `☕ <n> specs · none selected`; when the
-workspace carries a `.shipd/` directory but no live change, it SHALL print
-`☕ no active specs`; only when the workspace has no `.shipd/` directory at all
-SHALL it print nothing and exit zero. The prefix glyph SHALL be bare U+2615
-(no variation selector). The script SHALL read the default-named `.shipd/`
-paths directly — it SHALL NOT resolve layered configuration, so a repo or
-worktree with a renamed content directory is not scanned.
+none is pickable, it SHALL print `☕ <n> specs · none selected`; when a
+content directory resolves but holds no live change, it SHALL print
+`☕ no active specs`; when no content directory resolves, the spec segment
+SHALL render `no specs` and the script SHALL exit zero. The prefix glyph SHALL be bare U+2615
+(no variation selector).
 
 The script SHALL compose its output from three named segments: `spec` (the
 spec text this requirement defines above, from the change name through any
@@ -195,15 +195,6 @@ render empty. An unknown segment name SHALL be ignored.
 - **WHEN** the statusline script runs
 - **THEN** it prints `☕ no active specs` and exits zero
 
-#### Scenario: Non-shipd repos stay silent
-- **WHEN** the session's workspace directory contains no `.shipd/` directory
-- **THEN** the script prints nothing and exits zero
-
-#### Scenario: Renamed content dir is out of statusline scope
-- **GIVEN** a repo whose config renames the content directory to `specs`
-- **WHEN** the statusline script runs
-- **THEN** its changes are not scanned and no configuration is resolved
-
 #### Scenario: Directory under home renders relative to tilde
 - **GIVEN** a shipd workspace at `$HOME/projects/workspaces/understand` and
   the argument `--line spec,directory`
@@ -248,6 +239,10 @@ render empty. An unknown segment name SHALL be ignored.
   `\033[38;5;196m`, `\033[38;5;160m`, or `\033[38;5;124m` respectively,
   followed by `\033[0m`
 
+#### Scenario: A workspace with no content directory shows no specs
+- **WHEN** the session's workspace directory resolves no content directory
+- **THEN** the script prints `☕ no specs` and exits zero
+
 ### Requirement: Statusline integration
 id: statusline-integration
 
@@ -265,8 +260,8 @@ register it via a project-relative command.
 
 #### Scenario: Fast and local
 - **WHEN** the statusline script executes
-- **THEN** it completes using only file reads in the workspace, with no
-  network access and no Python/Node process spawned
+- **THEN** it completes using only local file reads, with no network
+  access, no `git` process, and no Python/Node process spawned
 
 ### Requirement: Chained statusline
 id: statusline-chain
@@ -275,8 +270,7 @@ When the statusline script is invoked with the two leading arguments
 `--then <command>`, it SHALL, after printing its own output, run `<command>`
 through `bash -c` with the same session JSON on its stdin, so the chained
 command's output follows shipd's. The chained command SHALL run on every
-exit path, including when shipd's own output is empty because the workspace
-has no `.shipd/` directory. Without `--then`, the script's output SHALL be
+exit path, including when no content directory resolves. Without `--then`, the script's output SHALL be
 unchanged.
 
 #### Scenario: Chained command renders after shipd's line
@@ -289,8 +283,63 @@ unchanged.
 - **GIVEN** a workspace with no `.shipd/` directory and the arguments
   `--then 'echo theirs'`
 - **WHEN** the statusline script runs
-- **THEN** the output is exactly `theirs`
+- **THEN** the output is `☕ no specs` followed by `theirs`
 
 #### Scenario: No chain leaves output unchanged
 - **WHEN** the statusline script runs without `--then`
 - **THEN** its output carries only shipd's line
+
+### Requirement: Statusline content-directory resolution
+id: statusline-content-resolution
+
+The statusline script SHALL resolve its content directory from the workspace
+directory W the way the engine does, using only local file reads. It SHALL
+read the `.shipd-config.json` in W and in each ancestor of W, nearest first,
+then `~/.shipd-config.json` when the home directory is not already among
+them, and SHALL take each of the keys `store_root` and `dir` as a JSON string
+from the nearest file declaring it. When `store_root` is declared, its value
+SHALL expand a leading `~`, and a value still relative SHALL resolve against
+the directory of the declaring file. The script SHALL find W's main checkout:
+the nearest ancestor-or-self of W holding a `.git` directory, or, where that
+entry is a `.git` file reading `gitdir: <main>/.git/worktrees/<name>`, the
+directory `<main>`; with no `.git` entry, W stands in for the main checkout.
+The content directory SHALL then be the first existing directory among
+`<store>/<main checkout relative to the nearest ancestor whose config
+declares a "workspace" key>` and `<store>/<basename of the main checkout>`.
+When `store_root` is not declared, the content directory SHALL be
+`W/<dir>`, `dir` defaulting to `.shipd`, when that directory exists. If no
+candidate exists or a declared value is unusable, then no content directory
+resolves, and the script SHALL print no error. Invoked with
+`--print-content-dir`, the script SHALL print only the resolved content
+directory, or nothing when none resolves, and exit zero.
+
+#### Scenario: A relative store root resolves against its config file
+- **GIVEN** `<ws>/.shipd-config.json` declaring `"store_root": ".shipd"` and
+  a repo `<ws>/app` with a `.git` directory and `<ws>/.shipd/app/planned/x/`
+- **WHEN** the statusline script runs with `<ws>/app` as `current_dir`
+- **THEN** it renders change `x` from `<ws>/.shipd/app/`
+
+#### Scenario: A registry path is preferred over the basename
+- **GIVEN** a config declaring both `"workspace"` and `"store_root"` at
+  `<ws>`, a repo at `<ws>/teams/a/app`, and both `<store>/teams/a/app/` and
+  `<store>/app/` existing
+- **WHEN** `--print-content-dir` runs with `<ws>/teams/a/app` as
+  `current_dir`
+- **THEN** it prints `<store>/teams/a/app`
+
+#### Scenario: A linked worktree resolves its main checkout's folder
+- **GIVEN** a worktree whose `.git` file reads
+  `gitdir: <ws>/app/.git/worktrees/w1` under a `store_root` config
+- **WHEN** `--print-content-dir` runs from that worktree
+- **THEN** it prints the same folder as from `<ws>/app`
+
+#### Scenario: A renamed in-repo content directory is scanned
+- **GIVEN** a repo whose config declares `"dir": "specs"` and holds
+  `specs/planned/x/`
+- **WHEN** the statusline script runs there
+- **THEN** it renders change `x`
+
+#### Scenario: A missing store folder shows no specs
+- **GIVEN** a `store_root` config whose candidate folders do not exist
+- **WHEN** the statusline script runs
+- **THEN** it prints `☕ no specs` and exits zero with nothing on stderr
