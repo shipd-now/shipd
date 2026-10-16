@@ -457,7 +457,7 @@ class GuardScriptTest(WakeScriptCase):
         self.can("watch", watch_line())
         self.can("list", json.dumps({"cards": [{"name": "alice"}]}) + "\n")
         self.guard()
-        self.assertIn(["join", "7", "--harness", "copilot-cli"],
+        self.assertIn(["join", "7", "--harness", "copilot-cli", "--role", "ci"],
                       [c["argv"] for c in self.calls()])
         self.assertEqual(self.verbs(), ["watch", "list", "join", "message"])
 

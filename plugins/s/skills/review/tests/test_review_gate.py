@@ -103,6 +103,7 @@ class FakeGh:
                  checks_only=False,
                  files=None, existing_comments=None, review_fail_times=0,
                  viewer="gate-bot", review_threads=None, commits=None,
+                 user_login="mikkel", user_fail=False,
                  variable_get_enabled=False, merge_call_fails=False):
         self.head_sha = head_sha
         self.base_sha = base_sha
@@ -142,6 +143,8 @@ class FakeGh:
         # authored by ``viewer``. ``review_threads`` is a list of thread dicts
         # (see ``_thread``); ``commits`` is a list of ISO-8601 committedDates.
         self.viewer = viewer
+        self.user_login = user_login    # what ``gh api user`` answers
+        self.user_fail = user_fail
         self.threads = [dict(t, comments=[dict(c) for c in t["comments"]])
                         for t in (review_threads or [])]
         self.commits = list(commits or [])
@@ -226,6 +229,10 @@ class FakeGh:
 
     def _api(self, args, input):
         endpoint = args[1]
+        if endpoint == "user":
+            if self.user_fail:
+                return 1, "", "HTTP 401: Bad credentials"
+            return 0, json.dumps({"login": self.user_login}), ""
         if endpoint == "graphql":
             return self._graphql(args[2:], input)
         path = endpoint.split("?", 1)[0]
@@ -568,6 +575,40 @@ class PostTest(unittest.TestCase):
         self.assertEqual(gh.review_posts[1].get("comments", []), [])
         # After the failure the anchored finding is folded into the summary.
         self.assertIn("boom", gh.summary_body())
+
+    def test_submission_body_carries_the_speaker_heading(self):
+        gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
+        findings = [
+            {"id": "f1", "severity": "high", "locations": ["a.py:5"],
+             "what": "boom", "why": "w", "fix": "x"},
+            {"id": "f2", "severity": "low", "locations": ["a.py:3"],
+             "what": "bang", "why": "w", "fix": "x"}]
+        review_gate.post(
+            "7", _review(verdict="changes-requested", findings=findings), gh)
+        lines = gh.review_posts[0]["body"].split("\n")
+        self.assertEqual(
+            lines[0],
+            "### \u2615 shipd \u00b7 semantic-review \u00b7 reviewer "
+            "(for @mikkel)")
+        self.assertEqual(
+            lines[1], "Semantic review: 2 inline comments. Full report in "
+            "the summary comment.")
+        self.assertNotIn("see the summary comment for the full report",
+                         gh.review_posts[0]["body"])
+
+    def test_failed_login_read_drops_the_for_segment_and_still_posts(self):
+        gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}],
+                    user_fail=True)
+        findings = [{"id": "f1", "severity": "high", "locations": ["a.py:5"],
+                     "what": "boom", "why": "w", "fix": "x"}]
+        review_gate.post(
+            "7", _review(verdict="changes-requested", findings=findings), gh)
+        post = gh.review_posts[0]
+        self.assertEqual(
+            post["body"].split("\n")[0],
+            "### \u2615 shipd \u00b7 semantic-review \u00b7 reviewer")
+        self.assertNotIn("(for @", post["body"])
+        self.assertEqual(post["event"], "COMMENT")
 
     def test_no_findings_posts_no_review(self):
         gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
