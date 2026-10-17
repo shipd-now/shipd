@@ -457,7 +457,7 @@ it. A `title` with an unknown placeholder or no `{summary}`, or a
 `pr-mode`: it shapes the title, `pr-mode` decides how the pull request ships.
 
 Every title `/s:pr` renders, and every commit shipd writes in a shipd worktree
-or through the engine, starts with `☕ Shipd: ` (never doubled). The brand is
+or through the engine, starts with `☕ ` (never doubled). The brand is
 not configurable. A repository with its own `commit-msg` hook or a
 `core.hooksPath` gets a note and unbranded commits.
 

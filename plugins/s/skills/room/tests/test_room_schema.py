@@ -76,10 +76,11 @@ class MarkerFormatTests(unittest.TestCase):
         msg = _agent_msg(text="the prose")
         lines = room_schema.render_comment(msg).split("\n")
         self.assertEqual(lines[1], "")
-        self.assertEqual(lines[2], "### ☕ shipd · a")
+        self.assertEqual(lines[2], "### ☕ a")
         self.assertEqual(lines[3], "submitted")
         self.assertEqual(lines[4], "")
-        self.assertEqual("\n".join(lines[5:]), "the prose")
+        self.assertEqual("\n".join(lines[5:]),
+                         "the prose\n\n%s" % room_schema.FOOTER)
 
     def test_marker_below_severity_line_parses(self):
         msg = _agent_msg(text="finding")
@@ -145,15 +146,15 @@ class AgentCardTests(unittest.TestCase):
         self.assertIn('"role":"reviewer"', raw)
         self.assertEqual(
             rendered.split("\n", 2)[2],
-            "### ☕ shipd · codex-reviewer · reviewer (for @mikkel)\n"
-            "<sub>joined the room from codex · skills: review-finding</sub>")
+            "<sub>☕ **codex-reviewer** joined the room from codex"
+            " · skills: review-finding</sub>")
         self.assertEqual(room_schema.parse_comment(rendered), card)
 
     def test_card_without_role_or_login_drops_segments(self):
         card = room_schema.AgentCard(name="x")
         rendered = room_schema.render_comment(card)
-        self.assertEqual(rendered.split("\n", 2)[2].split("\n")[0],
-                         "### ☕ shipd · x")
+        self.assertEqual(rendered.split("\n", 2)[2],
+                         "<sub>☕ **x** joined the room</sub>")
         _, raw = _marker_json(rendered)
         self.assertNotIn('"role"', raw)
 
@@ -167,11 +168,11 @@ class AgentCardTests(unittest.TestCase):
     def test_card_prose_minimal_and_with_description(self):
         self.assertEqual(
             room_schema._card_prose(room_schema.AgentCard(name="x")),
-            "### ☕ shipd · x\n<sub>joined the room</sub>")
+            "<sub>☕ **x** joined the room</sub>")
         self.assertEqual(
             room_schema._card_prose(room_schema.AgentCard(
                 name="x", skills=("a", "b"), description="does things")),
-            "### ☕ shipd · x\n<sub>joined the room · skills: a, b</sub>"
+            "<sub>☕ **x** joined the room · skills: a, b</sub>"
             "\n\ndoes things")
 
     def test_nameless_card_raises(self):
@@ -207,14 +208,14 @@ class MessageTests(unittest.TestCase):
         rendered = room_schema.render_comment(msg, login="mikkel", role="ci")
         self.assertEqual(
             rendered.split("\n", 2)[2],
-            "### ☕ shipd · copilot-ci · ci (for @mikkel)\n"
-            "→ builder · completed\n\ndone")
+            "### ☕ copilot-ci · ci (for @mikkel)\n"
+            "→ builder · completed\n\ndone\n\n" + room_schema.FOOTER)
         self.assertEqual(room_schema.parse_comment(rendered).text, "done")
 
     def test_header_without_to(self):
         msg = _agent_msg(text="x", state="working")
         lines = room_schema.render_comment(msg).split("\n")
-        self.assertEqual(lines[2], "### ☕ shipd · a")
+        self.assertEqual(lines[2], "### ☕ a")
         self.assertEqual(lines[3], "working")
 
     def test_header_without_to_or_state(self):
@@ -222,7 +223,7 @@ class MessageTests(unittest.TestCase):
             role="agent", parts=({"kind": "text", "text": "x"},),
             context_id=CONTEXT, agent="copilot-ci")
         self.assertEqual(room_schema._message_prose(msg),
-                         "### ☕ shipd · copilot-ci\n\nx")
+                         "### ☕ copilot-ci\n\nx\n\n" + room_schema.FOOTER)
 
     def test_role_and_login_never_enter_marker(self):
         msg = _agent_msg(text="x")
@@ -231,11 +232,27 @@ class MessageTests(unittest.TestCase):
         self.assertNotIn("mikkel", raw)
         self.assertNotIn('"ci"', raw)
 
+    def test_brand_heading_keeps_the_word_shipd(self):
+        self.assertEqual(
+            room_schema.speaker_heading(
+                "semantic-review", "reviewer", "mikkel", brand=True),
+            "☕ shipd · semantic-review · reviewer (for @mikkel)")
+        self.assertEqual(
+            room_schema.speaker_heading("semantic-review", "reviewer",
+                                        "mikkel"),
+            "☕ semantic-review · reviewer (for @mikkel)")
+
+    def test_parsed_text_excludes_heading_and_footer(self):
+        msg = _agent_msg(text="the prose")
+        parsed = room_schema.parse_comment(room_schema.render_comment(msg))
+        self.assertEqual(parsed.text, "the prose")
+
     def test_user_message_has_no_header(self):
         msg = room_schema.Message(
             role="user", parts=({"kind": "text", "text": "hi"},),
             context_id=None, agent="someone")
         self.assertEqual(room_schema._message_prose(msg), "hi")
+        self.assertNotIn("Posted by Shipd", room_schema._message_prose(msg))
 
     def _rendered_dict(self, msg):
         import json
@@ -316,7 +333,8 @@ class MessageTests(unittest.TestCase):
             metadata={"state": "submitted"})
         rendered = room_schema.render_comment(msg)
         self.assertEqual(rendered.split("\n", 2)[2],
-                         "### ☕ shipd · a\nsubmitted\n\nvisible")
+                         "### ☕ a\nsubmitted\n\nvisible\n\n"
+                         + room_schema.FOOTER)
         parsed = room_schema.parse_comment(rendered)
         self.assertEqual(len(parsed.parts), 2)
         self.assertEqual(parsed, msg)

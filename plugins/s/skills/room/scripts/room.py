@@ -559,7 +559,7 @@ def cmd_join(opts, parser, gh):
         skills=tuple(opts.skill or ()), version=_plugin_version(),
         harness=opts.harness or "", role=opts.role or "")
     try:
-        body = room_schema.render_comment(card, login=_login(gh, {}))
+        body = room_schema.render_comment(card)
     except room_schema.SchemaError as exc:
         raise RoomError(str(exc))
     if agent in owned:

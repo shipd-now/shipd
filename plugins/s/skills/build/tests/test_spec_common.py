@@ -4756,7 +4756,7 @@ class WikiAutocommitTest(unittest.TestCase):
             subject = "shipd-wiki: emit 2 file(s)"
             made = sc.wiki_autocommit(store, [index, page], subject)
             self.assertTrue(made)
-            self.assertEqual(self._log_subject(ws), "\u2615 Shipd: " + subject)
+            self.assertEqual(self._log_subject(ws), "\u2615 " + subject)
             self.assertEqual(
                 self._commit_files(ws),
                 [".shipd/wiki/index.md", ".shipd/wiki/page.md"])
@@ -4979,14 +4979,15 @@ class BrandSubjectTest(unittest.TestCase):
     """brand-subject-helper: the prefix is owned by spec_common."""
 
     def test_constant(self):
-        self.assertEqual(sc.BRAND_PREFIX, "\u2615 Shipd: ")
+        self.assertEqual(sc.BRAND_PREFIX, "\u2615 ")
 
     def test_bare_subject_gets_prefix(self):
         self.assertEqual(sc.brand_subject("room: fix x"),
-                         "\u2615 Shipd: room: fix x")
+                         "\u2615 room: fix x")
 
     def test_idempotent(self):
-        for s in ("\u2615 Shipd: room: fix x", "\u2615 Shipd:room: fix x"):
+        for s in ("\u2615 room: fix x", "\u2615room: fix x",
+                  "\u2615 Shipd: room: fix x"):
             self.assertEqual(sc.brand_subject(s), s)
 
     def test_autosquash_untouched(self):

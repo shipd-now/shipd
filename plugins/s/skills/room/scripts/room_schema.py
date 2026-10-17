@@ -12,9 +12,11 @@ comment bodies, folds a comment chain into Task views, and owns the task state
 machine and the round cap. Callers (the ``shipd room`` verbs, ``watch``, the
 gate) do the fetching and posting.
 
-Prose opens with a speaker heading, ``### ☕ shipd · <agent>[ · <role>][ (for
-@<login>)]``; the role and login are render arguments, so a Message marker
-never stores them, while a card marker carries its own optional ``role``.
+An agent Message's prose opens with a speaker heading, ``### ☕ <agent>[ ·
+<role>][ (for @<login>)]``, and ends with the ``FOOTER`` paragraph; the role
+and login are render arguments, so a Message marker never stores them. An
+Agent Card's prose is one ``<sub>`` line with no heading, role, or login; the
+card marker carries its own optional ``role``.
 """
 
 import json
@@ -124,11 +126,16 @@ _CARD_KEYS = ("name", "description", "skills", "version", "harness", "role")
 # The roles `room join --role` accepts; the schema itself takes any string.
 ROLE_VALUES = ("author", "reviewer", "ci")
 
+# The closing paragraph of every agent Message comment.
+FOOTER = "<sub>\u2615 Posted by Shipd</sub>"
 
-def speaker_heading(agent, role="", login=""):
-    """The speaker heading text (no markdown prefix): ``☕ shipd · agent``,
-    then `` · role`` and `` (for @login)`` when those are set."""
-    heading = "\u2615 shipd \u00b7 %s" % agent
+
+def speaker_heading(agent, role="", login="", brand=False):
+    """The speaker heading text (no markdown prefix): ``☕ agent``, then
+    `` · role`` and `` (for @login)`` when those are set. ``brand=True``
+    keeps the brand word: ``☕ shipd · agent``."""
+    heading = "\u2615 shipd \u00b7 %s" % agent if brand \
+        else "\u2615 %s" % agent
     if role:
         heading += " \u00b7 %s" % role
     if login:
@@ -184,14 +191,13 @@ def card_to_dict(card):
     return d
 
 
-def _card_prose(card, login=""):
-    heading = "### " + speaker_heading(card.name, card.role, login)
-    line = "joined the room"
+def _card_prose(card):
+    line = "\u2615 **%s** joined the room" % card.name
     if card.harness:
         line += " from %s" % card.harness
     if card.skills:
         line += " · skills: %s" % ", ".join(card.skills)
-    line = "%s\n<sub>%s</sub>" % (heading, line)
+    line = "<sub>%s</sub>" % line
     if card.description:
         return "%s\n\n%s" % (line, card.description)
     return line
@@ -331,7 +337,7 @@ def _message_prose(m, login="", role=""):
         lines.append("\u2192 %s" % m.to)
     elif m.state:
         lines.append(m.state)
-    return "%s\n\n%s" % ("\n".join(lines), m.text)
+    return "%s\n\n%s\n\n%s" % ("\n".join(lines), m.text, FOOTER)
 
 
 # ---------------------------------------------------------------------------
@@ -372,13 +378,13 @@ def parse_comment(body, author=None):
 
 def render_comment(obj, login="", role=""):
     """A room comment body: the marker on line 1, a blank line, the prose.
-    ``login`` heads the speaker heading; ``role`` heads a Message's (a card
-    uses its own ``role``). Neither is written into a Message marker.
+    ``login`` and ``role`` head a Message's speaker heading and are ignored
+    for a card. Neither is written into a Message marker.
     The object is validated first, so an invalid one raises ``SchemaError``."""
     if isinstance(obj, AgentCard):
         d = card_to_dict(obj)
         card_from_dict(d)
-        return "%s\n\n%s" % (render_marker(CARD_MARKER, d), _card_prose(obj, login))
+        return "%s\n\n%s" % (render_marker(CARD_MARKER, d), _card_prose(obj))
     if isinstance(obj, Message):
         d = message_to_dict(obj)
         message_from_dict(d)

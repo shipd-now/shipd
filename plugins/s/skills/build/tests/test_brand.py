@@ -15,7 +15,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
 SCRIPT = os.path.join(SCRIPTS, "brand.py")
 SKILLS = os.path.normpath(os.path.join(HERE, "..", ".."))
-BRAND = "☕ Shipd: "
+BRAND = "☕ "
 MARKER = "# shipd-managed commit-msg hook"
 
 

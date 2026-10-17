@@ -12,9 +12,9 @@ and you never read `pr-mode`.
    `python3 "$S/spec_status.py" cat change <slug>`; elsewhere read
    `git log <base>..HEAD`.
 2. **Read the standard**, `skills/document/references/standard.md`, then draft
-   the body: line 1 `## ☕ Shipd Pull Request`, a why-first paragraph, a short
-   list of what changed, and the last line
-   `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+   the body: line 1 `## ☕ Pull Request`, a why-first paragraph, a short
+   list of what changed, a `<sub>☕ Posted by Shipd</sub>` paragraph, and
+   the last line `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 3. **Lint it.** Stage it with a first-line `doc-type: concept` comment marker, run
    `python3 "$S/../../document/scripts/docs_lint.py" <file>` until it exits 0,
    then strip the marker line.

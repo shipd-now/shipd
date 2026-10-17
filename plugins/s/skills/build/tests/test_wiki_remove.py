@@ -169,7 +169,7 @@ class WikiRemoveGitTest(WikiRemoveTestBase):
         r = self.cli("wiki-remove", "some-page")
         self.assertEqual(r.returncode, 0, r.stderr)
         subject = self.git("log", "-1", "--format=%s").stdout.strip()
-        self.assertEqual(subject, "☕ Shipd: shipd-wiki: remove some-page")
+        self.assertEqual(subject, "☕ shipd-wiki: remove some-page")
         # The commit is scoped to exactly the touched files.
         files = self.git(
             "show", "--name-only", "--format=", "HEAD").stdout.split()

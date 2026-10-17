@@ -6,9 +6,10 @@ The fuller rules behind the pull request writer.
 
 | Part | Rule |
 | --- | --- |
-| Line 1 | `## ☕ Shipd Pull Request` |
+| Line 1 | `## ☕ Pull Request` |
 | Why paragraph | what a person sees today, then what this change fixes; plain words |
 | What changed | a short list, one bullet per user-visible effect |
+| Footer | a `<sub>☕ Posted by Shipd</sub>` paragraph, directly before the last line |
 | Last line | `🤖 Generated with [Claude Code](https://claude.com/claude-code)` |
 
 The body is staged with `<!-- doc-type: concept -->` as line 1 so that

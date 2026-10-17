@@ -8,7 +8,9 @@ edits, and registrations (shipd-pr pr-skill-writes, pr-callers).
 
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -43,11 +45,38 @@ class SkillWritesTest(unittest.TestCase):
         self.flat = _flat(self.text)
 
     def test_names_heading_lint_and_create_step(self):
-        for needle in ("## ☕ Shipd Pull Request", "docs_lint.py",
+        for needle in ("## ☕ Pull Request", "<sub>☕ Posted by Shipd</sub>",
+                       "docs_lint.py",
                        "--body-file", "gh pr edit",
                        "/s:pr [--ticket <id>] [--draft] [--base <ref>]",
                        "<!-- doc-type: concept -->", "pr_title.py"):
             self.assertIn(needle, self.flat, needle)
+
+    def test_old_heading_is_gone(self):
+        for path in (SKILL_PATH,
+                     os.path.join(PLUGIN_ROOT, "harness", "bodies", "pr.md"),
+                     os.path.join(PLUGIN_ROOT, "harness", "references",
+                                  "pr.md")):
+            self.assertNotIn("Shipd Pull Request", _read(path), path)
+
+    def test_body_with_footer_lints_clean(self):
+        body = (
+            "<!-- doc-type: concept -->\n\n"
+            "## ☕ Pull Request\n\n"
+            "This change quiets the brand on pull requests.\n\n"
+            "- Titles show only the mark.\n\n"
+            "<sub>☕ Posted by Shipd</sub>\n\n"
+            "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+        )
+        lint = os.path.join(PLUGIN_ROOT, "skills", "document", "scripts",
+                            "docs_lint.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "body.md")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(body)
+            proc = subprocess.run([sys.executable, "-B", lint, path],
+                                  capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
     def test_frontmatter_names_the_skill(self):
         self.assertRegex(self.text, r"(?m)^name: pr$")
