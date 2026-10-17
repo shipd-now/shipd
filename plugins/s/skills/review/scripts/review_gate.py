@@ -995,14 +995,17 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
                         commentable, room=room):
             submitted = event
         else:
-            # The inline review was rejected: fold every finding into the
+            # An inline review was rejected: fold every finding into the
             # summary so nothing is lost, then retry with no inline comments
-            # and the same event.
-            out("inline review rejected; folding findings into the summary")
-            _upsert_summary(
-                gh, repo, number,
-                render_summary(review, findings, disposition, model, files,
-                               room=room, head=sha, earlier=earlier))
+            # and the same event. A body-only review has nothing to fold.
+            if anchored:
+                out("inline review rejected; folding findings into the "
+                    "summary")
+                _upsert_summary(
+                    gh, repo, number,
+                    render_summary(review, findings, disposition, model,
+                                   files, room=room, head=sha,
+                                   earlier=earlier))
             if _post_review(gh, repo, number, sha, [], event, login,
                             room=room):
                 submitted = event
@@ -1010,8 +1013,11 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
                 if _post_review(gh, repo, number, sha, [], NEUTRAL_EVENT,
                                 login, room=room):
                     submitted = NEUTRAL_EVENT
-                out("review decision %s was not recorded; submitted a "
-                    "comment review instead" % event)
+                    out("review decision %s was not recorded; submitted a "
+                        "comment review instead" % event)
+                else:
+                    out("review decision %s was not recorded; the fallback "
+                        "comment review was also rejected" % event)
 
     # Fast-pass auto-merge logic
     fast_pass_armed = False

@@ -932,6 +932,23 @@ class ReviewEventTest(unittest.TestCase):
         self.assertEqual(self._events(gh), ["APPROVE", "APPROVE", "COMMENT"])
         self.assertTrue(any("not recorded" in l for l in lines))
 
+    def test_fallback_comment_also_rejected(self):
+        gh = self._gh(review_fail_times=3)
+        result, lines = self._post(gh, _review(verdict="changes-requested",
+                                               findings=self.FINDINGS))
+        self.assertEqual(len(gh.review_posts), 3)
+        self.assertIsNone(result["review_event"])
+        self.assertTrue(any("fallback comment review was also rejected" in l
+                            for l in lines))
+        self.assertFalse(any("submitted a comment review instead" in l
+                             for l in lines))
+
+    def test_body_only_rejection_does_not_fold(self):
+        gh = self._gh(reject_decisions=1)
+        _, lines = self._post(gh, _review(verdict="pass"))
+        self.assertEqual(self._events(gh), ["APPROVE", "APPROVE"])
+        self.assertFalse(any("inline review rejected" in l for l in lines))
+
 
 DECISIONS = {"success": "APPROVE", "failure": "REQUEST_CHANGES"}
 
