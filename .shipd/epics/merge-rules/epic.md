@@ -1,5 +1,5 @@
 # merge-rules
-Status: ready
+Status: active
 Theme: reliability
 
 ## Introduction
