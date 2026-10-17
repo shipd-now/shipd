@@ -70,8 +70,8 @@ code is `1` when a required check failed, `0` otherwise.
 Parse each line into `(level, check, detail)` and keep the whole output
 verbatim as the **before** state. The checks are `python`, `git`, `config`,
 `pipeline`, `wiki`, `store`, `store-sync`, `gh`, `difft`, `textual`,
-`snapshot`, `statusline`, `protection`, `automerge`, `copilot-secret`, and
-`fast-pass`.
+`snapshot`, `statusline`, `protection`, `automerge`, `copilot-secret`,
+`fast-pass`, `merge-rules`, and `actions-approve`.
 
 `wiki` is **report-only** and always `ok`: it names the wiki store the working
 directory resolves — a workspace store, the repo-local fallback store, or
@@ -127,6 +127,8 @@ exhaustive: a finding not listed here is **report-only**.
 | `fail git` — not on PATH | The platform-appropriate install command (macOS: `xcode-select --install` or `brew install git`; Debian/Ubuntu: `sudo apt install git`; otherwise point at https://git-scm.com/downloads) | Runnable on consent. Same rule: state the exact command first. |
 | `warn protection` — the default branch is **not protected** | `gh api -X PUT repos/<nwo>/branches/<default>/protection` with the minimal body below | Runnable on consent. Only for this finding — the PUT replaces the whole protection object, so it is offered **only** where the detail says the branch is not protected at all. |
 | `warn protection` — protected but **missing the `semantic-review` context** | `gh api -X POST repos/<nwo>/branches/<default>/protection/required_status_checks/contexts -f "contexts[]=semantic-review"` | Runnable on consent. This appends; it never clobbers contexts the branch already requires (`ci`, others). **Never** offer the whole-protection PUT for this finding. |
+| `warn merge-rules` — drift or no `shipd merge rules` ruleset | none | **Report-only.** Relay the line with `shipd gate rules` output; applied only through `/s:gate`'s consent-gated `shipd gate rules apply`. Propose no `gh api` write. |
+| `warn actions-approve` — Actions may not approve | none | **Report-only.** Relay it as an admin setting `/s:gate` offers; propose no `gh api` write. |
 | `warn automerge` — auto-merge disabled | `gh api -X PATCH repos/<nwo> -F allow_auto_merge=true` | Runnable on consent. |
 | `warn copilot-secret` — `COPILOT_GITHUB_TOKEN` not set | `gh secret set COPILOT_GITHUB_TOKEN` | **Never run by you.** The token cannot be minted programmatically and the command prompts for it. Relay the creation steps (below) and hand the storage step to the user as `! gh secret set COPILOT_GITHUB_TOKEN`. |
 | `warn gh` — present but not authenticated | `gh auth login` | **Never run by you.** It is interactive. Hand it to the user to run themselves as `! gh auth login`. |
@@ -166,6 +168,10 @@ JSON
 protected" is the PUT; "does not require the `semantic-review` status context"
 is the append POST. Getting this backwards would replace an existing
 protection ruleset, so read the detail before choosing.
+
+**A `protection` warning whose detail names a ruleset is report-only.** Offer
+neither the classic PUT nor the contexts POST for it; relay it and point to
+`/s:gate`.
 
 **A third `protection` warning — "requires no status checks at all" — is
 report-only.** The branch is protected but has no required status checks
