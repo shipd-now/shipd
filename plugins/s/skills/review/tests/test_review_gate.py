@@ -105,7 +105,13 @@ class FakeGh:
                  files=None, existing_comments=None, review_fail_times=0,
                  viewer="gate-bot", review_threads=None, commits=None,
                  user_login="mikkel", user_fail=False,
-                 variable_get_enabled=False, merge_call_fails=False):
+                 variable_get_enabled=False, merge_call_fails=False,
+                 pr_author="pr-author", author_fail=False,
+                 reject_decisions=0):
+        self.pr_author = pr_author
+        self.author_fail = author_fail
+        # Count of APPROVE/REQUEST_CHANGES review POSTs answered with a 422.
+        self._reject_decisions = reject_decisions
         self.head_sha = head_sha
         self.base_sha = base_sha
         self.number = number
@@ -168,6 +174,10 @@ class FakeGh:
     def __call__(self, args, input=None):
         args = list(args)
         self.calls.append((args, input))
+        if args[:2] == ["pr", "view"] and "author" in args:
+            if self.author_fail:
+                return 1, "", "gh: could not read author"
+            return 0, json.dumps({"author": {"login": self.pr_author}}), ""
         if args[:2] == ["pr", "view"]:
             return 0, json.dumps({"number": self.number,
                                   "baseRefOid": self.base_sha,
@@ -306,6 +316,10 @@ class FakeGh:
             self.review_posts.append(payload)
             if self._review_fail_remaining > 0:
                 self._review_fail_remaining -= 1
+                return 1, "", "HTTP 422: Unprocessable Entity"
+            if (self._reject_decisions > 0
+                    and payload.get("event") in ("APPROVE", "REQUEST_CHANGES")):
+                self._reject_decisions -= 1
                 return 1, "", "HTTP 422: Unprocessable Entity"
             return 0, json.dumps({"id": 55, "state": "COMMENTED"}), ""
 
@@ -566,7 +580,7 @@ class PostTest(unittest.TestCase):
         self.assertEqual([(c["path"], c["line"]) for c in comments],
                          [("a.py", 5)])
         self.assertEqual(comments[0]["side"], "RIGHT")
-        self.assertEqual(gh.review_posts[0]["event"], "COMMENT")
+        self.assertEqual(gh.review_posts[0]["event"], "REQUEST_CHANGES")
         self.assertEqual(gh.review_posts[0]["commit_id"], gh.head_sha)
         # The out-of-diff finding folded into the summary, not lost.
         body = gh.summary_body()
@@ -621,10 +635,12 @@ class PostTest(unittest.TestCase):
         self.assertNotIn("(for @", post["body"])
         self.assertEqual(post["event"], "COMMENT")
 
-    def test_no_findings_posts_no_review(self):
+    def test_no_findings_posts_a_body_only_approval(self):
         gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
         review_gate.post("7", _review(verdict="pass"), gh)
-        self.assertEqual(gh.review_posts, [])
+        self.assertEqual(len(gh.review_posts), 1)
+        self.assertEqual(gh.review_posts[0]["event"], "APPROVE")
+        self.assertEqual(gh.review_posts[0]["comments"], [])
 
 
 class PostBaseGuardTest(unittest.TestCase):
@@ -797,45 +813,127 @@ class SuggestionTest(unittest.TestCase):
 
 
 class ReviewEventTest(unittest.TestCase):
-    """Every review this poster submits is a `COMMENT`. The required
-    `semantic-review` status is the merge blocker; a `REQUEST_CHANGES` decision
-    would need a human dismissal even after the fix landed, so the event is
-    pinned here and cannot drift silently."""
+    """The review event follows the `semantic-review` status the poster sets
+    (`APPROVE` on success, `REQUEST_CHANGES` on failure) and is never a
+    decision when the acting login is the PR author or either is unreadable."""
 
     FINDINGS = [
         _finding(locations=["a.py:5"]),
         _finding(locations=["b.py:99"], severity="medium", what="out of diff"),
-        _finding(locations=["a.py:3"], severity="low", what="fixable",
-                 suggestion={"confident": True, "start_line": 3,
-                             "end_line": 4, "lines": ["one", "two"]}),
     ]
+    MEDIUMS = [_finding(locations=["a.py:5"], severity="medium")]
+
+    def _gh(self, **kw):
+        return FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}], **kw)
 
     def _events(self, gh):
         return [p["event"] for p in gh.review_posts]
 
-    def test_the_constant_is_comment(self):
-        self.assertEqual(review_gate.REVIEW_EVENT, "COMMENT")
+    def _post(self, gh, review, **kw):
+        lines = []
+        result = review_gate.post("7", review, gh, out=lines.append, **kw)
+        return result, lines
 
-    def test_every_posted_review_submits_comment(self):
-        gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
-        review_gate.post("7", _review(verdict="changes-requested",
-                                      findings=self.FINDINGS), gh)
+    def test_constants(self):
+        self.assertEqual(review_gate.DECISION_EVENTS,
+                         {"success": "APPROVE", "failure": "REQUEST_CHANGES"})
+        self.assertEqual(review_gate.NEUTRAL_EVENT, "COMMENT")
+        self.assertFalse(hasattr(review_gate, "REVIEW_EVENT"))
+
+    def test_clean_pass_approves_without_comments(self):
+        gh = self._gh()
+        result, _ = self._post(gh, _review(verdict="pass"))
+        self.assertEqual(self._events(gh), ["APPROVE"])
+        self.assertEqual(gh.review_posts[0]["comments"], [])
+        self.assertEqual(result["review_event"], "APPROVE")
+
+    def test_failing_verdict_requests_changes_with_inline_comment(self):
+        gh = self._gh()
+        result, _ = self._post(gh, _review(verdict="changes-requested",
+                                           findings=self.FINDINGS))
+        self.assertEqual(self._events(gh), ["REQUEST_CHANGES"])
+        self.assertEqual([(c["path"], c["line"])
+                          for c in gh.review_posts[0]["comments"]],
+                         [("a.py", 5)])
+        self.assertEqual(result["review_event"], "REQUEST_CHANGES")
+
+    def test_high_only_over_mediums_approves(self):
+        gh = self._gh()
+        self._post(gh, _review(verdict="changes-requested",
+                               findings=self.MEDIUMS),
+                   disposition="high-only")
+        self.assertEqual(gh.posted_status["state"], "success")
+        self.assertEqual(self._events(gh), ["APPROVE"])
+
+    def test_event_follows_status_under_every_scope(self):
+        for scope in review_gate.DISPOSITIONS:
+            gh = self._gh()
+            self._post(gh, _review(verdict="changes-requested",
+                                   findings=self.FINDINGS), disposition=scope)
+            want = DECISIONS[gh.posted_status["state"]]
+            self.assertEqual(self._events(gh), [want], scope)
+
+    def test_author_equal_to_login_submits_no_decision(self):
+        for author in ("mikkel", "MIKKEL"):
+            gh = self._gh(pr_author=author)
+            result, lines = self._post(gh, _review(
+                verdict="changes-requested", findings=self.FINDINGS))
+            self.assertEqual(self._events(gh), ["COMMENT"], author)
+            self.assertEqual(result["review_event"], "COMMENT")
+            said = [l for l in lines if "self-approval" in l]
+            self.assertEqual(len(said), 1)
+            self.assertIn("mikkel", said[0])
+
+    def test_author_clean_pass_submits_nothing(self):
+        gh = self._gh(pr_author="mikkel")
+        result, lines = self._post(gh, _review(verdict="pass"))
+        self.assertEqual(gh.review_posts, [])
+        self.assertIsNone(result["review_event"])
+        self.assertEqual(len([l for l in lines if "self-approval" in l]), 1)
+
+    def test_unreadable_login_falls_back_to_comment(self):
+        gh = self._gh(user_fail=True)
+        self._post(gh, _review(verdict="changes-requested",
+                               findings=self.FINDINGS))
+        self.assertEqual(self._events(gh), ["COMMENT"])
+        gh = self._gh(user_fail=True)
+        result, _ = self._post(gh, _review(verdict="pass"))
+        self.assertEqual(gh.review_posts, [])
+        self.assertIsNone(result["review_event"])
+
+    def test_unreadable_author_falls_back_to_comment(self):
+        gh = self._gh(author_fail=True)
+        self._post(gh, _review(verdict="changes-requested",
+                               findings=self.FINDINGS))
         self.assertEqual(self._events(gh), ["COMMENT"])
 
-    def test_the_retry_without_inline_is_also_a_comment(self):
-        gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}],
-                    review_fail_times=1)
-        review_gate.post("7", _review(verdict="changes-requested",
-                                      findings=self.FINDINGS), gh)
-        self.assertEqual(self._events(gh), ["COMMENT", "COMMENT"])
+    def test_retry_keeps_the_event(self):
+        gh = self._gh(reject_decisions=1)
+        result, _ = self._post(gh, _review(verdict="changes-requested",
+                                           findings=self.FINDINGS))
+        self.assertEqual(self._events(gh),
+                         ["REQUEST_CHANGES", "REQUEST_CHANGES"])
+        self.assertEqual(gh.review_posts[1]["comments"], [])
+        self.assertEqual(result["review_event"], "REQUEST_CHANGES")
 
-    def test_no_disposition_scope_changes_the_event(self):
-        for scope in review_gate.DISPOSITIONS:
-            gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
-            review_gate.post("7", _review(verdict="changes-requested",
-                                          findings=self.FINDINGS), gh,
-                             disposition=scope)
-            self.assertEqual(self._events(gh), ["COMMENT"], scope)
+    def test_double_rejection_ends_in_body_only_comment(self):
+        gh = self._gh(reject_decisions=2)
+        result, lines = self._post(gh, _review(verdict="changes-requested",
+                                               findings=self.FINDINGS))
+        self.assertEqual(self._events(gh),
+                         ["REQUEST_CHANGES", "REQUEST_CHANGES", "COMMENT"])
+        self.assertEqual(gh.review_posts[2]["comments"], [])
+        self.assertEqual(result["review_event"], "COMMENT")
+        self.assertTrue(any("not recorded" in l for l in lines))
+
+    def test_double_rejection_of_a_clean_approve(self):
+        gh = self._gh(reject_decisions=2)
+        _, lines = self._post(gh, _review(verdict="pass"))
+        self.assertEqual(self._events(gh), ["APPROVE", "APPROVE", "COMMENT"])
+        self.assertTrue(any("not recorded" in l for l in lines))
+
+
+DECISIONS = {"success": "APPROVE", "failure": "REQUEST_CHANGES"}
 
 
 class PostDispositionTest(unittest.TestCase):

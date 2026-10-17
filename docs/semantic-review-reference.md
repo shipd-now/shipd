@@ -50,6 +50,31 @@ prose, never an error:
 
 Source: `plugins/s/skills/review/references/json-output.md`.
 
+## The review event
+
+`review_gate.py post` submits one pull request review per post. Its event
+follows the `semantic-review` commit status the poster sets:
+
+| status | review event |
+|---|---|
+| `success` | `APPROVE` |
+| `failure` | `REQUEST_CHANGES` |
+
+The event follows the status, not the raw verdict, so the two never disagree
+under any `--disposition` scope. A decision review is always submitted, with
+a body only when no finding anchors.
+
+GitHub rejects an author approving their own pull request. When the acting
+login (`gh api user`) equals the pull request author (`gh pr view --json
+author`), compared case-insensitively, or either login cannot be read, the
+poster submits no decision. It submits a `COMMENT` review only when findings
+anchor, and prints one line naming the login.
+
+If GitHub rejects a decision review, the poster retries it once with no inline
+comments and the same event. If that is rejected too, it submits a body-only
+`COMMENT` review and prints that the decision was not recorded. The result
+carries `review_event`, the event actually submitted, or `null`.
+
 ## The `lint` configuration key
 
 `lint` is an optional top-level key in `.shipd-config.json`. It configures the

@@ -104,7 +104,11 @@ The flow:
    anchorable location across a finding's `locations` array (folding a finding
    into the summary only when none of its locations anchor), and sets the
    `semantic-review` commit status on the head SHA by scope — under the default
-   `all`, `success` iff the verdict is `pass`, else `failure`. Before any of
+   `all`, `success` iff the verdict is `pass`, else `failure`. The review it
+   submits follows that status: `APPROVE` on `success`, `REQUEST_CHANGES` on
+   `failure`. An acting login equal to the pull request's author (or an
+   unreadable login) submits a `COMMENT` only, and only when findings anchor.
+   Before any of
    that, it computes the pull request's own merge base from `baseRefOid` and
    `headRefOid` and compares it with the payload's `endpoints.merge_base`; on
    a mismatch — or an absent `endpoints.merge_base` — it aborts before writing
