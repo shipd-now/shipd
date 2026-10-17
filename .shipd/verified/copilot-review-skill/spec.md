@@ -176,7 +176,7 @@ not stalled — the newer push's run owns the gate.
 
 Where the gate's own reviewer produced the review, the workflow SHALL publish
 it as a pull-request review rather than as an issue comment, submitting the
-event `COMMENT`, carrying the review body and one anchored inline comment per
+event the verdict decides (below), carrying the review body and one anchored inline comment per
 finding whose severity is `high` or `medium` and whose path and line range the
 workflow itself verifies against the diff it computed. That diff SHALL cover
 every file the pull request changed, the workflow paginating the changed-files
@@ -190,6 +190,23 @@ review thread, and a repository requiring conversation resolution would
 otherwise let a `low` finding block a merge the rubric says it never blocks.
 Where an anchored finding also carries a replacement, its inline comment SHALL
 include that replacement as a committable `suggestion` block.
+
+The review event SHALL follow the verdict the workflow parsed, by the same
+rule as `review_gate.py post`: a parsed ship-it marker (status `success`)
+submits `APPROVE` and a parsed fix-required marker (status `failure`) submits
+`REQUEST_CHANGES`, authenticated by the workflow's own `github.token`, so
+github-actions[bot] is a reviewer GitHub counts. It SHALL submit `COMMENT`
+instead when no marker was parsed (the fail-open `success` and the strict-mode
+empty state alike, because nothing was judged), and when the pull request's
+author, read from the event payload, is `github-actions[bot]` or cannot be
+read, because GitHub rejects self-approval. The poll and review-event paths
+SHALL submit no review. When a decision review is rejected, notably with
+`GitHub Actions is not permitted to approve pull requests` while the
+repository setting is off, the workflow SHALL retry it once without inline
+comments under the same event, and if that is rejected too SHALL submit a
+body-only `COMMENT` review and print a line saying the decision was not
+recorded and naming the setting. That degradation SHALL NOT fail the step: the
+status was already posted.
 
 #### Scenario: The changed-files read is paginated
 - **WHEN** the posting step's changed-files read is inspected
@@ -213,8 +230,38 @@ include that replacement as a committable `suggestion` block.
 #### Scenario: The gate's own review is posted as a review
 - **WHEN** the workflow's own reviewer produces a review body for a pull
   request
-- **THEN** it is published through the pull-request reviews API with the event
-  `COMMENT`, not as an issue comment
+- **THEN** it is published through the pull-request reviews API, not as an
+  issue comment
+
+#### Scenario: A ship-it verdict approves as the Actions bot
+- **WHEN** the workflow's reviewer ends its report with the ship-it marker on a
+  pull request authored by someone else
+- **THEN** one review is submitted with the event `APPROVE` and the status is
+  `success`
+
+#### Scenario: A fix-required verdict requests changes
+- **WHEN** the reviewer ends with the fix-required marker
+- **THEN** one review is submitted with the event `REQUEST_CHANGES` carrying
+  the anchored findings, and the status is `failure`
+
+#### Scenario: A marker-less review stays a comment
+- **WHEN** the reviewer produced no verdict marker
+- **THEN** the review event is `COMMENT`, whether the status failed open or
+  strict mode left it unposted
+
+#### Scenario: The bot never approves its own pull request
+- **WHEN** the pull request's author is `github-actions[bot]` or is empty
+- **THEN** the review event is `COMMENT`
+
+#### Scenario: A refused approval degrades to a comment
+- **WHEN** GitHub rejects an `APPROVE` review twice
+- **THEN** a body-only `COMMENT` review is submitted, the output says the
+  decision was not recorded and names the Actions approval setting, and the
+  step does not fail
+
+#### Scenario: The poll paths submit no review
+- **WHEN** the workflow classifies a polled or review-event Copilot review
+- **THEN** it submits no review of its own
 
 #### Scenario: A verified high or medium finding is anchored
 - **WHEN** a `high` or `medium` finding's path and line range are present in

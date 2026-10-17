@@ -179,6 +179,10 @@ The verb prints each declared key as `<key> = <json>  [<source>]`. **`pr-mode =
 never arms auto-merge, so the setting buys nothing here. No `pr-mode` line, or
 any other value → keep it.
 
+Run `python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/actions_approval.py"
+--repo <nwo>` bare (it is read-only) and show its `actions-approve:` line
+beside the options.
+
 Then collect consent in **one batched selection** over exactly these runnable
 steps:
 
@@ -188,6 +192,7 @@ steps:
 | Allow auto-merge | `gh api -X PATCH repos/<nwo> -F allow_auto_merge=true` | Lets `gh pr merge --auto` arm on this repository. **Omitted under `pr-mode: draft`.** |
 | Fast-pass auto-merge | `gh variable set SHIPD_FAST_PASS --body true` | A reviewed pull request carrying a completed shipd change whose every delta scenario the review verified then merges without a human. **Omitted under `pr-mode: draft` alongside auto-merge.** |
 | Apply merge rules | `<shipd> gate rules apply` | Creates or updates one repository ruleset named `shipd merge rules` from the `merge` configuration, requiring the configured approvals and status checks before a pull request merges. Writes only that ruleset. Preview it first with bare `<shipd> gate rules`, which prints the configuration beside the live ruleset and writes nothing: show that output with the option. |
+| Let Actions approve (optional) | `python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/actions_approval.py" allow --repo <nwo>` | Turns on "Allow GitHub Actions to create and approve pull requests", so github-actions[bot] can count as a required approver. Any workflow in the repository could then approve a pull request. Writes only that setting and keeps the default workflow permissions. |
 | Strict verdicts (optional) | `gh variable set SHIPD_GATE_FAIL_OPEN --body false` | A review that produces no verdict marker then posts nothing and the required check stays `pending`, instead of passing fail-open. |
 
 Honor the dialog-and-prose-separation rule:
@@ -207,12 +212,17 @@ alongside the reviewer token** — on the poll fallback, where no marker is ever
 authored, it leaves `semantic-review` `pending` on every pull request until a
 session posts the gate by hand. State that trade-off in its option.
 
+**Recommend "Let Actions approve" only when the user wants the CI reviewer to
+count toward required approvals**, and never preselect it: it loosens a
+repository setting that `protect` and auto-merge do not. It runs only on a
+consent answer naming it.
+
 **The hand-offs are never dialog options.** `gh auth login` and
 `gh secret set COPILOT_GITHUB_TOKEN` are prose in the report — there is nothing
 here to consent to.
 
 **Declining runs nothing.** If the user selects "Do none of them" (or declines
-every step), perform no protection write, no ruleset write, no repository PATCH, and no variable
+every step), perform no protection write, no ruleset write, no repository PATCH, no `actions_approval.py allow`, and no variable
 set. Go straight to steps 7 and 8: the token hand-off, then the closing
 `shipd doctor` verification — with the manual hints for the steps not taken.
 
@@ -230,7 +240,9 @@ its exit code and output.
 apply` included: a 403 there names the missing admin permission). A denial (`HTTP 403`, or
 a message naming a missing admin right) is reported as *that step's* failure
 with the manual hint — the branch's protection settings, the repository's
-**Settings → General → Pull Requests** checkbox, or **Settings → Secrets and
+**Settings → General → Pull Requests** checkbox, **Settings → Actions →
+General → Workflow permissions** (for `actions_approval.py allow`, where an
+organization policy can also deny it), or **Settings → Secrets and
 variables → Actions → Variables** — and it **never blocks the remaining
 consented steps**. Never retry a denied call.
 
@@ -409,6 +421,10 @@ same choices as a plain-text numbered list and wait for a typed reply.
 Only an explicitly selected or typed stop/decline ends the flow.
 
 ## End
+
+If the Actions approval step was not taken or failed, say that the CI
+reviewer's approval degrades to a comment and does not count toward required
+approvals.
 
 If the merge rules step ran, say that GitHub enforces those rules only once
 the `shipd merge rules` ruleset exists, and that it exists only because that

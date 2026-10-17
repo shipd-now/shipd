@@ -411,6 +411,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REVIEW_BODY: ${{ github.event.review.body }}
         run: |
@@ -684,10 +685,21 @@ jobs:
           # What the gate judged, where a human can read it — published as a
           # pull-request review rather than an issue comment, so the report
           # arrives as a review with threads that can be anchored and
-          # dispositioned. The event is COMMENT, never REQUEST_CHANGES: the
-          # required `semantic-review` status posted above is the merge
-          # blocker, and a review decision would add a second block a human
-          # must dismiss by hand even after the fix landed.
+          # dispositioned. The event follows the verdict this run parsed, by
+          # the same rule as `review_gate.py post`: a ship-it marker submits
+          # APPROVE and a fix-required marker submits REQUEST_CHANGES, under
+          # github-actions[bot], so the CI reviewer counts as an approver.
+          # Anything else is a COMMENT: a review with no marker judged
+          # nothing (the fail-open `success` is not a verdict), and GitHub
+          # rejects the bot approving a pull request it authored. A stale
+          # REQUEST_CHANGES clears when the next run on the new head, the same
+          # account, posts its own review. The poll and review-event paths
+          # post no review at all: they classify GitHub's own Copilot review
+          # and fail open, so a bot decision there would carry no judgment.
+          # While the repository setting "Allow GitHub Actions to create and
+          # approve pull requests" is off, GitHub refuses a decision review;
+          # that degrades to a body-only COMMENT below and never fails the
+          # step, because the status above was already posted.
           #
           # Posted after the status, so a publication that fails cannot cost
           # the verdict it explains — and posted whenever this run captured
@@ -696,11 +708,25 @@ jobs:
           # leave `comment_file` unset and post nothing.
           if [[ -n "$comment_file" ]]; then
             review_payload="${RUNNER_TEMP:-.}/shipd-copilot-review-payload.json"
+            # The review event. Pure bash — `${var,,}` needs a newer bash than
+            # macOS ships — and a decision only for a parsed marker.
+            review_event=COMMENT
+            case "$PR_AUTHOR" in
+              ""|"github-actions[bot]") ;;
+              *)
+                case "$matched_state" in
+                  success) review_event=APPROVE ;;
+                  failure) review_event=REQUEST_CHANGES ;;
+                esac ;;
+            esac
             # The same payload without its inline comments. GitHub rejects a
             # whole review over one comment it will not accept, and the report
             # must not be lost to a line the API refuses, so the retry below
             # posts this instead.
             review_fallback="${RUNNER_TEMP:-.}/shipd-copilot-review-plain.json"
+            # The neutral form of the same review: its body alone, event
+            # COMMENT, for when GitHub refuses the decision itself.
+            review_neutral="${RUNNER_TEMP:-.}/shipd-copilot-review-neutral.json"
             # The findings the reviewer left beside its report — claims, not
             # facts: that agent ran `--allow-all-tools` over a diff it cannot
             # be trusted not to be steered by. So this step reads the pull
@@ -721,8 +747,9 @@ jobs:
                 "be posted without inline comments."
               : > "$files_file"
             fi
-            "$py_bin" - "$comment_file" "$findings_file" "$files_file" \
-              "$review_payload" "$review_fallback" <<'PY'
+            REVIEW_EVENT="$review_event" "$py_bin" - "$comment_file" \
+              "$findings_file" "$files_file" "$review_payload" \
+              "$review_fallback" "$review_neutral" <<'PY'
           """Shape the reviewed text and the reviewer's findings into a review payload.
 
           Reads only workspace files and writes only workspace files: it holds no
@@ -737,8 +764,8 @@ jobs:
           import re
           import sys
 
-          body_path, findings_path, files_path, payload_path, fallback_path = \
-              sys.argv[1:6]
+          body_path, findings_path, files_path, payload_path, fallback_path, \
+              neutral_path = sys.argv[1:7]
 
           HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
           SEVERITIES = ("high", "medium", "low")
@@ -933,13 +960,16 @@ jobs:
               comments.append(comment)
 
           payload = {"commit_id": os.environ["HEAD_SHA"],
-                     "event": "COMMENT",
+                     "event": os.environ.get("REVIEW_EVENT") or "COMMENT",
                      "body": fold(body, prose(unverified) + footer(files)),
                      "comments": comments}
           with open(payload_path, "w", encoding="utf-8") as handle:
               json.dump(payload, handle)
           payload["comments"] = []
           with open(fallback_path, "w", encoding="utf-8") as handle:
+              json.dump(payload, handle)
+          payload["event"] = "COMMENT"
+          with open(neutral_path, "w", encoding="utf-8") as handle:
               json.dump(payload, handle)
           PY
             if ! "$gh_bin" api --method POST \
@@ -950,8 +980,25 @@ jobs:
               # body alone rather than leave the pull request without it.
               echo "The anchored review of $HEAD_SHA was rejected; posting" \
                 "it without inline comments."
-              "$gh_bin" api --method POST \
-                "repos/$REPO/pulls/$PR_NUMBER/reviews" \
-                --input "$review_fallback"
+              if ! "$gh_bin" api --method POST \
+                  "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+                  --input "$review_fallback"; then
+                # A refused plain retry of a decision is GitHub declining the
+                # decision (typically the Actions approval setting being off),
+                # not the report: submit the body alone as a COMMENT. A
+                # COMMENT that fails here has no decision to drop, so it still
+                # fails the step.
+                if [[ "$review_event" == "COMMENT" ]]; then
+                  exit 1
+                fi
+                echo "::warning::The $review_event decision was not" \
+                  "recorded: GitHub refused it. Turn on 'Allow GitHub" \
+                  "Actions to create and approve pull requests' under" \
+                  "Settings, Actions, General, Workflow permissions to let" \
+                  "the CI reviewer approve. Posting the review as a comment."
+                "$gh_bin" api --method POST \
+                  "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+                  --input "$review_neutral"
+              fi
             fi
           fi

@@ -50,7 +50,7 @@ On every pull request opened, updated, or reopened, the gate's job:
    secret and no other credential.
 6. Classifies the output in a separate step, scanning backwards for the last
    marker line, then posts the status.
-7. Posts the review text as a pull-request comment, whatever the verdict.
+7. Posts the review text as a pull-request review, whatever the verdict.
 
 - **The version pin is deliberate.** An unpinned install would let the CLI
   vendor change what the gate runs. Upgrading bumps that line in the template.
@@ -59,11 +59,6 @@ On every pull request opened, updated, or reopened, the gate's job:
   read failure fails the step, so `pending` stands.
 - **A failed or timed-out run leaves `pending`.** The job discards the partial
   output and posts nothing; `review_gate.py post` is the manual out.
-- **Private repositories work.** This review runs in the repository's own
-  Actions job with the workflow's token, so the checkout below never arises.
-- **What it costs.** Copilot AI credits per review, against the token owner's
-  allowance — around ten credits for a small change. The concurrency group
-  cancels the run a new push supersedes, so one push gets one review.
 
 ### The poll fallback mode
 
@@ -169,8 +164,6 @@ steering. The gate bounds that risk rather than eliminating it:
 - **The instructions come from the base ref.** The gate reviews a change that
   edits `SKILL.md` under the rules that change asks to replace. Only a merge
   into the base moves that contract.
-- **The template pins the CLI version.** The reviewer's behaviour changes when
-  this template changes, not when the vendor ships.
 - **The workflow decides the verdict.** The reviewer writes text; the posting
   step applies this workflow's own rules to that text's last line.
 - **The session flow stays the high-assurance path.** `/s:review` plus
@@ -183,6 +176,13 @@ The workflow does its repository work with its own `github.token`:
 comment. The only secret it ever reads is the optional `COPILOT_GITHUB_TOKEN`,
 whose value reaches nothing but the Copilot CLI's environment.
 
+- **The review event.** On the CLI path, ship-it submits `APPROVE` and
+  fix-required submits `REQUEST_CHANGES`, as `github-actions[bot]`. No marker,
+  or a bot or unreadable author, gives `COMMENT`. The poll paths submit none.
+- **Degradation.** With "Allow GitHub Actions to create and approve pull
+  requests" off, GitHub rejects a decision. The workflow retries once without
+  inline comments, then posts a body-only `COMMENT` and warns. The step still
+  passes. `actions_approval.py allow` turns the setting on.
 - **Coexisting with the session flow.** `/s:review` plus `review_gate.py post`
   writes the same `semantic-review` context on the same commit. Neither poster
   excludes the other, and the newest post on a commit wins.
