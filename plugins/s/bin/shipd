@@ -184,7 +184,7 @@ verbs:
                              create the change's worktree, then run the
                              configured post-worktree-scripts
                              (also: remove, prune-branches, hooks)
-  room <verb> <pr> [args]    the PR room: join, list, message, close, watch
+  room <verb> <pr> [args]    the PR room: join, list, message, close, watch, whoami
   doctor                     preflight this environment for shipd
   statusline [install|layout]
                              register the shipd statusline, or lay out its segments

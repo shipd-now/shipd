@@ -46,7 +46,8 @@ class FakeGh:
     def __init__(self, number=7, repo="o/r", comments=None,
                  review_comments=None, pages=1, fail=None, state="OPEN",
                  delete_fail=False, login="bot", user_fail=False,
-                 threads=None):
+                 threads=None, pr_author="pr-author"):
+        self.pr_author = pr_author
         self.threads = [dict(t) for t in (threads or [])]
         self.login = login
         self.user_fail = user_fail
@@ -166,11 +167,16 @@ class FakeGh:
         if self.fail is not None and args[:len(self.fail)] == self.fail:
             return 1, "", "boom"
         if args[:2] == ["pr", "view"]:
-            return 0, json.dumps({
+            data = {
                 "number": self.number,
                 "state": self.state,
                 "url": "https://github.com/%s/pull/%d" % (self.repo,
-                                                          self.number)}), ""
+                                                          self.number)}
+            fields = args[args.index("--json") + 1].split(",") \
+                if "--json" in args else []
+            if "author" in fields:
+                data["author"] = {"login": self.pr_author}
+            return 0, json.dumps(data), ""
         if args[:2] == ["repo", "view"]:
             return 0, json.dumps({"nameWithOwner": self.repo}), ""
         if args[0] != "api":
@@ -675,6 +681,52 @@ class JoinTest(RoomTestBase):
         self.assertEqual(first_marker(gh.posts()[0]).name, "flag-a")
 
 
+class JoinIdentityTest(RoomTestBase):
+    """room-skill-identity-check: join warns when a reviewer or ci card is
+    posted from the author's account, and account selection stays with the
+    environment."""
+
+    def test_reviewer_on_the_authors_account_warns_and_joins(self):
+        for role in ("reviewer", "ci"):
+            gh = FakeGh(login="Mikkel", pr_author="mikkel")
+            code, out, err = self.room(gh, "join", "7", "--agent", "codex-a",
+                                       "--role", role)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(len(gh.posts()), 1)
+            self.assertIn("warning: acting as @Mikkel, who authored this "
+                          "pull request; a %s cannot approve it" % role, err)
+
+    def test_second_account_reviewer_does_not_warn(self):
+        gh = FakeGh(login="reviewer-b", pr_author="mikkel")
+        code, out, err = self.room(gh, "join", "7", "--agent", "codex-a",
+                                   "--role", "reviewer")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("authored this pull request", err)
+
+    def test_author_role_does_not_warn(self):
+        gh = FakeGh(login="mikkel", pr_author="mikkel")
+        code, out, err = self.room(gh, "join", "7", "--agent", "codex-a",
+                                   "--role", "author")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("authored this pull request", err)
+
+    def test_unreadable_login_still_joins(self):
+        gh = FakeGh(user_fail=True, pr_author="mikkel")
+        code, out, err = self.room(gh, "join", "7", "--agent", "codex-a",
+                                   "--role", "reviewer")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(gh.posts()), 1)
+        self.assertNotIn("authored this pull request", err)
+
+    def test_default_gh_passes_no_env_override(self):
+        proc = unittest.mock.Mock(returncode=0, stdout="", stderr="")
+        with unittest.mock.patch.object(room.subprocess, "run",
+                                        return_value=proc) as run:
+            room._default_gh(["api", "user"])
+        self.assertEqual(run.call_count, 1)
+        self.assertNotIn("env", run.call_args.kwargs)
+
+
 class ListTest(RoomTestBase):
     """room-list-verb: the text and JSON reports."""
 
@@ -789,6 +841,76 @@ def _joined(*extra):
     """Issue comments: cards for ``codex-a`` and ``claude-b``, then ``extra``."""
     return [card_comment(1, "codex-a"), card_comment(2, "claude-b")] + \
         list(extra)
+
+
+class WhoamiTest(RoomTestBase):
+    """room-whoami-verb: the acting account, the author, the credential
+    source, and the refusal of an author or an unreadable login."""
+
+    ENV = {"GH_TOKEN": "", "GH_CONFIG_DIR": ""}
+
+    def _whoami(self, gh, env=None):
+        merged = dict(self.ENV)
+        merged.update(env or {})
+        merged = {k: v for k, v in merged.items() if v}
+        base = {k: v for k, v in os.environ.items()
+                if k not in ("GH_TOKEN", "GH_CONFIG_DIR")}
+        with unittest.mock.patch.dict(os.environ, base, clear=True):
+            return self.room(gh, "whoami", "7", env=merged)
+
+    def test_second_account_may_approve(self):
+        gh = FakeGh(login="reviewer-b", pr_author="mikkel")
+        code, out, err = self._whoami(gh)
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertEqual(data["login"], "reviewer-b")
+        self.assertEqual(data["author"], "mikkel")
+        self.assertIs(data["may_approve"], True)
+        self.assertEqual(data["source"], "gh-login")
+
+    def test_author_in_another_case_is_refused(self):
+        gh = FakeGh(login="Mikkel", pr_author="mikkel")
+        code, out, err = self._whoami(gh)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        lines = [ln for ln in err.splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 1, err)
+        self.assertIn("Error:", lines[0])
+        self.assertIn("Mikkel", lines[0])
+        self.assertIn("cannot approve their own pull request", lines[0])
+
+    def test_unreadable_login_is_refused(self):
+        gh = FakeGh(user_fail=True, pr_author="mikkel")
+        code, out, err = self._whoami(gh)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("Error:", err)
+
+    def test_unreadable_author_is_refused(self):
+        gh = FakeGh(login="reviewer-b", pr_author="")
+        code, out, err = self._whoami(gh)
+        self.assertEqual(code, 1)
+        self.assertIn("Error:", err)
+
+    def test_source_follows_the_environment(self):
+        secret = "fake-token-value-123"
+        cases = (({"GH_TOKEN": secret}, "GH_TOKEN"),
+                 ({"GH_CONFIG_DIR": "/tmp/fake-gh-dir"}, "GH_CONFIG_DIR"),
+                 ({"GH_TOKEN": secret, "GH_CONFIG_DIR": "/tmp/fake-gh-dir"},
+                  "GH_TOKEN"),
+                 ({}, "gh-login"))
+        for env, source in cases:
+            gh = FakeGh(login="reviewer-b", pr_author="mikkel")
+            code, out, err = self._whoami(gh, env)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(json.loads(out)["source"], source)
+            self.assertNotIn(secret, out + err)
+
+    def test_whoami_writes_nothing_to_github(self):
+        gh = FakeGh(login="reviewer-b", pr_author="mikkel")
+        self._whoami(gh)
+        self.assertEqual(gh.posts(), [])
+        self.assertFalse([a for a, _i in gh.calls if "-X" in a])
 
 
 class MessageTest(RoomTestBase):

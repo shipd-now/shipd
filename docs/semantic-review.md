@@ -7,7 +7,7 @@ The semantic review reads a change structurally. It compares two refs through
 act on. It never reads whole files when the structural diff will do.
 
 `/s:review` runs it. On a pull request, the `semantic-review` check carries its
-verdict.
+verdict. A reviewer approves only from [its own account](agent-identity.md).
 
 ## What it reads
 
