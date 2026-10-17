@@ -1627,7 +1627,8 @@ class EpicResearchLintTest(unittest.TestCase):
     folder. When present it holds at least one markdown list entry whose link
     resolves — epic-dir-first, then repo-root — to an existing file under
     ``<content-dir>/research/``. Absent, the epic is exactly as valid as before;
-    the linter never walks ``research/`` on its own.
+    the linter only validates ``research/<slug>/report.md`` files, not loose
+    files or unlinked content.
 
     Written test-first; expected to FAIL until the research-link check lands in
     ``lint_epic`` (task 1.2)."""
@@ -1759,8 +1760,9 @@ class EpicResearchLintTest(unittest.TestCase):
         self.assertFalse(has([e.lower() for e in errors], "research"))
 
     def test_unlinked_malformed_research_file_ignored(self):
-        # A malformed file under research/ that no epic links produces no
-        # library-lint finding — the linter never walks research/ on its own.
+        # A loose malformed file directly under research/ (not a
+        # <slug>/report.md) that no epic links produces no library-lint
+        # finding.
         self._write_research("orphan.md", "not a valid anything @@@\n")
         self._write_epic("reporting-overhaul", self.BASE_EPIC)
         self.assertEqual([str(e) for e in sl.lint_library(self.root)], [])
@@ -2143,7 +2145,8 @@ class ResearchReportLintTest(unittest.TestCase):
     code blocks) resolving to a listed source — only when the report carries a
     citation signal (a ``## Sources`` section, or at least one marker). A
     titled report carrying neither signal is accepted, so a supplied document
-    installs clean. Library linting never walks ``research/`` on its own."""
+    installs clean. Library linting also runs these checks on every
+    ``research/<slug>/report.md`` it finds."""
 
     CONFORMING = (
         "# Payment API landscape\n"
@@ -2267,10 +2270,26 @@ class ResearchReportLintTest(unittest.TestCase):
         self._write_report("payment-apis", text)
         self.assertEqual(self._errors("payment-apis"), [])
 
-    def test_library_lint_ignores_research_files(self):
-        # An invalid report under research/ produces no library-lint finding —
-        # the linter never walks research/ on its own.
+    def test_library_lint_checks_research_files(self):
+        # An untitled report under research/<slug>/ now yields a
+        # library-lint finding naming the file.
         self._write_report("broken", "not a valid report @@@\n")
+        errors = [str(e) for e in sl.lint_library(self.root)]
+        self.assertTrue(has(errors, "report.md"), errors)
+        self.assertTrue(has(errors, "broken"), errors)
+
+    def test_library_lint_clean_with_titled_research_and_docs(self):
+        self._write_report("good", self.CONFORMING)
+        ddir = os.path.join(self.root, ".shipd", "docs", "good")
+        os.makedirs(ddir)
+        with open(os.path.join(ddir, "doc.md"), "w", encoding="utf-8") as fh:
+            fh.write("# A titled document\n\nFree-form body [1].\n")
+        # A slug directory without its file is skipped.
+        os.makedirs(os.path.join(self.root, ".shipd", "research", "empty"))
+        os.makedirs(os.path.join(self.root, ".shipd", "docs", "empty"))
+        self.assertEqual([str(e) for e in sl.lint_library(self.root)], [])
+
+    def test_library_lint_clean_without_research_or_docs_folders(self):
         self.assertEqual([str(e) for e in sl.lint_library(self.root)], [])
 
 
@@ -2543,8 +2562,8 @@ class DocsDocumentLintTest(unittest.TestCase):
     structure, so a supplied document (strategy notes, meeting minutes, an
     API excerpt) installs without pretending to a grammar it does not have.
     A missing document file is itself a finding naming the expected path.
-    Library linting never walks the content directory's ``docs/`` folder on
-    its own, and ``spec_lint.py`` exposes no command-line mode for these
+    Library linting runs these checks on every ``docs/<slug>/doc.md`` it
+    finds, and ``spec_lint.py`` exposes no command-line mode for these
     checks.
 
     Written test-first; expected to FAIL until ``lint_docs`` lands in
@@ -2597,11 +2616,12 @@ class DocsDocumentLintTest(unittest.TestCase):
         self.assertTrue(has(errors, "no-such-doc"), errors)
         self.assertTrue(has(errors, self._doc_path("no-such-doc")), errors)
 
-    def test_library_lint_ignores_docs_files(self):
-        # An untitled file under docs/ produces no library-lint finding —
-        # the linter never walks docs/ on its own.
+    def test_library_lint_checks_docs_files(self):
+        # An untitled file under docs/<slug>/ now yields a library-lint
+        # finding naming the document file.
         self._write_doc("broken", "not a valid document @@@\n")
-        self.assertEqual([str(e) for e in sl.lint_library(self.root)], [])
+        errors = [str(e) for e in sl.lint_library(self.root)]
+        self.assertTrue(has(errors, self._doc_path("broken")), errors)
 
     def test_no_command_line_mode_for_docs_checks(self):
         # spec_lint.py exposes no --docs flag (unlike --epic/--initiative);
