@@ -62,8 +62,15 @@ Success criteria:
 - **Approvals, not comments.** The review gate's poster submits a review with
   event `APPROVE` when its verdict is pass and `REQUEST_CHANGES` when it is
   fix-required, replacing today's `COMMENT`, so a reviewer's verdict counts
-  toward required approvals. The `semantic-review` status and summary comment
-  are unchanged. An approval by the PR's author is never attempted.
+  toward required approvals. This deliberately reverses the `COMMENT`-only
+  rule documented on `REVIEW_EVENT` in `review_gate.py` and in the installed
+  workflow, which avoided a second block that a human must dismiss by hand.
+  The reversal holds because the same account's next review on the new head
+  supersedes its earlier one, so a stale `REQUEST_CHANGES` clears when the
+  gate re-posts. The `REVIEW_EVENT` constant, the workflow's review payload,
+  and the test that pins `COMMENT` change together. The `semantic-review`
+  status and summary comment are unchanged. An approval by the PR's author is
+  never attempted.
 - **Identity is the account, one per role.** The author's agent posts under
   the PR author's account. The reviewer's agent posts under a second account
   with write access, selected per session by `GH_TOKEN` (or a `gh` config
