@@ -373,8 +373,9 @@ citation skeleton: the numbered `## Sources` section, the at-least-one-marker
 rule, and citation-marker resolution with fenced code blocks skipped. If the
 report carries neither signal, then only the title check SHALL apply and a
 titled report SHALL produce no findings. Every finding SHALL name the report
-file. Library linting SHALL NOT walk the content directory's `research/`
-folder on its own; the checks run only when the emit engine installs a report.
+file. Library linting SHALL run these checks on every
+`<content-dir>/research/<slug>/report.md` it finds, skipping a slug directory
+that holds no `report.md`, so CI validates reports without the emit engine.
 
 #### Scenario: Uncited titled document passes
 - **WHEN** the research checks run on a report whose first line is a
@@ -392,10 +393,10 @@ folder on its own; the checks run only when the emit engine installs a report.
   but no `## Sources` section
 - **THEN** a finding reports the missing `## Sources` section
 
-#### Scenario: Library lint ignores research files
-- **WHEN** `spec_lint.py` lints the library while an invalid file sits under
-  the content directory's `research/` folder
-- **THEN** no research finding is produced
+#### Scenario: Library lint checks research files
+- **WHEN** `spec_lint.py` lints the library while an untitled
+  `research/broken/report.md` exists
+- **THEN** a finding names that report file
 
 ### Requirement: Wiki lint mode
 id: wiki-lint-mode
@@ -623,10 +624,9 @@ skeleton, header metadata, or section structure — an installed document's
 body is free-form, so a supplied document never fails on a provenance or
 structure grammar it did not claim. Every finding SHALL name the document
 file. If the document file is missing, then the checks SHALL report that as
-a finding naming the expected path. Library linting SHALL NOT walk the
-content directory's `docs/` folder on its own, and the checks SHALL have no
-`spec_lint.py` command-line mode; they run only when the emit engine
-installs a document.
+a finding naming the expected path. Library linting SHALL run these checks on
+every `<content-dir>/docs/<slug>/` directory that holds a `doc.md`, and the
+checks SHALL have no `spec_lint.py` command-line mode.
 
 #### Scenario: Titled free-form document passes
 - **WHEN** the docs checks run on a document whose first line is a non-empty
@@ -639,10 +639,15 @@ installs a document.
   non-empty `# <title>`
 - **THEN** a finding names the document file and the expected title line
 
-#### Scenario: Library lint ignores docs files
-- **WHEN** `spec_lint.py` lints the library while an untitled file sits
-  under the content directory's `docs/` folder
-- **THEN** no docs finding is produced
+#### Scenario: Library lint checks docs files
+- **WHEN** `spec_lint.py` lints the library while an untitled
+  `docs/broken/doc.md` exists
+- **THEN** a finding names that document file
+
+#### Scenario: A repo without research or docs lints as before
+- **WHEN** `spec_lint.py` lints a library whose content directory has no
+  `research/` or `docs/` folder
+- **THEN** no research or docs finding is produced
 
 ### Requirement: Epic References section links
 id: epic-references-link-lint

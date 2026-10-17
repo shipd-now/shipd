@@ -1142,9 +1142,9 @@ def lint_research(root, slug, errors):
     report carries a citation signal: a ``## Sources`` section, or at least one
     such marker. A titled report carrying neither signal produces no findings,
     so a supplied document installs without declaring a provenance it does not
-    have. Every finding names the report file. These checks run only when the
-    emit engine installs a report; :func:`lint_library` never calls them, so the
-    library lint never walks the content directory's ``research/`` folder."""
+    have. Every finding names the report file. These checks run when the emit
+    engine installs a report and, via :func:`lint_library`, on every
+    ``research/<slug>/report.md`` in the content directory."""
     path = os.path.join(sc.specs_dir(root), "research", slug, "report.md")
     if not os.path.isfile(path):
         errors.append(LintError(
@@ -1206,9 +1206,9 @@ def lint_docs(root, slug, errors):
     skeleton, header metadata, or section structure is ever demanded and a
     supplied document (strategy notes, meeting minutes, an API excerpt)
     never fails on a grammar it did not claim. Every finding names the
-    document file. These checks run only when the emit engine installs a
-    document; :func:`lint_library` never calls them, so the library lint
-    never walks the content directory's ``docs/`` folder."""
+    document file. These checks run when the emit engine installs a
+    document and, via :func:`lint_library`, on every ``docs/<slug>/doc.md``
+    in the content directory."""
     path = os.path.join(sc.specs_dir(root), "docs", slug, "doc.md")
     if not os.path.isfile(path):
         errors.append(LintError(
@@ -1776,9 +1776,11 @@ def _read(path):
 
 
 def lint_library(root):
-    """Lint every master capability spec under ``.shipd/verified/`` and every epic
-    under ``.shipd/epics/``. Returns the list of :class:`LintError`. A repository
-    with no ``.shipd/epics/`` directory lints exactly as before this feature."""
+    """Lint every master capability spec under ``.shipd/verified/``, every epic
+    under ``.shipd/epics/``, every ``research/<slug>/report.md`` and every
+    ``docs/<slug>/doc.md``. Returns the list of :class:`LintError`. Absent
+    folders, and slug directories without their file, are skipped, so a
+    repository without them lints exactly as before."""
     errors = []
     specs_dir = os.path.join(sc.specs_dir(root), "verified")
     if os.path.isdir(specs_dir):
@@ -1791,6 +1793,14 @@ def lint_library(root):
         for slug in sorted(os.listdir(epics_dir)):
             if os.path.isfile(os.path.join(epics_dir, slug, "epic.md")):
                 lint_epic(root, slug, errors)
+    for folder, filename, check in (
+            ("research", "report.md", lint_research),
+            ("docs", "doc.md", lint_docs)):
+        base = os.path.join(sc.specs_dir(root), folder)
+        if os.path.isdir(base):
+            for slug in sorted(os.listdir(base)):
+                if os.path.isfile(os.path.join(base, slug, filename)):
+                    check(root, slug, errors)
     return errors
 
 
