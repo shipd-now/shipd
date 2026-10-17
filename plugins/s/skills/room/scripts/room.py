@@ -583,9 +583,14 @@ def _task_line(task):
 
 
 def _card_line(card):
-    return "%s  harness %s  skills %s  version %s" % (
-        card.name, card.harness or "-",
-        ",".join(card.skills) if card.skills else "-", card.version or "-")
+    parts = [card.name]
+    if card.role:
+        parts.append("role %s" % card.role)
+    if card.harness:
+        parts.append("harness %s" % card.harness)
+    parts.append("skills %s" % (",".join(card.skills) if card.skills else "-"))
+    parts.append("version %s" % (card.version or "-"))
+    return "  ".join(parts)
 
 
 def _task_dict(task):

@@ -66,7 +66,13 @@ class SkillLoopTest(unittest.TestCase):
         flat = _flat(self.text)
         self.assertIn("--skill review-finding --skill question --skill status",
                       flat)
-        self.assertIn("--timeout 600", flat)
+        self.assertIn("--timeout 540", flat)
+        self.assertNotIn("--timeout 600", flat)
+
+    def test_tool_call_timeout_exceeds_watch_timeout(self):
+        flat = _flat(self.text)
+        self.assertIn("its own timeout above 540 seconds", flat)
+        self.assertIn("600000", flat)
 
     def test_every_message_carries_a_state(self):
         lines = [ln for ln in self.text.splitlines()
@@ -173,7 +179,16 @@ class BodyRenderTest(unittest.TestCase):
     def test_background_harness_watches(self):
         out = hb.render("room", ("background-tasks",), refs_dir=REFS)
         self.assertIn("shipd room watch", out)
-        self.assertIn("--timeout 600", out)
+        self.assertIn("--timeout 540", out)
+        self.assertNotIn("--timeout 600", out)
+        self.assertIn("540 seconds", out)
+
+    def test_reference_and_doc_use_the_540_timeout(self):
+        for path in (os.path.join(PLUGIN_ROOT, "harness", "references",
+                                  "room.md"), DOC_PATH):
+            text = _read(path)
+            self.assertIn("--timeout 540", text, path)
+            self.assertNotIn("--timeout 600", text, path)
 
 
 class DocsTest(unittest.TestCase):

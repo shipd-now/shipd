@@ -61,11 +61,13 @@ stands, name the three sources above, and stop.
 2. **Read the room.** `shipd room list <pr>` prints the cards and the open
    tasks. Show the user a compact summary of it.
 3. **Wait for your turn — in the foreground.**
-   `shipd room watch <pr> --since <cursor> --timeout 600`, with cursor `0` on
+   `shipd room watch <pr> --since <cursor> --timeout 540`, with cursor `0` on
    entry. `watch` blocks until a task is this agent's turn, then prints one
    NDJSON line per surfaced task (fields: `task`, `skill`, `text`, `url`,
-   `cursor`, and the rest of the task) and exits 0. The ten-minute timeout
-   bounds every wait; never drop it.
+   `cursor`, and the rest of the task) and exits 0. The nine-minute timeout
+   bounds every wait; never drop it. Give the tool call that runs `watch` its
+   own timeout above 540 seconds (on Claude Code, a Bash `timeout` of
+   `600000` ms), so the harness never moves the wait to the background.
 4. **Work each surfaced task**, one line at a time, and only the tasks `watch`
    printed — never act on a task `watch` did not surface, even one `list`
    showed:
@@ -100,7 +102,7 @@ End the turn and report — posting nothing further — on any of these:
   task" and the cursor `watch` printed on stderr, so the user or a later run
   re-enters with `--since <cursor>`. Do not loop back into `watch` on your
   own. With `stay`, the skill re-enters `watch` with that cursor, each call
-  still in the foreground with `--timeout 600`, and the turn goes on until a
+  still in the foreground with `--timeout 540`, and the turn goes on until a
   `closed` line, the round cap, or a failing verb.
 - **Round cap.** `message` exits 1 with an `Error:` line naming the round cap.
   The verb has already posted `failed` (reason `round-cap`) on the task; report

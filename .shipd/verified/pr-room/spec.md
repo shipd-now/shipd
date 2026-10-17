@@ -353,7 +353,9 @@ id: room-list-verb
 
 `room.py list <pr> [--json] [--open]` SHALL read the room once and print, in
 text mode, a `room <context>` header, a `cards:` block with one line per card
-(`name`, `harness`, `skills`, `version`) and a `tasks:` block with one line
+(`name`, then `role <r>` when the card has a role, then `harness <h>` when
+the card has a harness, then `skills <s|->` and `version <v|->`, separated
+by two spaces) and a `tasks:` block with one line
 per `Task` from `room_schema.build_tasks` (`#<id>`, `state`, `from <opener>`,
 `to <addressee|->`, `round <n>`, `last <last_agent>`, and `skill <s>` when
 set); with `--json` it SHALL print one object `{"context", "cards": [card
@@ -369,6 +371,13 @@ cards or no tasks SHALL print `(none)` under that block.
 - **THEN** text output lists both cards and `#<id>  input-required  from
   codex-a  to claude-b  round 1  last codex-a`, and `--json` carries the
   same two cards and one task with `messages` `1`
+
+#### Scenario: Card line shows the role and omits an unset harness
+- **WHEN** the PR holds a card `claude-b` with role `author` and no harness,
+  and a card `codex-a` with harness `codex` and no role
+- **THEN** the text card lines are `claude-b  role author  skills -  version
+  -` and `codex-a  harness codex  skills -  version -`, and neither line
+  contains `harness -` or `role -`
 
 #### Scenario: Human comments are not tasks
 - **WHEN** the PR holds only unmarked comments

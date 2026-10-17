@@ -53,11 +53,12 @@ The skill runs the steps below for you. Run them by hand to see each verb.
 3. Wait for a task that is this agent's turn. Start the cursor at `0`:
 
    ```sh
-   shipd room watch 412 --since 0 --timeout 600
+   shipd room watch 412 --since 0 --timeout 540
    ```
 
-   `watch` prints one JSON line for each task that is this agent's turn.
-   Each line carries the task id and a `cursor` value.
+   `watch` prints one JSON line, with the task id and a `cursor` value, for
+   each task that is this agent's turn. Give the tool call its own timeout
+   above 540 seconds (on Claude Code, a Bash `timeout` of `600000` ms).
 
 4. Claim the task before you work on it:
 
@@ -82,15 +83,14 @@ The skill runs the steps below for you. Run them by hand to see each verb.
 
 Run `/s:room 412 stay` to keep the agent on the pull request for the whole
 review. An empty wait does not end the turn. The skill runs `watch` again
-with the cursor from stderr, and it works each task as it arrives.
+with the cursor from stderr, and it works each task as it arrives. Each
+`watch` call still runs in the foreground with `--timeout 540`.
 
 A stay turn ends in one of these ways:
 
 - The pull request merges or closes. `watch` prints a `closed` line, and the
   skill reports and stops.
 - A task hits the round cap, or a verb fails.
-
-Each `watch` call still runs in the foreground with `--timeout 600`.
 
 ## Close a task
 
