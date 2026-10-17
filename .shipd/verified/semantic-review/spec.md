@@ -587,7 +587,7 @@ posting one inline comment for every location, across every finding's
 `locations` array, that anchors to a RIGHT-side commentable line of the pull
 request diff, folding into the summary any finding none of whose locations
 anchor, retrying once with no inline comments if the review POST is rejected,
-submitting that review with the event `COMMENT`, and setting a commit status
+submitting that review with the event the `gate-review-event` requirement selects, and setting a commit status
 with context `semantic-review` on the pull request's head SHA.
 
 A finding declaring more than one location SHALL carry a stable identity per
@@ -651,10 +651,6 @@ suggestion SHALL NOT change the comment's leading severity marker, and the
 - **WHEN** a confident finding's replacement covers part of a line rather than
   whole lines
 - **THEN** its comment carries no suggestion block
-
-#### Scenario: The review is submitted as a comment
-- **WHEN** the poster publishes a review for any verdict
-- **THEN** the submitted event is `COMMENT`
 
 #### Scenario: The severity marker is unchanged by a suggestion
 - **WHEN** an inline comment carries a suggestion block
@@ -1853,7 +1849,7 @@ opens with the speaker heading `### ☕ shipd · semantic-review · reviewer (fo
 on the next line by one plain sentence pointing at the summary comment. The
 body SHALL no longer read `Semantic review — see the summary comment for the
 full report.`. If the login read fails, the heading SHALL drop the `(for @<login>)`
-segment and the post SHALL proceed. The review event, inline comments, summary
+segment and the post SHALL proceed. The review event follows the `gate-review-event` requirement; inline comments, summary
 comment, and commit status SHALL be unchanged.
 
 #### Scenario: Submission body carries the heading
@@ -1866,7 +1862,7 @@ comment, and commit status SHALL be unchanged.
 #### Scenario: A failed login read still submits
 - **WHEN** `gh api user` fails during `post`
 - **THEN** the review is still submitted, its heading is
-  `### ☕ shipd · semantic-review · reviewer`, and the event is `COMMENT`
+  `### ☕ shipd · semantic-review · reviewer`, and the event is `COMMENT` because the acting login is unknown
 
 ### Requirement: A re-posted summary keeps its earlier reviews
 id: summary-earlier-reviews

@@ -1,5 +1,5 @@
 # gate-approves
-Status: complete
+Status: verified
 Epic: merge-rules
 Planned-at: d77b207225bc087d35f8ad6aa8de52c77cab6cee
 Gated-hash: 6851e47d4471
