@@ -897,13 +897,20 @@ consuming skill knows the fix is unavailable. The verb SHALL continue to
 mutate nothing.
 
 The `protection` check SHALL probe
-`gh api repos/<nwo>/branches/<default>/protection`: when the response lists
-required status contexts containing `semantic-review` it SHALL report `ok`;
-when the contexts omit `semantic-review` it SHALL `warn` naming the missing
-context; when the response is 404 (unprotected) it SHALL `warn` naming the
-unprotected default branch; when the response is 403 (no admin) it SHALL fall
-back to the branches listing's `protected` boolean, reporting `ok` with a
-contexts-unverifiable note when `true` and `warn` when `false`.
+`gh api repos/<nwo>/branches/<default>/protection` and, when that probe does
+not already show `semantic-review` required, also the effective branch rules
+`gh api repos/<nwo>/rules/branches/<default>` (which includes organisation
+rulesets and needs no admin permission), and SHALL judge the union of the
+required status contexts from both: when the union contains `semantic-review`
+it SHALL report `ok` naming the source (classic protection or a ruleset);
+when a ruleset protects the branch (the rules list is non-empty) or classic
+protection does, and the union omits `semantic-review`, it SHALL `warn`
+naming the missing context and, for a ruleset, saying so; only when neither
+source protects the branch (classic 404 and an empty rules list) SHALL it
+`warn` naming the unprotected default branch. When the classic probe is 403
+(no admin) the check SHALL consult the rules list before the branches
+listing's `protected` boolean, and a rules-list probe that fails SHALL leave
+the classic outcome standing, never a false alarm.
 
 The `automerge` check SHALL report `ok` when the repository payload's
 `allow_auto_merge` is `true`; when it is `false` and the resolved `pr-mode`
@@ -939,6 +946,19 @@ being on is a consented setting, so neither state is a problem to report.
 - **WHEN** `shipd doctor` runs where the protection probe returns 404 for the
   default branch
 - **THEN** a `warn protection — ` line names the unprotected default branch
+
+#### Scenario: A ruleset-protected branch is not called unprotected
+- **WHEN** `shipd doctor` runs where the classic protection probe returns 404
+  and the effective branch rules list a `required_status_checks` rule whose
+  contexts include `semantic-review`
+- **THEN** the `protection` line begins `ok` and names the ruleset as the
+  source
+
+#### Scenario: A ruleset without the semantic-review context warns
+- **WHEN** the classic probe returns 404 and the effective rules list is
+  non-empty but requires no `semantic-review` context
+- **THEN** a `warn protection — ` line names the missing context and the
+  ruleset, and does not say the branch is unprotected
 
 #### Scenario: Protection missing the semantic-review context warns
 - **WHEN** `shipd doctor` runs where the protection probe returns required
@@ -1470,3 +1490,72 @@ naming the missing admin permission), and SHALL be reported by `shipd --help`.
 #### Scenario: Duplicate name is refused
 - **WHEN** two repository rulesets are named `shipd merge rules`
 - **THEN** apply writes nothing and exits `1` naming the duplicate
+
+### Requirement: Doctor merge-rules drift check
+id: doctor-merge-rules-check
+
+The `doctor` verb SHALL report a `merge-rules` check directly after
+`fast-pass`, read-only through the injectable `gh` runner. It SHALL resolve the
+`merge` configuration with `resolve_merge`, find the repository's
+`shipd merge rules` ruleset with `merge_rules.find_owned`, and compare them
+with `merge_rules.diff` (all from `merge-rules-config`). When nothing differs
+it SHALL report `ok`. When members differ, or no such ruleset exists, it SHALL
+`warn` with one line listing each differing member as `member: live X, wanted
+Y` joined by `; `, ending with a pointer to `shipd gate rules` (the
+member-per-line report) and `shipd gate rules apply` through `/s:gate`. When the
+`merge` configuration is invalid it SHALL `warn` naming the error. When GitHub
+is unreadable, the ruleset lookup raises, or the context is skipped, it SHALL
+report `ok` with a skipped or unverifiable note. The check SHALL write nothing.
+
+#### Scenario: Matching ruleset is ok
+- **WHEN** the live `shipd merge rules` ruleset matches the resolved config
+- **THEN** the `merge-rules` line begins `ok`
+
+#### Scenario: Drift is warned member by member
+- **WHEN** the live ruleset requires 0 approvals and config wants 2
+- **THEN** a `warn merge-rules — ` line contains `approvals: live 0, wanted 2`
+  and names `shipd gate rules`, and the exit code is `0`
+
+#### Scenario: Missing ruleset warns
+- **WHEN** no ruleset named `shipd merge rules` exists
+- **THEN** a `warn merge-rules — ` line names `shipd gate rules apply`
+
+#### Scenario: Unreadable GitHub never warns
+- **WHEN** the ruleset lookup fails or raises
+- **THEN** the line begins `ok` with a note that it could not be verified
+
+### Requirement: Doctor Actions-approval check
+id: doctor-actions-approve-check
+
+The `doctor` verb SHALL report an `actions-approve` check directly after
+`merge-rules`. Where `.github/workflows/copilot-review-gate.yml` exists at the
+root it SHALL read `gh api repos/<nwo>/actions/permissions/workflow` and report
+`ok` when `can_approve_pull_request_reviews` is `true`, and `warn` when it is
+`false`, saying the CI reviewer cannot approve until an admin enables the
+setting through `/s:gate`. Where the workflow is absent, the context is
+skipped, or the read is denied, it SHALL report `ok` with a skipped or
+unverifiable note. The check SHALL write nothing.
+
+#### Scenario: Setting off warns where the gate is installed
+- **WHEN** the gate workflow exists and the setting reads `false`
+- **THEN** a `warn actions-approve — ` line is printed
+
+#### Scenario: Setting on is ok
+- **WHEN** the gate workflow exists and the setting reads `true`
+- **THEN** the line begins `ok`
+
+#### Scenario: No gate workflow skips
+- **WHEN** the gate workflow is absent
+- **THEN** the line begins `ok` and notes it was skipped
+
+### Requirement: New GitHub checks are report-only under fix
+id: doctor-new-checks-report-only
+
+Under `doctor --fix` the `merge-rules` and `actions-approve` checks SHALL stay
+report-only, naming `/s:gate` (`shipd gate rules apply`) as the consent-gated
+remedy, and a `protection` finding sourced from a ruleset SHALL likewise run no
+remedy.
+
+#### Scenario: Fix performs no GitHub mutation for the new checks
+- **WHEN** `shipd doctor --fix` meets a `warn merge-rules` line
+- **THEN** no `gh` mutation runs and the line carries a `/s:gate` fix hint
