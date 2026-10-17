@@ -117,6 +117,13 @@ Before `gh pr merge`, with or without `--auto`, an agent whose card role is
 `tasks` is empty. A task still `working` or `input-required` blocks the merge:
 with `stay`, keep watching; otherwise report the open tasks and end the turn.
 
+## Approving
+
+Before any approving or change-requesting review, run `shipd room whoami <pr>`.
+It prints the acting login, the author and the credential source, and exits 1
+with an `Error:` line when the login is the author's or unreadable. On a
+non-zero exit, relay the `Error:` line and stop: do not submit the review.
+
 ## Foreground only
 
 `watch` runs in the foreground, inside the one tool call that waits on it.

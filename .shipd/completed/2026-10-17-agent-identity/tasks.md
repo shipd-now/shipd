@@ -1,0 +1,20 @@
+## 1. Tests first
+
+- [x] 1.1 [req: room-whoami-verb] In `plugins/s/skills/room/tests/test_room.py`, give `FakeGh` a `pr_author` argument (default `"pr-author"`) and make `pr view` answers that include `--json author` return `"author": {"login": ...}`. Add `WhoamiTest` covering: second account exits 0 with `may_approve` true, equal login in a different case exits 1 with one `Error:` line, failed `gh api user` exits 1, `source` is `GH_TOKEN` or `GH_CONFIG_DIR` or `gh-login` from the env and the token value is absent from output. Run it and observe it fail.
+- [x] 1.2 [req: room-skill-identity-check] In the same file add tests: `join --role reviewer` with login equal to the author posts the card and warns on stderr; `join --role author` does not warn; `_default_gh` calls `subprocess.run` without an `env` argument (patch `subprocess.run`). Run and observe failure.
+- [x] 1.3 [req: room-skill-identity-check] In `plugins/s/skills/room/tests/test_room_skill.py`, add a test that SKILL.md, `plugins/s/harness/bodies/room.md` and `plugins/s/harness/references/room.md` each contain `shipd room whoami`; and a test that `docs/agent-identity.md` passes `docs_lint.py` like the existing `docs/pr-room.md` test. Run and observe failure.
+
+## 2. Room verb
+
+- [x] 2.1 [req: room-whoami-verb] In `plugins/s/skills/room/scripts/room.py`, add `_pr_author(gh, ref, repo)` using `gh pr view <ref> --json author --repo <repo>` returning `""` on failure, and `_credential_source(environ)` returning `GH_TOKEN`, `GH_CONFIG_DIR` or `gh-login` in that precedence.
+- [x] 2.2 [req: room-whoami-verb] Add `cmd_whoami` after `cmd_list`: resolve the room, read the login with `_login`, read the author, raise `RoomError` with the one-line refusal when either is empty or they match case-insensitively, else emit the JSON object. Register the `whoami` subparser (with `pr`, `--json` omitted) in `build_parser` and update the module docstring verb list.
+- [x] 2.3 [req: room-skill-identity-check] In `cmd_join`, when `opts.role` is `reviewer` or `ci`, read the login and author and write `warning: acting as @<login>, who authored this pull request; a <role> cannot approve it` to stderr when they match. Never fail the join on an unreadable login.
+- [x] 2.4 [req: room-whoami-verb] In `plugins/s/bin/shipd`, add `whoami` to the room verb list in the help text at the `room <verb>` line (about line 180). Run the room suite and confirm tasks 1.1 and 1.2 pass.
+
+## 3. Skill, docs, version
+
+- [x] 3.1 [req: room-skill-identity-check] In `plugins/s/skills/room/SKILL.md` add a short section "Approving" after "Merging": run `shipd room whoami <pr>` before any approving or change-requesting review, stop and relay the `Error:` line if it exits non-zero. Add the same paragraph to `plugins/s/harness/bodies/room.md` (after the merge paragraph) and `plugins/s/harness/references/room.md` (a new `## Approving` section before `## The stop list`). Mention the new verb in the SKILL.md description-free body only.
+- [x] 3.2 [req: agent-identity-docs-version] Create `docs/agent-identity.md` (first line `<!-- doc-type: how-to -->`): steps to create the second account and a fine-grained token or `gh` config directory with write access, start the reviewer session with `GH_TOKEN` or `GH_CONFIG_DIR` set, verify with `shipd room whoami`, and the rule that tokens never go in tracked files or `.shipd-config.json`. Run `plugins/s/skills/document/scripts/docs_lint.py` on it until clean.
+- [x] 3.3 [req: agent-identity-docs-version] Add a See-also link to `docs/agent-identity.md` in `docs/pr-room.md`, `docs/multi-agent-pr.md` and `docs/semantic-review.md`, and add `whoami` to the verb description in `docs/pr-room.md`'s "Before you start".
+- [x] 3.4 [req: agent-identity-docs-version] Bump `version` in `plugins/s/.claude-plugin/plugin.json` one patch above `main`'s value and run `version_guard.py --base main --head HEAD`.
+- [x] 3.5 [req: *] Run `python3 -m unittest discover -s plugins/s/skills/room/tests` and `python3 -m unittest discover -s plugins/s/skills/build/tests`; grep both outputs for `OK` or `FAILED`. Do not edit `review_gate.py`.

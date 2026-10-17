@@ -8,6 +8,8 @@ agent drives to take part in one:
   join <pr>      post or refresh this agent's own card comment (``--role``
                  sets its role: author, reviewer, or ci)
   list <pr>      the room's cards and tasks
+  whoami <pr>    the acting login, the author, and the credential source;
+                 exits 1 when the login authored the pull request
   message <pr>   open a task (``--new``) or advance one (``--task ID``)
   close <pr>     post a task's terminal message
   watch <pr>     wait for a task that is this agent's turn (NDJSON)
@@ -500,6 +502,33 @@ def _login(gh, memo):
     return login
 
 
+def _pr_author(gh, ref, repo):
+    """The pull request author's login from ``gh pr view --json author``, or
+    ``""`` when the read fails or names no login."""
+    rc, out, _err = gh(["pr", "view", str(ref), "--json", "author",
+                        "--repo", repo])
+    if rc != 0:
+        return ""
+    try:
+        data = json.loads(out or "null")
+        author = data.get("author") if isinstance(data, dict) else None
+        return str(author.get("login") or "") \
+            if isinstance(author, dict) else ""
+    except ValueError:
+        return ""
+
+
+def _credential_source(environ):
+    """Which credential the ``gh`` subprocess will use: ``GH_TOKEN``, else
+    ``GH_CONFIG_DIR``, else the shared ``gh`` login. Names only, never a
+    value."""
+    if environ.get("GH_TOKEN"):
+        return "GH_TOKEN"
+    if environ.get("GH_CONFIG_DIR"):
+        return "GH_CONFIG_DIR"
+    return "gh-login"
+
+
 def _card_role(cards, name):
     """The role on ``name``'s card, or ``""`` when it has none."""
     for card in cards:
@@ -567,6 +596,13 @@ def cmd_join(opts, parser, gh):
     else:
         resp = _post(gh, repo, number, body)
     resp = resp or {}
+    if opts.role in ("reviewer", "ci"):
+        login = _login(gh, {})
+        author = _pr_author(gh, number, repo) if login else ""
+        if login and author and login.lower() == author.lower():
+            sys.stderr.write(
+                "warning: acting as @%s, who authored this pull request; "
+                "a %s cannot approve it\n" % (login, opts.role))
     _emit({"comment": resp.get("id", owned.get(agent)), "agent": agent,
            "url": resp.get("html_url")})
     sys.stderr.write("joined %s as %s\n" % (context, agent))
@@ -623,6 +659,25 @@ def cmd_list(opts, parser, gh):
     lines.append("tasks:")
     lines += ["  " + _task_line(t) for t in tasks] or ["  (none)"]
     sys.stdout.write("\n".join(lines) + "\n")
+    return 0
+
+
+def cmd_whoami(opts, parser, gh):
+    repo, number, _context = _resolve_room(gh, opts.pr, opts.repo)
+    login = _login(gh, {})
+    author = _pr_author(gh, number, repo)
+    if not login:
+        raise RoomError("could not read the acting GitHub login (gh api "
+                        "user failed); an approval needs a readable account")
+    if not author:
+        raise RoomError("could not read the author of %s#%d; an approval "
+                        "needs a known author" % (repo, number))
+    if login.lower() == author.lower():
+        raise RoomError("acting as @%s, who authored %s#%d; an author "
+                        "cannot approve their own pull request"
+                        % (login, repo, number))
+    _emit({"login": login, "author": author,
+           "source": _credential_source(os.environ), "may_approve": True})
     return 0
 
 
@@ -930,6 +985,12 @@ def build_parser():
     p.add_argument("--open", action="store_true",
                    help="list only tasks still working or input-required")
     p.set_defaults(func=cmd_list)
+
+    p = sub.add_parser("whoami", parents=[common],
+                       help="the acting account, refused when it authored "
+                            "the pull request")
+    p.add_argument("pr", help="pull request number, URL, or branch")
+    p.set_defaults(func=cmd_whoami)
 
     p = sub.add_parser("message", parents=[common],
                        help="open a task or advance one")
