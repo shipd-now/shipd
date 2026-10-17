@@ -16,9 +16,8 @@ verdict rules, the trust boundary, and the limits.
 
 **In a Claude Code session, `/s:gate` runs this whole guide for you.** It
 preflights the prerequisites, runs `shipd copilot add`, and offers to commit
-and push. It then takes one batched consent round over the repository settings,
-relays the token recipe, and verifies with `shipd doctor`. Read on to set the
-gate up by hand.
+and push. It then takes one consent round for the settings, relays the token
+recipe, and verifies with `shipd doctor`. Read on to set up by hand.
 
 ## 1. Install the files
 
@@ -63,18 +62,18 @@ pins the instructions to the base ref.
 Installing the files makes the skill available. Asking for a review is a
 GitHub-side setting, which `shipd copilot` never touches.
 
-- **Per pull request.** Request **Copilot** as a reviewer from the pull
-  request's Reviewers menu, as you would request a person.
+- **Per pull request.** Request **Copilot** as a reviewer from the Reviewers
+  menu.
 - **For every pull request.** Add a **branch ruleset** on the protected branch
   requiring Copilot code review, under **Settings** → **Rules** → **Rulesets**.
 
-The gate's poll fallback waits for that review. The CLI reviewer mode needs
-neither path, because it reviews every pull request from its own Actions job.
+The poll fallback waits for that review. The CLI reviewer mode needs neither,
+as it reviews every pull request from its own Actions job.
 
 ## 4. Set the reviewer token
 
-`COPILOT_GITHUB_TOKEN` selects the CLI reviewer mode, and the only thing it
-must do is spend Copilot requests. Give it exactly that.
+`COPILOT_GITHUB_TOKEN` selects the CLI reviewer mode and must only spend
+Copilot requests. Give it exactly that.
 
 **Create a dedicated token** under **Settings** → **Developer settings** →
 **Personal access tokens** → **Fine-grained tokens** → **Generate new token**:
@@ -87,8 +86,8 @@ must do is spend Copilot requests. Give it exactly that.
 4. **Expiration**: pick a bounded one, such as 90 days.
 
 **Never reuse a broad-scope token.** Any workflow run in the repository can
-read its secrets, including a run some unread pull request adds. The token
-above can do one thing if it leaks: spend Copilot credits.
+read its secrets, even one an unread pull request adds. This token can do one
+thing if it leaks: spend Copilot credits.
 
 **Store it as a repository secret.**
 
@@ -100,11 +99,16 @@ Storing a secret needs **Secrets: read and write** on the repository. That is a
 different credential from the reviewer token you store.
 
 **Expiry is fail-safe.** An expired token stops the CLI, so the gate posts no
-terminal status and `semantic-review` stays `pending`. An expired token can
-never green a check. To rotate, mint a new one and re-run `gh secret set`.
+terminal status and `semantic-review` stays `pending`, never green. To rotate,
+mint a new one and re-run `gh secret set`.
 
 **Removing the secret restores the poll fallback.** Run
 `gh secret delete COPILOT_GITHUB_TOKEN`, and the next run takes the poll path.
+
+**Let the CI reviewer approve.** The CLI reviewer submits `APPROVE` or
+`REQUEST_CHANGES` as `github-actions[bot]`. GitHub refuses that until the
+setting **Allow GitHub Actions to create and approve pull requests** is on.
+`actions_approval.py allow` sets it; bare, it only reads. Off, you get a comment.
 
 ## 5. Verify
 
@@ -119,14 +123,13 @@ them as its last three lines.
 
 Each check warns rather than fails. `/s:doctor` turns the two settings warnings
 into consent-gated fixes; the `copilot-secret` one is a hand-off, because a
-human mints the token. Then run the verb bare, which changes nothing:
+human mints the token. Then run the verb bare, which changes nothing. The
+[reference](copilot-review-reference.md#report-states-and---force) explains
+the four states it reports:
 
 ```bash
 shipd copilot
 ```
-
-The [reference](copilot-review-reference.md#report-states-and---force) explains
-the four states it reports.
 
 ## 6. Upgrade and uninstall
 
@@ -134,8 +137,7 @@ the four states it reports.
   owns at the current version. Run it after every `claude plugin update
   s@shipd` that moves the plugin version, then commit and push the refreshed
   files.
-- **Edit the plugin's templates, never the installed copies.** A re-`add`
-  overwrites them.
+- **Edit the plugin's templates, not the installed copies.** `add` overwrites them.
 - **To uninstall, run `shipd copilot remove`.** It deletes only the files it
   owns, prunes the empty skill directory, and succeeds when nothing is there.
   Commit the deletions and push, as with the install.

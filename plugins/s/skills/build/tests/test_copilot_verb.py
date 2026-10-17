@@ -1094,19 +1094,19 @@ class GateWorkflowTemplateTest(unittest.TestCase):
 
     def test_the_gates_own_review_is_posted_through_the_reviews_api(self):
         # An issue comment carries no anchoring and no thread to disposition.
-        # The gate's own report is a pull-request review, submitted as a
-        # `COMMENT`: the required status is the merge blocker, and a
-        # `REQUEST_CHANGES` decision would need a human to dismiss it even
-        # after the fix landed.
+        # The gate's own report is a pull-request review whose event follows
+        # the parsed verdict (`REVIEW_EVENT`), the same rule as
+        # `review_gate.py post`; the author comes from the event payload.
         posting = run_block(self.posting_step())
         self.assertIn('"repos/$REPO/pulls/$PR_NUMBER/reviews"', posting,
                       "the gate's own review is not posted through the "
                       "pull-request reviews API")
-        self.assertIn('"event": "COMMENT"', posting,
-                      "the review is not submitted as a COMMENT")
-        for event in ("REQUEST_CHANGES", "APPROVE"):
-            self.assertNotIn('"%s"' % event, posting,
-                             "the review submits the event %s" % event)
+        self.assertIn("REVIEW_EVENT", posting,
+                      "the review event does not follow the verdict")
+        self.assertIn("PR_AUTHOR: ${{ github.event.pull_request.user.login }}",
+                      self.posting_step(),
+                      "the posting step does not bind the pull request's "
+                      "author")
         # After the verdict, so a failed publication cannot cost the status.
         # (`/reviews` alone would find the poll's own read of the endpoint,
         # which runs long before the verdict is known.)
@@ -1392,6 +1392,18 @@ if [ "$method" = POST ]; then
   # just that something was, so the anchoring can be asserted.
   case "$url" in
     */reviews)
+      # A review whose event is scripted as rejected fails the way GitHub
+      # refuses an approval; it is logged apart from the accepted reviews.
+      if [ -n "$input" ] && [ -f "$input" ] && [ -f "$STUB_DIR/reject-events" ]; then
+        while read -r ev; do
+          if [ -n "$ev" ] && grep -q "\"event\": \"$ev\"" "$input"; then
+            cat "$input" >> "$GH_REJECTED"
+            printf '\n<<<REVIEW>>>\n' >> "$GH_REJECTED"
+            echo "GitHub Actions is not permitted to approve pull requests" >&2
+            exit 1
+          fi
+        done < "$STUB_DIR/reject-events"
+      fi
       if [ -n "$input" ] && [ -f "$input" ]; then
         cat "$input" >> "$GH_REVIEWS"
         printf '\n<<<REVIEW>>>\n' >> "$GH_REVIEWS"
@@ -1521,7 +1533,8 @@ class GateScriptCase(unittest.TestCase):
     # Scripted files the stubs serve from, cleared before each run.
     SCRIPTED = ("ids", "head", "body", "reviews-calls", "head-calls",
                 "cli-out", "cli-code", "cli-timeout", "base-skill",
-                "base-missing", "base-unreadable", "files", "cli-findings")
+                "base-missing", "base-unreadable", "files", "cli-findings",
+                "reject-events")
 
     def setUp(self):
         self.assertTrue(os.path.isfile(GATE_TEMPLATE),
@@ -1625,7 +1638,8 @@ class GateScriptCase(unittest.TestCase):
              secret="", cli_out=None, cli_code=None, cli_timed_out=False,
              fail_open="", base_skill=BASE_SKILL, base_ref_missing=False,
              base_unreadable=False, expect_failure=False, path_shim=False,
-             files=None, findings=None):
+             files=None, findings=None, pr_author="pr-author",
+             reject_events=()):
         """Run the gate script for ``event`` and return the statuses it posted,
         in order — one dict of ``-f key=value`` fields per post, with the URL
         it posted to under ``"url"``. What the run logged is left on
@@ -1698,6 +1712,8 @@ class GateScriptCase(unittest.TestCase):
         # reviewer would have left beside its report.
         if files is not None:
             self.plant("files", json.dumps(files))
+        if reject_events:
+            self.plant("reject-events", "\n".join(reject_events) + "\n")
         if findings is not None:
             self.plant("cli-findings", findings if isinstance(findings, str)
                        else json.dumps(findings))
@@ -1706,7 +1722,7 @@ class GateScriptCase(unittest.TestCase):
             fh.write(self.script)
         for name in ("gh-args", "comments-args", "copilot-args",
                      "timeout-args", "npm-args", "git-args", "shim-args",
-                     "gh-reviews",
+                     "gh-reviews", "gh-rejected",
                      "shipd-copilot-review-skill.md",
                      "shipd-copilot-review-body.md",
                      "shipd-copilot-review-payload.json",
@@ -1733,6 +1749,7 @@ class GateScriptCase(unittest.TestCase):
             "GH_ARGS": self.record,
             "GH_COMMENTS": os.path.join(self.tmp, "comments-args"),
             "GH_REVIEWS": os.path.join(self.tmp, "gh-reviews"),
+            "GH_REJECTED": os.path.join(self.tmp, "gh-rejected"),
             "COPILOT_ARGS": os.path.join(self.tmp, "copilot-args"),
             "TIMEOUT_ARGS": os.path.join(self.tmp, "timeout-args"),
             "NPM_ARGS": os.path.join(self.tmp, "npm-args"),
@@ -1743,6 +1760,7 @@ class GateScriptCase(unittest.TestCase):
             "EVENT_NAME": event,
             "REPO": "acme/widget",
             "PR_NUMBER": "7",
+            "PR_AUTHOR": pr_author,
             "HEAD_SHA": self.HEAD,
             "BASE_SHA": "0" * 39 + "b",
             "BASE_REF": "main",
@@ -1978,7 +1996,7 @@ class GateCliReviewerTest(GateScriptCase):
                          "the reviewed text was not posted as a review")
         self.assertEqual(posted[0]["body"], self.REVIEW,
                          "the review does not carry what the gate judged")
-        self.assertEqual(posted[0]["event"], "COMMENT")
+        self.assertEqual(posted[0]["event"], "APPROVE")
         self.assertEqual(posted[0]["commit_id"], self.HEAD)
         self.assertEqual(self.recorded("comments"), [],
                          "the report was also posted as an issue comment")
@@ -2081,14 +2099,79 @@ class GateReviewPostTest(GateScriptCase):
                          % len(posted))
         return posted[0]
 
-    def test_the_review_carries_the_judged_body_as_a_comment_event(self):
+    def rejected(self):
+        """The review payloads the stubbed GitHub refused, parsed, in order."""
+        path = os.path.join(self.tmp, "gh-rejected")
+        if not os.path.exists(path):
+            return []
+        return [json.loads(chunk)
+                for chunk in read(path).split("\n<<<REVIEW>>>\n")[:-1]]
+
+    SHIP_REVIEW = ("## Findings\n\nNothing blocking.\n\n"
+                   "**Verdict: Ship it**\n\n" + SHIP_MARKER + "\n")
+
+    def test_the_review_carries_the_judged_body_under_the_verdicts_event(self):
         self.cli_gate(findings=[])
         review = self.review()
-        self.assertEqual(review["event"], "COMMENT")
+        self.assertEqual(review["event"], "REQUEST_CHANGES")
         self.assertEqual(review["commit_id"], self.HEAD)
         self.assertIn("**Verdict: Fix required**", review["body"])
         self.assertEqual(review["body"].strip().splitlines()[-1], FIX_MARKER,
                          "the verdict marker is no longer the body's last line")
+
+    def test_a_ship_it_verdict_approves(self):
+        posts = self.cli_gate(cli_out=self.SHIP_REVIEW, findings=[])
+        self.assertStates(posts, ["pending", "success"])
+        self.assertEqual(self.review()["event"], "APPROVE")
+
+    def test_a_marker_less_fail_open_review_stays_a_comment(self):
+        posts = self.cli_gate(cli_out=QUOTING_BODY, findings=[])
+        self.assertStates(posts, ["pending", "success"])
+        self.assertEqual(self.review()["event"], "COMMENT")
+
+    def test_a_marker_less_strict_review_stays_a_comment(self):
+        posts = self.cli_gate(cli_out=QUOTING_BODY, findings=[],
+                              fail_open="false")
+        self.assertStates(posts, ["pending"])
+        self.assertEqual(self.review()["event"], "COMMENT")
+
+    def test_the_bot_never_approves_its_own_pull_request(self):
+        for author in ("github-actions[bot]", ""):
+            posts = self.cli_gate(cli_out=self.SHIP_REVIEW, findings=[],
+                                  pr_author=author)
+            self.assertStates(posts, ["pending", "success"])
+            self.assertEqual(self.review()["event"], "COMMENT", author)
+            posts = self.cli_gate(findings=[], pr_author=author)
+            self.assertStates(posts, ["pending", "failure"])
+            self.assertEqual(self.review()["event"], "COMMENT", author)
+
+    def test_a_twice_rejected_approval_degrades_to_a_body_only_comment(self):
+        self.cli_gate(cli_out=self.SHIP_REVIEW, findings=[],
+                      reject_events=["APPROVE"])
+        self.assertEqual([r["event"] for r in self.rejected()],
+                         ["APPROVE", "APPROVE"],
+                         "the decision was not tried once and retried once")
+        review = self.review()
+        self.assertEqual(review["event"], "COMMENT")
+        self.assertEqual(review["comments"], [])
+        self.assertIn("Nothing blocking.", review["body"])
+        self.assertIn("not recorded", self.stdout)
+        self.assertIn("Allow GitHub Actions to create and approve pull "
+                      "requests", self.stdout)
+
+    def test_a_rejected_anchored_decision_retries_plain_under_the_same_event(self):
+        self.cli_gate(findings=[self.ANCHORED], reject_events=["REQUEST_CHANGES"])
+        rejected = self.rejected()
+        self.assertEqual([r["event"] for r in rejected],
+                         ["REQUEST_CHANGES", "REQUEST_CHANGES"])
+        self.assertEqual(len(rejected[0]["comments"]), 1)
+        self.assertEqual(rejected[1]["comments"], [])
+        self.assertEqual(self.review()["event"], "COMMENT")
+
+    def test_the_poll_path_posts_no_review(self):
+        self.gate(ids="42", body=SHIP_MARKER + "\n")
+        self.assertEqual(self.reviews(), [])
+        self.assertEqual(self.rejected(), [])
 
     def test_a_verified_finding_is_anchored_on_its_range(self):
         self.cli_gate(findings=[self.ANCHORED])
