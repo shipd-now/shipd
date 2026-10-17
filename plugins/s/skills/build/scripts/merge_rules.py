@@ -35,7 +35,8 @@ GH_TIMEOUT = 30
 # diff also checks.
 MERGE_MEMBERS = ("approvals", "dismiss_stale", "last_push_approval",
                  "required_checks", "thread_resolution", "strict")
-EXTRA_MEMBERS = ("enforcement", "target", "ref_include")
+EXTRA_MEMBERS = ("enforcement", "target", "ref_include",
+                 "bypass_actors")
 
 _DEFAULT_REF = "~DEFAULT_BRANCH"
 
@@ -135,7 +136,7 @@ def _live_ref_include(detail):
 def compare(merge, detail):
     """Every checked member as ``(member, live, wanted)`` in fixed order —
     the six ``merge`` members, then ``enforcement``, ``target``, and
-    ``ref_include`` — whether or not they differ. ``required_checks`` compare
+    ``ref_include``, and ``bypass_actors`` (a count, wanted 0) — whether or not they differ. ``required_checks`` compare
     as sorted lists, and ``strict`` is wanted false when no check is required
     (the rule carrying it is then omitted)."""
     live = live_members(detail)
@@ -151,6 +152,7 @@ def compare(merge, detail):
     rows.append(("enforcement", detail.get("enforcement"), "active"))
     rows.append(("target", detail.get("target"), "branch"))
     rows.append(("ref_include", _live_ref_include(detail), [_DEFAULT_REF]))
+    rows.append(("bypass_actors", len(detail.get("bypass_actors") or []), 0))
     return rows
 
 
@@ -163,7 +165,7 @@ def diff(merge, detail):
 
 def _failure(what, err):
     err = (err or "").strip()
-    if "403" in err or "admin" in err.lower():
+    if "403" in err:
         return RulesError(
             "%s failed: GitHub refused (403) — managing rulesets needs "
             "repository admin permission (%s)" % (what, err))

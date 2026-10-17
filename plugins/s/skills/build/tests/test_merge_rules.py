@@ -222,6 +222,24 @@ class VerbTest(unittest.TestCase):
         self.assertIn("approvals: config 2, live 0 (differs)", out)
         self.assertIn("dismiss_stale: config true, live true (ok)", out)
 
+    def test_bypass_actor_drift_is_restored(self):
+        detail = _detail(OWNED_ID, mr.RULESET_NAME)
+        detail["bypass_actors"] = [{"actor_id": 5, "actor_type": "RepositoryRole",
+                                    "bypass_mode": "always"}]
+        fake = FakeGh(items=[_item(OWNED_ID, mr.RULESET_NAME)],
+                      details={OWNED_ID: detail})
+        code, out = _run(self._argv(), fake)
+        self.assertEqual(code, 0, out)
+        self.assertIn("bypass_actors: config 0, live 1 (differs)", out)
+        code, out = _run(self._argv("apply"), fake)
+        self.assertEqual(code, 0, out)
+        writes = fake.writes()
+        self.assertEqual(len(writes), 1)
+        args, _stdin = writes[0]
+        self.assertEqual(args[args.index("-X") + 1], "PUT")
+        self.assertIn("repos/%s/rulesets/%d" % (NWO, OWNED_ID), args)
+        self.assertIn("bypass_actors: 1 -> 0", out)
+
     def test_bare_report_with_no_ruleset(self):
         fake = FakeGh(items=[_item(MAIN_ID, "main")])
         code, out = _run(self._argv(), fake)
