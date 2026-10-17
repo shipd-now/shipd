@@ -29,6 +29,7 @@ SKILL_PATH = os.path.join(PLUGIN_ROOT, "skills", "room", "SKILL.md")
 DOCS_LINT = os.path.join(PLUGIN_ROOT, "skills", "document", "scripts",
                          "docs_lint.py")
 DOC_PATH = os.path.join(REPO_ROOT, "docs", "pr-room.md")
+IDENTITY_DOC_PATH = os.path.join(REPO_ROOT, "docs", "agent-identity.md")
 REFS = "R"
 
 
@@ -203,6 +204,24 @@ class DocsTest(unittest.TestCase):
     def test_doc_lints_clean(self):
         result = subprocess.run(
             [sys.executable, DOCS_LINT, DOC_PATH],
+            cwd=REPO_ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0,
+                         result.stdout + result.stderr)
+
+
+class SkillIdentityTest(unittest.TestCase):
+    """room-skill-identity-check and agent-identity-docs-version."""
+
+    def test_every_surface_names_whoami(self):
+        for path in (SKILL_PATH,
+                     os.path.join(PLUGIN_ROOT, "harness", "bodies", "room.md"),
+                     os.path.join(PLUGIN_ROOT, "harness", "references",
+                                  "room.md")):
+            self.assertIn("shipd room whoami", _read(path), path)
+
+    def test_identity_doc_lints_clean(self):
+        result = subprocess.run(
+            [sys.executable, DOCS_LINT, IDENTITY_DOC_PATH],
             cwd=REPO_ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0,
                          result.stdout + result.stderr)

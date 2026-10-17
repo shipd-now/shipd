@@ -184,7 +184,7 @@ verbs:
                              create the change's worktree, then run the
                              configured post-worktree-scripts
                              (also: remove, prune-branches, hooks)
-  room <verb> <pr> [args]    the PR room: join, list, message, close, watch
+  room <verb> <pr> [args]    the PR room: join, list, message, close, watch, whoami
   doctor                     preflight this environment for shipd
   statusline [install|layout]
                              register the shipd statusline, or lay out its segments
@@ -1093,6 +1093,35 @@ def _branch_protected(context, branch, run=_gh_run):
     return value if isinstance(value, bool) else None
 
 
+def _branch_rules(context, branch, run=_gh_run):
+    """``(status, rules)`` for the effective rules on ``branch`` — every
+    repository and organisation ruleset that applies — from the branch-rules
+    endpoint. ``rules`` is the decoded list, or ``[]`` wherever the probe
+    failed or returned another shape."""
+    status, payload = _gh_api(
+        "repos/%s/rules/branches/%s" % (context["nwo"], branch), run=run)
+    if status != 200 or not isinstance(payload, list):
+        return (status if status != 200 else None, [])
+    return (200, payload)
+
+
+def _rule_contexts(rules):
+    """The union of status contexts the ``required_status_checks`` rules in a
+    branch-rules list require."""
+    found = set()
+    for rule in rules:
+        if not (isinstance(rule, dict)
+                and rule.get("type") == "required_status_checks"):
+            continue
+        params = rule.get("parameters")
+        checks = (params.get("required_status_checks")
+                  if isinstance(params, dict) else None)
+        for check in checks if isinstance(checks, list) else []:
+            if isinstance(check, dict) and check.get("context"):
+                found.add(check["context"])
+    return found
+
+
 def check_protection(context, run=_gh_run):
     """Whether the default branch requires the ``semantic-review`` status
     context. Until it does, the review gate's verdict is advisory: a PR merges
@@ -1111,6 +1140,28 @@ def check_protection(context, run=_gh_run):
         % (branch, context["nwo"]))
     status, payload = _gh_api(
         "repos/%s/branches/%s/protection" % (context["nwo"], branch), run=run)
+    classic = []
+    if status == 200 and isinstance(payload, dict):
+        required = payload.get("required_status_checks")
+        if isinstance(required, dict) and isinstance(
+                required.get("contexts"), list):
+            classic = required["contexts"]
+    if "semantic-review" not in classic:
+        # Classic protection does not already show the gate: also read the
+        # effective branch rules, which include organisation rulesets and
+        # need no admin permission. A failing probe keeps the classic outcome.
+        rules_status, rules = _branch_rules(context, branch, run=run)
+        if rules_status == 200 and rules:
+            ruleset = _rule_contexts(rules)
+            if "semantic-review" in classic or "semantic-review" in ruleset:
+                return ("ok", "protection",
+                        "`%s` requires the `semantic-review` status context "
+                        "through a ruleset" % branch)
+            return ("warn", "protection",
+                    "`%s` of %s is protected by a ruleset but does not "
+                    "require the `semantic-review` status context — the "
+                    "gate's verdict is ignored at merge time%s"
+                    % (branch, context["nwo"], _admin_note(context)))
     if status == 200 and isinstance(payload, dict):
         required = payload.get("required_status_checks")
         if required is None:
@@ -1252,10 +1303,81 @@ def check_fast_pass(context, run=_gh_run):
             "SHIPD_FAST_PASS is off on %s" % context["nwo"])
 
 
+def check_merge_rules(root, context, run=_gh_run, merge_rules=None):
+    """Whether the repository's ``shipd merge rules`` ruleset matches the
+    ``merge`` configuration. Report-only: drift or an unapplied ruleset warns
+    and points at ``shipd gate rules``; applying it stays with ``/s:gate``."""
+    if context.get("skip"):
+        return ("ok", "merge-rules", "skipped: %s" % context["skip"])
+    _load_engine()
+    try:
+        merge = sc.resolve_merge(root)
+    except sc.ConfigError as exc:
+        return ("warn", "merge-rules",
+                "the `merge` configuration is invalid: %s" % exc)
+    if merge_rules is None:
+        _load_merge_rules()
+        merge_rules = mr
+    adapted = lambda args, stdin=None, cwd=None: run(args)
+    try:
+        item = merge_rules.find_owned(context["nwo"], adapted)
+        detail = (None if item is None else
+                  merge_rules._get_detail(context["nwo"], item["id"],
+                                          adapted))
+        drift = (None if detail is None else merge_rules.diff(merge, detail))
+        if drift:
+            drift = ["%s: live %s, wanted %s"
+                     % (member, merge_rules._fmt(live),
+                        merge_rules._fmt(wanted))
+                     for member, live, wanted in drift]
+    except Exception as exc:  # noqa: BLE001 - any failure is unverifiable
+        return ("ok", "merge-rules", "could not be verified: %s" % exc)
+    if item is None:
+        return ("warn", "merge-rules",
+                "no `shipd merge rules` ruleset exists on %s, so the live "
+                "approvals are absent — run `shipd gate rules apply` through "
+                "/s:gate%s" % (context["nwo"], _admin_note(context)))
+    if not drift:
+        return ("ok", "merge-rules",
+                "the `shipd merge rules` ruleset on %s matches the `merge` "
+                "configuration" % context["nwo"])
+    return ("warn", "merge-rules",
+            "%s — see `shipd gate rules`; apply with `shipd gate rules "
+            "apply` through /s:gate%s"
+            % ("; ".join(drift), _admin_note(context)))
+
+
+def check_actions_approve(root, context, run=_gh_run):
+    """Whether Actions may approve pull requests — the setting the installed
+    review gate's CI reviewer needs. Probed only where the gate workflow is
+    installed at ``root``; report-only."""
+    if not os.path.isfile(os.path.join(root, GATE_WORKFLOW)):
+        return ("ok", "actions-approve",
+                "skipped: no %s at %s" % (GATE_WORKFLOW, root))
+    if context.get("skip"):
+        return ("ok", "actions-approve", "skipped: %s" % context["skip"])
+    status, payload = _gh_api(
+        "repos/%s/actions/permissions/workflow" % context["nwo"], run=run)
+    allowed = (payload.get("can_approve_pull_request_reviews")
+               if isinstance(payload, dict) else None)
+    if status != 200 or not isinstance(allowed, bool):
+        return ("ok", "actions-approve",
+                "could not be verified: reading %s's Actions workflow "
+                "permissions was denied (%s)"
+                % (context["nwo"], _http_reason(status)))
+    if allowed:
+        return ("ok", "actions-approve",
+                "Actions may approve pull requests on %s" % context["nwo"])
+    return ("warn", "actions-approve",
+            "Actions may not approve pull requests on %s — the CI reviewer "
+            "cannot approve until an admin enables the setting through "
+            "/s:gate%s" % (context["nwo"], _admin_note(context)))
+
+
 def check_steps(root):
     """Every preflight check as an ordered ``(name, thunk)`` pair, required
     ones first; calling a thunk runs that one check and returns its
-    ``(level, name, detail)`` triple. The four GitHub-side checks close the
+    ``(level, name, detail)`` triple. The six GitHub-side checks close the
     list and share one repository context, resolved lazily, once, by the
     first of them to run — so a caller driving the thunks one at a time sees
     real progress, and the whole preflight makes at most two ``gh`` calls
@@ -1284,7 +1406,10 @@ def check_steps(root):
             ("protection", lambda: check_protection(context())),
             ("automerge", lambda: check_automerge(root, context())),
             ("copilot-secret", lambda: check_copilot_secret(root, context())),
-            ("fast-pass", lambda: check_fast_pass(context()))]
+            ("fast-pass", lambda: check_fast_pass(context())),
+            ("merge-rules", lambda: check_merge_rules(root, context())),
+            ("actions-approve",
+             lambda: check_actions_approve(root, context()))]
 
 
 def default_checks(root):
@@ -1340,6 +1465,12 @@ REMEDY_SURFACES = {
                    "`shipd init` to ignore and untrack it",
     "copilot-secret": "the review gate's Copilot CLI reviewer mode — see "
                       "docs/copilot-review.md",
+    "merge-rules": "the repository's merge ruleset — a repository-wide "
+                   "GitHub mutation; run `shipd gate rules apply` through "
+                   "the consent-gated /s:gate",
+    "actions-approve": "the Actions setting that lets the CI reviewer "
+                       "approve — an admin enables it through the "
+                       "consent-gated /s:gate",
 }
 
 
@@ -2960,6 +3091,8 @@ FINISH_FIXES = {
     "difft": "brew install difftastic (or cargo install difftastic)",
     "statusline": "shipd statusline install",
     "protection": "an admin of the repository runs /s:gate",
+    "merge-rules": "an admin of the repository runs /s:gate",
+    "actions-approve": "an admin of the repository runs /s:gate",
     "automerge": "an admin of the repository enables auto-merge (/s:doctor)",
     "gh": "gh auth login",
     "local-state": "shipd init",

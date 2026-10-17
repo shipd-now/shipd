@@ -147,4 +147,4 @@ code change gets an `input-required` reply that names the next skill:
 - [Semantic review](semantic-review.md) — the gate that posts review findings.
 - [Room wake reference](room-wake-reference.md) — the Actions wake that runs a
   turn with no session.
-- [Multi-agent PR](multi-agent-pr.md) — the model.
+- [Agent identity](agent-identity.md) — a second account, checked by `whoami`.

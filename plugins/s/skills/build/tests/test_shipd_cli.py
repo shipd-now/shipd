@@ -1352,7 +1352,7 @@ class DoctorCheckTest(unittest.TestCase):
                   "store", "store-sync", "local-state", "gh", "difft",
                   "textual", "snapshot",
                   "statusline", "protection", "automerge", "copilot-secret",
-                  "fast-pass")
+                  "fast-pass", "merge-rules", "actions-approve")
 
     def probed_check_names(self, root):
         """The check names ``default_checks`` reports, with every check — and
@@ -2172,7 +2172,8 @@ class DoctorCheckTest(unittest.TestCase):
                           "wiki", "store", "store-sync", "local-state", "gh",
                           "difft",
                           "textual", "snapshot", "statusline", "protection",
-                          "automerge", "copilot-secret", "fast-pass"])
+                          "automerge", "copilot-secret", "fast-pass",
+                          "merge-rules", "actions-approve"])
 
     def test_check_steps_names_match_default_checks_in_order(self):
         names = [name for name, _thunk in shipd.check_steps(self.tmp)]
@@ -2508,6 +2509,7 @@ class DoctorCheckTest(unittest.TestCase):
         responses = self.gh_responses(
             self.repo_payload(),
             {"branches/main/protection": self.HTTP_404,
+             "rules/branches/main": self.ok_json([]),
              "branches/main": self.ok_json({"name": "main",
                                             "protected": False}),
              "actions/secrets": self.ok_json({"secrets": []})})
@@ -2522,8 +2524,11 @@ class DoctorCheckTest(unittest.TestCase):
 
     # -- protection ---------------------------------------------------------
 
-    def protection(self, protection_response, repo=None, branch=None):
-        probes = {"branches/main/protection": protection_response}
+    def protection(self, protection_response, repo=None, branch=None,
+                   rules=None):
+        probes = {"branches/main/protection": protection_response,
+                  "rules/branches/main":
+                      self.ok_json([]) if rules is None else rules}
         if branch is not None:
             probes["branches/main"] = branch
         context, run = self.resolve_context(
@@ -2658,6 +2663,59 @@ class DoctorCheckTest(unittest.TestCase):
             self.ok_json({}),
             repo=self.repo_payload(permissions={"admin": False}))
         self.assertIn("lacks admin permission", detail)
+
+    def status_rule(self, *contexts):
+        return {"type": "required_status_checks",
+                "parameters": {"required_status_checks":
+                               [{"context": c} for c in contexts]}}
+
+    def test_a_ruleset_requiring_the_context_is_ok_naming_the_ruleset(self):
+        level, name, detail = self.protection(
+            self.HTTP_404,
+            rules=self.ok_json([self.status_rule("ci", "semantic-review")]))
+        self.assertEqual((level, name), ("ok", "protection"))
+        self.assertIn("ruleset", detail)
+        self.assertIn("semantic-review", detail)
+
+    def test_a_ruleset_without_the_context_warns_naming_the_ruleset(self):
+        level, name, detail = self.protection(
+            self.HTTP_404, rules=self.ok_json([self.status_rule("ci")]))
+        self.assertEqual((level, name), ("warn", "protection"))
+        self.assertIn("ruleset", detail)
+        self.assertIn("semantic-review", detail)
+        self.assertNotIn("not protected", detail)
+
+    def test_a_ruleset_without_status_rules_is_still_protection(self):
+        level, _name, detail = self.protection(
+            self.HTTP_404, rules=self.ok_json([{"type": "deletion"}]))
+        self.assertEqual(level, "warn")
+        self.assertNotIn("not protected", detail)
+
+    def test_an_empty_rules_list_still_warns_not_protected(self):
+        level, _name, detail = self.protection(self.HTTP_404,
+                                               rules=self.ok_json([]))
+        self.assertEqual(level, "warn")
+        self.assertIn("not protected", detail)
+
+    def test_a_failing_rules_probe_keeps_the_classic_outcome(self):
+        level, _name, detail = self.protection(self.HTTP_404,
+                                               rules=self.OFFLINE)
+        self.assertEqual(level, "warn")
+        self.assertIn("not protected", detail)
+
+    def test_non_admin_consults_the_rules_before_the_protected_boolean(self):
+        level, _name, detail = self.protection(
+            self.HTTP_403,
+            repo=self.repo_payload(permissions={"admin": False}),
+            rules=self.ok_json([self.status_rule("semantic-review")]))
+        self.assertEqual(level, "ok")
+        self.assertIn("ruleset", detail)
+
+    def test_classic_showing_the_context_skips_the_rules_probe(self):
+        self.protection(self.ok_json({"required_status_checks": {
+            "contexts": ["semantic-review"]}}))
+        self.assertNotIn("api repos/%s/rules/branches/main" % self.NWO,
+                         self.gh_calls)
 
     # -- automerge ----------------------------------------------------------
 
@@ -2816,6 +2874,118 @@ class DoctorCheckTest(unittest.TestCase):
                          ["protection", "automerge", "copilot-secret",
                           "fast-pass"])
 
+    # -- merge-rules and actions-approve ------------------------------------
+
+    MERGE = {"approvals": 2}
+
+    class FakeMergeRules:
+        """A stand-in ``merge_rules`` module: ``find_owned`` returns a list
+        entry, ``_get_detail`` its detail, ``diff`` the canned tuples."""
+
+        def __init__(self, item=None, drift=(), error=None):
+            self.item, self.drift, self.error = item, list(drift), error
+
+        def find_owned(self, nwo, run, cwd=None):
+            if self.error:
+                raise RuntimeError(self.error)
+            return self.item
+
+        def _get_detail(self, nwo, rid, run, cwd=None):
+            return {"id": rid}
+
+        def diff(self, merge, detail):
+            return self.drift
+
+        def _fmt(self, value):
+            return str(value)
+
+    def merge_rules_check(self, fake, skip=False, root=None):
+        if skip:
+            context = {"skip": "no repo"}
+        else:
+            context, _run = self.resolve_context(
+                self.gh_responses(self.repo_payload()))
+        root = root or os.path.join(self.tmp, "mr-root")
+        os.makedirs(root, exist_ok=True)
+        return shipd.check_merge_rules(root, context, merge_rules=fake)
+
+    def test_matching_ruleset_is_ok(self):
+        level, name, _d = self.merge_rules_check(
+            self.FakeMergeRules(item={"id": 7}))
+        self.assertEqual((level, name), ("ok", "merge-rules"))
+
+    def test_drift_is_warned_member_by_member_on_one_line(self):
+        level, _n, detail = self.merge_rules_check(self.FakeMergeRules(
+            item={"id": 7},
+            drift=[("approvals", 0, 2), ("dismiss_stale", False, True)]))
+        self.assertEqual(level, "warn")
+        self.assertIn("approvals: live 0, wanted 2; dismiss_stale: live "
+                      "False, wanted True", detail)
+        self.assertIn("shipd gate rules", detail)
+        self.assertNotIn("\n", detail)
+
+    def test_missing_ruleset_warns_naming_apply(self):
+        level, _n, detail = self.merge_rules_check(self.FakeMergeRules())
+        self.assertEqual(level, "warn")
+        self.assertIn("shipd gate rules apply", detail)
+
+    def test_a_raising_lookup_is_ok_unverifiable(self):
+        level, _n, detail = self.merge_rules_check(
+            self.FakeMergeRules(error="two rulesets named x"))
+        self.assertEqual(level, "ok")
+        self.assertIn("could not be verified: two rulesets named x", detail)
+
+    def test_skipped_context_is_ok_skipped(self):
+        level, _n, detail = self.merge_rules_check(
+            self.FakeMergeRules(), skip=True)
+        self.assertEqual(level, "ok")
+        self.assertIn("skipped", detail)
+
+    def test_invalid_merge_config_warns_naming_the_error(self):
+        root, _path = self.repo_with_config("mr-bad", {"merge": "nope"})
+        level, _n, detail = self.merge_rules_check(
+            self.FakeMergeRules(item={"id": 7}), root=root)
+        self.assertEqual(level, "warn")
+        self.assertIn("merge", detail)
+
+    def actions_approve(self, root, response=None, skip=False):
+        probes = ({} if response is None
+                  else {"actions/permissions/workflow": response})
+        if skip:
+            context, run = {"skip": "no repo"}, None
+        else:
+            context, run = self.resolve_context(
+                self.gh_responses(self.repo_payload(), probes))
+        return shipd.check_actions_approve(root, context, run=run)
+
+    def test_actions_approve_off_warns_where_the_gate_is_installed(self):
+        root = self.repo_with_gate("aa-off")
+        level, name, detail = self.actions_approve(root, self.ok_json(
+            {"can_approve_pull_request_reviews": False}))
+        self.assertEqual((level, name), ("warn", "actions-approve"))
+        self.assertIn("/s:gate", detail)
+
+    def test_actions_approve_on_is_ok(self):
+        root = self.repo_with_gate("aa-on")
+        level, _n, _d = self.actions_approve(root, self.ok_json(
+            {"can_approve_pull_request_reviews": True}))
+        self.assertEqual(level, "ok")
+
+    def test_actions_approve_skips_without_the_gate_workflow(self):
+        root = os.path.join(self.tmp, "aa-nogate")
+        os.makedirs(root)
+        level, _n, detail = self.actions_approve(root)
+        self.assertEqual(level, "ok")
+        self.assertIn("skipped", detail)
+        self.assertNotIn("api repos/%s/actions/permissions/workflow"
+                         % self.NWO, self.gh_calls)
+
+    def test_actions_approve_denied_read_is_unverifiable(self):
+        root = self.repo_with_gate("aa-denied")
+        level, _n, detail = self.actions_approve(root, self.HTTP_403)
+        self.assertEqual(level, "ok")
+        self.assertIn("could not be verified", detail)
+
     # -- a gh that never answers --------------------------------------------
 
     def timing_out_subprocess(self):
@@ -2875,7 +3045,7 @@ class DoctorCheckTest(unittest.TestCase):
         names = self.probed_check_names(self.tmp)
         self.assertEqual(names[names.index("statusline") + 1:],
                          ["protection", "automerge", "copilot-secret",
-                          "fast-pass"])
+                          "fast-pass", "merge-rules", "actions-approve"])
 
     def test_the_github_checks_never_fail_the_preflight(self):
         root = self.repo_with_gate("never-fail")
@@ -2883,6 +3053,7 @@ class DoctorCheckTest(unittest.TestCase):
             self.repo_payload(allow_auto_merge=False,
                               permissions={"admin": False}),
             {"branches/main/protection": self.HTTP_404,
+             "rules/branches/main": self.ok_json([]),
              "actions/secrets": self.ok_json({"secrets": []})})
         context, run = self.resolve_context(responses)
         results = [shipd.check_protection(context, run=run),
@@ -3281,6 +3452,15 @@ class DoctorFixTest(unittest.TestCase):
         self.assertFalse(any("gh" in c or "api" in c for c in calls), calls)
         self.assertIn("protection", out)
         self.assertIn("/s:doctor", out)
+
+    def test_new_github_findings_stay_report_only_under_fix(self):
+        for name in ("merge-rules", "actions-approve"):
+            out, _err, _code, calls = self.run_doctor(
+                [("warn", name, "drifted")], args=("--fix",))
+            self.assertFalse(any("gh" in c or "api" in c for c in calls),
+                             calls)
+            self.assertIn(name, out)
+            self.assertIn("/s:gate", out)
 
     def test_local_state_finding_stays_report_only_under_fix(self):
         # `local-state` carries no automated remedy (doctor-local-state-check):

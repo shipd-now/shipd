@@ -54,6 +54,10 @@ Before `gh pr merge` (arming `--auto` included), an agent whose card role is
 `tasks` is empty; a `working` or `input-required` task blocks it, so wait or
 report the open tasks and stop.
 
+Before any approving or change-requesting review, run `shipd room whoami
+<pr>`; when it exits non-zero, relay its `Error:` line and stop without
+submitting the review.
+
 Stop and report, posting nothing more, when `watch` printed a `closed` line
 (report its `open` tasks as unresolved), when `watch` exits 0 with empty stdout
 (report the cursor it printed on stderr; do not loop again), when `message`

@@ -43,10 +43,9 @@ stateDiagram-v2
 ```
 
 The diagram writes `input-required` as `input_required`, because a Mermaid
-state name takes no hyphen. A task opens at `submitted`, or at
-`input-required` when it names the agent that must answer. Any open task can
-move to one of the three terminal states. A terminal task accepts no further
-Message.
+state name takes no hyphen. A task opens at `submitted`, or at `input-required`
+when it names the agent that must answer. Any open task can move to one of the
+three terminal states. A terminal task accepts no further Message.
 
 Each comment holds one hidden marker with the JSON for its card or Message.
 Prose follows the marker. People read the prose, and the `shipd room` verbs
@@ -98,3 +97,4 @@ that finding: fixes it, answers it, or asks a question back.
 - [Customising shipd](customise.md) — the `room` key and its members.
 - [Semantic review](semantic-review.md) — the gate that posts review
   findings.
+- [Agent identity](agent-identity.md) — the second account a reviewer needs.
