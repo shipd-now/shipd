@@ -6,9 +6,10 @@ id: cli-dispatch
 The `shipd` binary SHALL expose exactly the curated verbs `init`, `list`,
 `status`, `locate`, `related`, `search`, `prd`, `epic`, `workspace`,
 `wiki`, `config`, `board`, `render`, `metrics`, `lint`, `worktree`, `room`,
-`doctor`, `statusline`, `copilot`, `vendor`, `harness`, `install`, and
-`update`, and for every verb except `list`, `doctor`, `statusline`,
-`copilot`, `vendor`, `harness`, `install`, and `update` SHALL delegate by
+`doctor`, `statusline`, `copilot`, `gate`, `vendor`, `harness`, `install`,
+and `update`, and for every verb except `list`, `doctor`, `statusline`,
+`copilot`, `gate`, `vendor`, `harness`, `install`, and `update` SHALL
+delegate by
 replacing its own process with the mapped script invocation (`init` ->
 `spec_status.py init`, `status` -> `spec_status.py show`, `locate` ->
 `spec_status.py locate`, `related` -> `spec_status.py related`, `search` ->
@@ -213,6 +214,11 @@ SHALL print the same banner to stdout and exit `0`.
 - **THEN** the banner of `shipd --help` lists `prd` among the verbs, and the
   invocation exits non-zero with the `Error:` line of
   `spec_status.py prd-show`, proving the delegation
+
+#### Scenario: Gate is a curated in-binary verb
+- **WHEN** `shipd --help` runs
+- **THEN** the banner lists `gate`, and `shipd gate` is served by the binary
+  itself rather than by replacing the process with a delegate
 
 ### Requirement: List in-flight changes
 id: cli-list
@@ -1410,3 +1416,57 @@ writing nothing.
 - **WHEN** `shipd statusline layout spec,clock` runs
 - **THEN** the exit code is `2`, the message names `clock`, and neither file
   changes
+
+### Requirement: Gate rules verb
+id: gate-rules-verb
+
+The `shipd gate rules` verb SHALL be served by the binary through a stdlib-only
+engine module `merge_rules.py` beside `spec_common.py`, and every GitHub call
+SHALL go through one injectable runner `run(args, stdin=None, cwd=None)`
+returning `(returncode, stdout, stderr)`. The repository is `--repo
+OWNER/NAME` when given, else the one `gh repo view` resolves from `--root`
+(default the cwd). Bare `shipd gate rules` SHALL print the resolved `merge`
+configuration beside the live ruleset named `shipd merge rules`, one line per
+member with an `ok` or `differs` mark, write nothing, and exit `0` even when
+they differ. `shipd gate rules apply` SHALL create that ruleset (POST) when no
+repository-sourced ruleset carries the name, update it in place (PUT by id)
+when exactly one does, and print one line per changed member as `member: live
+-> wanted`; when nothing differs it SHALL write nothing and say so. The
+ruleset body SHALL be: target `branch`, enforcement `active`, conditions
+`ref_name` including `~DEFAULT_BRANCH`, empty `bypass_actors`, a
+`pull_request` rule carrying `required_approving_review_count` from
+`approvals`, `dismiss_stale_reviews_on_push` from `dismiss_stale`,
+`require_last_push_approval` from `last_push_approval`,
+`required_review_thread_resolution` from `thread_resolution`, and
+`require_code_owner_review` false with no `allowed_merge_methods`; and a
+`required_status_checks` rule listing each `required_checks` context with
+`strict_required_status_checks_policy` from `strict` (the rule is omitted when
+the list is empty). The verb SHALL never write to, or read the detail of, any
+ruleset other than the one it owns, SHALL fail with `Error:` and exit `1` on a
+`ConfigError`, a duplicate-named ruleset, or a failed GitHub call (a 403
+naming the missing admin permission), and SHALL be reported by `shipd --help`.
+
+#### Scenario: Apply creates the ruleset when absent
+- **WHEN** `shipd gate rules apply` runs against a fake runner whose ruleset
+  list is empty
+- **THEN** exactly one POST to `repos/<nwo>/rulesets` is made whose body
+  carries the default merge rules, and each member prints as created
+
+#### Scenario: Apply updates only the owned ruleset
+- **WHEN** the list holds `main` and `shipd merge rules` and the latter's
+  approvals differ from config
+- **THEN** one PUT goes to the owned ruleset's id, nothing is written to
+  `main`, and the output shows `approvals: 0 -> 2`
+
+#### Scenario: Apply with no drift writes nothing
+- **WHEN** the live ruleset already matches the configuration
+- **THEN** no POST or PUT is made and the output says nothing was written
+
+#### Scenario: Bare verb reports and changes nothing
+- **WHEN** `shipd gate rules` runs with a live ruleset that differs
+- **THEN** the output marks the differing members `differs`, no write call is
+  made, and the exit code is `0`
+
+#### Scenario: Duplicate name is refused
+- **WHEN** two repository rulesets are named `shipd merge rules`
+- **THEN** apply writes nothing and exits `1` naming the duplicate

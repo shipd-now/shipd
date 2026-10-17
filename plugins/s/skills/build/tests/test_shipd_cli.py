@@ -43,7 +43,7 @@ VERBS = ("init", "list", "status", "locate", "related", "search", "prd",
          "epic",
          "workspace", "wiki", "config", "board", "render", "metrics", "lint",
          "worktree", "room",
-         "doctor", "statusline", "copilot", "vendor", "harness", "install",
+         "doctor", "statusline", "copilot", "gate", "vendor", "harness", "install",
          "update")
 
 
@@ -601,6 +601,51 @@ class DispatchTest(ShipdCliTestBase):
         self.assertEqual(r.returncode, 2)
         self.assertEqual(r.stdout, "")
         self.assertUsageBanner(r.stderr)
+
+
+class GateVerbTest(ShipdCliTestBase):
+    """``gate`` is a curated in-binary verb (shipd-cli cli-dispatch,
+    gate-rules-verb): only ``gate rules [apply]`` exists, served by
+    ``merge_rules.py``."""
+
+    def test_banner_lists_gate(self):
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("  gate ", r.stdout)
+
+    def test_gate_dispatches_in_binary_without_delegating(self):
+        self.assertNotIn("gate", shipd.VERB_TABLE)
+        seen = []
+
+        def no_exec(*args):
+            self.fail("gate must not exec-delegate")
+
+        with unittest.mock.patch.object(
+                shipd, "cmd_gate", lambda a: seen.append(a) or 0), \
+                unittest.mock.patch.object(shipd.os, "execv", no_exec):
+            code = shipd.main(["gate", "rules", "apply"])
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, [["rules", "apply"]])
+
+    def test_bare_gate_is_a_usage_error(self):
+        r = self.cli("gate")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("usage:", r.stderr)
+        self.assertIn("gate rules", r.stderr)
+
+    def test_unknown_subverb_is_a_usage_error(self):
+        r = self.cli("gate", "frobnicate")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("usage:", r.stderr)
+
+    def test_rules_help_exits_zero(self):
+        r = self.cli("gate", "rules", "--help")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("usage: shipd gate rules", r.stdout)
+
+    def test_unknown_rules_word_is_a_usage_error(self):
+        r = self.cli("gate", "rules", "frobnicate")
+        self.assertEqual(r.returncode, 2)
 
 
 class ListTest(ShipdCliTestBase):

@@ -3906,6 +3906,102 @@ class ResolveRoomTest(unittest.TestCase):
             self.assertEqual(self._resolve(root, home), ("x", 6))
 
 
+class ResolveMergeTest(unittest.TestCase):
+    """resolve_merge: the layered `merge` key holding the merge rules
+    (shipd-config merge-config-key). Stdlib-only. ``$HOME`` is always
+    overridden to an empty directory."""
+
+    DEFAULTS = {
+        "approvals": 2, "dismiss_stale": True, "last_push_approval": True,
+        "required_checks": ["ci", "semantic-review"],
+        "thread_resolution": True, "strict": False}
+
+    def _write_config(self, d, payload):
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, sc.CONFIG_FILENAME), "w",
+                  encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        return d
+
+    def _resolve(self, root, home):
+        with imports_blocked("pipeline_schema"), \
+                home_set_to(os.path.realpath(home)):
+            return sc.resolve_merge(root)
+
+    def _assert_bad(self, payload, member):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"merge": payload})
+            with self.assertRaises(sc.ConfigError) as cm:
+                self._resolve(root, home)
+            msg = str(cm.exception)
+            self.assertIn("merge", msg)
+            self.assertIn(member, msg)
+            self.assertIn(os.path.join(root, sc.CONFIG_FILENAME), msg)
+
+    def test_key_constants(self):
+        self.assertEqual(sc.MERGE_KEY, "merge")
+        self.assertIn("merge", sc.RECOGNIZED_CONFIG_KEYS)
+
+    def test_absent_key_yields_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            self.assertEqual(
+                self._resolve(os.path.realpath(tmp), home), self.DEFAULTS)
+
+    def test_partial_declaration_keeps_other_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"merge": {"approvals": 1}})
+            want = dict(self.DEFAULTS, approvals=1)
+            self.assertEqual(self._resolve(root, home), want)
+
+    def test_empty_required_checks_allowed(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            root = os.path.realpath(tmp)
+            self._write_config(root, {"merge": {"required_checks": []}})
+            self.assertEqual(self._resolve(root, home)["required_checks"], [])
+
+    def test_workspace_layer_governs_a_member_repo(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as home:
+            ws = os.path.realpath(tmp)
+            repo = os.path.join(ws, "repo")
+            self._write_config(ws, {"workspace": {}, "merge": {
+                "approvals": 3, "strict": True}})
+            os.makedirs(repo, exist_ok=True)
+            got = self._resolve(repo, home)
+            self.assertEqual(got["approvals"], 3)
+            self.assertTrue(got["strict"])
+
+    def test_approvals_true_errors(self):
+        self._assert_bad({"approvals": True}, "approvals")
+
+    def test_approvals_out_of_range_errors(self):
+        self._assert_bad({"approvals": 11}, "approvals")
+
+    def test_non_bool_flag_errors(self):
+        self._assert_bad({"strict": "yes"}, "strict")
+
+    def test_non_list_required_checks_errors(self):
+        self._assert_bad({"required_checks": "ci"}, "required_checks")
+
+    def test_duplicate_check_errors(self):
+        self._assert_bad({"required_checks": ["ci", "ci"]}, "required_checks")
+
+    def test_empty_check_errors(self):
+        self._assert_bad({"required_checks": [""]}, "required_checks")
+
+    def test_non_object_value_errors(self):
+        self._assert_bad("strict", "merge")
+
+    def test_unknown_member_errors(self):
+        self._assert_bad({"approvls": 2}, "approvls")
+
+
 class ResolvePrTest(unittest.TestCase):
     """resolve_pr: the layered `pr` key holding the PR title template and the
     ticket pattern (shipd-config pr-config-key). Stdlib-only. ``$HOME`` is

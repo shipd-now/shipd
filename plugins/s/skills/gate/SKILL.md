@@ -187,6 +187,7 @@ steps:
 | Require the check | `python3 "${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/review_gate.py" protect` | Requires the `semantic-review` status context on the default branch and turns on conversation resolution. Preserves every protection field the branch already has; creates the minimal protection when the branch has none. |
 | Allow auto-merge | `gh api -X PATCH repos/<nwo> -F allow_auto_merge=true` | Lets `gh pr merge --auto` arm on this repository. **Omitted under `pr-mode: draft`.** |
 | Fast-pass auto-merge | `gh variable set SHIPD_FAST_PASS --body true` | A reviewed pull request carrying a completed shipd change whose every delta scenario the review verified then merges without a human. **Omitted under `pr-mode: draft` alongside auto-merge.** |
+| Apply merge rules | `<shipd> gate rules apply` | Creates or updates one repository ruleset named `shipd merge rules` from the `merge` configuration, requiring the configured approvals and status checks before a pull request merges. Writes only that ruleset. Preview it first with bare `<shipd> gate rules`, which prints the configuration beside the live ruleset and writes nothing: show that output with the option. |
 | Strict verdicts (optional) | `gh variable set SHIPD_GATE_FAIL_OPEN --body false` | A review that produces no verdict marker then posts nothing and the required check stays `pending`, instead of passing fail-open. |
 
 Honor the dialog-and-prose-separation rule:
@@ -211,7 +212,7 @@ session posts the gate by hand. State that trade-off in its option.
 here to consent to.
 
 **Declining runs nothing.** If the user selects "Do none of them" (or declines
-every step), perform no protection write, no repository PATCH, and no variable
+every step), perform no protection write, no ruleset write, no repository PATCH, and no variable
 set. Go straight to steps 7 and 8: the token hand-off, then the closing
 `shipd doctor` verification — with the manual hints for the steps not taken.
 
@@ -225,7 +226,8 @@ pull requests still wait for a human merge.
 Run each approved command exactly as it was shown, one at a time, and capture
 its exit code and output.
 
-**All three need admin permission on the repository.** A denial (`HTTP 403`, or
+**All of them need admin permission on the repository** (`shipd gate rules
+apply` included: a 403 there names the missing admin permission). A denial (`HTTP 403`, or
 a message naming a missing admin right) is reported as *that step's* failure
 with the manual hint — the branch's protection settings, the repository's
 **Settings → General → Pull Requests** checkbox, or **Settings → Secrets and
@@ -374,8 +376,9 @@ evidence of what the repository now carries:
 <shipd> copilot
 ```
 
-Then stop. The reviewer token, the branch protection, and every other
-repository setting are exactly as this flow found them.
+Then stop. The reviewer token, the branch protection, the `shipd merge
+rules` ruleset, and every other repository setting are exactly as this flow
+found them: `update` never runs `shipd gate rules apply`.
 
 ## Enabling reviews is a GitHub-side setting
 
@@ -406,6 +409,10 @@ same choices as a plain-text numbered list and wait for a typed reply.
 Only an explicitly selected or typed stop/decline ends the flow.
 
 ## End
+
+If the merge rules step ran, say that GitHub enforces those rules only once
+the `shipd merge rules` ruleset exists, and that it exists only because that
+step succeeded.
 
 Close with the verdict in a line or two: what is installed, what is required at
 merge time, whether the gate is strict or advisory, and the exact commands the

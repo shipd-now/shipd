@@ -413,6 +413,7 @@ RECOGNIZED_CONFIG_KEYS = (
     "guardrails",
     "lint",
     "memory_dir",
+    "merge",
     "post-worktree-scripts",
     "pr",
     "pr-mode",
@@ -1271,6 +1272,82 @@ def resolve_room(root):
                 "`%s.max_rounds` must be an integer of at least 1 (from %s), "
                 "got %r" % (ROOM_KEY, source, max_rounds))
     return agent, max_rounds
+
+
+# ---------------------------------------------------------------------------
+# Merge rules (shipd-config merge-config-key)
+# ---------------------------------------------------------------------------
+
+# The config key declaring the repository's merge rules.
+MERGE_KEY = "merge"
+
+# The value of each `merge` member when no layer declares it.
+DEFAULT_MERGE = {
+    "approvals": 2,
+    "dismiss_stale": True,
+    "last_push_approval": True,
+    "required_checks": ["ci", "semantic-review"],
+    "thread_resolution": True,
+    "strict": False,
+}
+
+_MERGE_BOOL_MEMBERS = (
+    "dismiss_stale", "last_push_approval", "thread_resolution", "strict")
+
+
+def resolve_merge(root):
+    """Resolve the merge rules for ``root`` (shipd-config merge-config-key)
+    as a dict of all six members of :data:`DEFAULT_MERGE`.
+
+    Reads the ``merge`` key from ``root``'s layered configuration (via
+    :func:`resolve_config`); each member defaults when absent. A value that
+    is not an object, a member of the wrong type or range, or a member other
+    than the six raises :class:`ConfigError` naming ``merge``, the member, and
+    the config file that supplied it. Unknown members are rejected because a
+    typo would silently weaken a security rule. Stdlib-only."""
+    config, prov = resolve_config(root)
+    result = dict(DEFAULT_MERGE)
+    result["required_checks"] = list(DEFAULT_MERGE["required_checks"])
+    if MERGE_KEY not in config:
+        return result
+    raw = config[MERGE_KEY]
+    source = prov.get(MERGE_KEY, "default")
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            "`%s` must be an object with members %s (from %s), got %r"
+            % (MERGE_KEY, ", ".join(sorted(DEFAULT_MERGE)), source, raw))
+    for member in raw:
+        if member not in DEFAULT_MERGE:
+            raise ConfigError(
+                "`%s.%s` is not a recognized member; expected one of %s "
+                "(from %s)" % (MERGE_KEY, member,
+                               ", ".join(sorted(DEFAULT_MERGE)), source))
+    if "approvals" in raw:
+        val = raw["approvals"]
+        if isinstance(val, bool) or not isinstance(val, int) \
+                or not 0 <= val <= 10:
+            raise ConfigError(
+                "`%s.approvals` must be an integer from 0 to 10 (from %s), "
+                "got %r" % (MERGE_KEY, source, val))
+        result["approvals"] = val
+    for member in _MERGE_BOOL_MEMBERS:
+        if member in raw:
+            val = raw[member]
+            if not isinstance(val, bool):
+                raise ConfigError(
+                    "`%s.%s` must be true or false (from %s), got %r"
+                    % (MERGE_KEY, member, source, val))
+            result[member] = val
+    if "required_checks" in raw:
+        val = raw["required_checks"]
+        if not isinstance(val, list) or any(
+                not isinstance(c, str) or not c.strip() for c in val) \
+                or len(set(val)) != len(val):
+            raise ConfigError(
+                "`%s.required_checks` must be a list of distinct non-empty "
+                "strings (from %s), got %r" % (MERGE_KEY, source, val))
+        result["required_checks"] = list(val)
+    return result
 
 
 # ---------------------------------------------------------------------------

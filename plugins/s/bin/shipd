@@ -31,7 +31,10 @@ a GitHub-side mutation — never a spec artifact, and never modifying anything
 already there. The mutating
 verbs over the spec library (``set-status``,
 ``merge``, ``emit``, ``autopilot``, ``worktree remove``) stay behind their
-guarded scripts and skills.
+guarded scripts and skills. One more verb writes outside the repository:
+``gate rules apply`` creates or updates the one GitHub ruleset named
+``shipd merge rules`` from the ``merge`` configuration (bare ``gate rules``
+only reports), served by ``merge_rules.py``.
 
 Stdlib-only Python 3, per the engine's constitution.
 """
@@ -68,6 +71,10 @@ ss = None
 # the read actions never load the body templates' renderer.
 hr = None
 hg = None
+
+# The merge-rules engine behind ``gate rules``, imported on demand by
+# :func:`_load_merge_rules` so no other verb pays for it.
+mr = None
 
 # The interactive ``install`` flow, imported on demand by
 # :func:`_load_install_tui` for the same reason — it pulls in the generation
@@ -182,6 +189,7 @@ verbs:
   statusline [install|layout]
                              register the shipd statusline, or lay out its segments
   copilot [add|remove]       maintain the Copilot code-review skill in a repo
+  gate rules [apply]         report, or apply, the repo's merge-rules ruleset
   vendor [add|remove]        maintain a vendored per-repo shipd install
   harness [list|show|add|remove|status]
                              the harness registry, and the generated /s:
@@ -256,6 +264,17 @@ def _load_registry():
         sys.path.insert(0, str(SCRIPTS))
     import harness_registry
     hr = harness_registry
+
+
+def _load_merge_rules():
+    """Import ``merge_rules`` from the engine's scripts dir into the module
+    global ``mr``. Deferred to the ``gate`` path, exactly as
+    :func:`_load_registry` is to ``harness``."""
+    global mr
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    import merge_rules
+    mr = merge_rules
 
 
 def _load_generate():
@@ -2253,6 +2272,22 @@ def cmd_copilot(args):
 
 
 # ---------------------------------------------------------------------------
+# gate (shipd-cli gate-rules-verb)
+# ---------------------------------------------------------------------------
+
+def cmd_gate(args):
+    """``shipd gate rules [apply] [--repo OWNER/NAME] [--root DIR]``: report
+    or apply the merge-rules ruleset. Only the ``rules`` subverb exists; the
+    work lives in ``merge_rules.py``."""
+    if not args or args[0] != "rules":
+        sys.stderr.write("usage: shipd gate rules [apply] "
+                         "[--repo OWNER/NAME] [--root DIR]\n")
+        return 2
+    _load_merge_rules()
+    return mr.main(args[1:])
+
+
+# ---------------------------------------------------------------------------
 # vendor (shipd-cli vendor-verb)
 # ---------------------------------------------------------------------------
 
@@ -3255,6 +3290,8 @@ def main(argv):
         return cmd_statusline(rest)
     if verb == "copilot":
         return cmd_copilot(rest)
+    if verb == "gate":
+        return cmd_gate(rest)
     if verb == "vendor":
         return cmd_vendor(rest)
     if verb == "harness":
