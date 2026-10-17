@@ -193,7 +193,7 @@ class CreatePathTest(WorktreeEngineTestBase):
         self.git("add", "x.txt", cwd=wt)
         self.git("commit", "-q", "-m", "add x", cwd=wt)
         subject = self.git("log", "-1", "--format=%s", cwd=wt).stdout.strip()
-        self.assertEqual(subject, "\u2615 Shipd: add x")
+        self.assertEqual(subject, "\u2615 add x")
 
     def test_foreign_commit_msg_hook_is_never_clobbered(self):
         # commit-brand-hook-install: A foreign hook is never clobbered.

@@ -3,14 +3,14 @@
 ### Requirement: Brand a subject once
 id: brand-subject-helper
 
-The engine SHALL define the constant `BRAND_PREFIX = "☕ Shipd: "` in `spec_common` as the only place the prefix is spelled, and SHALL provide a stdlib-only `brand_subject(subject)` beside it. `brand_subject` SHALL return `subject` unchanged when it is empty or whitespace only, when it already starts with `BRAND_PREFIX` or with `BRAND_PREFIX` stripped of trailing whitespace, or when it starts with `fixup!`, `squash!`, or `amend!`. Otherwise it SHALL return `BRAND_PREFIX + subject`. The brand SHALL NOT be configurable.
+The engine SHALL define the constant `BRAND_PREFIX = "☕ "` in `spec_common` as the only place the prefix is spelled, and SHALL provide a stdlib-only `brand_subject(subject)` beside it. `brand_subject` SHALL return `subject` unchanged when it is empty or whitespace only, when it already starts with `☕` (which covers `☕ `, `☕` with no space, and the earlier `☕ Shipd: ` prefix), or when it starts with `fixup!`, `squash!`, or `amend!`. Otherwise it SHALL return `BRAND_PREFIX + subject`, so no subject is ever branded twice. The brand SHALL NOT be configurable.
 
 #### Scenario: A bare subject gets the prefix
 - **WHEN** `brand_subject("room: fix x")` runs
-- **THEN** it returns `☕ Shipd: room: fix x`
+- **THEN** it returns `☕ room: fix x`
 
 #### Scenario: Branding is idempotent
-- **WHEN** `brand_subject` runs on `☕ Shipd: room: fix x` or `☕ Shipd:room: fix x`
+- **WHEN** `brand_subject` runs on `☕ room: fix x`, `☕room: fix x`, or `☕ Shipd: room: fix x`
 - **THEN** it returns its input unchanged
 
 #### Scenario: Autosquash subjects are left alone
@@ -24,12 +24,12 @@ The engine SHALL ship a stdlib-only `plugins/s/skills/build/scripts/brand.py` wi
 
 #### Scenario: Subject verb prints the branded subject
 - **WHEN** `brand.py subject "Install the gate"` runs
-- **THEN** it prints `☕ Shipd: Install the gate` and exits 0
+- **THEN** it prints `☕ Install the gate` and exits 0
 
 #### Scenario: Commit message in a shipd worktree is branded
 - **GIVEN** a message file holding `hello` then a `#` comment line
 - **WHEN** `brand.py commit-msg <file>` runs inside a linked worktree whose directory sits in the repository's `.worktrees` folder
-- **THEN** the file's first line is `☕ Shipd: hello` and the comment line is unchanged
+- **THEN** the file's first line is `☕ hello` and the comment line is unchanged
 
 #### Scenario: Commit message in the root checkout is untouched
 - **WHEN** `brand.py commit-msg <file>` runs in the repository's root checkout
@@ -43,7 +43,7 @@ The `install-hook` verb SHALL write a POSIX `sh` file named `commit-msg` into `<
 #### Scenario: Create installs the hook and a worktree commit is branded
 - **GIVEN** a repository with no `commit-msg` hook
 - **WHEN** `worktree.py my-change` runs and a commit with message `add x` is made in the new worktree
-- **THEN** `<git-common-dir>/hooks/commit-msg` carries the marker and the commit's subject is `☕ Shipd: add x`
+- **THEN** `<git-common-dir>/hooks/commit-msg` carries the marker and the commit's subject is `☕ add x`
 
 #### Scenario: A foreign hook is never clobbered
 - **GIVEN** a `commit-msg` hook without the marker
@@ -67,7 +67,7 @@ id: brand-engine-commits
 
 #### Scenario: A store auto-commit is branded
 - **WHEN** an engine wiki write auto-commits with subject `shipd-wiki: queue-add q-x`
-- **THEN** the commit's subject is `☕ Shipd: shipd-wiki: queue-add q-x`
+- **THEN** the commit's subject is `☕ shipd-wiki: queue-add q-x`
 
 #### Scenario: Skill commit lines use the helper
 - **WHEN** the test reads `plugins/s/skills/gate/SKILL.md` and `plugins/s/skills/epic/SKILL.md`

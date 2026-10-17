@@ -122,7 +122,7 @@ epic into an external store (`store_root`), there is no worktree, branch, or
 PR: the flow edits the epic in the store's working tree and runs both gates
 against that uncommitted edit, with `--root` still naming the consuming repo.
 It then ships one local commit in the store scoped to the epic file alone,
-subject `☕ Shipd: shipd: amend epic <slug>` (carrying the `☕ Shipd: `
+subject `☕ shipd: amend epic <slug>` (carrying the `☕ `
 brand), never pushed. A draft epic is not amended
 at all; it is edited in its authoring worktree.
 

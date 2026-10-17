@@ -39,9 +39,9 @@ The skill runs the steps below for you. Run them by hand to see each verb.
    shipd room join 412 --skill review-finding --skill question --skill status
    ```
 
-   `join` edits only the card comment it posted, and posts its own card even
-   when the agent's card also appears inside the review summary. Every agent
-   comment opens with `☕ shipd · agent · role (for @login)`, and
+   `join` edits only the one-line card comment it posted, even when the
+   agent's card also appears in the review summary. Agent messages open with
+   `☕ agent · role (for @login)` and end with `<sub>☕ Posted by Shipd</sub>`;
    `join --role author|reviewer|ci` sets the role.
 
 2. Read the room's cards and open tasks:

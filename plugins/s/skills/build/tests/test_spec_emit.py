@@ -795,7 +795,7 @@ class WikiEmitTest(SpecEmitTestBase):
         r = self.cli("wiki", "--from", self.stage)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._commit_count(), before + 1)
-        self.assertEqual(self._head_subject(), "☕ Shipd: shipd-wiki: emit 2 file(s)")
+        self.assertEqual(self._head_subject(), "☕ shipd-wiki: emit 2 file(s)")
         self.assertEqual(
             self._head_files(),
             [".shipd/wiki/index.md", ".shipd/wiki/wiki/intro.md"])

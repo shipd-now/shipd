@@ -889,7 +889,7 @@ def _post_review(gh, repo, number, sha, anchored, commentable=None,
         except ValueError:
             login = ""
     heading = "### " + room_schema.speaker_heading(ROOM_AGENT, "reviewer",
-                                                    login)
+                                                    login, brand=True)
     pointer = ("Semantic review: %d inline comments. Full report in the "
                "summary comment." % len(comments) if comments else
                "Semantic review posted. Full report in the summary comment.")

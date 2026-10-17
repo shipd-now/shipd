@@ -4641,7 +4641,7 @@ class WikiFallbackStoreTest(SpecStatusTestBase):
             os.path.isfile(os.path.join(content, "wiki", "queue.md")))
         self.assertEqual(self._commit_count(store), before + 1)
         self.assertEqual(
-            self._head_subject(store), "☕ Shipd: shipd-wiki: queue-add q-stale-cache")
+            self._head_subject(store), "☕ shipd-wiki: queue-add q-stale-cache")
 
     def test_externally_redirected_store_commits_answer_and_discard(self):
         store, _content = self._redirect_store()
@@ -4649,12 +4649,12 @@ class WikiFallbackStoreTest(SpecStatusTestBase):
         r = self.cli("wiki-queue-answer", "retention", "--answer", "one release")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(
-            self._head_subject(store), "☕ Shipd: shipd-wiki: queue-answer q-retention")
+            self._head_subject(store), "☕ shipd-wiki: queue-answer q-retention")
         self.add_block("cache-ttl")
         r = self.cli("wiki-queue-discard", "cache-ttl", "--reason", "obsolete")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(
-            self._head_subject(store), "☕ Shipd: shipd-wiki: queue-discard q-cache-ttl")
+            self._head_subject(store), "☕ shipd-wiki: queue-discard q-cache-ttl")
 
     # -- ineligible root ------------------------------------------------------
 
@@ -4787,7 +4787,7 @@ class WikiQueueAddTest(SpecStatusTestBase):
                      "--recommendation", "yes")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._commit_count(), before + 1)
-        self.assertEqual(self._head_subject(), "☕ Shipd: shipd-wiki: queue-add q-stale-cache")
+        self.assertEqual(self._head_subject(), "☕ shipd-wiki: queue-add q-stale-cache")
         self.assertEqual(self._head_files(), [".shipd/wiki/queue.md"])
 
     def test_wiki_queue_add_duplicate_makes_no_commit(self):
@@ -5136,7 +5136,7 @@ class WikiQueueDiscardTest(SpecStatusTestBase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._commit_count(), before + 1)
         self.assertEqual(self._head_subject(),
-                         "☕ Shipd: shipd-wiki: queue-discard q-retention")
+                         "☕ shipd-wiki: queue-discard q-retention")
         self.assertEqual(self._head_files(), [".shipd/wiki/queue.md"])
 
     def test_refused_discard_makes_no_commit(self):

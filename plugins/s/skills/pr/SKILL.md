@@ -1,7 +1,7 @@
 ---
 name: pr
 description: >-
-  Write a shipd pull request's title and its `## ☕ Shipd Pull Request` body,
+  Write a shipd pull request's title and its `## ☕ Pull Request` body,
   then create the pull request with `gh pr create` (or update it with
   `gh pr edit` when the branch already has one) and print its full URL. The
   title follows the `pr` config template and can carry a ticket id; the body
@@ -39,16 +39,18 @@ plugin snapshot the session is running.
    `${CLAUDE_PLUGIN_ROOT}/skills/document/references/standard.md` before you
    write a word of the body.
 3. **Draft the body** in this order:
-   - Line 1 is exactly `## ☕ Shipd Pull Request`.
+   - Line 1 is exactly `## ☕ Pull Request`.
    - A why-first paragraph: what a person sees today, and what this change
      fixes. Plain words, no file paths in this paragraph.
    - A short list of what changed, one bullet per user-visible effect.
+   - A `<sub>☕ Posted by Shipd</sub>` paragraph, directly before the last
+     line.
    - The last line is `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 4. **Lint it.** Save the body to a scratch file with `<!-- doc-type: concept -->`
    as line 1, above the heading. Run
    `python3 "${CLAUDE_PLUGIN_ROOT}/skills/document/scripts/docs_lint.py" <file>`
    and fix the body until it exits 0. Then strip the marker line, so the
-   posted body starts with `## ☕ Shipd Pull Request`.
+   posted body starts with `## ☕ Pull Request`.
 5. **Render the title.** Take the change's one-sentence summary, trimmed to
    about 60 characters, and run
    `python3 "${CLAUDE_PLUGIN_ROOT}/skills/pr/scripts/pr_title.py" title --summary "<summary>" --branch "$(git branch --show-current)"`,

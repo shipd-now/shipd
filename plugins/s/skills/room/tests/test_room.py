@@ -535,7 +535,7 @@ class JoinTest(RoomTestBase):
         self.assertEqual(data["url"], gh.comments[-1]["html_url"])
         self.assertIn("joined %s as codex-a" % CONTEXT, err)
 
-    def test_join_with_a_role_heads_and_marks_the_card(self):
+    def test_join_with_a_role_marks_the_one_line_card(self):
         gh = FakeGh()
         code, _out, err = self.room(gh, "join", "7", "--agent", "codex-a",
                                     "--role", "author")
@@ -543,9 +543,10 @@ class JoinTest(RoomTestBase):
         body = gh.posts()[0]
         self.assertEqual(first_marker(body).role, "author")
         self.assertIn('"role":"author"', body.splitlines()[0])
-        self.assertIn("### \u2615 shipd \u00b7 codex-a \u00b7 author "
-                      "(for @bot)", body)
-        self.assertEqual(gh.user_calls(), 1)
+        self.assertIn("<sub>\u2615 **codex-a** joined the room</sub>", body)
+        self.assertNotIn("###", body)
+        self.assertNotIn("(for @", body)
+        self.assertEqual(gh.user_calls(), 0)
 
     def test_unknown_role_is_a_usage_error(self):
         gh = FakeGh()
@@ -832,8 +833,10 @@ class MessageTest(RoomTestBase):
         self.assertEqual(code, 0, err)
         self.assertEqual(
             gh.posts()[0].split("\n", 2)[2].splitlines()[0],
-            "### \u2615 shipd \u00b7 codex-a \u00b7 author (for @bot)")
+            "### \u2615 codex-a \u00b7 author (for @bot)")
         self.assertEqual(gh.user_calls(), 1)
+        self.assertTrue(gh.posts()[0].endswith(
+            "\n\n<sub>\u2615 Posted by Shipd</sub>"))
 
     def test_card_without_a_role_drops_the_role_segment(self):
         gh = FakeGh(comments=_joined())
@@ -842,7 +845,7 @@ class MessageTest(RoomTestBase):
         self.assertEqual(code, 0, err)
         self.assertEqual(
             gh.posts()[0].split("\n", 2)[2].splitlines()[0],
-            "### \u2615 shipd \u00b7 codex-a (for @bot)")
+            "### \u2615 codex-a (for @bot)")
 
     def test_unaddressed_opener_is_submitted(self):
         gh = FakeGh(comments=_joined())
@@ -1073,7 +1076,7 @@ class CloseTest(RoomTestBase):
         self.assertEqual(code, 0, err)
         self.assertIn("warning:", err)
         body = gh.posts()[0]
-        self.assertIn("### \u2615 shipd \u00b7 claude-b", body)
+        self.assertIn("### \u2615 claude-b", body)
         self.assertNotIn("(for @", body)
 
     def test_close_with_a_reason_at_the_cap_still_posts(self):
@@ -1528,7 +1531,7 @@ class WatchRoundCapTest(WatchTestBase):
         posts = gh.posts()
         self.assertEqual(len(posts), 2, posts)
         for body in posts:
-            self.assertIn("### \u2615 shipd \u00b7 claude-b \u00b7 reviewer "
+            self.assertIn("### \u2615 claude-b \u00b7 reviewer "
                           "(for @bot)", body)
         self.assertEqual(gh.user_calls(), 1)
 

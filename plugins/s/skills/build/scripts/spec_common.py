@@ -1149,20 +1149,20 @@ DEFAULT_PR_TITLE = "{summary}"
 PR_TITLE_PLACEHOLDERS = ("ticket", "summary", "change")
 
 
-BRAND_PREFIX = "\u2615 Shipd: "
+BRAND_PREFIX = "\u2615 "
 _BRAND_SKIP = ("fixup!", "squash!", "amend!")
 
 
 def brand_subject(subject):
     """Prefix a commit or pull request subject with :data:`BRAND_PREFIX`
     (shipd-brand brand-subject-helper). Returns ``subject`` unchanged when it
-    is empty or whitespace, already starts with the prefix (with or without
-    its trailing space), or starts with an autosquash marker. Not
+    is empty or whitespace, already starts with the mark ``\u2615`` (so
+    ``\u2615 ``, ``\u2615`` with no space, and the legacy ``\u2615 Shipd: ``
+    are never branded twice), or starts with an autosquash marker. Not
     configurable."""
     if not subject or not subject.strip():
         return subject
-    if subject.startswith(BRAND_PREFIX) or subject.startswith(
-            BRAND_PREFIX.rstrip()):
+    if subject.startswith(BRAND_PREFIX.rstrip()):
         return subject
     if subject.startswith(_BRAND_SKIP):
         return subject

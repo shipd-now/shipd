@@ -644,7 +644,7 @@ git push -u origin change/<change-name>
 gh pr merge --auto --squash --delete-branch
 PR_URL=$(gh pr view --json url -q .url)
 ```
-`/s:pr` writes the title and the `## ☕ Shipd Pull Request` body and opens
+`/s:pr` writes the title and the `## ☕ Pull Request` body and opens
 the PR; it never pushes or arms auto-merge. `gh pr merge --auto` enables auto-merge so the PR squashes and its branch is
 deleted once `ci` is green. If the repo rejects auto-merge, merge manually only
 after `ci` passes and say so in the report. Keep `PR_URL` for Phase 7.
