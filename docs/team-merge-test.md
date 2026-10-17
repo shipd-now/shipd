@@ -119,4 +119,7 @@ Do not paste the credential into a file, a chat, or a command argument.
 - A failed step in `run`: the pull request stays open. Read the last record
   in `evidence.json`; it names the claim and what GitHub returned. After a
   stop at `b-push-dismisses`, `run --resume --out <dir>` continues on the same
-  pull request and keeps the earlier records.
+  pull request and keeps the earlier records. It relabels the failed record
+  as `b-empty-push-keeps-approvals` only when the GitHub compare API shows no
+  changed file between the record's old and new head. A failed push that
+  changed files stops the run: it exits 1 and the record stays failed.

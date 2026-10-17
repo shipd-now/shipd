@@ -56,6 +56,8 @@ class Gh:
     def _env(self, who):
         env = dict(self.environ)
         if who != "reviewer":
+            env.pop(TOKEN_VAR, None)
+            env.pop(CONFIG_VAR, None)
             return env
         if env.get(TOKEN_VAR):
             env["GH_TOKEN"] = env[TOKEN_VAR]
@@ -545,12 +547,24 @@ class Proof:
     def resume(self):
         """Continue a run that stopped at ``b-push-dismisses`` after an empty
         commit: GitHub kept the approvals, so that failed record becomes the
-        observed fact and the dismissal proof is retried with a real change."""
+        observed fact and the dismissal proof is retried with a real change.
+        The relabel needs proof: the compare API must show no changed file
+        between the record's old and new head, else the run refuses."""
         with open(self.path) as handle:
             self.data = json.load(handle)
         last = (self.data.get("records") or [{}])[-1]
         if last.get("id") != "b-push-dismisses" or last.get("ok"):
             raise StepFailed("nothing to resume: the evidence does not end at b-push-dismisses")
+        moved = re.search(r"head (\w+) -> (\w+)", last.get("observed") or "")
+        if not moved:
+            raise StepFailed("cannot prove the push was empty: no old and new head in the record")
+        code, out, err = self.gh.exec(
+            ["gh", "api", "repos/%s/compare/%s...%s" % (self.repo, moved.group(1), moved.group(2)),
+             "--jq", ".files|length"])
+        if code != 0 or out.strip() != "0":
+            raise StepFailed("the push %s -> %s changed files (or could not be checked); "
+                             "only an empty push may be relabelled"
+                             % (moved.group(1), moved.group(2)))
         last.update(id="b-empty-push-keeps-approvals", ok=True,
                     claim="an empty push leaves the approvals standing (observed on GitHub; "
                           "the dismissal proof pushes a real change)")

@@ -53,6 +53,21 @@ def good_handler(argv, who):
     return (1, "", "unexpected: " + text)
 
 
+class EnvTest(unittest.TestCase):
+    def test_reviewer_credential_never_reaches_the_author(self):
+        env = {"TEAM_TEST_REVIEWER_GH_TOKEN": "rt", "TEAM_TEST_REVIEWER_GH_CONFIG_DIR": "/c",
+               "GH_TOKEN": "mine", "PATH": "/bin"}
+        gh = tmt.Gh(environ=env)
+        author = gh._env("author")
+        self.assertNotIn("TEAM_TEST_REVIEWER_GH_TOKEN", author)
+        self.assertNotIn("TEAM_TEST_REVIEWER_GH_CONFIG_DIR", author)
+        self.assertEqual(author["GH_TOKEN"], "mine")
+        self.assertEqual(gh._env("reviewer")["GH_TOKEN"], "rt")
+        cfg = tmt.Gh(environ={"TEAM_TEST_REVIEWER_GH_CONFIG_DIR": "/c", "GH_TOKEN": "mine"})
+        self.assertEqual(cfg._env("reviewer")["GH_CONFIG_DIR"], "/c")
+        self.assertNotIn("GH_TOKEN", cfg._env("reviewer"))
+
+
 class RepoRefusalTest(unittest.TestCase):
     def test_other_repo_exits_2_before_any_call(self):
         gh = FakeGh(good_handler)
@@ -201,6 +216,7 @@ class World:
         self.reviews, self.rid, self.pending_views = [], 0, 2
         self.pending_push = self.pr_created = self.empty_commit = False
         self.nhead = 1
+        self.pushes = {}
         self.add(BOT, "APPROVED", "h1")
 
     def add(self, login, state, commit):
@@ -231,6 +247,7 @@ class World:
             if argv[1] == "push" and self.pending_push:
                 self.pending_push = False
                 self.nhead += 1
+                self.pushes[(self.head, "h%d" % self.nhead)] = self.empty_commit
                 self.head, self.pending_views = "h%d" % self.nhead, 2
                 for rev in self.reviews:
                     if rev["state"] == "APPROVED":
@@ -241,6 +258,9 @@ class World:
                 if not self.empty_commit:
                     self.add(BOT, "APPROVED", self.head)
             return (0, "", "")
+        if "--jq" in argv and "/compare/" in text:
+            old, new = text.split("/compare/")[1].split()[0].split("...")
+            return (0, "0\n" if self.pushes.get((old, new)) else "1\n", "")
         if argv[:3] == ["gh", "pr", "create"]:
             self.pr_created = True
             return (0, PR_URL + "\n", "")
@@ -377,7 +397,7 @@ class RunTest(unittest.TestCase):
                     "started": "t", "finished": "t", "records": [
                         {"id": "a-two-approvals-clean", "claim": "c", "observed": "o",
                          "ok": True, "at": "t"},
-                        {"id": "b-push-dismisses", "claim": "c", "observed": "not DISMISSED",
+                        {"id": "b-push-dismisses", "claim": "c", "observed": "reads not DISMISSED; head h1 -> h2",
                          "ok": False, "at": "t"}]}
         with open(os.path.join(self.dir, "evidence.json"), "w") as handle:
             json.dump(evidence, handle)
@@ -392,6 +412,31 @@ class RunTest(unittest.TestCase):
         self.assertEqual(ev["result"], "pass")
         self.assertTrue(all(r["ok"] for r in ev["records"]))
         self.assertEqual(world.state, "MERGED")
+
+    def test_resume_refuses_a_real_edit_push(self):
+        world = World()
+        world.add(REVIEWER, "APPROVED", "h1")
+        world.pr_created = True
+        world.handler(["git", "commit"], "author")
+        world.handler(["git", "push"], "author")  # a real edit: approvals dismissed
+        for rev in world.reviews:  # then suppose GitHub left the review standing
+            rev["state"], rev["commit_id"] = "APPROVED", world.head
+        evidence = {"repo": REPO, "pr_url": PR_URL, "pr_number": PR_NUMBER,
+                    "branch": "team-merge-test/20260101-000000", "result": "fail",
+                    "started": "t", "finished": "t", "records": [
+                        {"id": "b-push-dismisses", "claim": "c",
+                         "observed": "reads not DISMISSED; head h1 -> h2",
+                         "ok": False, "at": "t"}]}
+        with open(os.path.join(self.dir, "evidence.json"), "w") as handle:
+            json.dump(evidence, handle)
+        code = tmt.main(["run", "--resume", "--out", self.dir, "--root", self.dir],
+                        gh=FakeGh(world.handler), out=lambda _l: None,
+                        sleep=lambda _s: None)
+        self.assertEqual(code, 1)
+        ev = self.evidence()
+        self.assertEqual([r["id"] for r in ev["records"]], ["b-push-dismisses"])
+        self.assertFalse(ev["records"][0]["ok"])
+        self.assertEqual(ev["result"], "fail")
 
     def test_resume_refuses_without_the_expected_failure(self):
         world = World()
