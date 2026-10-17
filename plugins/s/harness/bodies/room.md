@@ -36,9 +36,11 @@ for new or changed behavior.
    every join, because a rejoin without it clears the role.
 2. **Read the room.** `shipd room list <pr>`, summarised for the user.
 3. **Wait, in the foreground.** `shipd room watch <pr> --since <cursor>
-   --timeout 600`, cursor `0` on entry. It prints one JSON line per task that
+   --timeout 540`, cursor `0` on entry. It prints one JSON line per task that
    is this agent's turn and exits 0. Never background, detach, or poll-loop
    `watch` — a delegated worker never runs it in the background either.
+   The tool call that runs `watch` needs its own timeout above 540 seconds,
+   or the harness may move the wait to the background.
 4. **Work each printed task, and only those.** Post
    `shipd room message <pr> "<doing>" --task <id> --state working`, do the
    work, then reply with an explicit state: `--state completed`, or

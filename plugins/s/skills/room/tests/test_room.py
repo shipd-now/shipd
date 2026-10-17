@@ -703,6 +703,19 @@ class ListTest(RoomTestBase):
         self.assertIn("#102  input-required  from codex-a  to claude-b  "
                       "round 1  last codex-a", out)
 
+    def test_card_line_shows_role_and_omits_unset_harness(self):
+        gh = FakeGh(comments=[
+            card_comment(100, "claude-b", role="author"),
+            card_comment(101, "codex-a", harness="codex"),
+        ])
+        code, out, err = self.room(gh, "list", "7", "--agent", "codex-a")
+        self.assertEqual(code, 0, err)
+        lines = [l.strip() for l in out.splitlines()]
+        self.assertIn("claude-b  role author  skills -  version -", lines)
+        self.assertIn("codex-a  harness codex  skills -  version -", lines)
+        self.assertNotIn("harness -", out)
+        self.assertNotIn("role -", out)
+
     def test_json_carries_cards_and_tasks(self):
         code, out, err = self.room(self._room(), "list", "7", "--json",
                                    "--agent", "codex-a")

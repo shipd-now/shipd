@@ -15,6 +15,7 @@ that has never heard of these fake SHAs.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -137,6 +138,7 @@ class FakeGh:
         self.protect_put = None         # last full-protection PUT body
         self._comments = [dict(c) for c in (existing_comments or [])]
         self._next_comment_id = 1000
+        self._clock_writes = 0
         self._review_fail_remaining = review_fail_times
         # Thread model (GraphQL) state. ``viewer`` is the authenticated login —
         # i.e. the account the gate posts as, so gate-authored == root comment
@@ -153,6 +155,13 @@ class FakeGh:
         # Fast-pass variable control
         self.variable_get_enabled = variable_get_enabled
         self.merge_call_fails = merge_call_fails
+
+    def _stamp(self):
+        """An incrementing fixed clock: 2026-10-17T12:00:00Z, then one more
+        minute per issue-comment write."""
+        n = self._clock_writes
+        self._clock_writes += 1
+        return "2026-10-17T%02d:%02d:00Z" % (12 + n // 60, n % 60)
 
     # -- dispatch -----------------------------------------------------------
 
@@ -314,6 +323,7 @@ class FakeGh:
             for c in self._comments:
                 if c["id"] == cid:
                     c["body"] = payload["body"]
+                    c["updated_at"] = self._stamp()
                     return 0, json.dumps(c), ""
             return 1, "", "no such comment %d" % cid
 
@@ -324,7 +334,8 @@ class FakeGh:
             cid = self._next_comment_id
             self._next_comment_id += 1
             comment = {"id": cid, "body": payload["body"],
-                       "html_url": "%s#issuecomment-%d" % (self.pr_url, cid)}
+                       "html_url": "%s#issuecomment-%d" % (self.pr_url, cid),
+                       "updated_at": self._stamp()}
             self._comments.append(comment)
             return 0, json.dumps(comment), ""
 
@@ -2142,8 +2153,9 @@ def _manifest_version():
 
 
 class RoomSummaryTest(unittest.TestCase):
-    """With a ``room``, the summary carries the gate's Agent Card then its
-    Message directly above the footer block; without one it is unchanged."""
+    """With a ``room``, the summary carries only the gate's Agent Card
+    directly above the footer block (no Message, so it is not a task);
+    without one it is unchanged."""
 
     FILES = [{"filename": "a.py", "patch": PATCH_A,
               "additions": 12, "deletions": 3}]
@@ -2162,59 +2174,30 @@ class RoomSummaryTest(unittest.TestCase):
                          review_gate.BRAND_LINE)
         self.assertEqual(lines[-1], "Reviewed 1 file, +12 -3 lines.")
         self.assertEqual(lines[-2], "")
-        self.assertTrue(lines[-4].startswith("<!-- shipd-room-card "))
-        self.assertTrue(lines[-3].startswith("<!-- shipd-room "))
+        self.assertTrue(lines[-3].startswith("<!-- shipd-room-card "))
 
     def test_without_files_the_markers_close_the_body(self):
         lines = self._lines(_review(verdict="pass"), room=ROOM)
-        self.assertTrue(lines[-2].startswith("<!-- shipd-room-card "))
-        self.assertTrue(lines[-1].startswith("<!-- shipd-room "))
-        self.assertEqual(lines[-3], "")
+        self.assertTrue(lines[-1].startswith("<!-- shipd-room-card "))
+        self.assertEqual(lines[-2], "")
 
     def test_card_parses_back(self):
         lines = self._lines(_review(verdict="pass"), files=self.FILES,
                             room=ROOM)
-        card = room_schema.parse_comment(lines[-4])
+        card = room_schema.parse_comment(lines[-3])
         self.assertIsInstance(card, room_schema.AgentCard)
         self.assertEqual(card.name, "semantic-review")
         self.assertEqual(card.skills, ("semantic-review",))
         self.assertEqual(card.description, "shipd semantic-review gate")
         self.assertEqual(card.version, _manifest_version())
 
-    def test_message_parses_back(self):
-        cases = [
-            (_review(verdict="pass"), "all", "success"),
-            (_review(verdict="changes-requested", findings=[self.FINDING]),
-             "all", "failure"),
-            (_review(verdict="changes-requested", findings=[self.FINDING]),
-             "none", "success"),
-        ]
-        for review, disposition, state in cases:
-            with self.subTest(verdict=review["verdict"],
-                              disposition=disposition):
-                lines = self._lines(review, [self.FINDING]
-                                    if review["findings"] else [],
-                                    disposition=disposition,
-                                    files=self.FILES, room=ROOM)
-                msg = room_schema.parse_comment(lines[-3])
-                self.assertIsInstance(msg, room_schema.Message)
-                self.assertEqual(msg.role, "agent")
-                self.assertEqual(msg.agent, "semantic-review")
-                self.assertEqual(msg.context_id, "o/r#7")
-                self.assertIsNone(msg.task_id)
-                self.assertEqual(msg.state, "completed")
-                self.assertEqual(msg.round, 1)
-                self.assertEqual(msg.metadata["verdict"], review["verdict"])
-                self.assertEqual(msg.metadata["status"], state)
-                self.assertEqual(
-                    msg.text,
-                    review_gate._status_description(review, disposition))
-
-    def test_explicit_status_state_is_carried(self):
-        lines = self._lines(_review(verdict="pass"), room=ROOM,
-                            status_state="failure")
-        msg = room_schema.parse_comment(lines[-1])
-        self.assertEqual(msg.metadata["status"], "failure")
+    def test_summary_parses_to_one_card_and_no_message(self):
+        body = review_gate.render_summary(
+            _review(verdict="pass"), [], files=self.FILES, room=ROOM)
+        parsed = room_schema.parse_comments(body)
+        self.assertEqual(len(parsed), 1)
+        self.assertIsInstance(parsed[0], room_schema.AgentCard)
+        self.assertNotIn("<!-- shipd-room ", body)
 
     def test_without_room_no_room_text(self):
         body = review_gate.render_summary(
@@ -2306,7 +2289,7 @@ class RoomFindingTest(unittest.TestCase):
 
 
 CARD_PREFIX = "<!-- shipd-room-card "
-MESSAGE_PREFIX = "<!-- shipd-room "
+MESSAGE_PREFIX = "<!-- shipd-room {"
 
 
 class RoomPostTest(unittest.TestCase):
@@ -2327,14 +2310,12 @@ class RoomPostTest(unittest.TestCase):
 
     def _assert_summary_markers(self, body):
         self.assertEqual(body.count(CARD_PREFIX), 1)
-        self.assertEqual(body.count(MESSAGE_PREFIX), 1)
+        self.assertEqual(body.count(MESSAGE_PREFIX), 0)
         parsed = room_schema.parse_comments(body)
+        self.assertEqual(len(parsed), 1)
         self.assertIsInstance(parsed[0], room_schema.AgentCard)
-        messages = [m for m in parsed if isinstance(m, room_schema.Message)]
-        self.assertEqual(len(messages), 1)
-        self.assertEqual(messages[0].context_id, "o/r#7")
 
-    def test_pass_review_summary_carries_card_and_message(self):
+    def test_pass_review_summary_carries_card_only(self):
         gh = FakeGh(files=self.FILES)
         review_gate.post("7", _review(verdict="pass"), gh)
         self._assert_summary_markers(gh.summary_body())
@@ -2348,7 +2329,7 @@ class RoomPostTest(unittest.TestCase):
         review = gh.review_posts[0]
         self.assertEqual(len(review["comments"]), 2)
         for comment in review["comments"]:
-            self.assertEqual(comment["body"].count("shipd-room"), 1)
+            self.assertEqual(comment["body"].count(MESSAGE_PREFIX), 1)
         self.assertNotIn("shipd-room", review["body"])
         self._assert_summary_markers(gh.summary_body())
         self.assertNotIn("third", "".join(
@@ -2371,6 +2352,96 @@ class RoomPostTest(unittest.TestCase):
         self.assertEqual(len(gh.marker_comments()), 1)
         self.assertTrue(gh.comment_patch_calls())
         self._assert_summary_markers(gh.summary_body())
+
+    def test_summary_is_a_card_not_a_task_in_room_parse(self):
+        import room
+        gh = FakeGh(files=self.FILES)
+        review_gate.post(
+            "7", _review(verdict="changes-requested",
+                         findings=self._findings()), gh)
+        inline = []
+        for n, comment in enumerate(gh.review_posts[0]["comments"]):
+            inline.append({"id": 2000 + n, "body": comment["body"],
+                           "_room_endpoint": "review"})
+        summary = dict(gh.marker_comments()[-1])
+        summary.setdefault("id", 1000)
+        cards, tasks, _raw = room._parse_room([summary] + inline)
+        self.assertEqual([c.name for c in cards], ["semantic-review"])
+        self.assertEqual(len(tasks), len(inline))
+        self.assertEqual({t.id for t in tasks},
+                         {c["id"] for c in inline})
+
+
+class EarlierReviewsTest(unittest.TestCase):
+    """summary-earlier-reviews: a re-posted summary keeps a collapsed list
+    of the verdicts it replaced."""
+
+    FILES = [{"filename": "a.py", "patch": PATCH_A}]
+    SHAS = ("a" * 40, "b" * 40, "c" * 40)
+    HEAD_RE = r"<!-- shipd-semantic-review-head (\S+) -->"
+
+    def _fail(self):
+        return _review(verdict="changes-requested", findings=[
+            {"id": "f1", "severity": "high", "locations": ["a.py:2"],
+             "what": "first", "why": "w", "fix": "x"}])
+
+    def _post(self, gh, review, sha):
+        gh.head_sha = sha
+        review_gate.post("7", review, gh)
+        return gh.summary_body()
+
+    def _earlier(self, body):
+        start = body.index("<summary>Earlier reviews</summary>")
+        end = body.index("</details>", start)
+        return [ln for ln in body[start:end].splitlines()
+                if ln.startswith("- ")]
+
+    def test_first_post_has_no_earlier_list(self):
+        gh = FakeGh(files=self.FILES)
+        body = self._post(gh, _review(verdict="pass"), self.SHAS[0])
+        self.assertNotIn("Earlier reviews", body)
+        self.assertEqual(re.findall(self.HEAD_RE, body), [self.SHAS[0]])
+
+    def test_pass_after_fix_required_keeps_the_old_verdict(self):
+        gh = FakeGh(files=self.FILES)
+        self._post(gh, self._fail(), self.SHAS[0])
+        body = self._post(gh, _review(verdict="pass"), self.SHAS[1])
+        self.assertIn("## Findings: ✅ Ship it", body)
+        entries = self._earlier(body)
+        self.assertEqual(len(entries), 1)
+        self.assertTrue(
+            entries[0].startswith("- ❌ Fix required — `%s`"
+                                  % self.SHAS[0][:7]), entries[0])
+
+    def test_entries_carry_forward_newest_first(self):
+        gh = FakeGh(files=self.FILES)
+        self._post(gh, self._fail(), self.SHAS[0])
+        self._post(gh, self._fail(), self.SHAS[1])
+        body = self._post(gh, _review(verdict="pass"), self.SHAS[2])
+        entries = self._earlier(body)
+        self.assertEqual(len(entries), 2)
+        self.assertIn("`%s`" % self.SHAS[1][:7], entries[0])
+        self.assertIn("`%s`" % self.SHAS[0][:7], entries[1])
+        self.assertEqual(body.count("Earlier reviews"), 1)
+
+    def test_time_comes_from_the_comment_stamp(self):
+        previous = {"body": "## Findings: ✅ Ship it\n"
+                            "<!-- shipd-semantic-review-head %s -->\n"
+                            % self.SHAS[0],
+                    "updated_at": "2026-10-17T12:34:56Z"}
+        entries = review_gate.earlier_reviews(previous)
+        self.assertEqual(len(entries), 1)
+        self.assertTrue(entries[0].endswith("— 2026-10-17 12:34 UTC"),
+                        entries[0])
+
+    def test_legacy_summary_without_head_names_unknown(self):
+        previous = {"body": "## Findings: ✅ Ship it\n",
+                    "created_at": "2026-10-17T12:00:00Z"}
+        entries = review_gate.earlier_reviews(previous)
+        self.assertIn("`unknown`", entries[0])
+
+    def test_no_previous_summary_yields_nothing(self):
+        self.assertEqual(review_gate.earlier_reviews(None), [])
 
 
 if __name__ == "__main__":

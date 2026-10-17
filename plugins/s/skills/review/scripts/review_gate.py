@@ -367,9 +367,51 @@ def review_footer(files):
     return line + "."
 
 
+HEAD_MARKER_FMT = "<!-- shipd-semantic-review-head %s -->"
+_HEAD_MARKER_RE = re.compile(r"<!-- shipd-semantic-review-head (\S+) -->")
+EARLIER_OPEN = "<details><summary>Earlier reviews</summary>"
+EARLIER_CLOSE = "</details>"
+_STAMP_RE = re.compile(r"^(\d{4}-\d\d-\d\d)T(\d\d:\d\d):\d\dZ$")
+
+
+def _earlier_stamp(comment):
+    """The `` — <YYYY-MM-DD HH:MM> UTC`` segment for a summary comment, from
+    GitHub's own ``updated_at`` (else ``created_at``); empty when neither is
+    present, the raw stamp when it does not parse."""
+    stamp = comment.get("updated_at") or comment.get("created_at")
+    if not stamp:
+        return ""
+    match = _STAMP_RE.match(stamp)
+    if not match:
+        return " \u2014 %s" % stamp
+    return " \u2014 %s %s UTC" % match.groups()
+
+
+def earlier_reviews(previous):
+    """Entry lines for the Earlier-reviews block of a re-posted summary,
+    newest first: one for the ``previous`` summary comment dict (``None`` →
+    no entries), then every entry of its own Earlier-reviews block in
+    order."""
+    if not previous:
+        return []
+    body = previous.get("body") or ""
+    verdict = "verdict unknown"
+    for line in body.splitlines():
+        if line.startswith("## Findings: "):
+            verdict = line[len("## Findings: "):]
+            break
+    head = _HEAD_MARKER_RE.search(body)
+    sha7 = head.group(1)[:7] if head else "unknown"
+    entries = ["- %s \u2014 `%s`%s" % (verdict, sha7, _earlier_stamp(previous))]
+    if EARLIER_OPEN in body:
+        block = body.split(EARLIER_OPEN, 1)[1].split(EARLIER_CLOSE, 1)[0]
+        entries += [ln for ln in block.splitlines() if ln.startswith("- ")]
+    return entries
+
+
 def render_summary(review, unanchored, disposition="all", model=None,
                    files=None, fast_pass_outcome=None, room=None,
-                   status_state=None):
+                   head=None, earlier=None):
     """Render the marker-tagged summary comment body: the ☕ brand line, the
     verdict header, effort, the policy provenance lines, the
     ``# | rating | details`` findings table (or ``NO_PROBLEMS`` in its
@@ -387,10 +429,15 @@ def render_summary(review, unanchored, disposition="all", model=None,
     tiers are never resolved here.
 
     Given a ``room`` (``{"context", "agent"}``, see ``_room``), the gate's
-    PR-room Agent Card line then its Message line follow the fast-pass line,
-    above the footer block, so the footer stays last. ``status_state`` is the
-    commit status the Message records, computed from the review when not
-    passed. Without ``room`` the body is unchanged."""
+    PR-room Agent Card line follows the fast-pass line, above the footer
+    block, so the footer stays last. The summary carries the card only — no
+    Message — so it never lists as a room task.
+
+    Given ``head`` (the PR head sha), a hidden ``HEAD_MARKER_FMT`` line
+    records it just before the card line. Given a non-empty ``earlier`` (see
+    ``earlier_reviews``), a collapsed ``Earlier reviews`` block lists those
+    entries after the fast-pass line. Without ``head``, ``earlier``, and
+    ``room`` the body is unchanged."""
     verdict = review.get("verdict")
     findings = review.get("findings") or []
     out = [MARKER, "", BRAND_LINE, "", _verdict_header(verdict), "",
@@ -429,9 +476,14 @@ def render_summary(review, unanchored, disposition="all", model=None,
                 out.append("  - Fix: %s" % fix)
     if fast_pass_outcome:
         out += ["", fast_pass_outcome]
-    if room:
-        out += ["", _room_card_line(room),
-                _room_summary_line(room, review, status_state, disposition)]
+    if earlier:
+        out += ["", EARLIER_OPEN, ""] + list(earlier) + ["", EARLIER_CLOSE]
+    if head or room:
+        out.append("")
+        if head:
+            out.append(HEAD_MARKER_FMT % head)
+        if room:
+            out.append(_room_card_line(room))
     footer = review_footer(files)
     if footer:
         out += ["", footer]
@@ -684,25 +736,6 @@ def _room_card_line(room):
         room_schema.CARD_MARKER, room_schema.card_to_dict(card))
 
 
-def _room_summary_line(room, review, state, disposition="all"):
-    """The summary's Message marker line: a ``completed`` round-1 report
-    carrying the verdict and the commit status ``state`` (computed from the
-    review when ``None``), its text the status description. No ``taskId`` —
-    the in-place PATCH keeps the comment, and so the task, stable."""
-    if state is None:
-        state = status_state(review.get("verdict"),
-                             review.get("findings") or [], disposition)
-    msg = room_schema.Message(
-        role="agent",
-        parts=({"kind": "text",
-                "text": _status_description(review, disposition)},),
-        context_id=room["context"], agent=room["agent"],
-        metadata={"round": 1, "state": "completed", "status": state,
-                  "verdict": review.get("verdict")})
-    return room_schema.render_marker(
-        room_schema.MESSAGE_MARKER, room_schema.message_to_dict(msg))
-
-
 def _room_finding_line(room, f, path, line, digest):
     """An anchored finding's Message marker line: an ``input-required``
     round-1 task for any agent with the `review-finding` skill, addressed to
@@ -767,15 +800,21 @@ def _pr_files(gh, repo, number):
     return json.loads(out or "[]")
 
 
+def _find_summary(gh, repo, number):
+    """The existing summary comment dict (current or legacy marker), or
+    ``None`` when the pull request has none."""
+    rc, out, err = gh(["api",
+                       "repos/%s/issues/%d/comments?per_page=100" % (repo, number)])
+    comments = json.loads(out or "[]") if rc == 0 else []
+    return next((c for c in comments if has_gate_marker(c.get("body"))), None)
+
+
 def _upsert_summary(gh, repo, number, body):
     """Create the marker summary comment or edit the existing one in place — a
     comment carrying either the current or the legacy marker is *the* summary,
     so a pre-rename PR is edited rather than given a second one. Returns the
     comment's html_url."""
-    rc, out, err = gh(["api",
-                       "repos/%s/issues/%d/comments?per_page=100" % (repo, number)])
-    comments = json.loads(out or "[]") if rc == 0 else []
-    existing = next((c for c in comments if has_gate_marker(c.get("body"))), None)
+    existing = _find_summary(gh, repo, number)
     payload = json.dumps({"body": body})
     if existing:
         rc, out, err = gh(
@@ -895,10 +934,13 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
     anchored, unanchored = _split_findings(findings, commentable)
 
     state = status_state(review.get("verdict"), findings, disposition)
+    # Computed once, before the first upsert, so this run's own fold and
+    # fast-pass re-upserts never add an entry.
+    earlier = earlier_reviews(_find_summary(gh, repo, number))
     comment_url = _upsert_summary(
         gh, repo, number,
         render_summary(review, unanchored, disposition, model, files,
-                       room=room, status_state=state))
+                       room=room, head=sha, earlier=earlier))
     _set_status(gh, repo, sha, state,
                 _status_description(review, disposition), comment_url)
     out("summary comment: %s" % (comment_url or "(created)"))
@@ -917,7 +959,7 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
             _upsert_summary(
                 gh, repo, number,
                 render_summary(review, findings, disposition, model, files,
-                               room=room, status_state=state))
+                               room=room, head=sha, earlier=earlier))
             _post_review(gh, repo, number, sha, [], room=room)
 
     # Fast-pass auto-merge logic
@@ -948,7 +990,7 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
         gh, repo, number,
         render_summary(review, unanchored, disposition, model, files,
                        fast_pass_outcome=fast_pass_outcome_line,
-                       room=room, status_state=state))
+                       room=room, head=sha, earlier=earlier))
 
     out("semantic-review status: %s" % state)
     return {"state": state, "summary_url": comment_url,

@@ -4,9 +4,11 @@ The fuller protocol behind the room command's turn loop.
 
 ## The watch output
 
-`shipd room watch <pr> --since <cursor> --timeout 600` blocks until at least
+`shipd room watch <pr> --since <cursor> --timeout 540` blocks until at least
 one task is this agent's turn, then prints one NDJSON line per surfaced task
-and exits 0. Each line carries the `list --json` task fields plus:
+and exits 0. The tool call that runs `watch` needs its own timeout above 540
+seconds, or the harness may move the wait to the background. Each line
+carries the `list --json` task fields plus:
 
 | Field | Meaning |
 | --- | --- |
