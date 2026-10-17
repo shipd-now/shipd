@@ -1966,8 +1966,9 @@ class EpicReferencesLintTest(unittest.TestCase):
     holds at least one markdown list entry whose link resolves — epic-dir-
     first, then repo-root — to an existing file under one of those three
     folders; entries of the three kinds mix freely in the one section.
-    Absent, the epic is exactly as valid as before; the linter never walks
-    any of the three folders on its own. The section is additive: the
+    Absent, the epic is exactly as valid as before; library lint validates
+    only ``research/<slug>/report.md`` and ``docs/<slug>/doc.md`` and never
+    walks ``video/`` on its own. The section is additive: the
     ``## Research`` and ``## Video`` sections keep their existing findings
     unchanged whether or not ``## References`` is present. The check is the
     research/video check, generalized to accept a tuple of folders
