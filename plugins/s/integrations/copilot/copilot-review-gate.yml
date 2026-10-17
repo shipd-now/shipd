@@ -693,8 +693,10 @@ jobs:
           # nothing (the fail-open `success` is not a verdict), and GitHub
           # rejects the bot approving a pull request it authored. A stale
           # REQUEST_CHANGES clears when the next run on the new head, the same
-          # account, posts its own review. The poll and review-event paths
-          # post no review at all: they classify GitHub's own Copilot review
+          # account, approves; a marker-less or refused run submits only a
+          # COMMENT, which leaves it for a human to dismiss. The poll and
+          # review-event paths post no review at all: they classify GitHub's
+          # own Copilot review
           # and fail open, so a bot decision there would carry no judgment.
           # While the repository setting "Allow GitHub Actions to create and
           # approve pull requests" is off, GitHub refuses a decision review;
