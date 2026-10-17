@@ -58,12 +58,17 @@ import room_schema  # noqa: E402
 
 PROG = "review_gate"
 CONTEXT = "semantic-review"
-# The event every review this poster submits carries. `COMMENT` deliberately,
-# never `REQUEST_CHANGES`: the required `semantic-review` commit status set
-# below is the merge-blocking signal, and a review decision would add a second
-# block that a human must dismiss by hand even after the fix has landed. The
-# review POST is the carrier for inline comments, not a gate of its own.
-REVIEW_EVENT = "COMMENT"
+# The review event follows the `semantic-review` status the poster sets:
+# `APPROVE` on success, `REQUEST_CHANGES` on failure. This reverses the
+# earlier `COMMENT`-only rule, because a required-approval merge rule counts
+# only approval reviews. Keying the event on the status (never the raw
+# verdict) means the review and the status cannot disagree under any
+# disposition scope, so a `REQUEST_CHANGES` is only ever posted beside a red
+# status and the next green post on the same head clears it with `APPROVE`.
+DECISION_EVENTS = {"success": "APPROVE", "failure": "REQUEST_CHANGES"}
+# Submitted instead of a decision when the acting login is the PR author (or
+# either login is unreadable): GitHub rejects self-approval with a 422.
+NEUTRAL_EVENT = "COMMENT"
 MARKER = "<!-- shipd-semantic-review -->"
 # The pre-rename marker. Every *read* still recognizes it — a PR whose summary
 # predates the rename is edited in place, never duplicated — while every write
@@ -866,35 +871,61 @@ def _review_comment(f, path, line, commentable=None, location_index=0,
     return comment
 
 
-def _post_review(gh, repo, number, sha, anchored, commentable=None,
-                 room=None):
-    """Post one COMMENT review with the ``anchored`` inline comments, each
+def _acting_login(gh):
+    """The login ``gh api user`` answers, or ``""`` when it cannot be read."""
+    rc, out, _err = gh(["api", "user"])
+    if rc != 0:
+        return ""
+    try:
+        data = json.loads(out or "null")
+    except ValueError:
+        return ""
+    return str(data.get("login") or "") if isinstance(data, dict) else ""
+
+
+def _pr_author(gh, pr):
+    """The login of pull request ``pr``'s author, or ``""`` when unreadable."""
+    rc, out, _err = gh(["pr", "view", str(pr), "--json", "author"])
+    if rc != 0:
+        return ""
+    try:
+        data = json.loads(out or "null")
+    except ValueError:
+        return ""
+    author = data.get("author") if isinstance(data, dict) else None
+    return str(author.get("login") or "") if isinstance(author, dict) else ""
+
+
+def _review_event(state, login, author):
+    """The review event for status ``state``: the neutral ``COMMENT`` when
+    either login is unknown or they match (case-insensitively) — GitHub
+    rejects self-approval — else the decision the state maps to."""
+    if not login or not author or login.lower() == author.lower():
+        return NEUTRAL_EVENT
+    return DECISION_EVENTS[state]
+
+
+def _post_review(gh, repo, number, sha, anchored, event, login,
+                 commentable=None, room=None):
+    """Post one review of ``event`` with the ``anchored`` inline comments, each
     carrying its finding's committable suggestion where ``commentable`` — the
     per-path RIGHT-side line sets ``post`` already computed — admits one.
-    Given a ``room``, every inline comment opens a PR-room task. Returns True
-    on success, False on rejection (e.g. a 422 from an un-anchorable line)."""
+    ``login`` is the acting login for the heading. Given a ``room``, every
+    inline comment opens a PR-room task. Returns True on success, False on
+    rejection (e.g. a 422 from an un-anchorable line)."""
     comments = [
         _review_comment(f, p, ln,
                         None if commentable is None
                         else commentable.get(p, set()),
                         location_index=idx, room=room)
         for f, p, ln, idx in anchored]
-    rc, out, _err = gh(["api", "user"])
-    login = ""
-    if rc == 0:
-        try:
-            data = json.loads(out or "null")
-            login = str(data.get("login") or "") \
-                if isinstance(data, dict) else ""
-        except ValueError:
-            login = ""
     heading = "### " + room_schema.speaker_heading(ROOM_AGENT, "reviewer",
                                                     login, brand=True)
     pointer = ("Semantic review: %d inline comments. Full report in the "
                "summary comment." % len(comments) if comments else
                "Semantic review posted. Full report in the summary comment.")
     body = "%s\n%s" % (heading, pointer)
-    payload = json.dumps({"commit_id": sha, "event": REVIEW_EVENT,
+    payload = json.dumps({"commit_id": sha, "event": event,
                           "body": body, "comments": comments})
     rc, _out, _err = gh(["api", "repos/%s/pulls/%d/reviews" % (repo, number),
                          "-X", "POST", "--input", "-"], input=payload)
@@ -945,22 +976,48 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
                 _status_description(review, disposition), comment_url)
     out("summary comment: %s" % (comment_url or "(created)"))
 
-    if anchored:
+    login = _acting_login(gh)
+    author = _pr_author(gh, pr)
+    event = _review_event(state, login, author)
+    if event == NEUTRAL_EVENT and login and author:
+        out("review comment-only: %s is the pull request author and GitHub "
+            "rejects self-approval" % login)
+    submitted = None
+    # A decision always submits (a required approval needs a review object);
+    # a neutral COMMENT submits only when something anchors.
+    if event != NEUTRAL_EVENT or anchored:
         # ``commentable`` travels with the anchored findings: `_split_findings`
         # above stays the one decision on inline-vs-fold — an unanchorable
         # finding is already folded here, suggestion or not — and the same
         # sets it consulted then decide whether a suggestion's range is
         # committable, rather than a second anchoring pass over the diff.
-        if not _post_review(gh, repo, number, sha, anchored, commentable,
+        if _post_review(gh, repo, number, sha, anchored, event, login,
+                        commentable, room=room):
+            submitted = event
+        else:
+            # An inline review was rejected: fold every finding into the
+            # summary so nothing is lost, then retry with no inline comments
+            # and the same event. A body-only review has nothing to fold.
+            if anchored:
+                out("inline review rejected; folding findings into the "
+                    "summary")
+                _upsert_summary(
+                    gh, repo, number,
+                    render_summary(review, findings, disposition, model,
+                                   files, room=room, head=sha,
+                                   earlier=earlier))
+            if _post_review(gh, repo, number, sha, [], event, login,
                             room=room):
-            # The inline review was rejected: fold every finding into the
-            # summary so nothing is lost, then retry the review with no inline.
-            out("inline review rejected; folding findings into the summary")
-            _upsert_summary(
-                gh, repo, number,
-                render_summary(review, findings, disposition, model, files,
-                               room=room, head=sha, earlier=earlier))
-            _post_review(gh, repo, number, sha, [], room=room)
+                submitted = event
+            elif event != NEUTRAL_EVENT:
+                if _post_review(gh, repo, number, sha, [], NEUTRAL_EVENT,
+                                login, room=room):
+                    submitted = NEUTRAL_EVENT
+                    out("review decision %s was not recorded; submitted a "
+                        "comment review instead" % event)
+                else:
+                    out("review decision %s was not recorded; the fallback "
+                        "comment review was also rejected" % event)
 
     # Fast-pass auto-merge logic
     fast_pass_armed = False
@@ -995,7 +1052,8 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
     out("semantic-review status: %s" % state)
     return {"state": state, "summary_url": comment_url,
             "anchored": len(anchored), "unanchored": len(unanchored),
-            "disposition": disposition, "fast_pass_armed": fast_pass_armed}
+            "disposition": disposition, "fast_pass_armed": fast_pass_armed,
+            "review_event": submitted}
 
 
 def _enabled(value):
