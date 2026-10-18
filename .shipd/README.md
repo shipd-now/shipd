@@ -334,7 +334,7 @@ emits an install hint.
 An unskipped entry may carry typed options beside its form:
 
 - **Every stage entry** — `model`: a non-empty string that is either a symbolic
-  tier (`session`, `tier-below`, `tier-two-below`, resolved relative to the
+  tier (`session`, `high`, `medium`, `low`, resolved relative to the
   driving session) or a concrete model id. The set of concrete ids is open, so
   any other non-empty string is taken as one.
 - **`build`** — `subagent_model` (same tier type as `model`), `validator`
@@ -353,8 +353,8 @@ An unskipped entry may carry typed options beside its form:
     { "stage": "plan", "model": "session" },
     { "stage": "gate", "autopilot": { "attempts": 1 } },
     { "stage": "build", "validator": false,
-      "subagent_model": "tier-two-below", "telemetry": false },
-    { "stage": "review", "model": "tier-below", "disposition": "high-only" }
+      "subagent_model": "low", "telemetry": false },
+    { "stage": "review", "model": "low", "disposition": "high-only" }
   ]
 }
 ```

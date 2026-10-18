@@ -35,7 +35,7 @@ nothing:
   the status description so a green status over visible findings is explained
   on the PR.
 - `model=<tier>` — the model tier this review was meant to run on, symbolic
-  (`session`, `tier-below`, `tier-two-below`) or a concrete id. Pass it
+  (`session`, `high`, `medium`, `low`) or a concrete id. Pass it
   through to the poster as `--model`; it is recorded verbatim as a `Model:`
   line in the summary. **Applying** the tier is the concern of the driver that
   spawns the reviewing session (the autopilot's `review` stage); this skill

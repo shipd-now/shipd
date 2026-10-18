@@ -84,7 +84,7 @@ class TierTest(unittest.TestCase):
 
     def test_symbolic_tiers_constant(self):
         self.assertEqual(
-            ps.SYMBOLIC_TIERS, ("session", "tier-below", "tier-two-below"))
+            ps.SYMBOLIC_TIERS, ("session", "high", "medium", "low"))
 
     def test_each_symbolic_tier_is_accepted(self):
         for tier in ps.SYMBOLIC_TIERS:
@@ -115,7 +115,7 @@ class StageOptionsTest(unittest.TestCase):
     def test_model_option_rides_every_stage(self):
         for stage in ("research", "epic", "plan", "gate", "build", "review"):
             with self.subTest(stage=stage):
-                entry = {"stage": stage, "model": "tier-below"}
+                entry = {"stage": stage, "model": "low"}
                 self.assertEqual(ps.validate_entries([entry]), [entry])
 
     def test_build_options_are_accepted(self):
@@ -231,7 +231,7 @@ class ExclusivityTest(unittest.TestCase):
     def test_skip_with_an_option_is_rejected(self):
         with self.assertRaises(ValueError) as cm:
             ps.validate_entries([{"stage": "review", "skip": True,
-                                  "model": "tier-below"}])
+                                  "model": "low"}])
         msg = str(cm.exception)
         self.assertIn("entry 0 (", msg)
         self.assertIn("skip", msg)
@@ -266,7 +266,7 @@ class ExclusivityTest(unittest.TestCase):
         self.assertIn("replace", msg)
 
     def test_options_combine_freely_with_tools(self):
-        entry = {"stage": "plan", "model": "tier-below",
+        entry = {"stage": "plan", "model": "low",
                  "tools": [{"name": "mcp:sourcebot", "fallback": "builtin"}],
                  "autopilot": {"attempts": 2}}
         self.assertEqual(ps.validate_entries([entry]), [entry])

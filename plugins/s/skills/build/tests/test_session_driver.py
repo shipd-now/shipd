@@ -170,18 +170,18 @@ class RunnerTest(unittest.TestCase):
 
     def test_claude_argv(self):
         argv = session_driver.RUNNERS["claude"]["argv"](
-            "claude", "p", "s1", "m1", "/plugin", None)
+            "claude", "p", "s1", "high", None, "/plugin", None)
         self.assertEqual(argv, [
             "claude", "-p", "p", "--output-format", "json",
             "--plugin-dir", "/plugin", "--permission-mode",
-            "bypassPermissions", "--model", "m1", "--resume", "s1"])
+            "bypassPermissions", "--effort", "high", "--resume", "s1"])
 
     def test_opencode_argv(self):
         argv = session_driver.RUNNERS["opencode"]["argv"](
-            "opencode", "p", "s1", "m1", None, None)
+            "opencode", "p", "s1", "medium", "base/m", None, None)
         self.assertEqual(argv, [
             "opencode", "run", "--format", "json", "--auto",
-            "--model", "m1", "--session", "s1", "p"])
+            "--model", "base/m#medium", "--session", "s1", "p"])
 
     def test_opencode_parse_reads_the_last_session_and_joins_text(self):
         stdout = "\n".join([

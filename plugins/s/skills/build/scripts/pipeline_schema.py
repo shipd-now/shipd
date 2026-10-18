@@ -38,7 +38,7 @@ from spec_common import KEBAB_RE, PIPELINE_FALLBACKS, PIPELINE_STAGES
 # resolved relative to the driving session by the pipeline's consumers. Any
 # other non-empty string is a concrete model id — the set of ids is open, so a
 # new model never needs a schema release.
-SYMBOLIC_TIERS = ("session", "tier-below", "tier-two-below")
+SYMBOLIC_TIERS = ("session", "high", "medium", "low")
 
 # The closed set a `review` entry's `disposition` option may take.
 _DISPOSITIONS = ("all", "high-only", "none")
@@ -312,8 +312,8 @@ PRESETS = {
         {"stage": "plan", "model": "session"},
         {"stage": "gate", "autopilot": {"attempts": 1}},
         {"stage": "build", "validator": False,
-         "subagent_model": "tier-two-below", "telemetry": False},
-        {"stage": "review", "model": "tier-below",
+         "subagent_model": "low", "telemetry": False},
+        {"stage": "review", "model": "low",
          "disposition": "high-only"},
     ],
     "basic": [
@@ -322,8 +322,8 @@ PRESETS = {
         {"stage": "plan", "model": "session"},
         {"stage": "gate", "skip": True},
         {"stage": "build", "validator": False,
-         "subagent_model": "tier-below"},
-        {"stage": "review", "model": "tier-below",
+         "subagent_model": "medium"},
+        {"stage": "review", "model": "medium",
          "disposition": "high-only"},
     ],
 }

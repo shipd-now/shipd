@@ -1014,18 +1014,18 @@ class PostDispositionTest(unittest.TestCase):
         gh = FakeGh()
         review_gate.post(
             "7", _review(verdict="changes-requested", findings=[self.HIGH]),
-            gh, disposition="none", model="tier-below")
+            gh, disposition="none", model="low")
         self.assertEqual(gh.posted_status["state"], "success")
         self.assertIn("none", gh.posted_status["description"])
         body = gh.summary_body()
         self.assertIn("high boom", body)          # the finding is still there
         self.assertIn("Disposition: none", body)
-        self.assertIn("Model: tier-below", body)
+        self.assertIn("Model: low", body)
 
     def test_model_recorded_verbatim_and_absent_when_omitted(self):
         gh = FakeGh()
-        review_gate.post("7", _review(verdict="pass"), gh, model="tier-below")
-        self.assertIn("Model: tier-below", gh.summary_body())
+        review_gate.post("7", _review(verdict="pass"), gh, model="low")
+        self.assertIn("Model: low", gh.summary_body())
 
         gh = FakeGh()
         review_gate.post("7", _review(verdict="pass"), gh)
@@ -1042,13 +1042,13 @@ class PostDispositionTest(unittest.TestCase):
         try:
             code, out = _run_main(
                 ["post", "7", "--from", path,
-                 "--disposition", "high-only", "--model", "tier-two-below"], gh)
+                 "--disposition", "high-only", "--model", "medium"], gh)
         finally:
             os.unlink(path)
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out)["state"], "success")
         self.assertEqual(gh.posted_status["state"], "success")
-        self.assertIn("Model: tier-two-below", gh.summary_body())
+        self.assertIn("Model: medium", gh.summary_body())
 
 
 class ProtectionPutBodyTest(unittest.TestCase):

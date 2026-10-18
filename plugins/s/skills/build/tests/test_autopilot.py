@@ -914,7 +914,7 @@ class HarnessSelectionTest(AutopilotTestBase):
         captured = {}
 
         def fake_run_turn(prompt, cwd, resume_id=None, timeout=None,
-                          harness=None, binary=None, model=None,
+                          harness=None, binary=None, effort=None,
                           plugin_dir=None, extra_args=None):
             captured["harness"] = harness
             return True, None, "sess-1"
@@ -929,50 +929,47 @@ class HarnessSelectionTest(AutopilotTestBase):
         self.assertEqual(captured["harness"], "opencode")
 
 
-class ModelLadderTest(AutopilotTestBase):
-    """The run resolves the model ladder from the config `models` key."""
-
-    def _write_models(self, models):
-        with open(os.path.join(self.root, ".shipd-config.json"), "w",
-                  encoding="utf-8") as fh:
-            json.dump({"models": models}, fh)
+class ModelEffortTest(AutopilotTestBase):
+    """The run resolves each stage's effort level, and the config overrides."""
 
     def _shipped(self, *a, **k):
         return autopilot.MemberResult(outcome="shipped")
 
-    def test_the_report_carries_the_default_ladder(self):
-        _make_epic(self.root, "ep", [("a", "low")])
-        report = autopilot.run(self.root, "ep", member_driver=self._shipped,
-                               sync_fn=lambda *a, **k: None,
-                               out=lambda *_: None)
-        self.assertEqual(report["model_ladder"],
-                         list(autopilot.sc.DEFAULT_MODEL_LADDER))
-        self.assertEqual(report["tier_anchor"],
-                         autopilot.sc.DEFAULT_MODEL_LADDER[0])
+    def _report(self, **kwargs):
+        return autopilot.run(self.root, "ep", member_driver=self._shipped,
+                             sync_fn=lambda *a, **k: None,
+                             out=lambda *_: None, **kwargs)
 
-    def test_a_declared_ladder_reaches_the_report(self):
+    def test_the_report_carries_the_stage_levels(self):
         _make_epic(self.root, "ep", [("a", "low")])
-        self._write_models(["big", "mid", "small"])
-        report = autopilot.run(self.root, "ep", member_driver=self._shipped,
-                               sync_fn=lambda *a, **k: None,
-                               out=lambda *_: None)
-        self.assertEqual(report["model_ladder"], ["big", "mid", "small"])
-        self.assertEqual(report["tier_anchor"], "big")
+        report = self._report()
+        self.assertEqual(report["stage_effort"],
+                         dict(autopilot.sc.STAGE_EFFORT))
+        self.assertEqual(report["models"], {})
+        self.assertIsNone(report["model_base"])
 
-    def test_the_dry_run_prints_the_ladder(self):
+    def test_declared_overrides_reach_the_report(self):
         _make_epic(self.root, "ep", [("a", "low")])
-        self._write_models(["big", "mid", "small"])
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"models": {"high": "big"}, "model": "p/m"}, fh)
+        report = self._report()
+        self.assertEqual(report["models"], {"high": "big"})
+        self.assertEqual(report["model_base"], "p/m")
+
+    def test_the_dry_run_prints_the_stage_levels(self):
+        _make_epic(self.root, "ep", [("a", "low")])
         lines = []
         autopilot.run(self.root, "ep", dry_run=True, out=lines.append)
-        self.assertIn("Model ladder: big, mid, small", "\n".join(lines))
+        text = "\n".join(lines)
+        self.assertIn("Stage levels:", text)
+        self.assertIn("plan: high", text)
+        self.assertIn("build: medium", text)
 
-    def test_a_stage_resolves_against_the_declared_ladder(self):
-        _make_epic(self.root, "ep", [("a", "low")])
-        self._write_models(["big", "mid", "small"])
-        ladder = autopilot._resolve_ladder(self.root)
-        self.assertEqual(
-            autopilot.sc.resolve_model_tier("tier-below", "big", ladder),
-            "mid")
+    def test_a_stage_resolves_to_its_level(self):
+        self.assertEqual(autopilot.sc.resolve_effort("plan"), "high")
+        self.assertEqual(autopilot.sc.resolve_effort("gate"), "low")
+
 
 
 class RunTest(AutopilotTestBase):
@@ -1326,11 +1323,11 @@ class _Seams:
         return self.gate_rc
 
     def session_fn(self, stage, member, cwd, prompt, timeout, max_resumes,
-                   on_session=None, model=None):
+                   on_session=None, effort=None):
         self.sessions.append((stage, member, prompt))
         self.session_calls.append(
             {"stage": stage, "timeout": timeout, "max_resumes": max_resumes,
-             "model": model})
+             "model": effort})
         n = self._counts.get(stage, 0) + 1
         self._counts[stage] = n
         behavior = (self.session_plan if stage == "plan"
@@ -1345,7 +1342,7 @@ class _Seams:
             on_session(result[1])
         return result
 
-    def judge_fn(self, member, cwd, prompt, timeout, model=None,
+    def judge_fn(self, member, cwd, prompt, timeout, effort=None,
                  on_session=None):
         self.judgements.append((member, prompt))
         self._judge_n += 1
@@ -1619,168 +1616,94 @@ class StageKnobsTest(AutopilotTestBase):
 # (epic-autopilot stage-model-resolution).
 # ---------------------------------------------------------------------------
 
-class SessionModelTierTest(AutopilotTestBase):
-    def _models(self, session_calls):
-        return {c["stage"]: c["model"] for c in session_calls}
+class SessionEffortTest(AutopilotTestBase):
+    """A stage's effort reaches the driven session, and `session` inherits."""
 
-    def test_session_tier_inherits_the_cli_default(self):
+    def _effort_for(self, pipeline, **kwargs):
         s = _Seams()
-        pipeline = [{"stage": "plan", "model": "session"},
-                    {"stage": "gate"}, {"stage": "build"}]
-        s.drive(pipeline, self.root)
-        models = self._models(s.session_calls)
-        self.assertIsNone(models["plan"])   # no --model flag at all
-        self.assertIsNone(models["build"])  # a bare entry declares nothing
+        s.drive(pipeline, self.root, **kwargs)
+        return [c["model"] for c in s.session_calls]
 
-    def test_below_tier_resolves_against_the_ladder_top(self):
+    def test_a_stage_uses_its_default_level(self):
+        levels = self._effort_for([{"stage": "plan"}, {"stage": "build"}])
+        self.assertEqual(levels, ["high", "medium"])
+
+    def test_an_entry_overrides_its_stage(self):
+        levels = self._effort_for([{"stage": "build", "model": "high"}])
+        self.assertEqual(levels, ["high"])
+
+    def test_session_renders_the_anchor(self):
+        levels = self._effort_for([{"stage": "build", "model": "session"}],
+                                  session_model="my-model")
+        self.assertEqual(levels, ["my-model"])
+
+    def test_a_models_override_pins_the_level(self):
         s = _Seams()
-        pipeline = [{"stage": "plan"}, {"stage": "gate"},
-                    {"stage": "build", "model": "tier-below"}]
-        s.drive(pipeline, self.root)
-        self.assertEqual(self._models(s.session_calls)["build"], "opus")
+        s.drive([{"stage": "plan"}], self.root, models={"high": "pinned"})
+        self.assertEqual([c["model"] for c in s.session_calls],
+                         ["pinned"])
 
-    def test_run_anchor_shifts_the_resolution(self):
-        s = _Seams()
-        pipeline = [{"stage": "plan"}, {"stage": "gate"},
-                    {"stage": "build", "model": "tier-below"}]
-        s.drive(pipeline, self.root, session_model="sonnet")
-        self.assertEqual(self._models(s.session_calls)["build"], "haiku")
-
-    def test_concrete_id_passes_through_to_the_session(self):
-        s = _Seams()
-        pipeline = [{"stage": "plan", "model": "claude-fable-5"},
-                    {"stage": "gate"}, {"stage": "build"}]
-        s.drive(pipeline, self.root)
-        self.assertEqual(self._models(s.session_calls)["plan"],
-                         "claude-fable-5")
-
-    def test_enrichment_uses_the_gate_entrys_model(self):
-        s = _Seams(gate_rcs=[2, 0])
-        pipeline = [{"stage": "plan"},
-                    {"stage": "gate", "model": "tier-below"},
-                    {"stage": "build"}]
-        s.drive(pipeline, self.root)
-        self.assertEqual(self._models(s.session_calls)["enrich"], "opus")
-
-    def test_run_member_and_run_accept_the_anchor(self):
-        # The anchor is a run-level control both entry points thread through.
-        _make_epic(self.root, "ep", [("a", "low")])
-        seen = {}
-
-        def driver(root, epic, member, pipeline, heartbeat=None):
-            return autopilot.MemberResult(outcome="shipped",
-                                          pr_url="http://pr/a")
-
-        autopilot.run(self.root, "ep", member_driver=driver,
-                      sync_fn=lambda *a, **k: seen.setdefault("sync", True),
-                      session_model="sonnet", out=lambda *_: None)
-        autopilot.run_member(
-            self.root, "ep", "a", session_model="sonnet",
-            driver=lambda: autopilot.MemberResult(outcome="shipped",
-                                                  pr_url="http://pr/a"),
-            out=lambda *_: None)
 
 
 class TierAnchorVisibilityTest(AutopilotTestBase):
-    """The acting model-tier anchor is visible, never implicit: printed in the
-    dry run and recorded in the run report (epic-autopilot
-    stage-model-resolution)."""
+    """The anchor and the stage levels are visible, never implicit."""
 
-    def _dry_run_text(self, **kwargs):
-        lines = []
-        autopilot.run(self.root, "ep", dry_run=True, out=lines.append,
-                      **kwargs)
-        return "\n".join(lines)
+    def _shipped(self, *a, **k):
+        return autopilot.MemberResult(outcome="shipped")
 
-    def test_dry_run_prints_the_default_anchor(self):
+    def test_the_run_report_records_the_anchor(self):
         _make_epic(self.root, "ep", [("a", "low")])
-        text = self._dry_run_text()
-        self.assertIn("Model tier anchor:", text)
-        anchor_line = next(l for l in text.splitlines()
-                           if l.startswith("Model tier anchor:"))
-        self.assertIn("fable", anchor_line)  # the ladder top
-
-    def test_dry_run_prints_the_named_anchor(self):
-        _make_epic(self.root, "ep", [("a", "low")])
-        anchor_line = next(
-            l for l in self._dry_run_text(session_model="sonnet").splitlines()
-            if l.startswith("Model tier anchor:"))
-        self.assertIn("sonnet", anchor_line)
-
-    def test_run_report_records_the_anchor(self):
-        _make_epic(self.root, "ep", [("a", "low")])
-
-        def driver(root, epic, member, pipeline, heartbeat=None):
-            return autopilot.MemberResult(outcome="shipped",
-                                          pr_url="http://pr/a")
-
-        report = autopilot.run(
-            self.root, "ep", member_driver=driver, session_model="sonnet",
-            sync_fn=lambda *a, **k: None, out=lambda *_: None)
-        self.assertEqual(report["tier_anchor"], "sonnet")
-        path = os.path.join(self.root, ".shipd", "autopilot", "ep-report.json")
-        with open(path, encoding="utf-8") as fh:
-            self.assertEqual(json.load(fh)["tier_anchor"], "sonnet")
-
-    def test_run_report_records_the_default_anchor(self):
-        _make_epic(self.root, "ep", [("a", "low")])
-
-        def driver(root, epic, member, pipeline, heartbeat=None):
-            return autopilot.MemberResult(outcome="shipped",
-                                          pr_url="http://pr/a")
-
-        report = autopilot.run(self.root, "ep", member_driver=driver,
+        report = autopilot.run(self.root, "ep", session_model="my-model",
+                               member_driver=self._shipped,
                                sync_fn=lambda *a, **k: None,
                                out=lambda *_: None)
-        self.assertEqual(report["tier_anchor"], "fable")
+        self.assertEqual(report["session_model"], "my-model")
 
-    def test_run_member_report_records_the_anchor(self):
+    def test_the_run_report_records_no_default_anchor(self):
         _make_epic(self.root, "ep", [("a", "low")])
-        autopilot.run_member(
-            self.root, "ep", "a", session_model="sonnet",
-            driver=lambda: autopilot.MemberResult(outcome="shipped",
-                                                  pr_url="http://pr/a"),
-            out=lambda *_: None)
-        path = os.path.join(self.root, ".shipd", "autopilot", "ep-report.json")
-        with open(path, encoding="utf-8") as fh:
-            self.assertEqual(json.load(fh)["tier_anchor"], "sonnet")
+        report = autopilot.run(self.root, "ep", member_driver=self._shipped,
+                               sync_fn=lambda *a, **k: None,
+                               out=lambda *_: None)
+        self.assertIsNone(report["session_model"])
+
+    def test_the_dry_run_prints_the_default_anchor(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+        lines = []
+        autopilot.run(self.root, "ep", dry_run=True, out=lines.append)
+        self.assertIn("(the harness's own default)", "\n".join(lines))
 
 
-class ProductionSessionModelTest(unittest.TestCase):
-    """The production session seam turns a resolved model into the driven
-    CLI's ``--model`` argument — and omits the flag entirely when None."""
 
-    def _kwargs_for(self, model):
+class ProductionSessionEffortTest(unittest.TestCase):
+    """The production session seam hands the resolved effort to the runner."""
+
+    def _kwargs_for(self, effort):
         captured = {}
 
         def fake_run_turn(prompt, cwd, resume_id=None, timeout=None,
-                          harness=None, binary=None, model=None,
-                          plugin_dir=None, extra_args=None):
-            captured["model"] = model
-            captured["harness"] = harness
+                          harness=None, binary=None, effort=None,
+                          model_base=None, plugin_dir=None, extra_args=None):
+            captured["effort"] = effort
+            captured["model_base"] = model_base
             return True, None, "sess-1"
 
         real = session_driver.run_turn
         session_driver.run_turn = fake_run_turn
         try:
-            session_fn = autopilot._make_session_fn(None, "claude")
+            session_fn = autopilot._make_session_fn(None, "claude", None)
             session_fn("custom", "m", os.getcwd(), "do it", 10, 0,
-                       model=model)
+                       effort=effort)
         finally:
             session_driver.run_turn = real
         return captured
 
-    def test_resolved_model_reaches_the_runner(self):
-        self.assertEqual(self._kwargs_for("opus")["model"], "opus")
+    def test_the_effort_reaches_the_runner(self):
+        self.assertEqual(self._kwargs_for("high")["effort"], "high")
 
-    def test_no_model_reaches_the_runner_as_none(self):
-        self.assertIsNone(self._kwargs_for(None)["model"])
+    def test_no_effort_reaches_the_runner_as_none(self):
+        self.assertIsNone(self._kwargs_for(None)["effort"])
 
 
-# ---------------------------------------------------------------------------
-# Stale-worktree reclaim: an `already exists` create failure is healed by a
-# guarded remove + merged-only branch delete + one retried create.
-# ---------------------------------------------------------------------------
 
 class _ReclaimCommands:
     """Scripted ``command_fn`` for the reclaim path. Records every argv and
@@ -2132,7 +2055,7 @@ class GateEnrichmentTest(AutopilotTestBase):
             return 0, "", ""
 
         def session_fn(stage, member, cwd, prompt, timeout, max_resumes,
-                       on_session=None, model=None):
+                       on_session=None, effort=None):
             if stage == "enrich":
                 shutil.rmtree(worktree, ignore_errors=True)
             return True, "sess-%s" % stage, None
@@ -2151,79 +2074,25 @@ class GateEnrichmentTest(AutopilotTestBase):
 # ---------------------------------------------------------------------------
 
 class PreBuildHelpersTest(unittest.TestCase):
-    OBJ = {"verdicts": [{"member": "m", "verdict": "revise", "reason": "r",
-                         "contradicts": None, "revise": "tasks 2.x"}],
-           "clean": [], "error": None}
-
-    def test_sync_base_ref_prefers_origin_main(self):
-        calls = []
-
-        def command_fn(cmd, cwd):
-            calls.append(cmd)
-            return 0, "", ""
-
-        self.assertEqual(autopilot._sync_base_ref(command_fn, "/r"),
-                         "origin/main")
-        self.assertEqual(calls[0], ["git", "fetch", "origin", "main"])
-
-    def test_sync_base_ref_falls_back_to_main(self):
-        def command_fn(cmd, cwd):
-            return (1, "", "") if cmd[:2] == ["git", "rev-parse"] else (0, "", "")
-
-        self.assertEqual(autopilot._sync_base_ref(command_fn, "/r"), "main")
-
-    def test_parse_drift_verdict_shapes(self):
-        want = ("revise", "r", None, "tasks 2.x")
-        text = json.dumps(self.OBJ)
-        self.assertEqual(autopilot._parse_drift_verdict(text, "m"), want)
-        self.assertEqual(
-            autopilot._parse_drift_verdict("```json\n%s\n```" % text, "m"),
-            want)
-        self.assertEqual(
-            autopilot._parse_drift_verdict("Here it is:\n%s" % text, "m"),
-            want)
-        self.assertEqual(
-            autopilot._parse_drift_verdict(
-                json.dumps({"clean": ["m"], "verdicts": [], "error": None}),
-                "m"), "holds")
-
-    def test_parse_drift_verdict_errors(self):
-        bad = [
-            json.dumps({"verdicts": [], "clean": [], "error": "boom"}),
-            json.dumps({"verdicts": [], "clean": [], "error": None}),
-            json.dumps({"verdicts": [{"member": "m", "verdict": "maybe"}],
-                        "clean": [], "error": None}),
-            "",
-        ]
-        for text in bad:
-            with self.assertRaises(ValueError):
-                autopilot._parse_drift_verdict(text, "m")
-
-    def test_drift_summary_counts_kinds_in_first_seen_order(self):
-        payload = {"findings": [{"kind": "file-drift"}, {"kind": "file-drift"},
-                                {"kind": "symbol-gone"}]}
-        self.assertEqual(autopilot._drift_summary(payload),
-                         "file-drift 2, symbol-gone 1")
-
-    def test_prompts(self):
-        self.assertIn("/s:drift m --base origin/main --json",
-                      autopilot._drift_prompt("m", "origin/main"))
-        prompt = autopilot._stage_prompt(
-            "replan", "m", {},
-            drift={"base_ref": "origin/main", "reason": "r",
-                   "revise": "tasks", "summary": "file-drift 1"})
-        for needle in ("r", "tasks", "origin/main", "s:oracle", "USER",
-                       "spec_gate.py", "--root"):
-            self.assertIn(needle, prompt)
-
-    def test_the_claude_runner_owns_the_session_flags(self):
+    def test_the_claude_runner_renders_an_effort(self):
         argv = session_driver.RUNNERS["claude"]["argv"](
-            "claude", "p", None, "claude-x", autopilot.PLUGIN_DIR, None)
+            "claude", "p", None, "high", None, autopilot.PLUGIN_DIR, None)
         self.assertEqual(
             argv,
             ["claude", "-p", "p", "--output-format", "json", "--plugin-dir",
              autopilot.PLUGIN_DIR, "--permission-mode", "bypassPermissions",
-             "--model", "claude-x"])
+             "--effort", "high"])
+
+    def test_the_opencode_runner_renders_a_variant(self):
+        argv = session_driver.RUNNERS["opencode"]["argv"](
+            "opencode", "p", None, "medium", "base/m", None, None)
+        self.assertEqual(argv, ["opencode", "run", "--format", "json",
+                                "--auto", "--model", "base/m#medium", "p"])
+        bare = session_driver.RUNNERS["opencode"]["argv"](
+            "opencode", "p", None, "medium", None, None, None)
+        self.assertEqual(bare, ["opencode", "run", "--format", "json",
+                                "--auto", "p"])
+
 
 
 class PreBuildDriftTest(AutopilotTestBase):
@@ -2473,9 +2342,9 @@ class OracleAwareSessionTest(unittest.TestCase):
 
 class StageOptionPromptTest(unittest.TestCase):
     BUILD_OPTS = {"stage": "build", "validator": False, "telemetry": False,
-                  "parallelism": 2, "subagent_model": "tier-two-below"}
+                  "parallelism": 2, "subagent_model": "low"}
     REVIEW_OPTS = {"stage": "review", "disposition": "high-only",
-                   "model": "tier-below"}
+                   "model": "low"}
 
     def test_build_options_reach_the_build_prompt(self):
         prompt = autopilot._stage_prompt("build", "m", self.BUILD_OPTS)
@@ -2484,22 +2353,18 @@ class StageOptionPromptTest(unittest.TestCase):
         self.assertIn("telemetry", low)
         self.assertIn("2", prompt)          # the sub-agent cap
         self.assertIn("sub-agent", low)
-        # The sub-agent model is named as the concrete resolved value with its
-        # symbolic provenance alongside.
-        self.assertIn("sonnet", prompt)     # tier-two-below from the top
-        self.assertIn("tier-two-below", prompt)
+        # The sub-agent model is named verbatim — a level or a concrete id.
+        self.assertIn("low", prompt)
 
-    def test_build_subagent_model_resolves_against_the_stage_model(self):
-        # The anchor is the build session's own resolved model.
+    def test_build_subagent_model_passes_through_verbatim(self):
         prompt = autopilot._stage_prompt(
             "build", "m", self.BUILD_OPTS, model_anchor="opus")
-        self.assertIn("haiku", prompt)
-        self.assertIn("tier-two-below", prompt)
+        self.assertIn("low", prompt)
 
     def test_review_scope_reaches_the_poster_and_the_loop(self):
         prompt = autopilot._stage_prompt("review", "m", self.REVIEW_OPTS)
         self.assertIn("--disposition high-only", prompt)
-        self.assertIn("--model tier-below", prompt)
+        self.assertIn("--model low", prompt)
         low = prompt.lower()
         self.assertIn("high-severity", low)
         self.assertIn("autoreply", low)
@@ -2543,17 +2408,17 @@ class EntryLabelTest(unittest.TestCase):
     def test_build_options_render_in_the_label(self):
         label = autopilot._entry_label(
             {"stage": "build", "validator": False, "telemetry": False,
-             "parallelism": 2, "subagent_model": "tier-two-below"})
+             "parallelism": 2, "subagent_model": "medium"})
         self.assertIn("validator off", label)
         self.assertIn("telemetry off", label)
         self.assertIn("parallelism 2", label)
-        self.assertIn("subagent_model tier-two-below", label)
+        self.assertIn("subagent_model medium", label)
 
     def test_review_options_render_in_the_label(self):
         label = autopilot._entry_label(
-            {"stage": "review", "model": "tier-below",
+            {"stage": "review", "model": "low",
              "disposition": "high-only"})
-        self.assertIn("model tier-below", label)
+        self.assertIn("model low", label)
         self.assertIn("disposition high-only", label)
 
     def test_bare_and_skipped_entries_keep_their_labels(self):
@@ -2630,7 +2495,7 @@ class VanishedWorktreeTest(AutopilotTestBase):
             return 0, "", ""
 
         def session_fn(stage, member, cwd, prompt, timeout, max_resumes,
-                       on_session=None, model=None):
+                       on_session=None, effort=None):
             sessions.append(stage)
             if stage == "build":
                 shutil.rmtree(worktree, ignore_errors=True)
@@ -2739,7 +2604,7 @@ class DraftPrModeTest(AutopilotTestBase):
             return 0, "", ""
 
         def session_fn(stage, member, cwd, prompt, timeout, max_resumes,
-                       on_session=None, model=None):
+                       on_session=None, effort=None):
             if stage == "build":
                 shutil.rmtree(worktree, ignore_errors=True)
             return True, "sess-%s" % stage, None
@@ -3033,7 +2898,7 @@ class HeartbeatSessionIdTest(AutopilotTestBase):
             return 0, "", ""
 
         def session_fn(stage, member, cwd, prompt, timeout, max_resumes,
-                       on_session=None, model=None):
+                       on_session=None, effort=None):
             # Turn 1 of the drive yields a session id mid-drive.
             if on_session is not None:
                 on_session("sess-%s" % stage)

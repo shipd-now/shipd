@@ -39,13 +39,15 @@ sub-agents** running on the model down (one step below yours).
   | declared `subagent_model` | Agent tool `model` |
   | --- | --- |
   | `session` | omit the parameter — the sub-agent inherits this session's model |
-  | `tier-below` / `tier-two-below` | the model you judge one / two capability steps below this session's own model among the Agent tool's options; when fewer options sit below, the lowest one below; when none does, omit the parameter |
+  | `high` / `medium` / `low` | the model you judge that many capability steps below this session's own model among the Agent tool's options; when fewer options sit below, the lowest one below; when none does, omit the parameter |
   | anything else | a concrete model id — pass it verbatim |
 
-  The detached driver resolves the same tiers against the config `models`
-  ladder — a list of model ids, strongest first — or the engine's built-in
-  default (`fable`, `opus`, `sonnet`, `haiku`); the in-session policy above
-  judges the Agent tool's own options instead.
+  The detached driver resolves the same tiers as **effort levels**: each
+  stage has a built-in level (planning `high`, implementation and review
+  `medium`, everything else `low`), a `models` config map pins a level to a
+  concrete model, and a `model` key names the base a variant harness appends a
+  level to. The in-session policy above judges the Agent tool's own options
+  instead.
 
   When the resolved entry declares no `subagent_model` (the default pipeline
   declares none), the one-step-below policy above stands unchanged. The `build`
@@ -152,7 +154,7 @@ planning already answered. Before authoring anything, gate on context:
      authored, no sub-agent spawned. A declared pipeline never half-runs.
    - **The JSON is the contract.** The verb emits one object: read each
      entry's declared options from the `entries` dicts, e.g.
-     `{"stage": "build", "subagent_model": "tier-two-below", "validator":
+     `{"stage": "build", "subagent_model": "low", "validator":
      false, "telemetry": false}` — and never re-derive them from configuration
      files. `source` carries the provenance (a config path, `preset:<name>
      (<config-path>)`, or `default`); a `default` source means no layer

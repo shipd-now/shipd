@@ -109,13 +109,36 @@ _S_COMMAND_RE = re.compile(r"/s:([a-z0-9-]+)")
 DEFAULT_HARNESS = "claude"
 
 
-def _claude_argv(binary, prompt, resume_id, model, plugin_dir, extra_args):
+# The effort levels a runner expresses with its harness's own knob. Mirrors
+# ``spec_common.EFFORT_LEVELS``; declared here so the driver stays importable
+# with no engine module beside it.
+EFFORT_LEVELS = ("high", "medium", "low")
+
+
+def _effort_args(effort, model_base, variant):
+    """The model/effort flags a harness takes for ``effort``.
+
+    A concrete model id (any non-empty string that is not an effort level and
+    not ``session``) becomes ``--model <id>``. An effort level becomes
+    ``--effort <level>`` when ``variant`` is False, or ``--model
+    <base>#<level>`` when it is True and a base is declared. ``session`` and
+    ``None`` yield no flag, so the harness's own default decides."""
+    if not effort or effort == "session":
+        return []
+    if effort not in EFFORT_LEVELS:
+        return ["--model", effort]
+    if variant:
+        return ["--model", "%s#%s" % (model_base, effort)] if model_base else []
+    return ["--effort", effort]
+
+
+def _claude_argv(binary, prompt, resume_id, effort, model_base, plugin_dir,
+                 extra_args):
     cmd = [binary, "-p", prompt, "--output-format", "json"]
     if plugin_dir:
         cmd += ["--plugin-dir", plugin_dir]
     cmd += ["--permission-mode", "bypassPermissions"]
-    if model:
-        cmd += ["--model", model]
+    cmd += _effort_args(effort, model_base, variant=False)
     if resume_id is not None:
         cmd += ["--resume", resume_id]
     if extra_args:
@@ -134,10 +157,10 @@ def _identity(prompt):
     return prompt
 
 
-def _opencode_argv(binary, prompt, resume_id, model, plugin_dir, extra_args):
+def _opencode_argv(binary, prompt, resume_id, effort, model_base, plugin_dir,
+                   extra_args):
     cmd = [binary, "run", "--format", "json", "--auto"]
-    if model:
-        cmd += ["--model", model]
+    cmd += _effort_args(effort, model_base, variant=True)
     if resume_id is not None:
         cmd += ["--session", resume_id]
     if extra_args:
@@ -212,19 +235,20 @@ def runner_for(harness_id):
 
 
 def run_turn(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
-             harness=DEFAULT_HARNESS, binary=None, model=None,
-             plugin_dir=None, extra_args=None):
+             harness=DEFAULT_HARNESS, binary=None, effort=None,
+             model_base=None, plugin_dir=None, extra_args=None):
     """Run one headless turn; return ``(ok, failure, session_id)``.
 
     See :func:`run_turn_result`, which this wraps."""
     return run_turn_result(prompt, cwd, resume_id=resume_id, timeout=timeout,
-                           harness=harness, binary=binary, model=model,
-                           plugin_dir=plugin_dir, extra_args=extra_args)[:3]
+                           harness=harness, binary=binary, effort=effort,
+                           model_base=model_base, plugin_dir=plugin_dir,
+                           extra_args=extra_args)[:3]
 
 
 def run_turn_result(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
-                    harness=DEFAULT_HARNESS, binary=None, model=None,
-                    plugin_dir=None, extra_args=None):
+                    harness=DEFAULT_HARNESS, binary=None, effort=None,
+                    model_base=None, plugin_dir=None, extra_args=None):
     """Run one headless turn of a ``harness`` conversation inside ``cwd``.
 
     The runner ``harness`` names builds the argv, parses the transcript, and
@@ -239,8 +263,8 @@ def run_turn_result(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
     """
     runner = runner_for(harness)
     argv = runner["argv"](binary or runner["binary"],
-                          runner["rewrite"](prompt), resume_id, model,
-                          plugin_dir, extra_args)
+                          runner["rewrite"](prompt), resume_id, effort,
+                          model_base, plugin_dir, extra_args)
     try:
         proc = subprocess.run(
             argv, cwd=cwd, timeout=timeout, text=True,
@@ -258,13 +282,14 @@ def run_turn_result(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
 
 
 def _default_runner(prompt, cwd, resume_id, turn_index, timeout=TIMEOUT_DEFAULT,
-                    harness=DEFAULT_HARNESS, binary=None, model=None,
-                    plugin_dir=None, extra_args=None):
+                    harness=DEFAULT_HARNESS, binary=None, effort=None,
+                    model_base=None, plugin_dir=None, extra_args=None):
     """Adapt :func:`run_turn` to the :func:`drive` runner contract, which
     passes a ``turn_index`` the plain turn function does not need."""
     return run_turn(prompt, cwd, resume_id=resume_id, timeout=timeout,
-                    harness=harness, binary=binary, model=model,
-                    plugin_dir=plugin_dir, extra_args=extra_args)
+                    harness=harness, binary=binary, effort=effort,
+                    model_base=model_base, plugin_dir=plugin_dir,
+                    extra_args=extra_args)
 
 
 def drive(prompt, cwd, grade_fn, reply, max_resumes=MAX_RESUMES_DEFAULT,
