@@ -821,34 +821,24 @@ def _resolve_vanished(root, slug, last_session_id, stage, command_fn):
         reason="worktree vanished mid-run", session_id=last_session_id)
 
 
-def _session_extra_args(model=None):
-    """The extra ``claude -p`` arguments every driven session carries: the
-    plugin directory and bypass-permissions mode, plus ``--model <model>``
-    when a concrete model id is named."""
-    extra = ["--plugin-dir", PLUGIN_DIR,
-             "--permission-mode", "bypassPermissions"]
-    if model:
-        extra += ["--model", model]
-    return extra
+def _make_session_fn(binary, harness):
+    """Build the production session seam: drive a headless session in the
+    selected ``harness`` for a stage and return ``(ok, session_id, failure)``
+    where ``ok`` reflects the stage grade, not merely a clean exit.
 
-
-def _make_session_fn(claude_bin):
-    """Build the production session seam: drive a headless ``claude`` session
-    for a stage and return ``(ok, session_id, failure)`` where ``ok`` reflects
-    the stage grade, not merely a clean exit.
-
-    ``model`` (a concrete model id already resolved through
-    :func:`spec_common.resolve_model_tier`) becomes the session's ``--model``
-    argument; ``None`` passes no flag, so the CLI's own default decides."""
+    ``harness`` names the session driver's runner; ``binary`` overrides that
+    runner's default executable. ``model`` (a concrete model id already
+    resolved through :func:`spec_common.resolve_model_tier`) becomes the
+    session's ``--model`` argument; ``None`` passes no flag, so the harness's
+    own default decides."""
     def session_fn(stage, member, cwd, prompt, timeout, max_resumes,
                    on_session=None, model=None):
-        extra = _session_extra_args(model)
-
         def runner(prompt_, cwd_, resume_id, turn_index,
                    timeout=TIMEOUT_DEFAULT):
             return session_driver.run_turn(
                 prompt_, cwd_, resume_id=resume_id, timeout=timeout,
-                claude_bin=claude_bin, extra_args=extra)
+                harness=harness, binary=binary, model=model,
+                plugin_dir=PLUGIN_DIR)
 
         if stage in ("plan", "enrich", "replan"):
             grade = _plan_grade(cwd, member)
@@ -1088,15 +1078,15 @@ def _tier_anchor(session_model):
 # Pre-build drift step (epic-autopilot detached-pre-build-drift)
 # ---------------------------------------------------------------------------
 
-def _make_judge_fn(claude_bin):
+def _make_judge_fn(binary, harness):
     """Build the production judge seam: one headless turn returning
     ``(ok, session_id, failure, text)`` where ``text`` is the turn's
-    ``result`` — the reply carrying ``/s:drift --json``'s one object.
+    result — the reply carrying ``/s:drift --json``'s one object.
     ``on_session`` fires with the session id when the turn yields one."""
     def judge_fn(member, cwd, prompt, timeout, model=None, on_session=None):
         ok, failure, session_id, text = session_driver.run_turn_result(
-            prompt, cwd, timeout=timeout, claude_bin=claude_bin,
-            extra_args=_session_extra_args(model))
+            prompt, cwd, timeout=timeout, harness=harness, binary=binary,
+            model=model, plugin_dir=PLUGIN_DIR)
         if session_id is not None and on_session is not None:
             on_session(session_id)
         return ok, session_id, failure, text
@@ -1310,7 +1300,7 @@ def _pre_build_step(root, member, cwd, entry, knobs, command_fn, session_fn,
 
 
 def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
-                 max_resumes=MAX_RESUMES_DEFAULT, claude_bin="claude",
+                 max_resumes=MAX_RESUMES_DEFAULT, binary=None, harness="claude",
                  session_model=None, pr_mode=None, session_fn=None,
                  gate_fn=None, command_fn=None, judge_fn=None, out=_noop,
                  heartbeat=None):
@@ -1335,9 +1325,9 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
     if gate_fn is None:
         gate_fn = _default_gate_fn
     if session_fn is None:
-        session_fn = _make_session_fn(claude_bin)
+        session_fn = _make_session_fn(binary, harness)
     if judge_fn is None:
-        judge_fn = _make_judge_fn(claude_bin)
+        judge_fn = _make_judge_fn(binary, harness)
     if pr_mode is None:
         pr_mode = sc.resolve_pr_mode(root)
 
@@ -1621,7 +1611,7 @@ def _pipeline_from_stage(pipeline, stage):
 
 
 def drive_single_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
-                        max_resumes=MAX_RESUMES_DEFAULT, claude_bin="claude",
+                        max_resumes=MAX_RESUMES_DEFAULT, binary=None, harness="claude",
                         session_model=None, session_fn=None, gate_fn=None,
                         command_fn=None, judge_fn=None, out=_noop,
                         heartbeat=None):
@@ -1648,7 +1638,7 @@ def drive_single_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
     sliced = _pipeline_from_stage(pipeline, stage)
     return drive_member(
         root, epic, member, sliced, timeout=timeout, max_resumes=max_resumes,
-        claude_bin=claude_bin, session_model=session_model,
+        binary=binary, harness=harness, session_model=session_model,
         pr_mode=sc.resolve_pr_mode(root), session_fn=session_fn,
         gate_fn=gate_fn, command_fn=command_fn, judge_fn=judge_fn, out=out,
         heartbeat=heartbeat)
@@ -1785,7 +1775,7 @@ class _SigtermAbortGuard:
 
 def run(root, epic, *, max_members=None, dry_run=False,
         timeout=TIMEOUT_DEFAULT, max_resumes=MAX_RESUMES_DEFAULT,
-        claude_bin="claude", session_model=None, member_driver=None,
+        binary=None, harness="claude", session_model=None, member_driver=None,
         sync_fn=None, heartbeat=None, out=print):
     """Drive ``epic``'s unplanned members and return the run report dict.
 
@@ -1814,6 +1804,7 @@ def run(root, epic, *, max_members=None, dry_run=False,
     report = {
         "epic": epic,
         "pipeline_source": provenance,
+        "harness": harness,
         "tier_anchor": _tier_anchor(session_model),
         "shipped": [],
         "drafted": [],
@@ -1829,6 +1820,7 @@ def run(root, epic, *, max_members=None, dry_run=False,
             % (_tier_anchor(session_model),
                "" if session_model else " (ladder top; --session-model "
                                         "names another)"))
+        out("Harness: %s" % harness)
         out("Member order (After, then risk ascending):")
         for m in to_drive:
             out("  %s (risk %s)" % (m.slug, m.risk or "?"))
@@ -1842,7 +1834,7 @@ def run(root, epic, *, max_members=None, dry_run=False,
         def member_driver(root_, epic_, member_, pipeline_, heartbeat_=None):
             return drive_member(
                 root_, epic_, member_, pipeline_, timeout=timeout,
-                max_resumes=max_resumes, claude_bin=claude_bin,
+                max_resumes=max_resumes, binary=binary, harness=harness,
                 session_model=session_model, pr_mode=pr_mode, out=out,
                 heartbeat=heartbeat_)
 
@@ -1915,7 +1907,7 @@ def run(root, epic, *, max_members=None, dry_run=False,
 
 
 def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
-               max_resumes=MAX_RESUMES_DEFAULT, claude_bin="claude",
+               max_resumes=MAX_RESUMES_DEFAULT, binary=None, harness="claude",
                session_model=None, driver=None, heartbeat=None, out=print):
     """Targeted drive of a single epic member with a live heartbeat and run
     report — the board-observable wrapper the detached ``run`` action spawns.
@@ -1945,7 +1937,7 @@ def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
         def driver():
             return drive_single_member(
                 root, epic, slug, timeout=timeout, max_resumes=max_resumes,
-                claude_bin=claude_bin, session_model=session_model, out=out,
+                binary=binary, harness=harness, session_model=session_model, out=out,
                 heartbeat=hb)
 
     finished = False
@@ -1956,6 +1948,7 @@ def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
             report = {
                 "epic": epic,
                 "pipeline_source": provenance,
+                "harness": harness,
                 "tier_anchor": _tier_anchor(session_model),
                 "shipped": [],
                 "drafted": [],
@@ -2052,8 +2045,12 @@ def main(argv=None):
                         help="per-session wall-clock budget in seconds")
     parser.add_argument("--max-resumes", type=int, default=MAX_RESUMES_DEFAULT,
                         help="resumed turns per session before the grade decides")
-    parser.add_argument("--claude-bin", default="claude",
-                        help="the Claude Code CLI binary to invoke")
+    parser.add_argument("--harness", default=session_driver.DEFAULT_HARNESS,
+                        help="the harness to drive headless sessions in "
+                             "(default: %s)" % session_driver.DEFAULT_HARNESS)
+    parser.add_argument("--claude-bin", default=None,
+                        help="the harness CLI binary to invoke (default: the "
+                             "selected harness's own)")
     parser.add_argument("--session-model", default=None,
                         help="the model-tier anchor a stage's symbolic `model` "
                              "resolves against (default: the ladder top, %s)"
@@ -2083,13 +2080,13 @@ def main(argv=None):
         elif args.member:
             run_member(os.path.abspath(args.root), args.epic, args.member,
                        timeout=args.timeout, max_resumes=args.max_resumes,
-                       claude_bin=args.claude_bin,
+                       binary=args.claude_bin, harness=args.harness,
                        session_model=args.session_model)
         else:
             run(os.path.abspath(args.root), args.epic,
                 max_members=args.max_members, dry_run=args.dry_run,
                 timeout=args.timeout, max_resumes=args.max_resumes,
-                claude_bin=args.claude_bin,
+                binary=args.claude_bin, harness=args.harness,
                 session_model=args.session_model)
     except AutopilotError as exc:
         sys.stderr.write("error: %s\n" % exc)

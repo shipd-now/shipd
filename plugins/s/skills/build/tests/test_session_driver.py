@@ -7,6 +7,7 @@ runner — no live ``claude`` session is spawned. The runner contract is
 session_id)`` and :func:`drive` returns ``(ok, session_id, failure)``.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -123,7 +124,7 @@ class RunTurnTest(unittest.TestCase):
         self.assertFalse(os.path.exists(missing))
 
         ok, failure, session_id = session_driver.run_turn(
-            "p", missing, claude_bin="claude-stub-binary")
+            "p", missing, binary="claude-stub-binary")
 
         self.assertFalse(ok)
         self.assertIsNone(session_id)
@@ -149,19 +150,90 @@ class ResultTextTest(unittest.TestCase):
                 fh.write("#!/bin/sh\nprintf '%%s' '%s'\n" % transcript)
             os.chmod(fake, 0o755)
             self.assertEqual(
-                session_driver.run_turn_result("p", tmp, claude_bin=fake),
+                session_driver.run_turn_result("p", tmp, binary=fake),
                 (True, None, "s1", '{"mode": "change"}'))
             self.assertEqual(
-                session_driver.run_turn("p", tmp, claude_bin=fake),
+                session_driver.run_turn("p", tmp, binary=fake),
                 (True, None, "s1"))
 
     def test_missing_cwd_returns_empty_text(self):
         missing = os.path.join(
             tempfile.gettempdir(), "session-driver-nonexistent-dir-xyz")
         ok, failure, sid, text = session_driver.run_turn_result(
-            "p", missing, claude_bin="claude-stub-binary")
+            "p", missing, binary="claude-stub-binary")
         self.assertFalse(ok)
         self.assertEqual(text, "")
+
+
+class RunnerTest(unittest.TestCase):
+    """The harness runner registry — argv, transcript parse, prompt rewrite."""
+
+    def test_claude_argv(self):
+        argv = session_driver.RUNNERS["claude"]["argv"](
+            "claude", "p", "s1", "m1", "/plugin", None)
+        self.assertEqual(argv, [
+            "claude", "-p", "p", "--output-format", "json",
+            "--plugin-dir", "/plugin", "--permission-mode",
+            "bypassPermissions", "--model", "m1", "--resume", "s1"])
+
+    def test_opencode_argv(self):
+        argv = session_driver.RUNNERS["opencode"]["argv"](
+            "opencode", "p", "s1", "m1", None, None)
+        self.assertEqual(argv, [
+            "opencode", "run", "--format", "json", "--auto",
+            "--model", "m1", "--session", "s1", "p"])
+
+    def test_opencode_parse_reads_the_last_session_and_joins_text(self):
+        stdout = "\n".join([
+            json.dumps({"type": "step_start", "sessionID": "ses_1"}),
+            json.dumps({"type": "text", "sessionID": "ses_1",
+                        "part": {"type": "text", "text": "hello"}}),
+            json.dumps({"type": "text", "sessionID": "ses_2",
+                        "part": {"type": "text", "text": " world"}}),
+        ])
+        self.assertEqual(session_driver.RUNNERS["opencode"]["parse"](stdout),
+                         ("ses_2", "hello world"))
+
+    def test_opencode_parse_ignores_non_text_and_bad_lines(self):
+        stdout = "\n".join([
+            "not json",
+            json.dumps({"type": "tool", "sessionID": "s"}),
+            json.dumps({"type": "text", "part": {"text": "x"}}),
+        ])
+        self.assertEqual(session_driver.RUNNERS["opencode"]["parse"](stdout),
+                         ("s", "x"))
+
+    def test_rewrite_maps_the_command_vocabulary(self):
+        self.assertEqual(
+            session_driver.RUNNERS["opencode"]["rewrite"](
+                "Run /s:plan for the change x"),
+            "Run /shipd-plan for the change x")
+        self.assertEqual(
+            session_driver.RUNNERS["claude"]["rewrite"]("Run /s:plan for x"),
+            "Run /s:plan for x")
+
+    def test_unknown_harness_raises_a_named_error(self):
+        with self.assertRaises(session_driver.UnknownHarnessError) as caught:
+            session_driver.runner_for("no-such-harness")
+        self.assertIn("no-such-harness", str(caught.exception))
+
+    def test_a_turn_reads_the_opencode_transcript(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = json.dumps(
+                {"type": "text", "sessionID": "ses_9",
+                 "part": {"type": "text", "text": "hi"}})
+            data = os.path.join(tmp, "out.jsonl")
+            with open(data, "w", encoding="utf-8") as fh:
+                fh.write(transcript + "\n")
+            fake = os.path.join(tmp, "fake-opencode")
+            with open(fake, "w", encoding="utf-8") as fh:
+                fh.write("#!/bin/sh\ncat %s\n" % data)
+            os.chmod(fake, 0o755)
+            ok, failure, session_id, text = session_driver.run_turn_result(
+                "p", tmp, harness="opencode", binary=fake)
+        self.assertTrue(ok, failure)
+        self.assertEqual(session_id, "ses_9")
+        self.assertEqual(text, "hi")
 
 
 class FailureDetailTest(unittest.TestCase):

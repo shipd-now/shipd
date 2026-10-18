@@ -25,6 +25,7 @@ Standard library only — no third-party imports, no network beyond the
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 
 
@@ -92,37 +93,157 @@ def _failure_detail(stdout, stderr):
     return "no CLI diagnostics (likely a transient API/connection error)"
 
 
+# The harness runner registry: one record per supported harness, each carrying
+# its default binary, an ``argv`` builder, a transcript ``parse``, and a prompt
+# ``rewrite``. A harness is data here, never a branch in the resume loop, so a
+# new harness is one record.
+#
+# ``argv(binary, prompt, resume_id, model, plugin_dir, extra_args)`` returns the
+# full command line; ``parse(stdout)`` returns ``(session_id, result_text)``;
+# ``rewrite(prompt)`` maps the ``/s:`` command vocabulary to the harness's own
+# command names.
+
+# The ``/s:`` command vocabulary a stage prompt carries, e.g. ``/s:plan``.
+_S_COMMAND_RE = re.compile(r"/s:([a-z0-9-]+)")
+
+DEFAULT_HARNESS = "claude"
+
+
+def _claude_argv(binary, prompt, resume_id, model, plugin_dir, extra_args):
+    cmd = [binary, "-p", prompt, "--output-format", "json"]
+    if plugin_dir:
+        cmd += ["--plugin-dir", plugin_dir]
+    cmd += ["--permission-mode", "bypassPermissions"]
+    if model:
+        cmd += ["--model", model]
+    if resume_id is not None:
+        cmd += ["--resume", resume_id]
+    if extra_args:
+        cmd += list(extra_args)
+    return cmd
+
+
+def _claude_parse(stdout):
+    """The Claude transcript: one JSON object carrying ``session_id`` and
+    ``result``."""
+    return (session_id_from_transcript(stdout),
+            result_text_from_transcript(stdout))
+
+
+def _identity(prompt):
+    return prompt
+
+
+def _opencode_argv(binary, prompt, resume_id, model, plugin_dir, extra_args):
+    cmd = [binary, "run", "--format", "json", "--auto"]
+    if model:
+        cmd += ["--model", model]
+    if resume_id is not None:
+        cmd += ["--session", resume_id]
+    if extra_args:
+        cmd += list(extra_args)
+    cmd.append(prompt)
+    return cmd
+
+
+def _opencode_parse(stdout):
+    """OpenCode's JSONL transcript: the last top-level ``sessionID``, and the
+    concatenated ``part.text`` of every ``type == "text"`` line."""
+    session_id = None
+    texts = []
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        sid = data.get("sessionID")
+        if isinstance(sid, str) and sid:
+            session_id = sid
+        part = data.get("part")
+        if (data.get("type") == "text" and isinstance(part, dict)
+                and isinstance(part.get("text"), str)):
+            texts.append(part["text"])
+    return session_id, "".join(texts)
+
+
+def _opencode_rewrite(prompt):
+    """Map each ``/s:<command>`` token to the OpenCode command the harness
+    installer writes, ``/shipd-<command>``."""
+    return _S_COMMAND_RE.sub(lambda m: "/shipd-%s" % m.group(1), prompt)
+
+
+RUNNERS = {
+    "claude": {
+        "binary": "claude",
+        "argv": _claude_argv,
+        "parse": _claude_parse,
+        "rewrite": _identity,
+    },
+    "opencode": {
+        "binary": "opencode",
+        "argv": _opencode_argv,
+        "parse": _opencode_parse,
+        "rewrite": _opencode_rewrite,
+    },
+}
+
+
+class UnknownHarnessError(ValueError):
+    """Raised by :func:`runner_for` for an id no runner declares."""
+
+    def __init__(self, harness_id):
+        super().__init__("unknown harness %r — known: %s"
+                         % (harness_id, ", ".join(sorted(RUNNERS))))
+        self.harness_id = harness_id
+
+
+def runner_for(harness_id):
+    """The runner record ``harness_id`` names, or raise
+    :class:`UnknownHarnessError`."""
+    try:
+        return RUNNERS[harness_id]
+    except KeyError:
+        raise UnknownHarnessError(harness_id)
+
+
 def run_turn(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
-             claude_bin="claude", extra_args=None):
+             harness=DEFAULT_HARNESS, binary=None, model=None,
+             plugin_dir=None, extra_args=None):
     """Run one headless turn; return ``(ok, failure, session_id)``.
 
     See :func:`run_turn_result`, which this wraps."""
     return run_turn_result(prompt, cwd, resume_id=resume_id, timeout=timeout,
-                           claude_bin=claude_bin, extra_args=extra_args)[:3]
+                           harness=harness, binary=binary, model=model,
+                           plugin_dir=plugin_dir, extra_args=extra_args)[:3]
 
 
 def run_turn_result(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
-                    claude_bin="claude", extra_args=None):
-    """Run one headless turn of a ``claude`` conversation inside ``cwd``.
+                    harness=DEFAULT_HARNESS, binary=None, model=None,
+                    plugin_dir=None, extra_args=None):
+    """Run one headless turn of a ``harness`` conversation inside ``cwd``.
 
-    Launches ``<claude_bin> -p <prompt> --output-format json`` — plus any
-    ``extra_args`` (e.g. ``--plugin-dir``, ``--permission-mode``) and
-    ``--resume <resume_id>`` when continuing an existing session.
+    The runner ``harness`` names builds the argv, parses the transcript, and
+    rewrites the ``/s:`` command vocabulary; ``binary`` defaults to that
+    runner's own executable.
 
-    Returns ``(ok, failure, session_id, result_text)``: ``ok`` is True only when the CLI
-    exits 0 within ``timeout``; ``session_id`` is parsed from the turn's JSON
-    transcript (``None`` when unavailable). ``failure`` names the fault when
-    ``ok`` is False, else ``None``; ``result_text`` is the transcript's
-    ``result`` string (``""`` on every failure path).
+    Returns ``(ok, failure, session_id, result_text)``: ``ok`` is True only
+    when the CLI exits 0 within ``timeout``; ``session_id`` is parsed from the
+    turn's transcript (``None`` when unavailable). ``failure`` names the fault
+    when ``ok`` is False, else ``None``; ``result_text`` is the transcript's
+    result text (``""`` on every failure path).
     """
-    cmd = [claude_bin, "-p", prompt, "--output-format", "json"]
-    if extra_args:
-        cmd += list(extra_args)
-    if resume_id is not None:
-        cmd += ["--resume", resume_id]
+    runner = runner_for(harness)
+    argv = runner["argv"](binary or runner["binary"],
+                          runner["rewrite"](prompt), resume_id, model,
+                          plugin_dir, extra_args)
     try:
         proc = subprocess.run(
-            cmd, cwd=cwd, timeout=timeout, text=True,
+            argv, cwd=cwd, timeout=timeout, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except subprocess.TimeoutExpired:
         return False, "session timed out after %d s" % timeout, None, ""
@@ -132,17 +253,18 @@ def run_turn_result(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
         detail = _failure_detail(proc.stdout or "", proc.stderr or "")
         return (False, "session CLI exited %d: %s" % (proc.returncode, detail),
                 None, "")
-    out = proc.stdout or ""
-    return (True, None, session_id_from_transcript(out),
-            result_text_from_transcript(out))
+    session_id, result_text = runner["parse"](proc.stdout or "")
+    return True, None, session_id, result_text
 
 
 def _default_runner(prompt, cwd, resume_id, turn_index, timeout=TIMEOUT_DEFAULT,
-                    claude_bin="claude", extra_args=None):
+                    harness=DEFAULT_HARNESS, binary=None, model=None,
+                    plugin_dir=None, extra_args=None):
     """Adapt :func:`run_turn` to the :func:`drive` runner contract, which
     passes a ``turn_index`` the plain turn function does not need."""
     return run_turn(prompt, cwd, resume_id=resume_id, timeout=timeout,
-                    claude_bin=claude_bin, extra_args=extra_args)
+                    harness=harness, binary=binary, model=model,
+                    plugin_dir=plugin_dir, extra_args=extra_args)
 
 
 def drive(prompt, cwd, grade_fn, reply, max_resumes=MAX_RESUMES_DEFAULT,

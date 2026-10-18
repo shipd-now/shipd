@@ -825,7 +825,7 @@ class HandoffFixtureSanityDispatchTests(TmpPathTestCase):
             cases_dir, "seeded-red", shipped_test=_FAILING_TEST)
         with mock.patch.object(run, "run_conversation") as spy:
             results = run.execute_case(
-                case, runs=1, claude_bin="claude", keep_scratch=False)
+                case, runs=1, binary="claude", keep_scratch=False)
         spy.assert_not_called()
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0].passed)
