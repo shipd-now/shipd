@@ -2903,15 +2903,18 @@ def cmd_vendor(args):
 
 # The registry fields ``show`` prints, in the order the entries declare them.
 HARNESS_FIELDS = ("id", "name", "repo_pattern", "user_dir", "dialect",
-                  "frontmatter", "features")
+                  "frontmatter", "features", "agent")
 
 
 def _harness_field(value):
-    """One registry field's text rendering: a tuple joins with commas, and an
-    absent value — ``None`` or an empty tuple — reads as ``none`` rather than
-    as a blank that looks like a truncated report."""
+    """One registry field's text rendering: a tuple joins with commas, an
+    agent-surface dict renders as its repo pattern, and an absent value —
+    ``None`` or an empty tuple — reads as ``none`` rather than as a blank that
+    looks like a truncated report."""
     if value is None:
         return "none"
+    if isinstance(value, dict):
+        return value.get("repo_pattern") or "none"
     if isinstance(value, (tuple, list)):
         return ", ".join(value) if value else "none"
     return value

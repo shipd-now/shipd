@@ -566,6 +566,71 @@ class AddTest(ActionTestCase):
         self.assertEqual(self.tree(self.root), {})
 
 
+class AgentFileTest(ActionTestCase):
+    """The agent files ride the write pipeline beside the command files."""
+
+    def claude_agent_files(self):
+        return sorted(os.path.join(self.home, ".claude", "agents",
+                                   "shipd-%s.md" % role)
+                      for role in hr.AGENT_ROLES)
+
+    def test_add_writes_the_agent_files(self):
+        result = self.cli("add", "claude-code", "--user")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for path in self.claude_agent_files():
+            with self.subTest(path=path):
+                self.assertTrue(os.path.exists(path), path)
+                with open(path, encoding="utf-8") as handle:
+                    text = handle.read()
+                self.assertIn(hg.MARKER, text)
+                self.assertTrue(text.startswith("---\nname: shipd-"), text[:40])
+
+    def test_a_non_subagents_harness_writes_no_agent_file(self):
+        self.assertEqual(self.cli("add", "cursor", "--user").returncode, 0)
+        self.assertFalse(os.path.exists(
+            os.path.join(self.home, ".cursor", "agents")))
+
+    def test_agent_files_are_idempotent(self):
+        self.assertEqual(self.cli("add", "claude-code", "--user").returncode, 0)
+        before = {path: os.stat(path).st_mtime_ns
+                  for path in self.claude_agent_files()}
+        self.assertEqual(self.cli("add", "claude-code", "--user").returncode, 0)
+        after = {path: os.stat(path).st_mtime_ns
+                 for path in self.claude_agent_files()}
+        self.assertEqual(before, after)
+
+    def test_remove_deletes_the_agent_files(self):
+        self.assertEqual(self.cli("add", "claude-code", "--user").returncode, 0)
+        result = self.cli("remove", "claude-code", "--user")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for path in self.claude_agent_files():
+            self.assertFalse(os.path.exists(path), path)
+
+    def test_a_foreign_agent_file_is_refused_without_force(self):
+        agents = os.path.join(self.home, ".claude", "agents")
+        os.makedirs(agents)
+        foreign = os.path.join(agents, "shipd-sub-agent.md")
+        with open(foreign, "w", encoding="utf-8") as handle:
+            handle.write("mine\n")
+        result = self.cli("add", "claude-code", "--user")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(self.error_lines(result)), 1)
+        with open(foreign, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "mine\n")
+        self.assertEqual(os.listdir(agents), ["shipd-sub-agent.md"])
+
+    def test_status_counts_the_agent_files(self):
+        self.assertEqual(self.cli("add", "claude-code", "--user").returncode, 0)
+        installed = json.loads(
+            self.cli("status", "claude-code", "--user", "--json").stdout)
+        self.assertEqual(installed["claude-code"]["state"], "installed")
+        os.remove(self.claude_agent_files()[0])
+        record = json.loads(
+            self.cli("status", "claude-code", "--user", "--json").stdout)
+        self.assertEqual(record["claude-code"]["state"], "stale")
+        self.assertIn("missing", record["claude-code"]["detail"])
+
+
 class ConventionsFileTest(ActionTestCase):
     """aider's whole-harness surface: exactly one generated file, and the one
     manual wiring step it still needs."""

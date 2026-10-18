@@ -369,6 +369,20 @@ class HarnessVerbTest(unittest.TestCase):
         self.assertTrue(lines[0].startswith("Error: "), lines[0])
         self.assertIn("no-such-harness", lines[0])
 
+    def test_show_prints_the_agent_member(self):
+        r = self.cli("harness", "show", "claude-code")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        agent = [line for line in r.stdout.splitlines()
+                 if line.startswith("agent")]
+        self.assertEqual(len(agent), 1, r.stdout)
+        self.assertIn(".claude/agents/shipd-{agent}.md", agent[0])
+        cursor = self.cli("harness", "show", "cursor")
+        self.assertEqual(cursor.returncode, 0, cursor.stderr)
+        agent = [line for line in cursor.stdout.splitlines()
+                 if line.startswith("agent")]
+        self.assertEqual(len(agent), 1, cursor.stdout)
+        self.assertTrue(agent[0].rstrip().endswith("none"), agent[0])
+
     def test_the_verb_writes_nothing(self):
         before = sorted(os.listdir(self.cwd))
         self.assertEqual(self.cli("harness").returncode, 0)
