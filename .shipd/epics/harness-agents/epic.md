@@ -1,5 +1,5 @@
 # harness-agents
-Status: ready
+Status: active
 Theme: developer-experience
 
 ## Introduction
