@@ -112,6 +112,12 @@ rest. `shipd harness` lists the registry and inspects one entry; `shipd
 install` and `shipd harness add <name>` generate a harness's command
 surface into a repository.
 
+A harness that declares the `subagents` feature also receives its agent
+files beside its commands. The files are `shipd-sub-agent`, `shipd-oracle`,
+and `shipd-validator`, in the location that harness reads them from.
+[Harness agents reference](harness-agents-reference.md) records each
+harness's agent locations, its frontmatter, and the steps to add a harness.
+
 ## The environment overrides
 
 Three environment variables override a config value for one session,
