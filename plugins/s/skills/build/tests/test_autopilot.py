@@ -929,6 +929,52 @@ class HarnessSelectionTest(AutopilotTestBase):
         self.assertEqual(captured["harness"], "opencode")
 
 
+class ModelLadderTest(AutopilotTestBase):
+    """The run resolves the model ladder from the config `models` key."""
+
+    def _write_models(self, models):
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"models": models}, fh)
+
+    def _shipped(self, *a, **k):
+        return autopilot.MemberResult(outcome="shipped")
+
+    def test_the_report_carries_the_default_ladder(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+        report = autopilot.run(self.root, "ep", member_driver=self._shipped,
+                               sync_fn=lambda *a, **k: None,
+                               out=lambda *_: None)
+        self.assertEqual(report["model_ladder"],
+                         list(autopilot.sc.DEFAULT_MODEL_LADDER))
+        self.assertEqual(report["tier_anchor"],
+                         autopilot.sc.DEFAULT_MODEL_LADDER[0])
+
+    def test_a_declared_ladder_reaches_the_report(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+        self._write_models(["big", "mid", "small"])
+        report = autopilot.run(self.root, "ep", member_driver=self._shipped,
+                               sync_fn=lambda *a, **k: None,
+                               out=lambda *_: None)
+        self.assertEqual(report["model_ladder"], ["big", "mid", "small"])
+        self.assertEqual(report["tier_anchor"], "big")
+
+    def test_the_dry_run_prints_the_ladder(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+        self._write_models(["big", "mid", "small"])
+        lines = []
+        autopilot.run(self.root, "ep", dry_run=True, out=lines.append)
+        self.assertIn("Model ladder: big, mid, small", "\n".join(lines))
+
+    def test_a_stage_resolves_against_the_declared_ladder(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+        self._write_models(["big", "mid", "small"])
+        ladder = autopilot._resolve_ladder(self.root)
+        self.assertEqual(
+            autopilot.sc.resolve_model_tier("tier-below", "big", ladder),
+            "mid")
+
+
 class RunTest(AutopilotTestBase):
     def test_dry_run_drives_nothing(self):
         _make_epic(self.root, "ep", [("a", "low"), ("b", "high")])

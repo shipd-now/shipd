@@ -69,7 +69,10 @@ member, walks the resolved pipeline for each in turn, opens an auto-merging
 pull request per member, parks the members it cannot finish, and writes a JSON
 report. It cannot see this session's model, so the pipeline's symbolic model
 tiers resolve against an anchor the dry run prints as its `Model tier anchor:`
-line; pass `--session-model <alias>` to anchor the stages on a weaker model.
+line. The ladder is the config `models` key — a list of model ids, strongest
+first — or the engine's built-in default (`fable`, `opus`, `sonnet`, `haiku`),
+printed as the dry run's `Model ladder:` line. Pass `--session-model <alias>`
+to anchor the stages on a weaker model.
 <!-- if:subagents -->
 Where the user would rather watch each stage than run headless, the same
 pipeline can be driven inside this session instead: one `shipd-sub-agent`

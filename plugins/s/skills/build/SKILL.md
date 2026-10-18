@@ -42,6 +42,11 @@ sub-agents** running on the model down (one step below yours).
   | `tier-below` / `tier-two-below` | the model you judge one / two capability steps below this session's own model among the Agent tool's options; when fewer options sit below, the lowest one below; when none does, omit the parameter |
   | anything else | a concrete model id — pass it verbatim |
 
+  The detached driver resolves the same tiers against the config `models`
+  ladder — a list of model ids, strongest first — or the engine's built-in
+  default (`fable`, `opus`, `sonnet`, `haiku`); the in-session policy above
+  judges the Agent tool's own options instead.
+
   When the resolved entry declares no `subagent_model` (the default pipeline
   declares none), the one-step-below policy above stands unchanged. The `build`
   entry's own `model` is ignored interactively — you are the session the user

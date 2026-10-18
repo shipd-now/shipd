@@ -4087,7 +4087,7 @@ class ResolveModelTierTest(unittest.TestCase):
     stage-model-resolution). Pure: no config, no filesystem, no import."""
 
     def test_ladder_is_strongest_first(self):
-        self.assertEqual(sc.MODEL_LADDER,
+        self.assertEqual(sc.DEFAULT_MODEL_LADDER,
                          ("fable", "opus", "sonnet", "haiku"))
 
     def test_session_without_anchor_inherits_the_cli_default(self):
@@ -4126,17 +4126,49 @@ class ResolveModelTierTest(unittest.TestCase):
             sc.resolve_model_tier("claude-fable-5", session_model="sonnet"),
             "claude-fable-5")
 
-    def test_non_ladder_anchor_steps_from_the_ladder_top(self):
-        # An anchor that is not a ladder alias cannot be positioned on the
-        # ladder, so stepping falls back to the top — fail expensive.
+    def test_non_ladder_anchor_falls_back_to_itself(self):
+        # A named anchor that is not on the ladder cannot be positioned on it,
+        # so the below-tiers resolve to the anchor rather than stepping onto a
+        # name the harness may not run.
         self.assertEqual(
             sc.resolve_model_tier("tier-below",
                                   session_model="claude-fable-5"),
-            "opus")
+            "claude-fable-5")
         self.assertEqual(
             sc.resolve_model_tier("tier-two-below",
                                   session_model="claude-fable-5"),
-            "sonnet")
+            "claude-fable-5")
+
+    def test_a_declared_ladder_replaces_the_default(self):
+        ladder = ["big", "mid", "small"]
+        self.assertEqual(
+            sc.resolve_model_tier("tier-below", "big", ladder), "mid")
+        self.assertEqual(
+            sc.resolve_model_tier("tier-two-below", "big", ladder), "small")
+        self.assertEqual(
+            sc.resolve_model_tier("tier-below", "small", ladder), "small")
+
+    def test_an_empty_ladder_resolves_below_tiers_to_the_anchor(self):
+        self.assertEqual(
+            sc.resolve_model_tier("tier-below", "only", []), "only")
+        self.assertIsNone(sc.resolve_model_tier("tier-below", None, []))
+
+    def test_models_is_a_recognized_config_key(self):
+        self.assertIn("models", sc.RECOGNIZED_CONFIG_KEYS)
+
+    def test_resolve_model_ladder_reads_the_declared_key(self):
+        self.assertEqual(sc.resolve_model_ladder({"models": ["big", "mid"]}),
+                         ("big", "mid"))
+        self.assertEqual(sc.resolve_model_ladder({}), sc.DEFAULT_MODEL_LADDER)
+        self.assertEqual(sc.resolve_model_ladder(None),
+                         sc.DEFAULT_MODEL_LADDER)
+
+    def test_a_malformed_ladder_raises_a_config_error(self):
+        for bad in ("big", [], ["big", ""], [1], [None]):
+            with self.subTest(bad=bad):
+                with self.assertRaises(sc.ConfigError) as caught:
+                    sc.resolve_model_ladder({"models": bad})
+                self.assertIn("models", str(caught.exception))
 
 
 class WikiPathsTest(unittest.TestCase):
