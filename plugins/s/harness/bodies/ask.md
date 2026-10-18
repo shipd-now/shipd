@@ -20,7 +20,7 @@ Every wiki verb below runs as `python3 "$S/spec_status.py" --root <repo-root>
    at — ask the user to restate it as a decision and stop there.
 2. **Consult durable knowledge**, in this order:
 <!-- if:subagents -->
-   Delegate the search to a non-interactive helper agent, handing it the
+   Delegate the search to a `shipd-oracle` helper agent, handing it the
    compact question, the repo's absolute root, and `$S/spec_status.py`; it
    returns a verdict and asks nothing back. Run the search yourself when no
    helper is available.

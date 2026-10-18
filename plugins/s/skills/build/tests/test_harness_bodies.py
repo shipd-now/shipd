@@ -314,6 +314,23 @@ class TriggerPhraseTest(unittest.TestCase):
         self.assertEqual(claiming, ["demo"])
 
 
+class DelegationAgentTest(unittest.TestCase):
+    """Each ``if:subagents`` branch names the generated agent it delegates to."""
+
+    def test_subagents_branches_name_the_generated_agents(self):
+        for command, agent in (("build", "shipd-sub-agent"),
+                               ("autopilot", "shipd-sub-agent"),
+                               ("ask", "shipd-oracle")):
+            with self.subTest(command=command):
+                out = hb.render(command, hr.FEATURES, refs_dir=REFS)
+                self.assertIn(agent, out)
+
+    def test_a_harness_without_subagents_names_no_agent(self):
+        out = hb.render("build", (), refs_dir=REFS)
+        self.assertNotIn("shipd-sub-agent", out)
+        self.assertIn("Do the work yourself", out)
+
+
 class ShippedRenderTest(unittest.TestCase):
     """What the shipped templates render to, at both ends of the feature
     vocabulary."""

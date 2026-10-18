@@ -72,10 +72,11 @@ tiers resolve against an anchor the dry run prints as its `Model tier anchor:`
 line; pass `--session-model <alias>` to anchor the stages on a weaker model.
 <!-- if:subagents -->
 Where the user would rather watch each stage than run headless, the same
-pipeline can be driven inside this session instead: one worker per stage per
-member, in the dry run's order, each stage graded by reading the repository
-through its own CLIs rather than by trusting the worker's summary, and every
-failure raised to the user instead of parking the member.
+pipeline can be driven inside this session instead: one `shipd-sub-agent`
+worker per stage per member, in the dry run's order, each stage graded by
+reading the repository through its own CLIs rather than by trusting the
+worker's summary, and every failure raised to the user instead of parking the
+member.
 <!-- end -->
 
 ## 4. Relay the report
