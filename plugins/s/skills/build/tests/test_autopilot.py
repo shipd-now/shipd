@@ -882,6 +882,53 @@ class PreflightTest(AutopilotTestBase):
         self.assertFalse(os.path.exists(os.path.join(self.root, ".worktrees")))
 
 
+class HarnessSelectionTest(AutopilotTestBase):
+    """The run selects a session runner by harness id."""
+
+    def test_the_report_names_the_default_harness(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+        report = autopilot.run(
+            self.root, "ep",
+            member_driver=lambda *a, **k: autopilot.MemberResult(
+                outcome="shipped"),
+            sync_fn=lambda *a, **k: None, out=lambda *_: None)
+        self.assertEqual(report["harness"], "claude")
+
+    def test_the_report_names_the_selected_harness(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+        report = autopilot.run(
+            self.root, "ep", harness="opencode",
+            member_driver=lambda *a, **k: autopilot.MemberResult(
+                outcome="shipped"),
+            sync_fn=lambda *a, **k: None, out=lambda *_: None)
+        self.assertEqual(report["harness"], "opencode")
+
+    def test_the_dry_run_names_the_harness(self):
+        _make_epic(self.root, "ep", [("a", "low")])
+        lines = []
+        autopilot.run(self.root, "ep", dry_run=True, harness="opencode",
+                      out=lines.append)
+        self.assertIn("Harness: opencode", "\n".join(lines))
+
+    def test_the_harness_reaches_the_session_runner(self):
+        captured = {}
+
+        def fake_run_turn(prompt, cwd, resume_id=None, timeout=None,
+                          harness=None, binary=None, model=None,
+                          plugin_dir=None, extra_args=None):
+            captured["harness"] = harness
+            return True, None, "sess-1"
+
+        real = session_driver.run_turn
+        session_driver.run_turn = fake_run_turn
+        try:
+            session_fn = autopilot._make_session_fn(None, "opencode")
+            session_fn("custom", "m", os.getcwd(), "do it", 10, 0)
+        finally:
+            session_driver.run_turn = real
+        self.assertEqual(captured["harness"], "opencode")
+
+
 class RunTest(AutopilotTestBase):
     def test_dry_run_drives_nothing(self):
         _make_epic(self.root, "ep", [("a", "low"), ("b", "high")])
@@ -1657,31 +1704,31 @@ class ProductionSessionModelTest(unittest.TestCase):
     """The production session seam turns a resolved model into the driven
     CLI's ``--model`` argument — and omits the flag entirely when None."""
 
-    def _extra_args_for(self, model):
+    def _kwargs_for(self, model):
         captured = {}
 
         def fake_run_turn(prompt, cwd, resume_id=None, timeout=None,
-                          claude_bin=None, extra_args=None):
-            captured["extra"] = list(extra_args or [])
+                          harness=None, binary=None, model=None,
+                          plugin_dir=None, extra_args=None):
+            captured["model"] = model
+            captured["harness"] = harness
             return True, None, "sess-1"
 
         real = session_driver.run_turn
         session_driver.run_turn = fake_run_turn
         try:
-            session_fn = autopilot._make_session_fn("claude")
+            session_fn = autopilot._make_session_fn(None, "claude")
             session_fn("custom", "m", os.getcwd(), "do it", 10, 0,
                        model=model)
         finally:
             session_driver.run_turn = real
-        return captured["extra"]
+        return captured
 
-    def test_resolved_model_becomes_a_model_flag(self):
-        extra = self._extra_args_for("opus")
-        self.assertIn("--model", extra)
-        self.assertEqual(extra[extra.index("--model") + 1], "opus")
+    def test_resolved_model_reaches_the_runner(self):
+        self.assertEqual(self._kwargs_for("opus")["model"], "opus")
 
-    def test_no_model_passes_no_flag(self):
-        self.assertNotIn("--model", self._extra_args_for(None))
+    def test_no_model_reaches_the_runner_as_none(self):
+        self.assertIsNone(self._kwargs_for(None)["model"])
 
 
 # ---------------------------------------------------------------------------
@@ -2123,12 +2170,14 @@ class PreBuildHelpersTest(unittest.TestCase):
                        "spec_gate.py", "--root"):
             self.assertIn(needle, prompt)
 
-    def test_session_extra_args(self):
-        base = ["--plugin-dir", autopilot.PLUGIN_DIR,
-                "--permission-mode", "bypassPermissions"]
-        self.assertEqual(autopilot._session_extra_args(None), base)
-        self.assertEqual(autopilot._session_extra_args("claude-x"),
-                         base + ["--model", "claude-x"])
+    def test_the_claude_runner_owns_the_session_flags(self):
+        argv = session_driver.RUNNERS["claude"]["argv"](
+            "claude", "p", None, "claude-x", autopilot.PLUGIN_DIR, None)
+        self.assertEqual(
+            argv,
+            ["claude", "-p", "p", "--output-format", "json", "--plugin-dir",
+             autopilot.PLUGIN_DIR, "--permission-mode", "bypassPermissions",
+             "--model", "claude-x"])
 
 
 class PreBuildDriftTest(AutopilotTestBase):

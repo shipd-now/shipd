@@ -270,11 +270,11 @@ _session_id_from_transcript = session_driver.session_id_from_transcript
 
 
 def _run_turn(prompt, scratch, resume_id=None, turn_index=1,
-              claude_bin="claude", host_repo=HOST_REPO,
+              binary="claude", host_repo=HOST_REPO,
               timeout=SESSION_TIMEOUT_SECONDS):
     """Run one turn of a headless Claude Code conversation inside ``scratch``.
 
-    Launches ``<claude_bin> -p <prompt> --plugin-dir <host>/plugins/s
+    Launches ``<binary> -p <prompt> --plugin-dir <host>/plugins/s
     --permission-mode bypassPermissions --output-format json`` with the scratch
     directory as cwd — plus ``--resume <resume_id>`` when continuing an
     existing session. The captured stdout is written to
@@ -286,7 +286,7 @@ def _run_turn(prompt, scratch, resume_id=None, turn_index=1,
     transcript (``None`` when unavailable).
     """
     plugin_dir = os.path.join(host_repo, "plugins", "s")
-    cmd = [claude_bin, "-p", prompt, "--plugin-dir", plugin_dir,
+    cmd = [binary, "-p", prompt, "--plugin-dir", plugin_dir,
            "--permission-mode", "bypassPermissions",
            "--output-format", "json"]
     if resume_id is not None:
@@ -326,7 +326,7 @@ def _behavior_gate_passed(case, scratch):
         shutil.rmtree(throwaway, ignore_errors=True)
 
 
-def run_conversation(case, scratch, claude_bin="claude", host_repo=HOST_REPO,
+def run_conversation(case, scratch, binary="claude", host_repo=HOST_REPO,
                      timeout=SESSION_TIMEOUT_SECONDS,
                      max_resumes=MAX_RESUMES_DEFAULT, turn_runner=None):
     """Drive ``case`` as a bounded headless conversation inside ``scratch``.
@@ -379,7 +379,7 @@ def run_conversation(case, scratch, claude_bin="claude", host_repo=HOST_REPO,
         def runner(prompt_, cwd, resume_id, turn_index, **kwargs):
             return _run_turn(
                 prompt_, cwd, resume_id, turn_index,
-                claude_bin=claude_bin, host_repo=host_repo, timeout=timeout)
+                binary=binary, host_repo=host_repo, timeout=timeout)
 
     if case.grader == "handoff":
         ok, failure, _session_id = runner(
@@ -997,7 +997,7 @@ def build_arg_parser():
     return parser
 
 
-def execute_case(case, runs, claude_bin, keep_scratch,
+def execute_case(case, runs, binary, keep_scratch,
                  max_resumes=MAX_RESUMES_DEFAULT):
     """Run ``case`` ``runs`` times, returning the list of :class:`RunResult`.
 
@@ -1044,7 +1044,7 @@ def execute_case(case, runs, claude_bin, keep_scratch,
                     result = RunResult(False, sanity_failure)
                 else:
                     ok, failure = run_conversation(
-                        case, scratch, claude_bin=claude_bin,
+                        case, scratch, binary=binary,
                         max_resumes=max_resumes)
                     if not ok:
                         result = RunResult(False, failure)
@@ -1111,7 +1111,7 @@ def main(argv=None):
         plural = "" if args.runs == 1 else "s"
         print("== case: %s (%d run%s) ==" % (case.name, args.runs, plural))
         results[case.name] = execute_case(
-            case, args.runs, args.claude_bin, args.keep_scratch,
+            case, args.runs, args.binary, args.keep_scratch,
             max_resumes=args.max_resumes)
     print()
     print("Summary:")
