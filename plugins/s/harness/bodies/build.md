@@ -36,18 +36,18 @@ against a lint-clean change, and only inside that change's own branch.
    `plan.md`'s `## Implementation` are the contract; a task that needs a
    decision they do not fix is a question, not a judgement call.
 <!-- if:subagents -->
-   Delegate the implementation: spawn one executor per currently-claimable
-   task on the model tier one step below your own, and keep the architectural
-   work yourself. Each spawn message carries only the change name, the
-   absolute path to `"$S/claim_task.sh"`, and any build-specific addenda — the
-   artifacts on disk are its whole context, so paste no conversation into it.
-   Each executor loops `claim` → implement → `complete` → re-`claim`, passing
-   a stable personal `--as <label>` on every claim and completion and waiting
-   for barriers with `claim <change> --as <label> --wait` in the foreground of
-   one tool call — never a poll loop, and never a backgrounded claim. When one
-   returns a message beginning `QUESTION:`, answer it yourself and
-   definitively, updating the artifacts first when the answer exposes a gap in
-   the spec, then resume that executor where it paused.
+   Delegate the implementation: spawn one `shipd-sub-agent` executor per
+   currently-claimable task on the model tier one step below your own, and keep
+   the architectural work yourself. Each spawn message carries only the change
+   name, the absolute path to `"$S/claim_task.sh"`, and any build-specific
+   addenda — the artifacts on disk are its whole context, so paste no
+   conversation into it. Each executor loops `claim` → implement → `complete` →
+   re-`claim`, passing a stable personal `--as <label>` on every claim and
+   completion and waiting for barriers with `claim <change> --as <label>
+   --wait` in the foreground of one tool call — never a poll loop, and never a
+   backgrounded claim. When one returns a message beginning `QUESTION:`, answer
+   it yourself and definitively, updating the artifacts first when the answer
+   exposes a gap in the spec, then resume that executor where it paused.
 <!-- else -->
    Do the work yourself, one task at a time.
    `bash "$S/claim_task.sh" claim <change> --as <label>` atomically takes the
