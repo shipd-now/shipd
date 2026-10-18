@@ -333,6 +333,93 @@ class SurfaceTest(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class AgentRenderingTest(unittest.TestCase):
+    """The agent surface — ``render_agent``, ``agent_source``, and the paths."""
+
+    def plugin_agent(self, role):
+        return os.path.join(PLUGIN_ROOT, "agents", "%s.md" % role)
+
+    def plugin_parts(self, role):
+        with open(self.plugin_agent(role), encoding="utf-8") as handle:
+            text = handle.read()
+        _empty, front, body = text.split("---\n", 2)
+        description = re.search(r"^description:\s*(.*)$", front, re.M).group(1)
+        return description, body.strip()
+
+    def test_agent_source_reads_description_and_body(self):
+        for role in hr.AGENT_ROLES:
+            with self.subTest(role=role):
+                description, body = hg.agent_source(role)
+                plugin_description, plugin_body = self.plugin_parts(role)
+                self.assertEqual(description, plugin_description)
+                self.assertEqual(body.strip(), plugin_body)
+
+    def test_agent_source_refuses_a_missing_marker(self):
+        base = tempfile.mkdtemp(prefix="shipd-agent-source-")
+        try:
+            os.makedirs(os.path.join(base, "agents"))
+            path = os.path.join(base, "agents", "sub-agent.md")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("no marker here\n")
+            with self.assertRaises(ValueError) as caught:
+                hg.agent_source("sub-agent", base_dir=base)
+            self.assertIn(path, str(caught.exception))
+        finally:
+            shutil.rmtree(base, ignore_errors=True)
+
+    def test_agent_source_refuses_an_unknown_role(self):
+        with self.assertRaises(ValueError):
+            hg.agent_source("no-such-role")
+
+    def test_claude_code_agent_renders_its_declared_fields(self):
+        text = hg.render_agent(hr.get("claude-code"), "sub-agent")
+        description, body = hg.agent_source("sub-agent")
+        self.assertTrue(text.startswith("---\nname: shipd-sub-agent\n"), text)
+        self.assertIn("description: %s\n" % hg.yaml_scalar(description), text)
+        self.assertIn(hg.MARKER, text)
+        self.assertTrue(text.endswith(body), text[-200:])
+
+    def test_extra_fields_render_verbatim(self):
+        opencode = hg.render_agent(hr.get("opencode"), "oracle")
+        self.assertIn("mode: subagent", opencode.split("---")[1])
+        agy = hg.render_agent(hr.get("agy"), "validator")
+        self.assertIn("subagent: true", agy.split("---")[1])
+
+    def test_render_pins_the_plugin_agent_prose(self):
+        for role in hr.AGENT_ROLES:
+            with self.subTest(role=role):
+                text = hg.render_agent(hr.get("claude-code"), role)
+                description, plugin_body = self.plugin_parts(role)
+                self.assertIn("description: %s\n" % hg.yaml_scalar(description),
+                              text)
+                self.assertTrue(text.rstrip("\n").endswith(plugin_body))
+
+    def test_agent_surface_paths(self):
+        claude = hr.get("claude-code")
+        self.assertEqual(hg.agent_repo_relpath(claude, "sub-agent"),
+                         ".claude/agents/shipd-sub-agent.md")
+        self.assertEqual(hg.agent_user_basename(claude, "sub-agent"),
+                         "shipd-sub-agent.md")
+        self.assertEqual(
+            hg.agent_user_path(claude, "sub-agent"),
+            os.path.join(os.path.expanduser("~/.claude/agents/"),
+                         "shipd-sub-agent.md"))
+        omp = hr.get("oh-my-pi")
+        self.assertEqual(hg.agent_repo_relpath(omp, "sub-agent"),
+                         ".omp/agents/shipd-sub-agent.md")
+        self.assertEqual(
+            hg.agent_user_path(omp, "sub-agent"),
+            os.path.join(os.path.expanduser("~/.omp/agent/agents/"),
+                         "shipd-sub-agent.md"))
+
+    def test_no_agent_surface_renders_nothing(self):
+        cursor = hr.get("cursor")
+        self.assertIsNone(hg.render_agent(cursor, "sub-agent"))
+        self.assertIsNone(hg.agent_repo_relpath(cursor, "sub-agent"))
+        self.assertIsNone(hg.agent_user_basename(cursor, "sub-agent"))
+        self.assertIsNone(hg.agent_user_path(cursor, "sub-agent"))
+
+
 class ActionTestCase(unittest.TestCase):
     """A temp repository root, a temp working directory, and an isolated
     ``HOME``, with the binary driven by path through a subprocess — the
