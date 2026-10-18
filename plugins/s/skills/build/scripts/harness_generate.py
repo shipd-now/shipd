@@ -435,6 +435,62 @@ def reference_paths(mode, root=None, base_dir=None):
             if harness_bodies.reference(command, base_dir) is not None]
 
 
+def agent_target_path(entry, role, mode, root=None):
+    """The absolute path ``role``'s agent file takes for ``entry`` in ``mode``,
+    or ``None`` when the harness has no agent surface there."""
+    if mode == USER_MODE:
+        return agent_user_path(entry, role)
+    relative = agent_repo_relpath(entry, role)
+    if relative is None:
+        return None
+    return os.path.join(os.path.abspath(root), relative)
+
+
+def agent_paths(entry, mode, root=None):
+    """Every generated agent file path for ``entry`` in ``mode``, empty when
+    the harness has no agent surface there — one per ``AGENT_ROLES`` member."""
+    if entry["agent"] is None:
+        return []
+    paths = []
+    for role in harness_registry.AGENT_ROLES:
+        path = agent_target_path(entry, role, mode, root)
+        if path is not None:
+            paths.append(path)
+    return paths
+
+
+def surface_paths(entry, mode, root=None, base_dir=None):
+    """Every generated path for ``entry`` in ``mode`` — its command files and
+    its agent files — empty when it has neither surface there. A harness may
+    carry an agent surface in a mode where it has no command surface (an entry
+    whose ``user_dir`` is ``None`` but whose agent ``user_dir`` is set), so
+    presence is decided on the union, never on the command files alone."""
+    return (command_paths(entry, mode, root, base_dir)
+            + agent_paths(entry, mode, root))
+
+
+def _agent_payloads(entry, mode, root, base_dir):
+    """``[(path, text)]`` for one harness's generated agent files, one per
+    ``AGENT_ROLES`` member, or ``[]`` when it has no agent surface."""
+    payloads = []
+    for role in harness_registry.AGENT_ROLES:
+        path = agent_target_path(entry, role, mode, root)
+        if path is None:
+            continue
+        payloads.append((path, render_agent(entry, role, base_dir)))
+    return payloads
+
+
+def _entry_payloads(entry, mode, root, base_dir, label):
+    """Every generated ``(path, text)`` for ``entry`` in ``mode``: its command
+    files when it has a command surface, and its agent files."""
+    payloads = []
+    if has_surface(entry, mode):
+        payloads.extend(_command_payloads(entry, mode, root, base_dir, label))
+    payloads.extend(_agent_payloads(entry, mode, root, base_dir))
+    return payloads
+
+
 def legacy_command_paths(entry, mode, base_dir=None):
     """Marker-owned paths from superseded user surfaces for ``entry``.
 
@@ -498,24 +554,26 @@ def planned(entries, mode, root=None, base_dir=None):
     """``(payloads, skipped)`` for ``entries`` in ``mode``.
 
     ``payloads`` is ``[(absolute path, text)]`` covering every selected
-    harness's command files plus — once, since the refs root is shared — the
-    fallback reference files, when any selected harness declares
-    ``file-references``. ``skipped`` holds the ids with no surface in this
-    mode; they are reported, never an error.
+    harness's command files, its agent files, and — once, since the refs root
+    is shared — the fallback reference files, when any selected harness
+    declares ``file-references``. ``skipped`` holds the ids with no surface in
+    this mode; they are reported, never an error.
     """
     payloads = []
     skipped = []
     label = None
     wants_references = False
     for entry in entries:
-        if not has_surface(entry, mode):
+        if has_surface(entry, mode):
+            if label is None:
+                label = refs_label(mode, root)
+            wants_references = (wants_references
+                                or FILE_REFERENCES in entry["features"])
+        entry_payloads = _entry_payloads(entry, mode, root, base_dir, label)
+        if not entry_payloads:
             skipped.append(entry["id"])
             continue
-        if label is None:
-            label = refs_label(mode, root)
-        payloads.extend(_command_payloads(entry, mode, root, base_dir, label))
-        wants_references = (wants_references
-                            or FILE_REFERENCES in entry["features"])
+        payloads.extend(entry_payloads)
     if wants_references:
         payloads.extend(_reference_payloads(mode, root, base_dir))
     return payloads, skipped
@@ -680,10 +738,11 @@ def remove(entries, mode, root=None, force=False, base_dir=None):
     candidates = []
     lines = []
     for entry in entries:
-        if not has_surface(entry, mode):
+        paths = surface_paths(entry, mode, root, base_dir)
+        if not paths:
             lines.append("skipped %s (no %s surface)" % (entry["id"], mode))
             continue
-        candidates.extend(command_paths(entry, mode, root, base_dir))
+        candidates.extend(paths)
     if (candidates
             and not _references_still_wanted(entries, mode, root, base_dir)):
         candidates.extend(reference_paths(mode, root, base_dir))
@@ -724,13 +783,13 @@ def remove(entries, mode, root=None, force=False, base_dir=None):
 def _entry_state(entry, mode, root, base_dir):
     """``(state, detail, expected, present)`` for one harness's surface.
 
-    Presence is decided on the harness's *own* command files: the reference
-    files live in a shared root, so another harness having installed them
-    must not make this one look partly installed. They still count toward
+    Presence is decided on the harness's *own* command and agent files: the
+    reference files live in a shared root, so another harness having installed
+    them must not make this one look partly installed. They still count toward
     currency — an installed harness whose references have drifted is stale.
     """
     label = refs_label(mode, root)
-    payloads = _command_payloads(entry, mode, root, base_dir, label)
+    payloads = _entry_payloads(entry, mode, root, base_dir, label)
     references = (_reference_payloads(mode, root, base_dir)
                   if FILE_REFERENCES in entry["features"] else [])
     expected = len(payloads)
@@ -756,9 +815,13 @@ def _entry_state(entry, mode, root, base_dir):
                 expected, len(present))
     reasons = []
     if missing:
-        reasons.append("%d missing" % missing)
+        first_missing = next(path for path, _text in payloads
+                             if not os.path.exists(path))
+        reasons.append("%d missing (%s)"
+                       % (missing, display(first_missing, mode, root)))
     if differing:
-        reasons.append("%d differing" % len(differing))
+        reasons.append("%d differing (%s)"
+                       % (len(differing), display(differing[0], mode, root)))
     if stale_references:
         reasons.append("%d reference file%s missing or differing"
                        % (len(stale_references),
@@ -774,7 +837,8 @@ def status(entries, mode, root=None, base_dir=None):
     ``present``. Reads only — nothing here creates or modifies a file."""
     report = {}
     for entry in entries:
-        if not has_surface(entry, mode):
+        paths = surface_paths(entry, mode, root, base_dir)
+        if not paths:
             report[entry["id"]] = {
                 "state": "skipped",
                 "detail": "no %s surface" % mode,
@@ -785,7 +849,7 @@ def status(entries, mode, root=None, base_dir=None):
             continue
         state, detail, expected, present = _entry_state(
             entry, mode, root, base_dir)
-        first = command_paths(entry, mode, root, base_dir)[0]
+        first = paths[0]
         report[entry["id"]] = {
             "state": state,
             "detail": detail,
