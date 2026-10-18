@@ -24,6 +24,7 @@ Stdlib-only Python 3, per the engine's constitution.
 """
 
 import os
+import re
 import sys
 import tempfile
 
@@ -262,6 +263,108 @@ def user_path(entry, command=None):
     directory = directory.format(command=command)
     return os.path.join(os.path.expanduser(directory),
                         user_basename(entry, command))
+
+
+# ---------------------------------------------------------------------------
+# The agent surface
+# ---------------------------------------------------------------------------
+
+AGENT_SOURCE_SUBDIR = ("harness", "agents")
+
+_AGENT_DESCRIPTION_RE = re.compile(r"^<!-- description: (?P<text>.+) -->$")
+
+
+def _agent_dir(base_dir):
+    base = harness_bodies.DEFAULT_BASE_DIR if base_dir is None else base_dir
+    return os.path.join(base, "agents")
+
+
+def agent_source(role, base_dir=None):
+    """``role``'s neutral definition as ``(description, body)``.
+
+    Reads ``plugins/s/harness/agents/<role>.md``, which opens with a
+    ``<!-- description: ... -->`` marker and then carries the role's
+    system-prompt prose with no harness frontmatter. Raises ``ValueError``
+    naming the path when the file is absent or its first line is not the
+    marker — a source without a description is a source that cannot render.
+    """
+    path = os.path.join(_agent_dir(base_dir), "%s.md" % role)
+    if not os.path.isfile(path):
+        raise ValueError("no agent source for role %r (%s)" % (role, path))
+    with open(path, "r", encoding="utf-8") as handle:
+        text = handle.read()
+    lines = text.split("\n")
+    match = _AGENT_DESCRIPTION_RE.match(lines[0]) if lines else None
+    if match is None:
+        raise ValueError("agent source %s does not open with a "
+                         "'<!-- description: ... -->' marker" % path)
+    return match.group("text"), "\n".join(lines[1:]).lstrip("\n")
+
+
+def _agent_head(entry, role, description):
+    """The agent file's ``---``-delimited frontmatter: exactly the entry's
+    declared agent fields in order, then its ``extra`` pairs verbatim."""
+    lines = ["---"]
+    for field in entry["agent"]["frontmatter"]:
+        if field == "name":
+            value = command_id(role)
+        elif field == "description":
+            value = description
+        else:
+            value = None
+        if value is None:
+            continue
+        lines.append("%s: %s" % (field, yaml_scalar(value)))
+    for field, value in entry["agent"]["extra"]:
+        lines.append("%s: %s" % (field, yaml_scalar(value)))
+    lines.append("---")
+    return "".join("%s\n" % line for line in lines)
+
+
+def render_agent(entry, role, base_dir=None):
+    """The full text of ``role``'s agent file for harness ``entry``.
+
+    The frontmatter head, then :data:`MARKER`, then the neutral source's body —
+    the same shape :func:`render` gives a command, so a generated agent is
+    owned and recognisable the same way. Returns ``None`` when ``entry``
+    carries no agent surface.
+    """
+    if entry["agent"] is None:
+        return None
+    description, body = agent_source(role, base_dir)
+    return "%s%s\n\n%s" % (_agent_head(entry, role, description), MARKER, body)
+
+
+def agent_repo_relpath(entry, role):
+    """``role``'s generated agent file for ``entry``, relative to a repository
+    root, or ``None`` when the harness has no agent repo surface."""
+    agent = entry["agent"]
+    if agent is None or agent["repo_pattern"] is None:
+        return None
+    return os.path.normpath(agent["repo_pattern"].format(agent=role))
+
+
+def agent_user_basename(entry, role):
+    """The filename ``role``'s agent takes in a user-global directory, or
+    ``None`` when the harness has no agent surface."""
+    agent = entry["agent"]
+    if agent is None:
+        return None
+    pattern = agent["repo_pattern"]
+    if pattern is None:
+        return "%s.md" % command_id(role)
+    return os.path.basename(pattern.format(agent=role))
+
+
+def agent_user_path(entry, role):
+    """``role``'s generated agent file for ``entry`` in the user-global
+    surface, or ``None`` when it has no agent ``user_dir``."""
+    agent = entry["agent"]
+    if agent is None or agent["user_dir"] is None:
+        return None
+    directory = agent["user_dir"].format(agent=role)
+    return os.path.join(os.path.expanduser(directory),
+                        agent_user_basename(entry, role))
 
 
 def has_surface(entry, mode):
