@@ -40,7 +40,9 @@ KEBAB_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DIALECTS = ("yaml", "markdown-headers", "conventions-file")
 
 ENTRY_KEYS = {"id", "name", "repo_pattern", "user_dir", "dialect",
-              "frontmatter", "features"}
+              "frontmatter", "features", "agent"}
+
+AGENT_KEYS = {"repo_pattern", "user_dir", "dialect", "frontmatter", "extra"}
 
 
 class FeatureVocabularyTest(unittest.TestCase):
@@ -182,6 +184,129 @@ class GetTest(unittest.TestCase):
         for harness_id in hr.ids():
             with self.subTest(harness=harness_id):
                 self.assertEqual(hr.get(harness_id)["id"], harness_id)
+
+
+class AgentSurfaceTest(unittest.TestCase):
+    """The registry's agent-file surface — ``agent`` members and the accessor."""
+
+    def test_agent_is_present_exactly_when_subagents_is_declared(self):
+        for entry in hr.HARNESSES:
+            with self.subTest(harness=entry["id"]):
+                self.assertEqual(entry["agent"] is not None,
+                                 "subagents" in entry["features"])
+
+    def test_every_agent_member_carries_exactly_the_agent_keys(self):
+        for entry in hr.HARNESSES:
+            agent = entry["agent"]
+            if agent is None:
+                continue
+            with self.subTest(harness=entry["id"]):
+                self.assertEqual(set(agent), AGENT_KEYS)
+                self.assertIn(agent["dialect"], hr.AGENT_DIALECTS)
+
+    def test_agent_repo_patterns_carry_the_agent_placeholder(self):
+        for entry in hr.HARNESSES:
+            agent = entry["agent"]
+            if agent is None or agent["repo_pattern"] is None:
+                continue
+            with self.subTest(harness=entry["id"]):
+                self.assertIn("{agent}", agent["repo_pattern"])
+
+    def test_agent_frontmatter_is_an_ordered_duplicate_free_subset(self):
+        for entry in hr.HARNESSES:
+            agent = entry["agent"]
+            if agent is None:
+                continue
+            with self.subTest(harness=entry["id"]):
+                fields = agent["frontmatter"]
+                self.assertEqual(len(fields), len(set(fields)))
+                self.assertTrue(set(fields) <= {"name", "description"})
+
+    def test_agent_extra_is_a_tuple_of_string_pairs(self):
+        for entry in hr.HARNESSES:
+            agent = entry["agent"]
+            if agent is None:
+                continue
+            with self.subTest(harness=entry["id"]):
+                self.assertIsInstance(agent["extra"], tuple)
+                for pair in agent["extra"]:
+                    self.assertIsInstance(pair, tuple)
+                    self.assertEqual(len(pair), 2)
+                    self.assertTrue(all(isinstance(v, str) for v in pair))
+
+    def test_agent_surface_accessor(self):
+        self.assertIsNone(hr.agent_surface("no-such-harness"))
+        self.assertIsNone(hr.agent_surface("cursor"))
+        self.assertEqual(hr.agent_surface("opencode")["repo_pattern"],
+                         ".opencode/agents/shipd-{agent}.md")
+
+    def test_claude_code_agent_target(self):
+        agent = hr.agent_surface("claude-code")
+        self.assertEqual(agent["repo_pattern"],
+                         ".claude/agents/shipd-{agent}.md")
+        self.assertEqual(agent["user_dir"], "~/.claude/agents/")
+        self.assertEqual(agent["dialect"], "yaml")
+        self.assertEqual(agent["frontmatter"], ("name", "description"))
+        self.assertEqual(agent["extra"], ())
+
+    def test_opencode_agent_target(self):
+        agent = hr.agent_surface("opencode")
+        self.assertEqual(agent["repo_pattern"],
+                         ".opencode/agents/shipd-{agent}.md")
+        self.assertEqual(agent["user_dir"], "~/.config/opencode/agents/")
+        self.assertEqual(agent["dialect"], "yaml")
+        self.assertEqual(agent["frontmatter"], ("description",))
+        self.assertEqual(agent["extra"], (("mode", "subagent"),))
+
+    def test_agy_agent_target(self):
+        agent = hr.agent_surface("agy")
+        self.assertEqual(agent["repo_pattern"],
+                         ".agents/agents/shipd-{agent}.md")
+        self.assertEqual(agent["user_dir"], "~/.gemini/config/agents/")
+        self.assertEqual(agent["dialect"], "yaml")
+        self.assertEqual(agent["frontmatter"], ("name", "description"))
+        self.assertEqual(agent["extra"], (("subagent", "true"),))
+
+    def test_oh_my_pi_agent_target(self):
+        agent = hr.agent_surface("oh-my-pi")
+        self.assertEqual(agent["repo_pattern"],
+                         ".omp/agents/shipd-{agent}.md")
+        self.assertEqual(agent["user_dir"], "~/.omp/agent/agents/")
+        self.assertEqual(agent["dialect"], "yaml")
+        self.assertEqual(agent["frontmatter"], ("name", "description"))
+        self.assertEqual(agent["extra"], ())
+
+
+class AgentSourceTest(unittest.TestCase):
+    """The neutral agent source under ``plugins/s/harness/agents/``."""
+
+    def source(self, role):
+        return os.path.join(PLUGIN_ROOT, "harness", "agents", "%s.md" % role)
+
+    def plugin_agent(self, role):
+        return os.path.join(PLUGIN_ROOT, "agents", "%s.md" % role)
+
+    def body_after_frontmatter(self, text):
+        return text.split("---\n", 2)[2].strip()
+
+    def test_one_source_file_per_role_with_a_description_marker(self):
+        directory = os.path.join(PLUGIN_ROOT, "harness", "agents")
+        names = sorted(n for n in os.listdir(directory) if n.endswith(".md"))
+        self.assertEqual(names, sorted("%s.md" % r for r in hr.AGENT_ROLES))
+        for role in hr.AGENT_ROLES:
+            with self.subTest(role=role):
+                first = open(self.source(role), encoding="utf-8").read().splitlines()[0]
+                match = re.match(r"^<!-- description: (?P<text>.+) -->$", first)
+                self.assertIsNotNone(match, first)
+                self.assertTrue(match.group("text").strip())
+
+    def test_source_body_matches_the_plugin_agent(self):
+        for role in hr.AGENT_ROLES:
+            with self.subTest(role=role):
+                source = open(self.source(role), encoding="utf-8").read()
+                source_body = source.split("-->", 1)[1].strip()
+                plugin = open(self.plugin_agent(role), encoding="utf-8").read()
+                self.assertEqual(source_body, self.body_after_frontmatter(plugin))
 
 
 class HarnessVerbTest(unittest.TestCase):
