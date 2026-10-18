@@ -284,8 +284,8 @@ ECO_ENTRIES = [
     {"stage": "plan", "model": "session"},
     {"stage": "gate", "autopilot": {"attempts": 1}},
     {"stage": "build", "validator": False,
-     "subagent_model": "tier-two-below", "telemetry": False},
-    {"stage": "review", "model": "tier-below", "disposition": "high-only"},
+     "subagent_model": "low", "telemetry": False},
+    {"stage": "review", "model": "low", "disposition": "high-only"},
 ]
 
 BASIC_ENTRIES = [
@@ -293,8 +293,8 @@ BASIC_ENTRIES = [
     {"stage": "epic", "skip": True},
     {"stage": "plan", "model": "session"},
     {"stage": "gate", "skip": True},
-    {"stage": "build", "validator": False, "subagent_model": "tier-below"},
-    {"stage": "review", "model": "tier-below", "disposition": "high-only"},
+    {"stage": "build", "validator": False, "subagent_model": "medium"},
+    {"stage": "review", "model": "medium", "disposition": "high-only"},
 ]
 
 

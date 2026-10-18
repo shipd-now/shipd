@@ -414,6 +414,7 @@ RECOGNIZED_CONFIG_KEYS = (
     "lint",
     "memory_dir",
     "merge",
+    "model",
     "models",
     "post-worktree-scripts",
     "pr",
@@ -983,63 +984,76 @@ PIPELINE_KEY = "autonomous-pipeline"
 # The default model ladder, strongest first: the aliases a symbolic tier steps
 # over when a repository declares no `models` key (epic-autopilot
 # stage-model-resolution). A repository's `models` configuration replaces it.
-DEFAULT_MODEL_LADDER = ("fable", "opus", "sonnet", "haiku")
+# The effort levels a pipeline stage runs at (epic-autopilot
+# stage-model-resolution). Each harness expresses a level with its own knob.
+EFFORT_LEVELS = ("high", "medium", "low")
 
-# The symbolic tiers and how far below the anchor each sits. Mirrors
-# `pipeline_schema.SYMBOLIC_TIERS` on the stdlib side, so resolution never
-# imports the schema module.
-_TIER_STEPS = {"session": 0, "tier-below": 1, "tier-two-below": 2}
+# The built-in level every pipeline stage defaults to: planning and authoring
+# run high, implementation and judgement run medium, and everything else runs
+# low. A pipeline entry's `model` option overrides its stage's level.
+STAGE_EFFORT = {
+    "plan": "high",
+    "enrich": "high",
+    "replan": "high",
+    "epic": "high",
+    "build": "medium",
+    "review": "medium",
+}
 
-
-def resolve_model_ladder(config=None):
-    """The model ladder a resolved ``config`` declares, else the default
-    (shipd-config model-ladder-key).
-
-    A declared ``models`` value SHALL be a non-empty list of non-empty strings,
-    ordered strongest-first; anything else raises :class:`ConfigError` naming
-    ``models``."""
-    if config is None:
-        return DEFAULT_MODEL_LADDER
-    ladder = config.get("models")
-    if ladder is None:
-        return DEFAULT_MODEL_LADDER
-    if (not isinstance(ladder, list) or not ladder
-            or not all(isinstance(entry, str) and entry for entry in ladder)):
-        raise ConfigError(
-            "config `models` must be a list of non-empty model ids, got %r"
-            % (ladder,))
-    return tuple(ladder)
+# The level a stage the map does not name falls back to.
+DEFAULT_EFFORT = "low"
 
 
-def resolve_model_tier(tier, session_model=None, ladder=None):
-    """Resolve a pipeline entry's ``model``/``subagent_model`` ``tier`` to the
-    concrete value a consumer passes as ``--model`` (epic-autopilot
+def resolve_effort(stage, declared=None):
+    """The effort level ``stage`` runs at (epic-autopilot
     stage-model-resolution). Pure — no config, no environment, no imports.
 
-    ``session`` resolves to ``session_model`` itself, so a ``None`` anchor
-    means "pass no ``--model``" and inherit whatever the CLI defaults to.
-    ``tier-below`` and ``tier-two-below`` resolve to the ladder entry one or
-    two positions below the anchor, clamped at the ladder bottom. The anchor is
-    ``session_model`` when it sits on the ladder, the ladder's top entry when
-    ``session_model`` is ``None``, and ``session_model`` itself when a named
-    anchor does not sit on the ladder — so a run proceeds on one model rather
-    than stepping onto a name the harness cannot run. ``ladder`` defaults to
-    :data:`DEFAULT_MODEL_LADDER`. Any other non-empty string is a concrete
-    model id and is returned verbatim."""
-    if tier not in _TIER_STEPS:
-        return tier
-    if tier == "session":
-        return session_model
-    rungs = DEFAULT_MODEL_LADDER if ladder is None else tuple(ladder)
-    if not rungs:
-        return session_model
-    if session_model is None:
-        index = 0
-    elif session_model in rungs:
-        index = rungs.index(session_model)
-    else:
-        return session_model
-    return rungs[min(index + _TIER_STEPS[tier], len(rungs) - 1)]
+    ``declared`` (a pipeline entry's ``model`` option) wins when it names
+    ``session`` or an effort level, and is returned verbatim when it is a
+    concrete model id. Otherwise the stage's :data:`STAGE_EFFORT` default
+    applies, falling back to :data:`DEFAULT_EFFORT` for a stage the map does
+    not name."""
+    if declared:
+        return declared
+    return STAGE_EFFORT.get(stage, DEFAULT_EFFORT)
+
+
+def resolve_models(config=None):
+    """The per-level model override a resolved ``config`` declares, else ``{}``
+    (shipd-config model-ladder-key).
+
+    A declared ``models`` value SHALL be a map from an effort level to a
+    non-empty model id; anything else raises :class:`ConfigError` naming
+    ``models`` and the offending value."""
+    if config is None:
+        return {}
+    models = config.get("models")
+    if models is None:
+        return {}
+    if not isinstance(models, dict) or not all(
+            key in EFFORT_LEVELS and isinstance(value, str) and value
+            for key, value in models.items()):
+        raise ConfigError(
+            "config `models` must map effort levels (%s) to non-empty model "
+            "ids, got %r" % (", ".join(EFFORT_LEVELS), models))
+    return dict(models)
+
+
+def resolve_model_base(config=None):
+    """The base model a harness that expresses a level as a model variant
+    appends the level to, else ``None`` (shipd-config model-ladder-key).
+
+    A declared ``model`` value SHALL be a non-empty string; anything else
+    raises :class:`ConfigError` naming ``model`` and the offending value."""
+    if config is None:
+        return None
+    base = config.get("model")
+    if base is None:
+        return None
+    if not isinstance(base, str) or not base:
+        raise ConfigError(
+            "config `model` must be a non-empty model id, got %r" % (base,))
+    return base
 
 
 def resolve_pipeline(root):

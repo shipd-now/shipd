@@ -40,7 +40,8 @@ repo's own `.shipd/` copy may be behind it.
 | `wiki_base` | A durable base wiki store searched alongside the workspace's own `wiki/`. |
 | `memory_dir` | Root of the personal memory store. Default `~/.shipd-memory`. |
 | `valid_themes` | The theme vocabulary the linter accepts in an artifact's `Theme:` header. |
-| `models` | The model ladder the symbolic pipeline tiers step over: a list of model ids, strongest first. Defaults to the engine's built-in ladder. |
+| `model` | The base model a harness that expresses an effort level as a model variant appends the level to. Undeclared means the harness's own default. |
+| `models` | A per-level model override: a map from an effort level (`high`, `medium`, `low`) to a concrete model id. Undeclared leaves each level to the harness. |
 | `autonomous-pipeline` | Which steps a delivery runs. See "The delivery steps" below. |
 | `pr` | The pull request title: `title`, a template using `{summary}` (required), `{ticket}`, and `{change}` (default `{summary}`), and `ticket_pattern`, a regular expression that finds a ticket id in the branch name. See the content directory's `README.md`. |
 | `pr-mode` | How a change's PR ships: `auto` (default) or `draft`. See the content directory's `README.md`. |

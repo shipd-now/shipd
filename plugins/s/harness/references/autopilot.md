@@ -75,10 +75,11 @@ for the grade, never a substitute for it.
 Options are read from the same `entries` dicts, never re-derived:
 
 - **`model`** — the tier that stage runs on, resolved relative to the acting
-  session: `session` inherits it, `tier-below` and `tier-two-below` step one or
-  two rungs down the ladder — the config `models` key, default `fable`,
-  `opus`, `sonnet`, `haiku` — and clamp at the bottom, and anything else is a
-  concrete id passed through verbatim.
+  session: `session` inherits it, `high`, `medium`, and `low` are effort
+  levels resolved against the stage's built-in default or the entry's own
+  declaration, and anything else is a concrete id passed through verbatim. The
+  harness expresses a level with its own knob: `--effort` for Claude Code,
+  `--model <base>#<level>` for OpenCode.
 - **`tools`** — a preferred-tool binding appended to the stage's instruction as
   one `<name> (fallback: <fallback>)` per binding, joined by `; `.
 - **build options** — `validator` false skips the adversarial validation pass

@@ -821,7 +821,7 @@ def _resolve_vanished(root, slug, last_session_id, stage, command_fn):
         reason="worktree vanished mid-run", session_id=last_session_id)
 
 
-def _make_session_fn(binary, harness):
+def _make_session_fn(binary, harness, model_base=None):
     """Build the production session seam: drive a headless session in the
     selected ``harness`` for a stage and return ``(ok, session_id, failure)``
     where ``ok`` reflects the stage grade, not merely a clean exit.
@@ -832,12 +832,12 @@ def _make_session_fn(binary, harness):
     session's ``--model`` argument; ``None`` passes no flag, so the harness's
     own default decides."""
     def session_fn(stage, member, cwd, prompt, timeout, max_resumes,
-                   on_session=None, model=None):
+                   on_session=None, effort=None):
         def runner(prompt_, cwd_, resume_id, turn_index,
                    timeout=TIMEOUT_DEFAULT):
             return session_driver.run_turn(
                 prompt_, cwd_, resume_id=resume_id, timeout=timeout,
-                harness=harness, binary=binary, model=model,
+                harness=harness, binary=binary, effort=effort,
                 plugin_dir=PLUGIN_DIR)
 
         if stage in ("plan", "enrich", "replan"):
@@ -886,7 +886,7 @@ def _build_option_lines(entry, model_anchor):
                      % entry["parallelism"])
     sub = entry.get("subagent_model")
     if sub:
-        resolved = sc.resolve_model_tier(sub, model_anchor)
+        resolved = sub
         if resolved is None:
             lines.append("- Spawn execution sub-agents on this session's own "
                          "model (the pipeline's `session` tier).")
@@ -1067,28 +1067,27 @@ def _attempts_phrase(attempts):
     return "%d attempt%s" % (attempts, "" if attempts == 1 else "s")
 
 
-def _tier_anchor(session_model, ladder=None):
-    """The anchor a run's symbolic tiers actually resolve against: the named
-    ``session_model``, or the resolved ladder's top when none was named.
+def _anchor(session_model):
+    """The model a stage declaring ``session`` inherits: the named
+    ``session_model``, or ``None`` so the harness's own default decides.
     Printed in the dry run and recorded in the report so the anchor is never
     implicit."""
-    if session_model:
-        return session_model
-    rungs = sc.DEFAULT_MODEL_LADDER if ladder is None else tuple(ladder)
-    return rungs[0] if rungs else None
+    return session_model or None
 
 
-def _resolve_ladder(root):
-    """The model ladder the run's configuration declares, else the default."""
+def _resolve_model_config(root):
+    """``(models, model_base)`` the run's configuration declares: the
+    per-level override map and the base a variant harness appends a level to.
+    Both default to nothing, so an unconfigured repository needs no models."""
     config, _provenance = sc.resolve_config(root)
-    return sc.resolve_model_ladder(config)
+    return sc.resolve_models(config), sc.resolve_model_base(config)
 
 
 # ---------------------------------------------------------------------------
 # Pre-build drift step (epic-autopilot detached-pre-build-drift)
 # ---------------------------------------------------------------------------
 
-def _make_judge_fn(binary, harness):
+def _make_judge_fn(binary, harness, model_base=None):
     """Build the production judge seam: one headless turn returning
     ``(ok, session_id, failure, text)`` where ``text`` is the turn's
     result — the reply carrying ``/s:drift --json``'s one object.
@@ -1096,7 +1095,8 @@ def _make_judge_fn(binary, harness):
     def judge_fn(member, cwd, prompt, timeout, model=None, on_session=None):
         ok, failure, session_id, text = session_driver.run_turn_result(
             prompt, cwd, timeout=timeout, harness=harness, binary=binary,
-            model=model, plugin_dir=PLUGIN_DIR)
+            effort=effort, model_base=model_base,
+            plugin_dir=PLUGIN_DIR)
         if session_id is not None and on_session is not None:
             on_session(session_id)
         return ok, session_id, failure, text
@@ -1201,11 +1201,11 @@ def _pre_build_step(root, member, cwd, entry, knobs, command_fn, session_fn,
     the base ref, check ``After`` dependencies merged, merge the ref into the
     worktree, run the drift verb, judge drift with a headless ``/s:drift``,
     and re-plan and re-gate on ``revise``. ``knobs`` is ``(attempts, timeout,
-    resumes, model)`` from the build entry. Returns ``(outcome, stage, reason,
+    resumes, effort)`` from the build entry. Returns ``(outcome, stage, reason,
     session_id)`` with ``outcome`` in ``proceed``, ``needs_human``,
     ``rejected``."""
     slug = member.slug
-    attempts, timeout, resumes, model = knobs
+    attempts, timeout, resumes, effort = knobs
     ref = _sync_base_ref(command_fn, root)
 
     waiting = [d for d in member.after
@@ -1246,7 +1246,7 @@ def _pre_build_step(root, member, cwd, entry, knobs, command_fn, session_fn,
 
     def judge_action(_attempt, _prev):
         ok, sid, failure, text = judge_fn(
-            slug, cwd, prompt, timeout, model=model, on_session=on_sess)
+            slug, cwd, prompt, timeout, effort=effort, on_session=on_sess)
         if not ok:
             return False, sid, failure
         try:
@@ -1285,7 +1285,7 @@ def _pre_build_step(root, member, cwd, entry, knobs, command_fn, session_fn,
             p += ("\n\nA prior re-plan attempt failed: %s\nDiagnose and "
                   "finish revising the plan." % prev_failure)
         return session_fn("replan", slug, cwd, p, timeout, resumes,
-                          on_session=on_sess, model=model)
+                          on_session=on_sess, effort=effort)
 
     ok, sid, failure = _strike_loop(
         replan_action, out, "replan", attempts=attempts,
@@ -1311,7 +1311,8 @@ def _pre_build_step(root, member, cwd, entry, knobs, command_fn, session_fn,
 
 def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
                  max_resumes=MAX_RESUMES_DEFAULT, binary=None, harness="claude",
-                 session_model=None, ladder=None, pr_mode=None, session_fn=None,
+                 session_model=None, models=None, model_base=None,
+                 pr_mode=None, session_fn=None,
                  gate_fn=None, command_fn=None, judge_fn=None, out=_noop,
                  heartbeat=None):
     """Drive a single member through the resolved ``pipeline`` in its own
@@ -1322,10 +1323,10 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
     present, this member's start, each stage attempt, and the outcome are
     recorded.
 
-    ``session_model`` is the run's model-tier anchor: every entry's declared
-    ``model`` resolves against it through
-    :func:`spec_common.resolve_model_tier` (``None`` anchors at the ladder
-    top).
+    ``session_model`` is the model a stage declaring ``session`` inherits
+    (``None`` leaves the harness's own default in force). ``models`` is the
+    per-level override map and ``model_base`` the base a variant harness
+    appends a level to.
 
     ``pr_mode`` is the run's resolved PR mode (shipd-config pr-mode-key), which
     the callers resolve once per run and thread in; ``None`` resolves it from
@@ -1335,9 +1336,9 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
     if gate_fn is None:
         gate_fn = _default_gate_fn
     if session_fn is None:
-        session_fn = _make_session_fn(binary, harness)
+        session_fn = _make_session_fn(binary, harness, model_base)
     if judge_fn is None:
-        judge_fn = _make_judge_fn(binary, harness)
+        judge_fn = _make_judge_fn(binary, harness, model_base)
     if pr_mode is None:
         pr_mode = sc.resolve_pr_mode(root)
 
@@ -1420,8 +1421,11 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
         # model its sessions launch with (None -> the CLI default).
         attempts, entry_timeout, entry_resumes = _stage_opts(
             entry, timeout, max_resumes)
-        entry_model = sc.resolve_model_tier(entry.get("model"), session_model,
-                                            ladder)
+        entry_model = sc.resolve_effort(entry.get("stage"),
+                                        entry.get("model"))
+        entry_model = (models or {}).get(entry_model, entry_model)
+        if entry_model == "session":
+            entry_model = session_model
 
         # Custom step: run its command at this position in the worktree.
         if "custom" in entry:
@@ -1480,7 +1484,7 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
             enrich_prompt = _stage_prompt("enrich", slug, entry)
 
             def enrich_action(_attempt, prev_failure, _prompt=enrich_prompt,
-                              _model=entry_model):
+                              _effort=entry_model):
                 p = _prompt
                 if prev_failure:
                     p = _prompt + ("\n\nA prior enrichment attempt failed: %s"
@@ -1488,7 +1492,7 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
                                    "findings." % prev_failure)
                 return session_fn("enrich", slug, cwd, p, entry_timeout,
                                   entry_resumes, on_session=on_sess,
-                                  model=_model)
+                                  effort=_effort)
 
             ok, session_id, failure = _strike_loop(
                 enrich_action, out, "enrich", attempts=attempts,
@@ -1555,17 +1559,17 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
         # `subagent_model` resolves against this stage's own model, falling
         # back to the run's anchor.
         prompt = _stage_prompt(stage, slug, entry,
-                               entry_model or session_model, pr_mode=pr_mode)
+                               entry_model, pr_mode=pr_mode)
 
         def action(_attempt, prev_failure, _stage=stage, _prompt=prompt,
                    _timeout=entry_timeout, _resumes=entry_resumes,
-                   _model=entry_model):
+                   _effort=entry_model):
             p = _prompt
             if prev_failure:
                 p = _prompt + ("\n\nA prior attempt failed: %s\nDiagnose and "
                                "finish the stage." % prev_failure)
             return session_fn(_stage, slug, cwd, p, _timeout, _resumes,
-                              on_session=on_sess, model=_model)
+                              on_session=on_sess, effort=_effort)
 
         ok, session_id, failure = _strike_loop(action, out, stage,
                                                attempts=attempts,
@@ -1623,7 +1627,8 @@ def _pipeline_from_stage(pipeline, stage):
 
 def drive_single_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
                         max_resumes=MAX_RESUMES_DEFAULT, binary=None, harness="claude",
-                        session_model=None, ladder=None, session_fn=None,
+                        session_model=None, models=None, model_base=None,
+                        session_fn=None,
                         gate_fn=None,
                         command_fn=None, judge_fn=None, out=_noop,
                         heartbeat=None):
@@ -1651,7 +1656,8 @@ def drive_single_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
     return drive_member(
         root, epic, member, sliced, timeout=timeout, max_resumes=max_resumes,
         binary=binary, harness=harness, session_model=session_model,
-        ladder=ladder, pr_mode=sc.resolve_pr_mode(root), session_fn=session_fn,
+        models=models, model_base=model_base,
+        pr_mode=sc.resolve_pr_mode(root), session_fn=session_fn,
         gate_fn=gate_fn, command_fn=command_fn, judge_fn=judge_fn, out=out,
         heartbeat=heartbeat)
 
@@ -1787,7 +1793,8 @@ class _SigtermAbortGuard:
 
 def run(root, epic, *, max_members=None, dry_run=False,
         timeout=TIMEOUT_DEFAULT, max_resumes=MAX_RESUMES_DEFAULT,
-        binary=None, harness="claude", session_model=None, ladder=None,
+        binary=None, harness="claude", session_model=None, models=None,
+        model_base=None,
         member_driver=None,
         sync_fn=None, heartbeat=None, out=print):
     """Drive ``epic``'s unplanned members and return the run report dict.
@@ -1797,7 +1804,8 @@ def run(root, epic, *, max_members=None, dry_run=False,
     nothing — and writes no heartbeat. ``heartbeat`` is an injectable
     :class:`heartbeat.RunHeartbeat` seam; when ``None`` a live one is
     constructed for a real run (never for ``--dry-run``). ``session_model`` is
-    the run's model-tier anchor (``None`` anchors at the ladder top)."""
+    the model a ``session`` stage inherits (``None`` uses the harness's own
+    default)."""
     if not os.path.isfile(_epic_file(root, epic)):
         raise AutopilotError("epic '%s' not found under %s"
                              % (epic, sc.specs_dir(root)))
@@ -1813,15 +1821,17 @@ def run(root, epic, *, max_members=None, dry_run=False,
     # Resolved once per run and threaded into every member drive, so a bad
     # `pr-mode` value fails the run before any member is driven.
     pr_mode = sc.resolve_pr_mode(root)
-    if ladder is None:
-        ladder = _resolve_ladder(root)
+    if models is None:
+        models, model_base = _resolve_model_config(root)
 
     report = {
         "epic": epic,
         "pipeline_source": provenance,
         "harness": harness,
-        "tier_anchor": _tier_anchor(session_model, ladder),
-        "model_ladder": list(ladder),
+        "session_model": session_model,
+        "models": models or {},
+        "model_base": model_base,
+        "stage_effort": dict(sc.STAGE_EFFORT),
         "shipped": [],
         "drafted": [],
         "rejected": [],
@@ -1833,10 +1843,11 @@ def run(root, epic, *, max_members=None, dry_run=False,
     if dry_run:
         out("Dry run for epic '%s' (pipeline from %s):" % (epic, provenance))
         out("Model tier anchor: %s%s"
-            % (_tier_anchor(session_model, ladder),
-               "" if session_model else " (ladder top; --session-model "
-                                        "names another)"))
-        out("Model ladder: %s" % ", ".join(ladder))
+            % (_anchor(session_model) or "(the harness's own default)",
+               "" if session_model else " (--session-model names another)"))
+        out("Stage levels: %s" % ", ".join(
+            "%s: %s" % (stage, level)
+            for stage, level in sorted(sc.STAGE_EFFORT.items())))
         out("Harness: %s" % harness)
         out("Member order (After, then risk ascending):")
         for m in to_drive:
@@ -1852,7 +1863,8 @@ def run(root, epic, *, max_members=None, dry_run=False,
             return drive_member(
                 root_, epic_, member_, pipeline_, timeout=timeout,
                 max_resumes=max_resumes, binary=binary, harness=harness,
-                session_model=session_model, ladder=ladder, pr_mode=pr_mode,
+                session_model=session_model, models=models,
+                model_base=model_base, pr_mode=pr_mode,
                 out=out,
                 heartbeat=heartbeat_)
 
@@ -1926,7 +1938,8 @@ def run(root, epic, *, max_members=None, dry_run=False,
 
 def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
                max_resumes=MAX_RESUMES_DEFAULT, binary=None, harness="claude",
-               session_model=None, ladder=None, driver=None, heartbeat=None,
+               session_model=None, models=None, model_base=None, driver=None,
+               heartbeat=None,
                out=print):
     """Targeted drive of a single epic member with a live heartbeat and run
     report — the board-observable wrapper the detached ``run`` action spawns.
@@ -1947,8 +1960,8 @@ def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
             "member '%s' is %s — a targeted drive enters only an unplanned "
             "(plan) or ready (build) member" % (slug, member.state or "?"))
     _pipeline, provenance = sc.resolve_pipeline(root)
-    if ladder is None:
-        ladder = _resolve_ladder(root)
+    if models is None:
+        models, model_base = _resolve_model_config(root)
 
     hb = heartbeat if heartbeat is not None else RunHeartbeat(
         root, epic, out=out)
@@ -1959,7 +1972,8 @@ def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
             return drive_single_member(
                 root, epic, slug, timeout=timeout, max_resumes=max_resumes,
                 binary=binary, harness=harness, session_model=session_model,
-                ladder=ladder, out=out, heartbeat=hb)
+                models=models, model_base=model_base, out=out,
+                heartbeat=hb)
 
     finished = False
     with _SigtermAbortGuard(hb, lambda: finished):
@@ -1970,8 +1984,10 @@ def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
                 "epic": epic,
                 "pipeline_source": provenance,
                 "harness": harness,
-                "tier_anchor": _tier_anchor(session_model, ladder),
-                "model_ladder": list(ladder),
+                "session_model": session_model,
+                "models": models or {},
+                "model_base": model_base,
+                "stage_effort": dict(sc.STAGE_EFFORT),
                 "shipped": [],
                 "drafted": [],
                 "rejected": [],
@@ -2074,10 +2090,8 @@ def main(argv=None):
                         help="the harness CLI binary to invoke (default: the "
                              "selected harness's own)")
     parser.add_argument("--session-model", default=None,
-                        help="the model-tier anchor a stage's symbolic `model` "
-                             "resolves against (default: the ladder top, %s; "
-                             "the ladder is the config `models` key, else "
-                             "this default)" % sc.DEFAULT_MODEL_LADDER[0])
+                        help="the model a stage declaring `session` inherits "
+                             "(default: the harness's own)")
     args = parser.parse_args(argv)
 
     if args.parallel < 1:

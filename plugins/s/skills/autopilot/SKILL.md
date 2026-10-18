@@ -334,7 +334,7 @@ the stage is graded on the `semantic-review` status being green AND
 
 Read each entry's options from the `entries` dicts of the same
 `pipeline-show --json` object the walk consumes (The entry walk above — one
-call per run) — e.g. `{"stage": "build", "subagent_model": "tier-two-below",
+call per run) — e.g. `{"stage": "build", "subagent_model": "low",
 "validator": false, "telemetry": false}` — and never re-derive them from the
 config.
 
@@ -345,7 +345,7 @@ parameter set to the tier resolved **relative to this session**:
 | declared `model` | Agent tool `model` |
 | --- | --- |
 | `session` | omit the parameter — the sub-agent inherits this session's model |
-| `tier-below` / `tier-two-below` | the model you judge one / two capability steps below this session's own model among the Agent tool's options; when fewer options sit below, the lowest one below; when none does, omit the parameter |
+| `high` / `medium` / `low` | the model you judge that many capability steps below this session's own model among the Agent tool's options; when fewer options sit below, the lowest one below; when none does, omit the parameter |
 | anything else | a concrete model id — pass it verbatim |
 
 **A declared `tools` binding decorates the stage instruction.** When the entry
@@ -534,15 +534,15 @@ background it:
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> [--max-members N] [--timeout S] [--max-resumes R] [--session-model MODEL]
 ```
 A detached run cannot see this session's model, so the symbolic tiers in the
-pipeline (`session`, `tier-below`, `tier-two-below`) resolve against an
-**anchor**: the ladder's top entry unless `--session-model` names another. The
-ladder is the config `models` key — a list of model ids, strongest first — or
-the engine's built-in default (`fable`, `opus`, `sonnet`, `haiku`). The dry run
-prints the acting anchor as its `Model tier anchor:` line and the ladder as its
-`Model ladder:` line, and the run report records them as `tier_anchor` and
-`model_ladder` — surface them when confirming the run, and pass
-`--session-model <alias>` when the user wants the stages anchored on a weaker
-model than the ladder top.
+pipeline are **effort levels** (`session`, `high`, `medium`, `low`) with a
+built-in default per stage: planning stages run `high`, implementation and
+review `medium`, and everything else `low`. A stage declaring `session`
+inherits the driver's own model, named by `--session-model` when the harness
+cannot see it. The dry run prints each stage's level as its `Stage levels:`
+line and the anchor beside it, and the run report records them as
+`stage_effort` and `session_model` — surface them when confirming the run. A
+`models` config map pins a level to a concrete model, and a `model` key names
+the base a variant harness (OpenCode) appends a level to; both are optional.
 The autopilot creates a worktree per member, drives plan → gate → build (honoring
 skips, replacements, custom steps, and tool bindings), and — on a gate context
 rejection — drives a single oracle-backed enrichment session and re-runs the gate

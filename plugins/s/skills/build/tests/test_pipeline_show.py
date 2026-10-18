@@ -171,10 +171,10 @@ class PipelineShowPresetTest(unittest.TestCase):
         lines = self._lines(r.stdout)
         self.assertIn("skipped", lines["research"])
         self.assertIn("autopilot.attempts=1", lines["gate"])
-        for pair in ("validator=false", "subagent_model=tier-two-below",
+        for pair in ("validator=false", "subagent_model=low",
                      "telemetry=false"):
             self.assertIn(pair, lines["build"])
-        for pair in ("model=tier-below", "disposition=high-only"):
+        for pair in ("model=low", "disposition=high-only"):
             self.assertIn(pair, lines["review"])
 
     def test_json_eco_carries_preset_source_and_entry_options(self):
@@ -189,7 +189,7 @@ class PipelineShowPresetTest(unittest.TestCase):
                       payload["source"])
         build = next(e for e in payload["entries"]
                      if e.get("stage") == "build")
-        self.assertEqual(build["subagent_model"], "tier-two-below")
+        self.assertEqual(build["subagent_model"], "low")
         self.assertIs(build["validator"], False)
         self.assertIs(build["telemetry"], False)
 
