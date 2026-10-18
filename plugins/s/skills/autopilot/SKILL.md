@@ -535,11 +535,14 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> [--max-
 ```
 A detached run cannot see this session's model, so the symbolic tiers in the
 pipeline (`session`, `tier-below`, `tier-two-below`) resolve against an
-**anchor**: the ladder top (`fable`) unless `--session-model` names another.
-The dry run prints the acting anchor as its `Model tier anchor:` line and the
-run report records it as `tier_anchor` — surface that line when confirming the
-run, and pass `--session-model <alias>` when the user wants the stages
-anchored on a weaker model than the ladder top.
+**anchor**: the ladder's top entry unless `--session-model` names another. The
+ladder is the config `models` key — a list of model ids, strongest first — or
+the engine's built-in default (`fable`, `opus`, `sonnet`, `haiku`). The dry run
+prints the acting anchor as its `Model tier anchor:` line and the ladder as its
+`Model ladder:` line, and the run report records them as `tier_anchor` and
+`model_ladder` — surface them when confirming the run, and pass
+`--session-model <alias>` when the user wants the stages anchored on a weaker
+model than the ladder top.
 The autopilot creates a worktree per member, drives plan → gate → build (honoring
 skips, replacements, custom steps, and tool bindings), and — on a gate context
 rejection — drives a single oracle-backed enrichment session and re-runs the gate

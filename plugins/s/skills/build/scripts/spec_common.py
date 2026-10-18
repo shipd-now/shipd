@@ -414,6 +414,7 @@ RECOGNIZED_CONFIG_KEYS = (
     "lint",
     "memory_dir",
     "merge",
+    "models",
     "post-worktree-scripts",
     "pr",
     "pr-mode",
@@ -979,10 +980,10 @@ PIPELINE_PRESETS = ("default", "eco", "basic")
 # The config key naming the autonomous pipeline.
 PIPELINE_KEY = "autonomous-pipeline"
 
-# The model ladder, strongest first: the aliases a symbolic tier steps over
-# (epic-autopilot stage-model-resolution). Single source of truth for every
-# consumer of a pipeline entry's `model` / `subagent_model` option.
-MODEL_LADDER = ("fable", "opus", "sonnet", "haiku")
+# The default model ladder, strongest first: the aliases a symbolic tier steps
+# over when a repository declares no `models` key (epic-autopilot
+# stage-model-resolution). A repository's `models` configuration replaces it.
+DEFAULT_MODEL_LADDER = ("fable", "opus", "sonnet", "haiku")
 
 # The symbolic tiers and how far below the anchor each sits. Mirrors
 # `pipeline_schema.SYMBOLIC_TIERS` on the stdlib side, so resolution never
@@ -990,28 +991,55 @@ MODEL_LADDER = ("fable", "opus", "sonnet", "haiku")
 _TIER_STEPS = {"session": 0, "tier-below": 1, "tier-two-below": 2}
 
 
-def resolve_model_tier(tier, session_model=None):
+def resolve_model_ladder(config=None):
+    """The model ladder a resolved ``config`` declares, else the default
+    (shipd-config model-ladder-key).
+
+    A declared ``models`` value SHALL be a non-empty list of non-empty strings,
+    ordered strongest-first; anything else raises :class:`ConfigError` naming
+    ``models``."""
+    if config is None:
+        return DEFAULT_MODEL_LADDER
+    ladder = config.get("models")
+    if ladder is None:
+        return DEFAULT_MODEL_LADDER
+    if (not isinstance(ladder, list) or not ladder
+            or not all(isinstance(entry, str) and entry for entry in ladder)):
+        raise ConfigError(
+            "config `models` must be a list of non-empty model ids, got %r"
+            % (ladder,))
+    return tuple(ladder)
+
+
+def resolve_model_tier(tier, session_model=None, ladder=None):
     """Resolve a pipeline entry's ``model``/``subagent_model`` ``tier`` to the
     concrete value a consumer passes as ``--model`` (epic-autopilot
     stage-model-resolution). Pure — no config, no environment, no imports.
 
     ``session`` resolves to ``session_model`` itself, so a ``None`` anchor
     means "pass no ``--model``" and inherit whatever the CLI defaults to.
-    ``tier-below`` and ``tier-two-below`` resolve to the :data:`MODEL_LADDER`
-    alias one or two positions below the anchor, clamped at the ladder bottom;
-    the anchor is ``session_model`` when it names a ladder alias, else the
-    ladder top — an unknown anchor cannot be positioned on the ladder, so
-    stepping starts from the strongest rung (fail expensive, never weak). Any
-    other non-empty string is a concrete model id and is returned verbatim."""
+    ``tier-below`` and ``tier-two-below`` resolve to the ladder entry one or
+    two positions below the anchor, clamped at the ladder bottom. The anchor is
+    ``session_model`` when it sits on the ladder, the ladder's top entry when
+    ``session_model`` is ``None``, and ``session_model`` itself when a named
+    anchor does not sit on the ladder — so a run proceeds on one model rather
+    than stepping onto a name the harness cannot run. ``ladder`` defaults to
+    :data:`DEFAULT_MODEL_LADDER`. Any other non-empty string is a concrete
+    model id and is returned verbatim."""
     if tier not in _TIER_STEPS:
         return tier
     if tier == "session":
         return session_model
-    if session_model in MODEL_LADDER:
-        index = MODEL_LADDER.index(session_model)
-    else:
+    rungs = DEFAULT_MODEL_LADDER if ladder is None else tuple(ladder)
+    if not rungs:
+        return session_model
+    if session_model is None:
         index = 0
-    return MODEL_LADDER[min(index + _TIER_STEPS[tier], len(MODEL_LADDER) - 1)]
+    elif session_model in rungs:
+        index = rungs.index(session_model)
+    else:
+        return session_model
+    return rungs[min(index + _TIER_STEPS[tier], len(rungs) - 1)]
 
 
 def resolve_pipeline(root):

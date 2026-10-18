@@ -76,7 +76,8 @@ Options are read from the same `entries` dicts, never re-derived:
 
 - **`model`** — the tier that stage runs on, resolved relative to the acting
   session: `session` inherits it, `tier-below` and `tier-two-below` step one or
-  two rungs down the ladder and clamp at the bottom, and anything else is a
+  two rungs down the ladder — the config `models` key, default `fable`,
+  `opus`, `sonnet`, `haiku` — and clamp at the bottom, and anything else is a
   concrete id passed through verbatim.
 - **`tools`** — a preferred-tool binding appended to the stage's instruction as
   one `<name> (fallback: <fallback>)` per binding, joined by `; `.

@@ -1067,11 +1067,21 @@ def _attempts_phrase(attempts):
     return "%d attempt%s" % (attempts, "" if attempts == 1 else "s")
 
 
-def _tier_anchor(session_model):
+def _tier_anchor(session_model, ladder=None):
     """The anchor a run's symbolic tiers actually resolve against: the named
-    ``session_model``, or the ladder top when none was named. Printed in the
-    dry run and recorded in the report so the anchor is never implicit."""
-    return session_model or sc.MODEL_LADDER[0]
+    ``session_model``, or the resolved ladder's top when none was named.
+    Printed in the dry run and recorded in the report so the anchor is never
+    implicit."""
+    if session_model:
+        return session_model
+    rungs = sc.DEFAULT_MODEL_LADDER if ladder is None else tuple(ladder)
+    return rungs[0] if rungs else None
+
+
+def _resolve_ladder(root):
+    """The model ladder the run's configuration declares, else the default."""
+    config, _provenance = sc.resolve_config(root)
+    return sc.resolve_model_ladder(config)
 
 
 # ---------------------------------------------------------------------------
@@ -1301,7 +1311,7 @@ def _pre_build_step(root, member, cwd, entry, knobs, command_fn, session_fn,
 
 def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
                  max_resumes=MAX_RESUMES_DEFAULT, binary=None, harness="claude",
-                 session_model=None, pr_mode=None, session_fn=None,
+                 session_model=None, ladder=None, pr_mode=None, session_fn=None,
                  gate_fn=None, command_fn=None, judge_fn=None, out=_noop,
                  heartbeat=None):
     """Drive a single member through the resolved ``pipeline`` in its own
@@ -1410,7 +1420,8 @@ def drive_member(root, epic, member, pipeline, *, timeout=TIMEOUT_DEFAULT,
         # model its sessions launch with (None -> the CLI default).
         attempts, entry_timeout, entry_resumes = _stage_opts(
             entry, timeout, max_resumes)
-        entry_model = sc.resolve_model_tier(entry.get("model"), session_model)
+        entry_model = sc.resolve_model_tier(entry.get("model"), session_model,
+                                            ladder)
 
         # Custom step: run its command at this position in the worktree.
         if "custom" in entry:
@@ -1612,7 +1623,8 @@ def _pipeline_from_stage(pipeline, stage):
 
 def drive_single_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
                         max_resumes=MAX_RESUMES_DEFAULT, binary=None, harness="claude",
-                        session_model=None, session_fn=None, gate_fn=None,
+                        session_model=None, ladder=None, session_fn=None,
+                        gate_fn=None,
                         command_fn=None, judge_fn=None, out=_noop,
                         heartbeat=None):
     """Drive exactly the one epic member named by ``slug`` — independent of the
@@ -1639,7 +1651,7 @@ def drive_single_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
     return drive_member(
         root, epic, member, sliced, timeout=timeout, max_resumes=max_resumes,
         binary=binary, harness=harness, session_model=session_model,
-        pr_mode=sc.resolve_pr_mode(root), session_fn=session_fn,
+        ladder=ladder, pr_mode=sc.resolve_pr_mode(root), session_fn=session_fn,
         gate_fn=gate_fn, command_fn=command_fn, judge_fn=judge_fn, out=out,
         heartbeat=heartbeat)
 
@@ -1775,7 +1787,8 @@ class _SigtermAbortGuard:
 
 def run(root, epic, *, max_members=None, dry_run=False,
         timeout=TIMEOUT_DEFAULT, max_resumes=MAX_RESUMES_DEFAULT,
-        binary=None, harness="claude", session_model=None, member_driver=None,
+        binary=None, harness="claude", session_model=None, ladder=None,
+        member_driver=None,
         sync_fn=None, heartbeat=None, out=print):
     """Drive ``epic``'s unplanned members and return the run report dict.
 
@@ -1800,12 +1813,15 @@ def run(root, epic, *, max_members=None, dry_run=False,
     # Resolved once per run and threaded into every member drive, so a bad
     # `pr-mode` value fails the run before any member is driven.
     pr_mode = sc.resolve_pr_mode(root)
+    if ladder is None:
+        ladder = _resolve_ladder(root)
 
     report = {
         "epic": epic,
         "pipeline_source": provenance,
         "harness": harness,
-        "tier_anchor": _tier_anchor(session_model),
+        "tier_anchor": _tier_anchor(session_model, ladder),
+        "model_ladder": list(ladder),
         "shipped": [],
         "drafted": [],
         "rejected": [],
@@ -1817,9 +1833,10 @@ def run(root, epic, *, max_members=None, dry_run=False,
     if dry_run:
         out("Dry run for epic '%s' (pipeline from %s):" % (epic, provenance))
         out("Model tier anchor: %s%s"
-            % (_tier_anchor(session_model),
+            % (_tier_anchor(session_model, ladder),
                "" if session_model else " (ladder top; --session-model "
                                         "names another)"))
+        out("Model ladder: %s" % ", ".join(ladder))
         out("Harness: %s" % harness)
         out("Member order (After, then risk ascending):")
         for m in to_drive:
@@ -1835,7 +1852,8 @@ def run(root, epic, *, max_members=None, dry_run=False,
             return drive_member(
                 root_, epic_, member_, pipeline_, timeout=timeout,
                 max_resumes=max_resumes, binary=binary, harness=harness,
-                session_model=session_model, pr_mode=pr_mode, out=out,
+                session_model=session_model, ladder=ladder, pr_mode=pr_mode,
+                out=out,
                 heartbeat=heartbeat_)
 
     reached = to_drive if max_members is None else to_drive[:max_members]
@@ -1908,7 +1926,8 @@ def run(root, epic, *, max_members=None, dry_run=False,
 
 def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
                max_resumes=MAX_RESUMES_DEFAULT, binary=None, harness="claude",
-               session_model=None, driver=None, heartbeat=None, out=print):
+               session_model=None, ladder=None, driver=None, heartbeat=None,
+               out=print):
     """Targeted drive of a single epic member with a live heartbeat and run
     report — the board-observable wrapper the detached ``run`` action spawns.
     Seeds the epic heartbeat with just this member, drives it via
@@ -1928,6 +1947,8 @@ def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
             "member '%s' is %s — a targeted drive enters only an unplanned "
             "(plan) or ready (build) member" % (slug, member.state or "?"))
     _pipeline, provenance = sc.resolve_pipeline(root)
+    if ladder is None:
+        ladder = _resolve_ladder(root)
 
     hb = heartbeat if heartbeat is not None else RunHeartbeat(
         root, epic, out=out)
@@ -1937,8 +1958,8 @@ def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
         def driver():
             return drive_single_member(
                 root, epic, slug, timeout=timeout, max_resumes=max_resumes,
-                binary=binary, harness=harness, session_model=session_model, out=out,
-                heartbeat=hb)
+                binary=binary, harness=harness, session_model=session_model,
+                ladder=ladder, out=out, heartbeat=hb)
 
     finished = False
     with _SigtermAbortGuard(hb, lambda: finished):
@@ -1949,7 +1970,8 @@ def run_member(root, epic, slug, *, timeout=TIMEOUT_DEFAULT,
                 "epic": epic,
                 "pipeline_source": provenance,
                 "harness": harness,
-                "tier_anchor": _tier_anchor(session_model),
+                "tier_anchor": _tier_anchor(session_model, ladder),
+                "model_ladder": list(ladder),
                 "shipped": [],
                 "drafted": [],
                 "rejected": [],
@@ -2053,8 +2075,9 @@ def main(argv=None):
                              "selected harness's own)")
     parser.add_argument("--session-model", default=None,
                         help="the model-tier anchor a stage's symbolic `model` "
-                             "resolves against (default: the ladder top, %s)"
-                             % sc.MODEL_LADDER[0])
+                             "resolves against (default: the ladder top, %s; "
+                             "the ladder is the config `models` key, else "
+                             "this default)" % sc.DEFAULT_MODEL_LADDER[0])
     args = parser.parse_args(argv)
 
     if args.parallel < 1:
