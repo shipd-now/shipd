@@ -75,6 +75,7 @@ SEVERITY_TABLE = "| # | rating | details |"
 # this suite runs on). The gate materializes its own copy from the *base* ref
 # of this path rather than following the one on the ref under review.
 GATE_SKILL_PATH = ".github/skills/code-review/SKILL.md"
+GATE_ENGINE_PATH = ".github/skills/code-review/scripts/semdiff.py"
 
 # Where the posting step invokes `gh` from. It is a hardcoded literal in the
 # template rather than an environment override, because a variable an earlier
@@ -387,7 +388,20 @@ def gate_script(text, substitute="stub"):
     stubbed on ``PATH`` for a test run instead. Everything the logic needs of
     the event reaches it through the steps' ``env:``, so a run is driven
     entirely by the environment the test sets."""
-    bodies = [run_block(step) for step in job_steps(gate_job(text))]
+    bodies = []
+    for step in job_steps(gate_job(text)):
+        body = run_block(step)
+        # Copy the runner's step-output binding: the later steps read the
+        # grounding step's outputs from their environment, so the harness
+        # exports them from the output file right after that step's body.
+        if body and "id: grounding" in step:
+            body += (
+                'GROUNDING_OUTCOME="$(sed -n \'s/^outcome=//p\' '
+                '"$GITHUB_OUTPUT" | tail -n 1)"; '
+                'GROUNDING_FILES="$(sed -n \'s/^files=//p\' '
+                '"$GITHUB_OUTPUT" | tail -n 1)"; '
+                'export GROUNDING_OUTCOME GROUNDING_FILES\n')
+        bodies.append(body)
     return ACTIONS_EXPRESSION.sub(
         substitute, "".join(body for body in bodies if STATUS_CONTEXT in body))
 
@@ -420,6 +434,12 @@ class SkillTemplateTest(unittest.TestCase):
         for subcommand in ("files", "diff", "context"):
             self.assertIn(subcommand, self.text,
                           "template omits semdiff subcommand %r" % subcommand)
+
+    def test_supplied_grounding_is_read_instead_of_re_running_the_engine(self):
+        lowered = " ".join(self.text.lower().split())
+        self.assertIn("names files holding", lowered)
+        self.assertIn("do not run those subcommands", lowered)
+        self.assertIn("fails closed", lowered)
 
     def test_prefers_structural_json_over_raw_file_dumps(self):
         lowered = self.text.lower()
@@ -795,7 +815,9 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertIn("state=pending", first)
         self.assertIn("context=%s" % STATUS_CONTEXT, first)
         for step in self.steps[1:]:
-            self.assertNotIn("state=pending", run_block(step),
+            # The status post is the `-f state=pending` argument; the
+            # posting step may name `pending` as the state it re-posts.
+            self.assertNotIn("-f state=pending", run_block(step),
                              "pending is posted after the first step")
 
     def test_the_cli_path_checks_out_the_reviewed_commit_with_full_history(
@@ -926,7 +948,12 @@ class GateWorkflowTemplateTest(unittest.TestCase):
                                  "a step writes to %s" % channel)
                 self.assertNotIn(">> %s" % channel, run,
                                  "a step writes to %s" % channel)
-            self.assertNotIn("${{ steps.", step,
+            # The grounding outcome and count are the one step output the
+            # steps read, bound by expression so $GITHUB_ENV cannot rewrite
+            # them; the findings and the body still cross as workspace files.
+            self.assertNotIn("${{ steps.", step.replace(
+                "${{ steps.grounding.outputs.outcome }}", "").replace(
+                "${{ steps.grounding.outputs.files }}", ""),
                              "a step output carries data between the steps")
         # And the reviewer is told to write it, at that same path: the
         # contract names the file, the prompt names where this run wants it.
@@ -1232,7 +1259,11 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         # rather than through a pipe.
         self.assertIn("${", self.script,
                       "the gate step does no parameter expansion at all")
-        for line in shell_lines(self.script):
+        # The posting step's own script: the grounding step before it shells
+        # out to the engine by design, and the harness appends a binding line.
+        posting_script = ACTIONS_EXPRESSION.sub(
+            "stub", run_block(self.posting_step()))
+        for line in shell_lines(posting_script):
             if line.lstrip().startswith("#"):
                 continue
             words = line.replace("$(", " ").replace("`", " ").split()
@@ -1492,10 +1523,24 @@ case "$1" in
     printf '%s\n' "@BASE_COMMIT@"
     exit 0 ;;
   cat-file)
+    for last; do :; done
+    case "$last" in
+      *semdiff.py)
+        if [ -f "$STUB_DIR/base-engine" ]; then exit 0; fi
+        echo "fatal: path does not exist in that ref" >&2
+        exit 128 ;;
+    esac
     if [ -f "$STUB_DIR/base-skill" ]; then exit 0; fi
     echo "fatal: path does not exist in that ref" >&2
     exit 128 ;;
   show)
+    for last; do :; done
+    case "$last" in
+      *semdiff.py)
+        if [ -f "$STUB_DIR/base-engine" ]; then cat "$STUB_DIR/base-engine"; exit 0; fi
+        echo "fatal: path does not exist in that ref" >&2
+        exit 128 ;;
+    esac
     if [ -f "$STUB_DIR/base-unreadable" ]; then
       echo "fatal: unable to read object" >&2
       exit 128
@@ -1505,6 +1550,27 @@ case "$1" in
     exit 128 ;;
 esac
 exit 0
+'''
+
+# The review engine (`semdiff.py`), stubbed. It records its arguments, one per
+# line, prints scripted `files` JSON (three files by default) or an empty `diff`,
+# and exits with the scripted code.
+ENGINE_STUB = r'''#!/usr/bin/env python3
+import os, sys
+with open(os.environ["ENGINE_ARGS"], "a", encoding="utf-8") as fh:
+    for arg in sys.argv[1:]:
+        fh.write(arg + "\n")
+stub = os.environ["STUB_DIR"]
+if sys.argv[1:2] == ["files"]:
+    path = os.path.join(stub, "engine-files")
+    if os.path.exists(path):
+        sys.stdout.write(open(path, encoding="utf-8").read())
+    else:
+        sys.stdout.write('{"summary": {"files": 3, "cohorts": 1}, "cohorts": []}')
+elif sys.argv[1:2] == ["diff"]:
+    sys.stdout.write('{"files": []}')
+path = os.path.join(stub, "engine-code")
+sys.exit(int(open(path, encoding="utf-8").read()) if os.path.exists(path) else 0)
 '''
 
 # What the stubbed `git rev-parse` resolves the base ref to. Every read of the
@@ -1534,7 +1600,7 @@ class GateScriptCase(unittest.TestCase):
     SCRIPTED = ("ids", "head", "body", "reviews-calls", "head-calls",
                 "cli-out", "cli-code", "cli-timeout", "base-skill",
                 "base-missing", "base-unreadable", "files", "cli-findings",
-                "reject-events")
+                "reject-events", "base-engine", "engine-files", "engine-code")
 
     def setUp(self):
         self.assertTrue(os.path.isfile(GATE_TEMPLATE),
@@ -1580,6 +1646,13 @@ class GateScriptCase(unittest.TestCase):
         os.makedirs(os.path.dirname(head_skill))
         with open(head_skill, "w", encoding="utf-8") as fh:
             fh.write(HEAD_SKILL)
+        # The checkout's own copy of the review engine, stubbed: the fallback
+        # the grounding step runs only where the base tree carries none.
+        engine = os.path.join(self.tmp, *GATE_ENGINE_PATH.split("/"))
+        os.makedirs(os.path.dirname(engine), exist_ok=True)
+        with open(engine, "w", encoding="utf-8") as fh:
+            fh.write(ENGINE_STUB)
+        os.chmod(engine, 0o755)
 
     def recorded(self, name):
         """The argument lines a stub recorded in the last run, or ``[]``."""
@@ -1639,7 +1712,8 @@ class GateScriptCase(unittest.TestCase):
              fail_open="", base_skill=BASE_SKILL, base_ref_missing=False,
              base_unreadable=False, expect_failure=False, path_shim=False,
              files=None, findings=None, pr_author="pr-author",
-             reject_events=()):
+             reject_events=(), engine_files=None, engine_code=None,
+             base_engine=None, fast_pass=""):
         """Run the gate script for ``event`` and return the statuses it posted,
         in order — one dict of ``-f key=value`` fields per post, with the URL
         it posted to under ``"url"``. What the run logged is left on
@@ -1712,6 +1786,14 @@ class GateScriptCase(unittest.TestCase):
         # reviewer would have left beside its report.
         if files is not None:
             self.plant("files", json.dumps(files))
+        if engine_files is not None:
+            self.plant("engine-files", json.dumps(
+                {"summary": {"files": engine_files, "cohorts": 1},
+                 "cohorts": []}))
+        if engine_code is not None:
+            self.plant("engine-code", str(engine_code))
+        if base_engine is not None:
+            self.plant("base-engine", base_engine)
         if reject_events:
             self.plant("reject-events", "\n".join(reject_events) + "\n")
         if findings is not None:
@@ -1728,6 +1810,11 @@ class GateScriptCase(unittest.TestCase):
                      "shipd-copilot-review-payload.json",
                      "shipd-copilot-review-plain.json",
                      "shipd-copilot-review-files.json",
+                     "github-output", "engine-args",
+                     "shipd-copilot-review-semdiff.py",
+                     "shipd-copilot-review-semdiff-files.json",
+                     "shipd-copilot-review-semdiff-diff.json",
+                     "shipd-copilot-review-report.md",
                      FINDINGS_FILE):
             path = os.path.join(self.tmp, name)
             if os.path.exists(path):
@@ -1754,6 +1841,8 @@ class GateScriptCase(unittest.TestCase):
             "TIMEOUT_ARGS": os.path.join(self.tmp, "timeout-args"),
             "NPM_ARGS": os.path.join(self.tmp, "npm-args"),
             "GIT_ARGS": os.path.join(self.tmp, "git-args"),
+            "ENGINE_ARGS": os.path.join(self.tmp, "engine-args"),
+            "GITHUB_OUTPUT": os.path.join(self.tmp, "github-output"),
             "GH_TOKEN": "stub-token",
             "STUB_DIR": self.tmp,
             "RUNNER_TEMP": self.tmp,
@@ -1785,6 +1874,10 @@ class GateScriptCase(unittest.TestCase):
             env.pop("SHIPD_GATE_FAIL_OPEN", None)
         else:
             env["SHIPD_GATE_FAIL_OPEN"] = fail_open
+        if fast_pass:
+            env["SHIPD_FAST_PASS"] = fast_pass
+        with open(env["GITHUB_OUTPUT"], "w", encoding="utf-8"):
+            pass
         try:
             result = subprocess.run(["bash", script], cwd=self.tmp, env=env,
                                     capture_output=True, text=True,
@@ -1968,7 +2061,12 @@ class GateCliReviewerTest(GateScriptCase):
         # thing the pinning exists to prevent — so the reviewer never runs.
         posts = self.cli_gate(cli_out=self.REVIEW, base_ref_missing=True,
                               expect_failure=True)
-        self.assertStates(posts, ["pending"])
+        # The grounding step cannot pin its engine either, so the review is
+        # ungrounded: the status goes back to `pending`, and no verdict is
+        # posted.
+        self.assertStates(posts, ["pending", "pending"])
+        self.assertTrue(posts[-1]["description"].startswith(
+            "Review not grounded:"))
         self.assertEqual(self.cli_args(), [],
                          "the reviewer ran without pinned instructions")
         self.assertIn("main", self.stderr,
@@ -2476,6 +2574,169 @@ class GateStrictModeTest(GateScriptCase):
         posts = self.gate(secret=self.SECRET, cli_out=QUOTING_BODY)
         self.assertStates(posts, ["pending", "success"])
         self.assertIn("no verdict", posts[-1].get("description", "").lower())
+
+
+class GateGroundingTest(GateScriptCase):
+    """The workflow, not the model, runs the engine: the grounding step hands
+    the reviewer the `files` and `diff` output and the posting step refuses a
+    verdict on a review that covered nothing (copilot-review-skill
+    gate-review-grounding)."""
+
+    SECRET = "ghp-stub-copilot-pat"
+    BASE = "0" * 39 + "b"
+    REVIEW = ("## Findings\n\nNothing blocking.\n\n**Verdict: Ship it**\n\n"
+              + SHIP_MARKER + "\n")
+    ONE_FILE = [{"filename": "src/a.py", "patch": "@@ -1 +1 @@\n-a\n+b\n"}]
+
+    def cli_gate(self, **kwargs):
+        kwargs.setdefault("secret", self.SECRET)
+        kwargs.setdefault("cli_out", self.REVIEW)
+        return self.gate(**kwargs)
+
+    def last_description(self, posts):
+        return posts[-1].get("description", "")
+
+    def test_the_engine_runs_base_first_then_head(self):
+        self.cli_gate()
+        args = self.recorded("engine")
+        self.assertEqual(args, ["files", self.BASE, self.HEAD,
+                                "diff", self.BASE, self.HEAD])
+
+    def test_the_step_outputs_carry_the_outcome_and_the_count(self):
+        self.cli_gate()
+        output = read(os.path.join(self.tmp, "github-output")).splitlines()
+        self.assertIn("outcome=ok", output)
+        self.assertIn("files=3", output)
+
+    def test_the_prompt_names_the_grounding_files(self):
+        self.cli_gate()
+        prompt = self.prompt()
+        self.assertIn("shipd-copilot-review-semdiff-files.json", prompt)
+        self.assertIn("shipd-copilot-review-semdiff-diff.json", prompt)
+        lowered = prompt.lower()
+        self.assertIn("not run", lowered)
+        self.assertIn("files", lowered)
+        self.assertIn("diff", lowered)
+
+    def test_the_base_refs_engine_is_the_one_run(self):
+        # A base engine that counts five files where the checkout's stub
+        # counts three: the output says which copy ran.
+        self.cli_gate(base_engine=ENGINE_STUB.replace(
+            '"files": 3', '"files": 5'))
+        output = read(os.path.join(self.tmp, "github-output"))
+        self.assertIn("files=5", output.splitlines())
+        shown = [arg for arg in self.recorded("git")
+                 if arg.endswith("scripts/semdiff.py")]
+        self.assertTrue(shown, "no read of the engine path was made")
+        self.assertTrue(any(BASE_COMMIT in arg for arg in shown),
+                        "the engine was not read at the pinned base commit")
+        self.assertNotIn("head copy", self.stdout.lower())
+
+    def test_the_head_copy_runs_only_where_the_base_has_none(self):
+        self.cli_gate()
+        self.assertIn("head copy", self.stdout.lower())
+
+    def test_a_zero_file_grounding_never_approves(self):
+        posts = self.cli_gate(engine_files=0, files=self.ONE_FILE,
+                              expect_failure=True)
+        self.assertEqual(posts[-1].get("state"), "pending")
+        self.assertTrue(self.last_description(posts).startswith(
+            "Review not grounded:"), self.last_description(posts))
+        self.assertNotIn("success", [post.get("state") for post in posts])
+        reviews = self.reviews()
+        self.assertEqual(len(reviews), 1)
+        self.assertEqual(reviews[0].get("event"), "COMMENT")
+        self.assertTrue(reviews[0].get("body", "").startswith(
+            "**Not a verdict.**"), reviews[0].get("body"))
+
+    def test_a_zero_file_grounding_never_arms_fast_pass(self):
+        self.cli_gate(engine_files=0, files=self.ONE_FILE, fast_pass="true",
+                      expect_failure=True)
+        comments = self.recorded("comments")
+        self.assertNotIn("merge", comments)
+
+    def test_a_failed_engine_skips_the_reviewer(self):
+        posts = self.cli_gate(engine_code=1, expect_failure=True)
+        self.assertEqual(self.cli_args(), [])
+        self.assertEqual(posts[-1].get("state"), "pending")
+        self.assertTrue(self.last_description(posts).startswith(
+            "Review not grounded:"), self.last_description(posts))
+        self.assertEqual(self.reviews(), [])
+
+    def test_an_empty_pull_request_is_still_grounded(self):
+        posts = self.cli_gate(engine_files=0, files=[])
+        self.assertStates(posts, ["pending", "success"])
+        self.assertEqual(self.reviews()[-1].get("event"), "APPROVE")
+
+    def test_fail_open_does_not_rescue_an_ungrounded_review(self):
+        posts = self.cli_gate(engine_files=0, files=self.ONE_FILE,
+                              fail_open="true", expect_failure=True)
+        self.assertEqual(posts[-1].get("state"), "pending")
+
+
+class GateReportExtractionTest(GateScriptCase):
+    """The posted review is the report alone, and the verdict is read from the
+    same text (copilot-review-skill gate-report-extraction)."""
+
+    SECRET = "ghp-stub-copilot-pat"
+
+    TRANSCRIPT = ("I will read the grounding files first.\n\n"
+                  "\u25cf Read shipd-copilot-review-semdiff-files.json\n"
+                  "  \u2502 /tmp/files.json\n"
+                  "  \u2514 3 files read\n\n"
+                  "Now writing the report.\n\n")
+    REPORT = ("## Findings: \u2705 Ship it\n\nNo problems found.\n\n"
+              "**Verdict: Ship it**\n\n" + SHIP_MARKER + "\n")
+
+    def cli_gate(self, **kwargs):
+        kwargs.setdefault("secret", self.SECRET)
+        return self.gate(**kwargs)
+
+    def test_the_cli_runs_silent(self):
+        self.cli_gate(cli_out=self.TRANSCRIPT + self.REPORT)
+        self.assertIn("-s", self.cli_args())
+
+    def test_narration_and_transcript_are_dropped(self):
+        out = self.TRANSCRIPT + self.REPORT + "\nAll done, goodbye.\n"
+        posts = self.cli_gate(cli_out=out)
+        self.assertStates(posts, ["pending", "success"])
+        body = self.reviews()[-1]["body"]
+        self.assertEqual(body.splitlines()[0],
+                         "## Findings: \u2705 Ship it")
+        self.assertNotIn("\u25cf", body)
+        self.assertNotIn("goodbye", body)
+        self.assertNotIn("grounding files first", body)
+        self.assertIn(SHIP_MARKER, body.splitlines())
+
+    def test_a_later_findings_subheading_keeps_the_verdict_header(self):
+        out = (self.TRANSCRIPT + "## Findings: \u2705 Ship it\n\n"
+               "| High | 0 |\n\n## Findings by cohort\n\nDetail line.\n\n"
+               + SHIP_MARKER + "\n")
+        posts = self.cli_gate(cli_out=out)
+        self.assertStates(posts, ["pending", "success"])
+        body = self.reviews()[-1]["body"]
+        self.assertEqual(body.splitlines()[0],
+                         "## Findings: \u2705 Ship it")
+        self.assertIn("## Findings by cohort", body)
+        self.assertIn("| High | 0 |", body)
+
+    def test_headerless_output_loses_only_its_transcript_blocks(self):
+        out = ("Intro prose line.\n\u25cf Run python3 semdiff.py\n"
+               "  \u2502 files\n  \u2514 ok\nClosing prose line.\n\n"
+               + SHIP_MARKER + "\n")
+        self.cli_gate(cli_out=out)
+        body = self.reviews()[-1]["body"]
+        self.assertIn("Intro prose line.", body)
+        self.assertIn("Closing prose line.", body)
+        self.assertNotIn("\u25cf", body)
+        self.assertNotIn("\u2502", body)
+        self.assertNotIn("\u2514", body)
+
+    def test_a_fix_required_marker_in_the_report_still_fails(self):
+        out = (self.TRANSCRIPT + "## Findings: Fix required\n\nBad.\n\n"
+               + FIX_MARKER + "\n")
+        posts = self.cli_gate(cli_out=out)
+        self.assertStates(posts, ["pending", "failure"])
 
 
 class CopilotVerbCase(unittest.TestCase):

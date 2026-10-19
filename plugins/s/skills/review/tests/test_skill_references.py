@@ -1580,10 +1580,14 @@ HEREDOC_PY_RE = re.compile(r"<<'PY'\n(.*?)\n( *)PY\n", re.DOTALL)
 
 
 def _extract_heredoc_python(yml_text):
-    """The posting step's inline Python: the body of the one `<<'PY' ... PY`
-    heredoc in `copilot-review-gate.yml`, dedented to real module-level
+    """The posting step's inline Python: the body of the `<<'PY' ... PY`
+    heredoc that builds the payload in `copilot-review-gate.yml`, dedented to real module-level
     Python source."""
-    match = HEREDOC_PY_RE.search(yml_text)
+    # The step carries several heredocs now (the changed-files count and the
+    # report extraction come first); the payload builder is the one that
+    # defines `footer`.
+    match = next((m for m in HEREDOC_PY_RE.finditer(yml_text)
+                  if "def footer(" in m.group(1)), None)
     if not match:
         raise AssertionError(
             "expected a <<'PY' ... PY heredoc in copilot-review-gate.yml")

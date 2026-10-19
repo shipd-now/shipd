@@ -46,11 +46,14 @@ On every pull request opened, updated, or reopened, the gate's job:
 3. Installs `difft`, `ripgrep`, and `@github/copilot` at a pinned version.
 4. Materializes the reviewer's instructions from the base ref, with
    `git show origin/<base>:.github/skills/code-review/SKILL.md`.
-5. Runs the CLI under a 10-minute timeout, in a step holding the reviewer
+5. Runs the base ref's copy of the engine, base first and head second. It
+   saves the `files` and `diff` output for the reviewer.
+6. Runs the CLI under a 10-minute timeout, in a step holding the reviewer
    secret and no other credential.
-6. Classifies the output in a separate step, scanning backwards for the last
-   marker line, then posts the status.
-7. Posts the review text as a pull-request review, whatever the verdict.
+7. Cuts the output down to the report, then classifies it in a separate step.
+   The scan runs backwards for the last marker line. The step then posts the
+   status.
+8. Posts the report as a pull-request review, whatever the verdict.
 
 - **The version pin is deliberate.** An unpinned install would let the CLI
   vendor change what the gate runs. Upgrading bumps that line in the template.
@@ -59,6 +62,14 @@ On every pull request opened, updated, or reopened, the gate's job:
   read failure fails the step, so `pending` stands.
 - **A failed or timed-out run leaves `pending`.** The job discards the partial
   output and posts nothing; `review_gate.py post` is the manual out.
+- **A review that covered nothing fails closed.** The engine may fail. It may
+  also see 0 files on a pull request that changes at least one. Either way the
+  gate posts `pending` with a "Review not grounded" description. It submits no
+  `APPROVE` or `REQUEST_CHANGES`, arms no fast-pass, and ignores
+  `SHIPD_GATE_FAIL_OPEN`. Any captured text goes out as a `COMMENT` that opens
+  with a "Not a verdict" notice. The job then fails.
+- **The posted body is the report.** The CLI runs with `-s`. The gate keeps the
+  text from the last `## Findings` header through the verdict marker.
 
 ### The poll fallback mode
 
@@ -131,82 +142,70 @@ output, a polled review, a review event. A real verdict still decides.
 
 ### The trust boundary
 
-The CLI reviewer runs an LLM agent, with its tools enabled, over content the
-pull request carries.
+The CLI reviewer runs an LLM agent, with its tools enabled, over content the pull request carries.
 
-**The baseline is GitHub's.** On a same-repository pull request, GitHub already
-runs the branch's own copy of every workflow file, with the repository's
-secrets. Anyone who can push a branch already has that reach. This workflow
-introduces no new class of actor.
+**The baseline is GitHub's.** On a same-repository pull request, GitHub already runs the branch's
+own copy of every workflow file, with the repository's secrets. Anyone who can push a branch already
+has that reach. This workflow introduces no new class of actor.
 
-**The residual risk is content, not push access.** The reviewer reads text the
-change carries: a diff, a commit message, an added file. A change can try to
-talk it into an unearned `ship-it`, and no LLM reviewer is immune to such
-steering. The gate bounds that risk rather than eliminating it:
+**The residual risk is content, not push access.** The reviewer reads text the change carries: a
+diff, a commit message, an added file. A change can try to talk it into an unearned `ship-it`, and
+no LLM reviewer is immune to such steering. The gate bounds that risk rather than eliminating it:
 
-- **The reviewer holds no credential but its own.** The CLI step's environment
-  binds `COPILOT_GITHUB_TOKEN` and nothing else. The workflow's `github.token`
-  lives only in the next step, which classifies and posts. A steered reviewer
-  can spend credits and write a misleading body, but it cannot post the status
-  or push.
-- **The posting step inherits nothing from the reviewer.** A step can hand
-  later steps a `$GITHUB_PATH` entry and `$GITHUB_ENV` variables. A shimmed
-  `gh` would run the reviewer's own program with `github.token`, and an
-  injected `SHIPD_GATE_FAIL_OPEN=true` would green a strict repository. So the
-  posting step invokes `gh` by the hardcoded absolute path `/usr/bin/gh` —
-  never a `PATH` lookup, never an overridable default. It re-binds the
-  strictness knob in its own step-level `env:` from the `vars` context, which
-  the runner evaluates and no earlier step can write.
-- **That split is not a wall.** A GitHub-hosted runner gives the job
-  passwordless `sudo`, so a fully steered agent could overwrite `/usr/bin/gh`
-  itself. The split removes the easy routes; the floor under it is the token's
-  minimality.
-- **The instructions come from the base ref.** The gate reviews a change that
-  edits `SKILL.md` under the rules that change asks to replace. Only a merge
-  into the base moves that contract.
-- **The workflow decides the verdict.** The reviewer writes text; the posting
-  step applies this workflow's own rules to that text's last line.
-- **The session flow stays the high-assurance path.** `/s:review` plus
-  `review_gate.py post` keeps a human in the loop, with your credential.
+- **The reviewer holds no credential but its own.** The CLI step's environment binds
+  `COPILOT_GITHUB_TOKEN` and nothing else. The workflow's `github.token` lives only in the next
+  step, which classifies and posts. A steered reviewer can spend credits and write a misleading
+  body, but it cannot post the status or push.
+- **The posting step inherits nothing from the reviewer.** A step can hand later steps a
+  `$GITHUB_PATH` entry and `$GITHUB_ENV` variables. A shimmed `gh` would run the reviewer's own
+  program with `github.token`, and an injected `SHIPD_GATE_FAIL_OPEN=true` would green a strict
+  repository. So the posting step invokes `gh` by the hardcoded absolute path `/usr/bin/gh` — never
+  a `PATH` lookup, never an overridable default. It re-binds the strictness knob in its own
+  step-level `env:` from the `vars` context, which the runner evaluates and no earlier step can
+  write.
+- **That split is not a wall.** A GitHub-hosted runner gives the job passwordless `sudo`, so a fully
+  steered agent could overwrite `/usr/bin/gh` itself. The split removes the easy routes; the floor
+  under it is the token's minimality.
+- **The instructions come from the base ref.** The gate reviews a change that edits `SKILL.md` under
+  the rules that change asks to replace. Only a merge into the base moves that contract.
+- **The workflow decides the verdict.** The reviewer writes text; the posting step applies this
+  workflow's own rules to that text's last line.
+- **The session flow stays the high-assurance path.** `/s:review` plus `review_gate.py post` keeps a
+  human in the loop, with your credential.
 
 ### Tokens, permissions, and the session flow
 
-The workflow does its repository work with its own `github.token`:
-`statuses: write` to post the status, `pull-requests: write` to poll and
-comment. The only secret it ever reads is the optional `COPILOT_GITHUB_TOKEN`,
-whose value reaches nothing but the Copilot CLI's environment.
+The workflow does its repository work with its own `github.token`: `statuses: write` to post the
+status, `pull-requests: write` to poll and comment. The only secret it ever reads is the optional
+`COPILOT_GITHUB_TOKEN`, whose value reaches nothing but the Copilot CLI's environment.
 
-- **The review event.** On the CLI path, ship-it submits `APPROVE` and
-  fix-required submits `REQUEST_CHANGES`, as `github-actions[bot]`. No marker,
-  or a bot or unreadable author, gives `COMMENT`. The poll paths submit none.
-- **Degradation.** With "Allow GitHub Actions to create and approve pull
-  requests" off, GitHub rejects a decision. The workflow retries once without
-  inline comments, then posts a body-only `COMMENT` and warns. The step still
-  passes. `actions_approval.py allow` turns the setting on.
-- **Coexisting with the session flow.** `/s:review` plus `review_gate.py post`
-  writes the same `semantic-review` context on the same commit. Neither poster
-  excludes the other, and the newest post on a commit wins.
-- **Limit: pull requests from forks.** GitHub gives a fork pull request's
-  workflow a read-only token. The gate therefore posts no status there, in
-  either mode, and the check stays unreported. Same-repository branches behave
-  normally; on a fork, post the status from a session.
-- **No bootstrap step.** The gate gates the very pull request that installs it;
-  an earlier "bootstrap" limit in this guide proved wrong under dogfooding.
+- **The review event.** On the CLI path, ship-it submits `APPROVE` and fix-required submits
+  `REQUEST_CHANGES`, as `github-actions[bot]`. No marker, or a bot or unreadable author, gives
+  `COMMENT`. The poll paths submit none.
+- **Degradation.** With "Allow GitHub Actions to create and approve pull requests" off, GitHub
+  rejects a decision. The workflow retries once without inline comments, then posts a body-only
+  `COMMENT` and warns. The step still passes. `actions_approval.py allow` turns the setting on.
+- **Coexisting with the session flow.** `/s:review` plus `review_gate.py post` writes the same
+  `semantic-review` context on the same commit. Neither poster excludes the other, and the newest
+  post on a commit wins.
+- **Limit: pull requests from forks.** GitHub gives a fork pull request's workflow a read-only
+  token. The gate therefore posts no status there, in either mode, and the check stays unreported.
+  Same-repository branches behave normally; on a fork, post the status from a session.
+- **No bootstrap step.** The gate gates the very pull request that installs it; an earlier
+  "bootstrap" limit in this guide proved wrong under dogfooding.
 
 ### Private repositories, on the poll mode
 
-GitHub runs its Copilot review in a dynamic Actions run that checks the
-repository out for itself. On a private repository that checkout has failed in
-practice (`repository not found`). Nothing under `.github/skills` is then on
-disk. The skill never loads, the review carries no verdict marker, and the
-strictness knob classifies it.
+GitHub runs its Copilot review in a dynamic Actions run that checks the repository out for itself.
+On a private repository that checkout has failed in practice (`repository not found`). Nothing under
+`.github/skills` is then on disk. The skill never loads, the review carries no verdict marker, and
+the strictness knob classifies it.
 
-The setup workflow is fail-soft about that. `copilot-code-review.yml` checks
-the repository out `continue-on-error`, and installs `difft` and `ripgrep` only
-where the checkout succeeded. The job completes with the installs skipped,
-which is what GitHub's PR-visible `ccr-setup-step-failure` notice keys on. The
-limit belongs to the poll fallback alone, so open that review run's log once
-and confirm its checkout succeeded.
+The setup workflow is fail-soft about that. `copilot-code-review.yml` checks the repository out
+`continue-on-error`, and installs `difft` and `ripgrep` only where the checkout succeeded. The job
+completes with the installs skipped, which is what GitHub's PR-visible `ccr-setup-step-failure`
+notice keys on. The limit belongs to the poll fallback alone, so open that review run's log once and
+confirm its checkout succeeded.
 
 ## Report states and `--force`
 

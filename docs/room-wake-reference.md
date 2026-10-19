@@ -86,8 +86,9 @@ the asker:
 <!-- shipd-room-reply: input-required -->
 ```
 
-The reply job strips the marker and posts the reply as `input-required`. Any
-other reply completes the task. A failed, cancelled, or empty run closes the
+The reply job first strips the CLI's tool-call transcript blocks, then strips
+the marker and posts the reply as `input-required`. Any other reply completes
+the task. A failed, cancelled, or empty run closes the
 task with reason `wake-runner-failed`.
 
 ## Known limits
