@@ -236,6 +236,46 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(text, "hi")
 
 
+class PreflightTest(unittest.TestCase):
+    """The sign-in probe — one tiny turn, no resume, no plugin dir."""
+
+    def _fake(self, tmp, stdout, code):
+        record = os.path.join(tmp, "args.txt")
+        fake = os.path.join(tmp, "fake-claude")
+        with open(fake, "w", encoding="utf-8") as fh:
+            fh.write("#!/bin/sh\nfor a in \"$@\"; do echo \"$a\" >> %s; done\n"
+                     "echo '%s'\nexit %d\n" % (record, stdout, code))
+        os.chmod(fake, 0o755)
+        return fake, record
+
+    def test_a_signed_in_harness_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake, record = self._fake(
+                tmp, '{"session_id": "p-1", "result": "ok"}', 0)
+            result = session_driver.preflight(tmp, binary=fake)
+            with open(record, encoding="utf-8") as fh:
+                args = fh.read().splitlines()
+        self.assertEqual(result, (True, None))
+        self.assertIn("-p", args)
+        self.assertIn(session_driver.PREFLIGHT_PROMPT, args)
+        self.assertNotIn("--plugin-dir", args)
+        self.assertNotIn("--resume", args)
+
+    def test_a_signed_out_harness_fails_with_the_detail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake, _ = self._fake(
+                tmp, '{"result": "Failed to authenticate"}', 1)
+            ok, failure = session_driver.preflight(tmp, binary=fake)
+        self.assertFalse(ok)
+        self.assertIn("Failed to authenticate", failure)
+
+    def test_every_runner_has_a_login_hint(self):
+        for key in session_driver.RUNNERS:
+            self.assertTrue(session_driver.login_hint(key), key)
+        self.assertEqual(session_driver.login_hint("claude"),
+                         "claude auth login")
+
+
 class FailureDetailTest(unittest.TestCase):
     """A non-zero ``claude -p`` turn must never surface a blank reason, even
     when the CLI writes its fault to stdout (JSON result) with empty stderr."""

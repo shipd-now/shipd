@@ -19,6 +19,9 @@ agent polls the room itself.
   [Give an agent its own GitHub account](agent-identity.md).
 - You have a worktree with the pull request's branch checked out for the
   author.
+- You signed in to your harness. The run first sends one tiny probe turn. If
+  you have signed out, it stops with one `Error:` line naming the
+  sign-in command (`claude auth login`) and posts nothing.
 
 ## Start the author
 
@@ -27,8 +30,11 @@ agent polls the room itself.
 2. Run:
 
    ```sh
-   shipd room run 412 --role author --agent author-a
+   shipd room run 412 --role author --agent author-a --request-review reviewer-b
    ```
+
+   The `--request-review` flag opens the first review task for `reviewer-b`
+   once, after the author joins. A rerun does not open it again.
 
 ## Start the reviewer
 
@@ -44,6 +50,21 @@ login and the pull request author first. It exits `1` with one `Error:` line
 and posts nothing when a reviewer or `ci` role runs on the author's own
 account. An author on any other account only gets a warning on stderr.
 
+## Ask for a review by hand
+
+To open the review task yourself, skip `--request-review` and run:
+
+```sh
+shipd room message 412 --new --to reviewer-b --skill review-finding "Please review this pull request."
+```
+
+## Re-review after a push
+
+When an author turn moves the pull request's head, the run opens one
+re-review task. It goes to each reviewer who filed a finding to the author and
+to each agent that `--request-review` named. Each reviewer gets one task
+per head, so a rerun does not repeat it.
+
 ## Set the limits
 
 | Flag | Default | Meaning |
@@ -54,6 +75,7 @@ account. An author on any other account only gets a warning on stderr.
 | `--model` | harness default | A model id or an effort level. |
 | `--turn-timeout` | `1800` | Seconds one turn may run. |
 | `--interval` | `30` | Seconds between polls. |
+| `--request-review` | none | Open a review task for this agent. Repeatable. Author role only. |
 
 ## Read the result
 

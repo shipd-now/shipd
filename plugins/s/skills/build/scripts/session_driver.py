@@ -6,7 +6,7 @@ epic autopilot (``autopilot.py``). Both drive a headless ``claude -p`` session
 in a working directory and, while a supplied grade has not yet passed, resume
 the same session with a canned reply — bounded by a resume budget.
 
-Two entry points:
+Entry points:
 
 * :func:`run_turn` runs a single headless turn, returning ``(ok, failure,
   session_id)``. The session id is parsed from the turn's JSON transcript so a
@@ -14,6 +14,8 @@ Two entry points:
 * :func:`run_turn_result` is :func:`run_turn` plus the turn's ``result`` text
   as a fourth element (``""`` on any failure); ``run_turn`` returns the first
   three unchanged.
+* :func:`preflight` probes that a harness is signed in with one minimal
+  turn, returning ``(ok, failure)``.
 * :func:`drive` runs the grade-gated loop over an injectable turn ``runner``
   (default :func:`run_turn`), returning ``(ok, session_id, failure)``. The
   ``runner`` seam makes the loop unit-testable without a live session.
@@ -35,6 +37,10 @@ MAX_RESUMES_DEFAULT = 4
 
 # Default per-turn wall-clock budget (seconds).
 TIMEOUT_DEFAULT = 1800
+
+# The sign-in probe: one tiny prompt and a short wall-clock budget.
+PREFLIGHT_PROMPT = "Reply with the single word ok."
+PREFLIGHT_TIMEOUT = 120
 
 
 def session_id_from_transcript(text):
@@ -206,12 +212,14 @@ RUNNERS = {
         "argv": _claude_argv,
         "parse": _claude_parse,
         "rewrite": _identity,
+        "login": "claude auth login",
     },
     "opencode": {
         "binary": "opencode",
         "argv": _opencode_argv,
         "parse": _opencode_parse,
         "rewrite": _opencode_rewrite,
+        "login": "opencode auth login",
     },
 }
 
@@ -232,6 +240,11 @@ def runner_for(harness_id):
         return RUNNERS[harness_id]
     except KeyError:
         raise UnknownHarnessError(harness_id)
+
+
+def login_hint(harness):
+    """The sign-in command ``harness`` names, for a signed-out failure."""
+    return runner_for(harness)["login"]
 
 
 def run_turn(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
@@ -279,6 +292,18 @@ def run_turn_result(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
                 None, "")
     session_id, result_text = runner["parse"](proc.stdout or "")
     return True, None, session_id, result_text
+
+
+def preflight(cwd, harness=DEFAULT_HARNESS, binary=None, effort=None,
+              model_base=None, timeout=PREFLIGHT_TIMEOUT):
+    """Probe that ``harness`` is signed in with one minimal turn.
+
+    Returns ``(ok, failure)`` — the first two elements of
+    :func:`run_turn_result` on :data:`PREFLIGHT_PROMPT`, with no resume, no
+    plugin dir, and no extra arguments."""
+    return run_turn_result(PREFLIGHT_PROMPT, cwd, timeout=timeout,
+                           harness=harness, binary=binary, effort=effort,
+                           model_base=model_base)[:2]
 
 
 def _default_runner(prompt, cwd, resume_id, turn_index, timeout=TIMEOUT_DEFAULT,

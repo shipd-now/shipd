@@ -1084,13 +1084,17 @@ def build_parser():
                    metavar="CURSOR",
                    help="surface only tasks newer than <issue>:<review> "
                         "comment ids (default: 0:0, the backlog)")
+    p.add_argument("--request-review", action="append", default=[],
+                   dest="request_review", metavar="AGENT",
+                   help="open a review-finding task addressed to AGENT "
+                        "after joining (repeatable; needs --role author)")
     p.set_defaults(func=None)
 
     return parser, sub.choices
 
 
 def main(argv=None, gh=None, sleep=time.sleep, clock=time.monotonic,
-         runner=None):
+         runner=None, preflight=None):
     parser, verbs = build_parser()
     opts = parser.parse_args(argv)
     gh = gh or _default_gh
@@ -1100,7 +1104,7 @@ def main(argv=None, gh=None, sleep=time.sleep, clock=time.monotonic,
         if opts.verb == "run":
             import room_run
             return room_run.cmd_run(opts, verbs["run"], gh, runner,
-                                    sleep, clock)
+                                    sleep, clock, preflight=preflight)
         return opts.func(opts, verbs[opts.verb], gh)
     except RoomError as exc:
         cli_common.err(str(exc))
