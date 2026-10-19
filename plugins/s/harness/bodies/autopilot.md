@@ -10,12 +10,19 @@ question on the user's behalf — the driver owns every stage decision.
 
 ## 1. Preflight — read-only, drives nothing
 
-Confirm the epic is approved with
-`python3 "$S/spec_status.py" epic-show <epic>`. Only `ready` and `active`
-epics can be driven: a missing epic, a `draft` one (which still needs
-`epic-set-status ready`), or a `complete` one (which has nothing left) stops
-the flow here, with nothing driven. That approval is the last human gate —
-everything past it belongs to the driver.
+Run the launch rubric and relay every line it prints:
+
+```sh
+python3 "$S/autopilot.py" <epic> --preflight
+```
+
+It prints one `ok|warn|fail <check> — <detail>` line per check and a
+`preflight:` summary. If any line is `fail`, stop here: relay the failing lines
+with the remedies they name, ask nothing, and drive nothing. The `epic-status`
+line is what checks the approval — only `ready` and `active` epics can be
+driven, and a missing, `draft`, or `complete` epic fails it. That approval is
+the last human gate; everything past it belongs to the driver. `warn` lines are
+not failures — carry every one of them into the confirmation.
 
 Relay the roster `epic-show` printed. The run drives the members shown as
 `unplanned`, in risk-ascending order, and reports every other state without
@@ -30,7 +37,8 @@ python3 "$S/autopilot.py" <epic> --dry-run
 ## 2. Confirm the run controls
 
 The run spends real model time and opens real pull requests, so confirm its
-scope against the dry run's member list before launching:
+scope against the dry run's member list before launching. This confirmation is
+the last question of the run: after it the in-session drive asks nothing else.
 
 | control | what it caps | default |
 | --- | --- | --- |
@@ -77,10 +85,12 @@ model.
 <!-- if:subagents -->
 Where the user would rather watch each stage than run headless, the same
 pipeline can be driven inside this session instead: one `shipd-sub-agent`
-worker per stage per member, in the dry run's order, each stage graded by
-reading the repository through its own CLIs rather than by trusting the
-worker's summary, and every failure raised to the user instead of parking the
-member.
+worker per stage per member, in the `--waves` mode's order, each stage graded
+by reading the repository through its own CLIs rather than by trusting the
+worker's summary. Before a member's build entry the drive syncs its worktree
+with the base branch and checks drift, re-planning a `revise` verdict without a
+human. A failing member is parked with its reason while the drive carries on
+with every member that does not depend on it.
 <!-- end -->
 
 ## 4. Relay the report
@@ -96,6 +106,10 @@ Relay the driver's report verbatim, then add the pointers a human acts on:
 - **Parked as needs-human** — print the exact command that reopens that
   member's session, one line per member, so a person can pick up the precise
   conversation.
+- **Parked** — each member with its reason, the stage or step that parked it,
+  and the recovery pointer for that reason.
+- **Blocked** — each member held by a parked member, or waiting on a dependency
+  that has not merged, with the re-run pointer.
 - **Skipped** members with their state, and **unreached** members cut off by
   `--max-members`.
 

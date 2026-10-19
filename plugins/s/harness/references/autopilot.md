@@ -15,14 +15,13 @@ stage it enters at:
 | `ready` | `build` |
 | anything else | not driven — named in the summary with its state |
 
-The dry run's **`Member order (risk ascending):`** block lists only the
-`unplanned` members. Every other member, `ready` included, appears instead
-among the summary's `skipped: <member> (<state>)` lines. So a drive that also
-covers `ready` members reads **both** sections: the ordered block first, then
-the `skipped:` entries whose state is `ready`, in printed order. Never
-re-derive the order, and never conclude a `ready` member was excluded merely
-because the ordered block does not carry it — that block never carries `ready`
-members at all.
+The drive's grouping and order come from the driver's `--waves` mode: its
+`waves` array, in order, is the drive's script over members, and each wave's
+`members` run together. The mode lists only the members drivable now and
+reports every other member in `skipped: <member> (<state>)`. Never re-derive
+the order from the dry run or the roster — the dry run is the detached mode's
+preview, and a `ready` member that does not appear in a plan wave enters a
+build wave on a later call.
 
 Each driven member gets its own worktree, and every stage for that member runs
 with that worktree as its working directory. The worktree helper is
@@ -91,23 +90,70 @@ Options are read from the same `entries` dicts, never re-derived:
   the review spends (`all`, `high-only`, `none`) and `model` is recorded as
   provenance. The grade is unchanged in every scope.
 - **`autopilot` blocks** (`attempts`, `timeout`, `max_resumes`) are the
-  detached driver's budgets. A run with a human present ignores them — the
-  human is the retry loop.
+  detached driver's budgets. An in-session run ignores them too: a failed stage
+  parks, it is never retried on a budget.
 
-## Failure contract
+## Pre-build drift step
 
-A detached run parks; a run with a human present asks. With a human present:
+Once per member, when its walk reaches an entry whose `stage` is `build`, sync
+and measure the member before that entry runs. In `.worktrees/<member>` run
+`git fetch origin main`, then `git merge --no-edit origin/main`; a non-zero
+merge runs `git merge --abort` and parks the member as `sync-conflict`.
 
-- a **failed stage grade** stops the drive and puts the situation to the user,
-  naming the member and the stage;
-- a **gate rejection** is raised to the user rather than parking the member as
-  `rejected`;
-- a **command entry exiting non-zero** stops the drive the same way, naming
-  the member, the entry, the exit code, and the output — never retried on an
-  attempt budget.
+Measure with `spec_status.py --root .worktrees/<member> drift <member> --base
+origin/main --json`:
 
-In every case no further member starts while the stop is unanswered, and the
-drive resumes at the same member and stage once the user answers.
+| exit | what happens |
+| --- | --- |
+| 0 | build — no model is spawned |
+| 4 | judge with one `/s:drift <member> --base origin/main --json` sub-agent |
+| anything else | park as `drift-error`, naming the command's `Error:` line |
+
+The judge reads `verdicts[0].verdict` from the sub-agent's final text; a
+missing or unparseable object parks as `drift-error`. `holds` builds, `conflict`
+parks as `drift-conflict` naming the verdict's `contradicts`, and `revise` runs
+one re-plan sub-agent in the worktree — naming the verdict's `revise:` pointer
+and reason, staying inside the plan's `**Answered by:** USER` entries and the
+epic's Decisions, and ending with `spec_gate.py <member> --base origin/main`.
+Grade the revision from disk: status `ready`, `spec_lint.py` exit 0, and
+`spec_gate.py <member> --check` exit 0; anything else parks as `replan-failed`.
+The step never repeats for a member in one run.
+
+### Resume pointers
+
+| parked reason | resume pointer |
+| --- | --- |
+| `gate-rejected`, `replan-failed` at `rejected` | `/s:plan <member>` |
+| `grade-failed build`, `command-failed`, `sync-conflict` | `/s:build <member>` in `.worktrees/<member>`, or re-run `/s:autopilot <epic>` |
+| `grade-failed review` | the review instruction's post flow on the member's pull request URL |
+| `drift-conflict` | settle the named `Q<n>` (`/s:epic <epic> amend` for a Decision), re-gate, then re-run `/s:autopilot <epic>` |
+| `drift-error` | `/s:drift <member>` in the worktree, then re-run `/s:autopilot <epic>` |
+
+## Failure contract: park and continue
+
+After the launch confirmation no human is present, so the in-session drive
+never asks. A failed stage grade (`grade-failed <stage>`), a gate rejection
+(`gate-rejected`), a command entry exiting non-zero (`command-failed <entry>
+exit <rc>`), and the pre-build step's `sync-conflict`, `drift-error`,
+`drift-conflict`, and `replan-failed` each park the member: record the reason in
+the session, emit `heartbeat.py build-finish <member> --outcome parked`, and
+start no further entry for it. The parked set lives in the session only — no
+plan status is written for a parked member.
+
+Inside a wave, the other in-flight sub-agents run to their end and are graded,
+and the drive continues with the next round and wave. Before every `--waves`
+re-run, `git fetch origin main`; drop parked members, mark as held every
+`blocked` entry whose `waiting_on` names a parked or held member (to a
+fixpoint), and skip a wave emptied that way.
+
+When no runnable wave remains but `blocked` holds entries that are not held,
+poll `gh pr view change/<dep> --json state` for each `waiting_on` every 60
+seconds, up to `--timeout` seconds in total. Once every dependency reports
+`MERGED`, fetch and re-run `--waves`; when the bound expires or a dependency
+reports `CLOSED`, end the run and list those members as blocked — `held by
+<parked>` for a dependent of a parked member, `waiting on <dep>` for a
+dependency that never merged. A dependent of a parked or held member is never
+waited for.
 
 ## Resuming
 
@@ -115,4 +161,5 @@ An interrupted run needs no run-state file: member state already lives on disk
 as the spec status, the lint result, the pull request, and the review gate.
 Re-invoking the command for the same epic re-reads that state and re-enters
 each member at the stage its current state maps to, so members that already
-advanced pick up where they stopped.
+advanced pick up where they stopped. A parked member is re-driven the same way
+once the remedy its resume pointer names is done.
