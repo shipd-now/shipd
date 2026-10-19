@@ -294,8 +294,12 @@ def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
         if ok and opts.role == "author":
             after = _head(gh, number, repo, warned)
             if before and after and before != after:
-                _re_review(gh, repo, number, context, agent, opts, after,
-                           memo)
+                try:
+                    _re_review(gh, repo, number, context, agent, opts,
+                               after, memo)
+                except room.RoomError as exc:
+                    sys.stderr.write(
+                        "warning: re-review request failed: %s\n" % exc)
         if not ok:
             reason, failure = "turn-failed", why
         elif turns >= opts.max_turns:

@@ -454,6 +454,28 @@ class RunRereviewTest(RunTestBase):
         self.assertEqual(request_posts(gh), [])
         self.assertEqual(self.summary(out)["reason"], "closed")
 
+    def test_a_failed_re_review_post_warns_and_the_run_still_ends(self):
+        gh = FakeGh(comments=self.room_comments(), head="aaa1111")
+        real = gh.__call__
+
+        def failing(args, input=None):
+            # Only the re-review POST fails: it is the one made after the
+            # runner hook has moved the head.
+            if "POST" in args and gh.head != "aaa1111":
+                return 1, "", "boom"
+            return real(args, input=input)
+
+        failing.posts = gh.posts
+        runner = FakeRunner(hook=self.moving_hook(gh))
+        code, out, err = _run(
+            ["run"] + list(self.ARGV) + ["--root", self.root], failing,
+            seams={"sleep": FakeSleep(), "clock": FakeClock(),
+                   "runner": runner, "preflight": FakePreflight()})
+        self.assertEqual(code, 0, err)
+        self.assertIn("warning: re-review request failed", err)
+        self.assertEqual(len(out.strip().splitlines()), 1, out)
+        self.assertEqual(self.summary(out)["reason"], "closed")
+
 
 if __name__ == "__main__":
     unittest.main()
