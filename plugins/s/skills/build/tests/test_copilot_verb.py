@@ -729,6 +729,19 @@ class GateWorkflowTemplateTest(unittest.TestCase):
                       "the concurrency group is not keyed on the pull request")
         self.assertIn("cancel-in-progress: true", block)
 
+    def test_other_reviewers_review_events_get_their_own_group(self):
+        # A review by anyone but Copilot skips the job, so it must not share
+        # the group and cancel a live review of the same pull request.
+        block = [line.strip() for line in yaml_block(self.text, "concurrency")]
+        group = [line for line in block if line.startswith("group:")]
+        self.assertEqual(len(group), 1)
+        for needle in ("github.event_name == 'pull_request_review'",
+                       "github.event.review.user.login"
+                       " != 'copilot-pull-request-reviewer[bot]'",
+                       "github.event.review.id",
+                       "-review-"):
+            self.assertIn(needle, group[0])
+
     def test_one_job_serves_both_triggers(self):
         # Both events land in the same job, so the poll and the review-event
         # classification share one script — and one classification block.

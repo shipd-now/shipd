@@ -92,6 +92,7 @@ commit, then classifies what that review's body says.
 - **A timeout invents nothing.** Where the window elapses with no Copilot
   review of that commit, the gate leaves the status `pending` and posts nothing
   further. The same holds when a new push cancels the poll.
+- **Other reviewers never cancel the gate.** A review from anyone but Copilot runs in its own concurrency group. An agent approving first leaves the running review intact.
 - **What it costs.** Waiting occupies a runner — up to 15 runner-minutes per
   update, typically two or three. A private repository pays for those minutes.
 
