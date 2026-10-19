@@ -736,7 +736,8 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         group = [line for line in block if line.startswith("group:")]
         self.assertEqual(len(group), 1)
         for needle in ("github.event_name == 'pull_request_review'",
-                       "copilot-pull-request-reviewer[bot]",
+                       "github.event.review.user.login"
+                       " != 'copilot-pull-request-reviewer[bot]'",
                        "github.event.review.id",
                        "-review-"):
             self.assertIn(needle, group[0])
