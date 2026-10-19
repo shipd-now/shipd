@@ -484,7 +484,8 @@ def ci_review(review_id, commit="aaa1111", login="github-actions[bot]",
               body=None):
     """A pull request review as the reviews endpoint serves it."""
     return {"id": review_id, "user": {"login": login}, "commit_id": commit,
-            "body": MARKER + " Fix required" if body is None else body,
+            "body": "## Findings: Fix required\n" + MARKER if body is None
+            else body,
             "html_url": "%s#pullrequestreview-%d" % (URL, review_id)}
 
 
@@ -529,6 +530,22 @@ class RunCiReviewTest(RunTestBase):
         code, out, err = self.run_ci(gh, runner=runner)
         self.assertEqual(code, 0, err)
         self.assertEqual(runner.calls, [])
+
+    def test_a_quoted_marker_on_a_ship_it_review_runs_no_turn(self):
+        body = ("## Findings: Ship it\nThe run matches `%s` in prose.\n"
+                "<!-- shipd-verdict: ship-it -->\nReviewed 3 files." % MARKER)
+        gh = FakeGh(head="aaa1111", reviews=[ci_review(5, body=body)])
+        runner = FakeRunner()
+        code, out, err = self.run_ci(gh, runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(runner.calls, [])
+
+    def test_the_verdict_line_may_precede_a_footer(self):
+        body = "## Findings: Fix required\n%s  \nReviewed 3 files." % MARKER
+        gh = FakeGh(head="aaa1111", reviews=[ci_review(6, body=body)])
+        runner = FakeRunner()
+        self.run_ci(gh, runner=runner)
+        self.assertEqual(len(runner.calls), 1)
 
     def test_the_login_matches_ignoring_case(self):
         gh = FakeGh(head="aaa1111",

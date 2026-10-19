@@ -74,8 +74,9 @@ push, or to reply with the reason a finding is wrong. The turn counts toward
 `--max-turns`.
 
 - The review must come from the `--ci-reviewer` login, belong to the current
-  head, and carry the fix-required marker. "Ship it" reviews and comments
-  start nothing.
+  head, and carry the fix-required marker as its verdict line. The run reads
+  the verdict as the CI gate does: the last line that is a verdict marker. A
+  marker quoted in prose, "Ship it" reviews, and comments start nothing.
 - The run handles each review once.
 - A pushed fix re-runs the CI reviewer and opens the re-review tasks.
 - A reply does not clear the CI verdict. Only a new push re-runs the CI

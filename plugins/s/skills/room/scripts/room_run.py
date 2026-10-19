@@ -34,6 +34,7 @@ PLUGIN_DIR = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
 DEFAULT_SKILLS = ("review-finding", "question", "status")
 FAILURE_REASONS = ("turn-failed", "watch-failed")
 FIX_REQUIRED_MARKER = "<!-- shipd-verdict: fix-required -->"
+SHIP_IT_MARKER = "<!-- shipd-verdict: ship-it -->"
 IDLE_WATCH_LINE = "watch: no actionable task"
 SLICE_INTERVALS = 4
 
@@ -105,9 +106,20 @@ def _head(gh, number, repo, warned):
     return head if isinstance(head, str) else ""
 
 
+def _fix_required(body):
+    """Whether ``body``'s verdict is fix-required, read as the CI gate reads
+    it: the last line that, stripped, equals a verdict marker. A marker
+    quoted anywhere else is prose, not a verdict."""
+    for line in reversed(body.splitlines()):
+        line = line.strip()
+        if line in (FIX_REQUIRED_MARKER, SHIP_IT_MARKER):
+            return line == FIX_REQUIRED_MARKER
+    return False
+
+
 def _ci_reviews(gh, repo, number, login, head, warned):
-    """The reviews by ``login`` (case-insensitive) of ``head`` whose body
-    carries the fix-required marker, oldest first. A failed or unparseable
+    """The reviews by ``login`` (case-insensitive) of ``head`` whose
+    verdict line is the fix-required marker, oldest first. A failed or unparseable
     read warns once (tracked in ``warned``) and returns ``[]``."""
     rc, out, _err = gh(["api", "--paginate",
                         "repos/%s/pulls/%d/reviews" % (repo, number)])
@@ -143,7 +155,7 @@ def _ci_reviews(gh, repo, number, login, head, warned):
         body = review.get("body")
         if isinstance(who, str) and who.lower() == wanted and \
                 review.get("commit_id") == head and \
-                isinstance(body, str) and FIX_REQUIRED_MARKER in body:
+                isinstance(body, str) and _fix_required(body):
             found.append(review)
     return found
 
