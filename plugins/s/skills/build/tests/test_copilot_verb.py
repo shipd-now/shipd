@@ -2708,6 +2708,18 @@ class GateReportExtractionTest(GateScriptCase):
         self.assertNotIn("grounding files first", body)
         self.assertIn(SHIP_MARKER, body.splitlines())
 
+    def test_a_later_findings_subheading_keeps_the_verdict_header(self):
+        out = (self.TRANSCRIPT + "## Findings: \u2705 Ship it\n\n"
+               "| High | 0 |\n\n## Findings by cohort\n\nDetail line.\n\n"
+               + SHIP_MARKER + "\n")
+        posts = self.cli_gate(cli_out=out)
+        self.assertStates(posts, ["pending", "success"])
+        body = self.reviews()[-1]["body"]
+        self.assertEqual(body.splitlines()[0],
+                         "## Findings: \u2705 Ship it")
+        self.assertIn("## Findings by cohort", body)
+        self.assertIn("| High | 0 |", body)
+
     def test_headerless_output_loses_only_its_transcript_blocks(self):
         out = ("Intro prose line.\n\u25cf Run python3 semdiff.py\n"
                "  \u2502 files\n  \u2514 ok\nClosing prose line.\n\n"

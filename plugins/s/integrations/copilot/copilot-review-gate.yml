@@ -714,10 +714,14 @@ jobs:
 
 
           def last_header(before):
+              fallback = None
               for index in range(before - 1, -1, -1):
-                  if lines[index].lstrip().startswith("## Findings"):
+                  head = lines[index].lstrip()
+                  if head.startswith("## Findings:"):
                       return index
-              return None
+                  if fallback is None and head.startswith("## Findings"):
+                      fallback = index
+              return fallback
 
 
           def without_blocks(rows):
