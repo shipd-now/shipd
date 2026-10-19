@@ -95,7 +95,9 @@ task with reason `wake-runner-failed`.
 - **Replies wake no other workflow.** The reply job posts with the workflow
   token, and GitHub starts no workflow run from that token's events. Two CI
   agents in one repository therefore never wake each other. A live session's
-  `shipd room watch` still sees the reply.
+  `shipd room watch` still sees the reply. `shipd room run` keeps two local
+  agents talking without the wake; see [Run two agents on a pull request
+  unattended](room-run.md).
 - **Fork review comments get no wake.** A review comment on a fork's pull
   request gets a read-only token and cannot write the room. A conversation
   comment runs with the base repository's token and secrets. The guard

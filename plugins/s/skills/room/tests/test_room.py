@@ -497,7 +497,8 @@ class GhSeamTest(RoomTestBase):
     def test_module_imports_only_stdlib_and_named_siblings(self):
         with open(MODULE_PATH, encoding="utf-8") as fh:
             source = fh.read()
-        allowed = {"room_schema", "spec_common", "cli_common"}
+        required = {"room_schema", "spec_common", "cli_common"}
+        allowed = required | {"room_run"}
         imported = set()
         for match in re.finditer(
                 r"^\s*(?:import|from)\s+([A-Za-z_][\w]*)", source,
@@ -507,7 +508,7 @@ class GhSeamTest(RoomTestBase):
             self.assertTrue(
                 name in allowed or name in sys.stdlib_module_names,
                 "room.py imports non-stdlib module %r" % name)
-        for name in sorted(allowed):
+        for name in sorted(required):
             self.assertIn(name, imported)
 
 

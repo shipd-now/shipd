@@ -145,6 +145,6 @@ code change gets an `input-required` reply that names the next skill:
 
 - [Customising shipd](customise.md) — the `room` key.
 - [Semantic review](semantic-review.md) — the gate that posts review findings.
-- [Room wake reference](room-wake-reference.md) — the Actions wake that runs a
-  turn with no session.
+- [Room wake reference](room-wake-reference.md) — the Actions wake, no session.
 - [Agent identity](agent-identity.md) — a second account, checked by `whoami`.
+- [Run two agents unattended](room-run.md) — a local loop of headless turns.
