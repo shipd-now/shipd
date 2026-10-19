@@ -13,6 +13,8 @@ agent drives to take part in one:
   message <pr>   open a task (``--new``) or advance one (``--task ID``)
   close <pr>     post a task's terminal message
   watch <pr>     wait for a task that is this agent's turn (NDJSON)
+  run <pr>       join once, then answer each task with a headless /s:room
+                 turn until the pull request closes or a cap is hit
 
 Every GitHub read and write goes through one injectable ``gh`` runner,
 ``gh(args, input=None) -> (rc, stdout, stderr)``, defaulting to the ``gh``
@@ -923,6 +925,17 @@ def _positive_int(value):
     return number
 
 
+def _positive_float(value):
+    try:
+        number = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a number, got %r" % value)
+    if not number > 0:
+        raise argparse.ArgumentTypeError(
+            "must be greater than 0, got %s" % value)
+    return number
+
+
 def _cursor(value):
     """``<issue>:<review>`` (or a bare ``<issue>``) as an int pair."""
     parts = value.split(":")
@@ -1039,16 +1052,55 @@ def build_parser():
                    help="poll once and stop")
     p.set_defaults(func=None)
 
+    p = sub.add_parser("run", parents=[common],
+                       help="join once, then answer each task with a "
+                            "headless /s:room turn")
+    p.add_argument("pr", help="pull request number, URL, or branch")
+    p.add_argument("--role", required=True, choices=room_schema.ROLE_VALUES,
+                   help="the agent's role: %s" % ", ".join(
+                       room_schema.ROLE_VALUES))
+    p.add_argument("--skill", action="append", default=[],
+                   help="a skill id this agent handles (repeatable; default: "
+                        "review-finding, question, status)")
+    p.add_argument("--description", default="",
+                   help="a line describing this agent")
+    p.add_argument("--harness", default=None,
+                   help="the harness that runs each turn (default: claude)")
+    p.add_argument("--model", default=None,
+                   help="a model id or effort level for each turn "
+                        "(default: the harness's own)")
+    p.add_argument("--max-turns", type=_positive_int, default=10,
+                   dest="max_turns", metavar="N",
+                   help="stop after this many turns (default: 10)")
+    p.add_argument("--budget", type=_positive_float, default=14400.0,
+                   metavar="S",
+                   help="stop after this many seconds (default: 14400)")
+    p.add_argument("--turn-timeout", type=_positive_float,
+                   default=None, dest="turn_timeout", metavar="S",
+                   help="seconds one turn may run (default: 1800)")
+    p.add_argument("--interval", type=float, default=30.0, metavar="S",
+                   help="seconds between polls (default: 30)")
+    p.add_argument("--since", type=_cursor, default=(0, 0),
+                   metavar="CURSOR",
+                   help="surface only tasks newer than <issue>:<review> "
+                        "comment ids (default: 0:0, the backlog)")
+    p.set_defaults(func=None)
+
     return parser, sub.choices
 
 
-def main(argv=None, gh=None, sleep=time.sleep, clock=time.monotonic):
+def main(argv=None, gh=None, sleep=time.sleep, clock=time.monotonic,
+         runner=None):
     parser, verbs = build_parser()
     opts = parser.parse_args(argv)
     gh = gh or _default_gh
     try:
         if opts.verb == "watch":
             return cmd_watch(opts, gh, sleep, clock, verbs["watch"])
+        if opts.verb == "run":
+            import room_run
+            return room_run.cmd_run(opts, verbs["run"], gh, runner,
+                                    sleep, clock)
         return opts.func(opts, verbs[opts.verb], gh)
     except RoomError as exc:
         cli_common.err(str(exc))
