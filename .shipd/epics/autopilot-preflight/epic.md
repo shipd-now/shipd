@@ -1,5 +1,5 @@
 # autopilot-preflight
-Status: active
+Status: complete
 Theme: reliability
 
 ## Introduction
@@ -161,13 +161,13 @@ The `After` column below orders the members along those layers.
 
 | Tool | Calls | Output tokens |
 | --- | --- | --- |
-| Bash | 493 | 7.2k |
-| (no tool) | 0 | 3.8k |
-| ToolSearch | 16 | 3.2k |
-| TaskStop | 5 | 363 |
-| SubagentHandback | 17 | 340 |
-| Agent | 17 | 266 |
-| Read | 1 | 138 |
+| Bash | 644 | 9.4k |
+| (no tool) | 0 | 5.1k |
+| ToolSearch | 19 | 4.0k |
+| SubagentHandback | 23 | 432 |
+| TaskStop | 6 | 375 |
+| Agent | 24 | 338 |
+| Read | 2 | 276 |
 | Monitor | 7 | 122 |
 | SendMessage | 2 | 26 |
-| **Total** | 558 | 15.5k |
+| **Total** | 727 | 20.1k |
