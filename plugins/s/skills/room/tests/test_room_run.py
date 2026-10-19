@@ -477,5 +477,153 @@ class RunRereviewTest(RunTestBase):
         self.assertEqual(self.summary(out)["reason"], "closed")
 
 
+MARKER = "<!-- shipd-verdict: fix-required -->"
+
+
+def ci_review(review_id, commit="aaa1111", login="github-actions[bot]",
+              body=None):
+    """A pull request review as the reviews endpoint serves it."""
+    return {"id": review_id, "user": {"login": login}, "commit_id": commit,
+            "body": MARKER + " Fix required" if body is None else body,
+            "html_url": "%s#pullrequestreview-%d" % (URL, review_id)}
+
+
+def reviews_reads(gh):
+    return [a for a, _i in gh.calls if any(
+        x.endswith("/pulls/7/reviews") for x in a)]
+
+
+class RunCiReviewTest(RunTestBase):
+    ARGV = ("7", "--role", "author", "--agent", "author-a")
+
+    def run_ci(self, gh, *extra, runner=None, step=10, argv=None):
+        return self.run_verb(
+            gh, *(argv or self.ARGV), "--budget", "100", "--interval", "5",
+            *extra, runner=runner or FakeRunner(),
+            clock=FakeClock(step=step))
+
+    def test_a_fix_required_review_of_the_head_runs_one_turn(self):
+        gh = FakeGh(head="aaa1111", reviews=[ci_review(31)])
+        runner = FakeRunner()
+        code, out, err = self.run_ci(gh, runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(runner.calls), 1)
+        prompt = runner.calls[0][0]
+        self.assertIn("@github-actions[bot]", prompt)
+        self.assertIn(URL, prompt)
+        self.assertIn("aaa1111", prompt)
+        self.assertIn("%s#pullrequestreview-31" % URL, prompt)
+        self.assertIn("room run: turn 1 on CI review 31 by "
+                      "github-actions[bot]", err)
+        self.assertNotIn("no actionable task", err)
+        summary = self.summary(out)
+        self.assertEqual(summary["turns"], 1)
+        self.assertEqual(summary["reason"], "budget")
+
+    def test_other_reviews_run_no_turn(self):
+        gh = FakeGh(head="aaa1111", reviews=[
+            ci_review(1, body="Ship it"),
+            ci_review(2, commit="old0000"),
+            ci_review(3, login="someone-else")])
+        runner = FakeRunner()
+        code, out, err = self.run_ci(gh, runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(runner.calls, [])
+
+    def test_the_login_matches_ignoring_case(self):
+        gh = FakeGh(head="aaa1111",
+                    reviews=[ci_review(4, login="GitHub-Actions[bot]")])
+        runner = FakeRunner()
+        self.run_ci(gh, runner=runner)
+        self.assertEqual(len(runner.calls), 1)
+
+    def test_a_review_is_handled_once(self):
+        gh = FakeGh(head="aaa1111", reviews=[ci_review(31), ci_review(32)])
+        runner = FakeRunner()
+        code, out, err = self.run_ci(gh, runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(runner.calls), 1)
+        self.assertIn("CI review 32", err)
+        self.assertGreater(len(reviews_reads(gh)), 1)
+
+    def test_a_pushed_fix_requests_a_re_review(self):
+        gh = FakeGh(head="aaa1111", reviews=[ci_review(31)])
+
+        def hook(_n):
+            gh.head = "bbb2222"
+            gh.state = "MERGED"
+
+        runner = FakeRunner(hook=hook)
+        code, out, err = self.run_ci(
+            gh, "--request-review", "reviewer-b", runner=runner)
+        self.assertEqual(code, 0, err)
+        tasks = [t for t in request_posts(gh) if t.metadata.get("head")
+                 == "bbb2222"]
+        self.assertEqual(len(tasks), 1, gh.posts())
+        self.assertEqual(tasks[0].to, "reviewer-b")
+
+    def test_the_turn_counts_toward_the_cap(self):
+        gh = FakeGh(head="aaa1111", reviews=[ci_review(31)])
+        runner = FakeRunner()
+        code, out, err = self.run_ci(gh, "--max-turns", "1", runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.summary(out)["reason"], "turn-cap")
+
+    def test_a_failed_reviews_read_warns_once_and_runs_no_turn(self):
+        gh = FakeGh(head="aaa1111", reviews=[ci_review(31)])
+        real = gh.__call__
+
+        def flaky(args, input=None):
+            if any(a.endswith("/pulls/7/reviews") for a in args):
+                return 1, "", "boom"
+            return real(args, input=input)
+
+        flaky.posts = gh.posts
+        runner = FakeRunner()
+        code, out, err = self.run_verb(
+            flaky, *self.ARGV, "--budget", "100", "--interval", "5",
+            runner=runner, clock=FakeClock(step=10))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(runner.calls, [])
+        self.assertEqual(err.count("could not read the reviews"), 1, err)
+
+    def test_slices_are_four_intervals(self):
+        gh = FakeGh(head="aaa1111")
+        timeouts = []
+        real = room_run.room.cmd_watch
+
+        def spy(ns, *rest):
+            timeouts.append(ns.timeout)
+            return real(ns, *rest)
+
+        with unittest.mock.patch.object(room_run.room, "cmd_watch", spy):
+            self.run_verb(gh, *self.ARGV, "--budget", "100",
+                          "--interval", "5", clock=FakeClock(step=1))
+        self.assertEqual(timeouts[0], 20)
+        self.assertTrue(all(t <= 20 for t in timeouts), timeouts)
+        self.assertGreater(len(timeouts), 1)
+
+    def test_a_reviewer_run_never_reads_reviews(self):
+        gh = FakeGh(head="aaa1111", reviews=[ci_review(31)], login="rev",
+                    pr_author="mikkel")
+        runner = FakeRunner()
+        code, out, err = self.run_verb(
+            gh, "7", "--role", "reviewer", "--agent", "rev-b",
+            "--budget", "100", "--interval", "5", runner=runner,
+            clock=FakeClock(step=10))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(reviews_reads(gh), [])
+        self.assertEqual(runner.calls, [])
+
+    def test_an_empty_ci_reviewer_keeps_the_single_watch(self):
+        gh = FakeGh(head="aaa1111", reviews=[ci_review(31)])
+        runner = FakeRunner()
+        code, out, err = self.run_ci(gh, "--ci-reviewer", "", runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(reviews_reads(gh), [])
+        self.assertEqual(runner.calls, [])
+        self.assertIn("no actionable task", err)
+
+
 if __name__ == "__main__":
     unittest.main()
