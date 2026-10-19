@@ -35,14 +35,19 @@ DEFAULT_SKILLS = ("review-finding", "question", "status")
 FAILURE_REASONS = ("turn-failed", "watch-failed")
 
 
-def _default_runner(opts, root):
-    """The turn runner wrapping ``session_driver.run_turn``; no ``env`` is
-    passed, so the process environment reaches the spawned session."""
+def _model_base(root):
+    """The configured model base for ``root``; a bad config is a
+    ``RoomError``."""
     try:
-        model_base = spec_common.resolve_model_base(
+        return spec_common.resolve_model_base(
             spec_common.resolve_config(root)[0])
     except spec_common.ConfigError as exc:
         raise room.RoomError(str(exc))
+
+
+def _default_runner(opts, root, model_base):
+    """The turn runner wrapping ``session_driver.run_turn``; no ``env`` is
+    passed, so the process environment reaches the spawned session."""
 
     def runner(prompt, cwd, resume_id, turn_index):
         return session_driver.run_turn(
@@ -78,6 +83,85 @@ def _check_identity(gh, number, repo, role):
     return login
 
 
+def _head(gh, number, repo, warned):
+    """The pull request's head sha, or ``""`` when it cannot be read. A failed
+    read warns once (tracked in ``warned``) and never fails the run."""
+    rc, out, _err = gh(["pr", "view", str(number), "--json", "headRefOid",
+                        "--repo", repo])
+    if rc != 0:
+        if "head" not in warned:
+            warned.add("head")
+            sys.stderr.write("warning: could not read the head of %s#%d\n"
+                             % (repo, number))
+        return ""
+    try:
+        data = json.loads(out or "null")
+    except ValueError:
+        return ""
+    head = data.get("headRefOid") if isinstance(data, dict) else None
+    return head if isinstance(head, str) else ""
+
+
+def _first_to(task):
+    """The addressee of ``task``'s first message, or ``None``."""
+    return task.messages[0].to if task.messages else None
+
+
+def _has_request(tasks, agent, target, head=None):
+    """True when ``agent`` already opened a task addressed to ``target`` --
+    at ``head`` too, when one is given."""
+    for task in tasks:
+        if task.opener != agent or _first_to(task) != target:
+            continue
+        if head is None or task.messages[0].metadata.get("head") == head:
+            return True
+    return False
+
+
+def _open_request(gh, repo, number, context, agent, target, head, text,
+                  memo):
+    """Open a review-finding task addressed to ``target`` as an author."""
+    metadata = {"state": "input-required", "round": 1, "to": target,
+                "skill": "review-finding"}
+    if head:
+        metadata["head"] = head
+    room._post_message(
+        gh, repo, number, room._message(context, agent, text, None, metadata),
+        room._login(gh, memo), "author")
+
+
+def _re_review(gh, repo, number, context, agent, opts, head, memo):
+    """After a head-moving author turn, open one re-review task per target
+    lacking one at ``head``: the ``--request-review`` agents plus every
+    reviewer-role agent who opened a task addressed to this agent."""
+    cards, tasks, _raw, _comments = room._read_room(gh, repo, number)
+    targets = set(opts.request_review)
+    for task in tasks:
+        if _first_to(task) == agent and \
+                room._card_role(cards, task.opener) == "reviewer":
+            targets.add(task.opener)
+    targets.discard(agent)
+    for target in sorted(targets):
+        if _has_request(tasks, agent, target, head):
+            continue
+        _open_request(gh, repo, number, context, agent, target, head,
+                      _re_review_text(agent, head), memo)
+        sys.stderr.write("room run: re-review requested from %s at %s\n"
+                         % (target, head[:7]))
+
+
+def _kick_off_text(agent, head):
+    return ("Please review this pull request%s. Post each finding as a task "
+            "to %s; approve when nothing blocking is left."
+            % (" at head %s" % head[:7] if head else "", agent))
+
+
+def _re_review_text(agent, head):
+    return ("Re-review please: the head moved to %s. Approve it if nothing "
+            "blocking remains, or post each finding as a task to %s."
+            % (head[:7], agent))
+
+
 def _summary(turns, session_id, reason, context, cursor, closed=None,
              failure=None):
     out = {"turns": turns, "session_id": session_id, "reason": reason,
@@ -89,7 +173,7 @@ def _summary(turns, session_id, reason, context, cursor, closed=None,
     return out
 
 
-def cmd_run(opts, parser, gh, runner, sleep, clock):
+def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
     # The parser leaves these unset so ``room.py`` never imports
     # ``session_driver`` itself.
     opts.harness = opts.harness or session_driver.DEFAULT_HARNESS
@@ -102,12 +186,29 @@ def cmd_run(opts, parser, gh, runner, sleep, clock):
     if not opts.interval > 0:
         parser.error("--interval must be greater than 0, got %s"
                      % opts.interval)
+    if opts.request_review and opts.role != "author":
+        parser.error("--request-review needs --role author")
     root = room._root(opts)
     agent = room._agent_name(opts, parser, root)
+    if agent in opts.request_review:
+        parser.error("--request-review cannot name this run's own agent")
     repo, number, context = room._resolve_room(gh, opts.pr, opts.repo)
     login = _check_identity(gh, number, repo, opts.role)
     sys.stderr.write("room run: acting as @%s (%s)\n" % (
         login, room._credential_source(os.environ)))
+    model_base = None
+    if runner is None or preflight is None:
+        model_base = _model_base(root)
+    if preflight is None:
+        def preflight(cwd):
+            return session_driver.preflight(
+                cwd, harness=opts.harness, effort=opts.model,
+                model_base=model_base)
+    ready, why = preflight(root)
+    if not ready:
+        raise room.RoomError(
+            "harness %s is not ready: %s; sign in with `%s` and rerun"
+            % (opts.harness, why, session_driver.login_hint(opts.harness)))
     url = room._gh_json(
         gh, ["pr", "view", str(number), "--json", "url", "--repo", repo],
         what="gh pr view %s" % number)
@@ -123,8 +224,20 @@ def cmd_run(opts, parser, gh, runner, sleep, clock):
     with contextlib.redirect_stdout(io.StringIO()):
         room.cmd_join(join_ns, parser, gh)
 
+    memo = {}
+    warned = set()
+    if opts.request_review:
+        _cards, tasks, _raw, _comments = room._read_room(gh, repo, number)
+        head = _head(gh, number, repo, warned)
+        for name in dict.fromkeys(opts.request_review):
+            if _has_request(tasks, agent, name):
+                continue
+            _open_request(gh, repo, number, context, agent, name, head,
+                          _kick_off_text(agent, head), memo)
+            sys.stderr.write("room run: review requested from %s\n" % name)
+
     if runner is None:
-        runner = _default_runner(opts, root)
+        runner = _default_runner(opts, root, model_base)
     prompt = "/s:room %s role %s, skills %s" % (
         url, opts.role, ", ".join(skills))
     os.environ[room.AGENT_ENV] = agent
@@ -172,10 +285,17 @@ def cmd_run(opts, parser, gh, runner, sleep, clock):
         turns += 1
         sys.stderr.write("room run: turn %d on task(s) %s\n" % (
             turns, ", ".join("#%s" % t.get("task") for t in tasks)))
+        before = _head(gh, number, repo, warned) \
+            if opts.role == "author" else ""
         ok, why, new_id = runner(prompt, root, session_id, turns - 1)
         if new_id:
             session_id = new_id
         cursor = _line_cursor(tasks[-1], cursor)
+        if ok and opts.role == "author":
+            after = _head(gh, number, repo, warned)
+            if before and after and before != after:
+                _re_review(gh, repo, number, context, agent, opts, after,
+                           memo)
         if not ok:
             reason, failure = "turn-failed", why
         elif turns >= opts.max_turns:

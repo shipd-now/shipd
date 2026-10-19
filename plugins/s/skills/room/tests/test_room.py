@@ -46,7 +46,8 @@ class FakeGh:
     def __init__(self, number=7, repo="o/r", comments=None,
                  review_comments=None, pages=1, fail=None, state="OPEN",
                  delete_fail=False, login="bot", user_fail=False,
-                 threads=None, pr_author="pr-author"):
+                 threads=None, pr_author="pr-author", head=None):
+        self.head = head
         self.pr_author = pr_author
         self.threads = [dict(t) for t in (threads or [])]
         self.login = login
@@ -176,6 +177,8 @@ class FakeGh:
                 if "--json" in args else []
             if "author" in fields:
                 data["author"] = {"login": self.pr_author}
+            if "headRefOid" in fields and self.head is not None:
+                data["headRefOid"] = self.head
             return 0, json.dumps(data), ""
         if args[:2] == ["repo", "view"]:
             return 0, json.dumps({"nameWithOwner": self.repo}), ""

@@ -44,6 +44,19 @@ class FakeRunner:
         return True, None, "s-1"
 
 
+class FakePreflight:
+    """The preflight seam: records each ``cwd`` and returns a scripted
+    ``(ok, failure)``, so no test starts a real harness session."""
+
+    def __init__(self, result=(True, None)):
+        self.result = result
+        self.calls = []
+
+    def __call__(self, cwd):
+        self.calls.append(cwd)
+        return self.result
+
+
 def waiting(comment_id=10, to="author-a", opener="other"):
     """A task addressed to ``to`` and waiting for its turn."""
     return msg_comment(comment_id, opener, text="please look",
@@ -52,10 +65,11 @@ def waiting(comment_id=10, to="author-a", opener="other"):
 
 class RunTestBase(RoomTestBase):
     def run_verb(self, gh, *argv, runner=None, clock=None, sleep=None,
-                 env=None):
+                 env=None, preflight=None):
         seams = {"sleep": sleep or FakeSleep(),
                  "clock": clock or FakeClock(),
-                 "runner": runner or FakeRunner()}
+                 "runner": runner or FakeRunner(),
+                 "preflight": preflight or FakePreflight()}
         return _run(["run"] + list(argv) + ["--root", self.root], gh,
                     env=env, seams=seams)
 
@@ -76,6 +90,22 @@ class RunStartTest(RunTestBase):
         self.assertEqual(code, 1, err)
         self.assertEqual(out, "")
         self.assertEqual(err.count("Error:"), 1, err)
+        self.assertEqual(gh.posts(), [])
+        self.assertEqual(runner.calls, [])
+
+    def test_signed_out_harness_stops_before_joining(self):
+        gh = FakeGh(login="rev", pr_author="mikkel")
+        runner = FakeRunner()
+        preflight = FakePreflight((False, "session CLI exited 1: Failed to "
+                                   "authenticate: OAuth session expired"))
+        code, out, err = self.run_verb(
+            gh, "7", "--role", "reviewer", "--agent", "rev-b",
+            runner=runner, preflight=preflight)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertEqual(err.count("Error:"), 1, err)
+        self.assertIn("claude auth login", err)
+        self.assertEqual(len(preflight.calls), 1)
         self.assertEqual(gh.posts(), [])
         self.assertEqual(runner.calls, [])
 
@@ -192,7 +222,8 @@ class RunLoopTest(RunTestBase):
                 ["run", "7", "--role", "author", "--agent", "author-a",
                  "--max-turns", "1", "--model", "high",
                  "--turn-timeout", "99", "--root", self.root], gh,
-                seams={"sleep": FakeSleep(), "clock": FakeClock()})
+                seams={"sleep": FakeSleep(), "clock": FakeClock(),
+                       "preflight": FakePreflight()})
         self.assertEqual(code, 0, err)
         self.assertEqual(run_turn.call_count, 1)
         args, kwargs = run_turn.call_args
@@ -274,13 +305,154 @@ class RunStopTest(RunTestBase):
             ["run", "7", "--role", "author", "--agent", "author-a",
              "--root", self.root], flaky,
             seams={"sleep": FakeSleep(), "clock": FakeClock(),
-                   "runner": runner})
+                   "runner": runner, "preflight": FakePreflight()})
         self.assertEqual(code, 1, err)
         summary = self.summary(out)
         self.assertEqual(summary["reason"], "watch-failed")
         self.assertIn("boom", summary["failure"])
         self.assertEqual(err.count("Error:"), 1, err)
         self.assertEqual(runner.calls, [])
+
+
+def request_posts(gh):
+    """The parsed Messages posted with no task id, i.e. the tasks the run
+    opened, in order."""
+    out = []
+    for body in gh.posts():
+        parsed = first_marker(body)
+        if getattr(parsed, "task_id", 0) is None and \
+                getattr(parsed, "metadata", None) is not None:
+            out.append(parsed)
+    return out
+
+
+class RunRequestReviewTest(RunTestBase):
+    ARGV = ("7", "--role", "author", "--agent", "author-a")
+
+    def test_kick_off_opens_one_review_task(self):
+        gh = FakeGh(head="abc1234def", state="MERGED")
+        code, out, err = self.run_verb(
+            gh, *self.ARGV, "--request-review", "reviewer-b")
+        self.assertEqual(code, 0, err)
+        posts = gh.posts()
+        self.assertEqual(len(posts), 2, posts)
+        task = first_marker(posts[1])
+        self.assertIsNone(task.task_id)
+        self.assertEqual(task.to, "reviewer-b")
+        self.assertEqual(task.skill, "review-finding")
+        self.assertEqual(task.state, "input-required")
+        self.assertEqual(task.metadata["head"], "abc1234def")
+        self.summary(out)
+
+    def test_an_existing_request_is_not_repeated(self):
+        gh = FakeGh(
+            comments=[msg_comment(10, "author-a", text="review please",
+                                  state="input-required", round=1,
+                                  to="reviewer-b")],
+            head="abc1234def", state="MERGED")
+        code, out, err = self.run_verb(
+            gh, *self.ARGV, "--request-review", "reviewer-b")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(gh.posts()), 1)
+
+    def test_a_repeated_name_opens_one_task(self):
+        gh = FakeGh(head="abc1234def", state="MERGED")
+        code, out, err = self.run_verb(
+            gh, *self.ARGV, "--request-review", "reviewer-b",
+            "--request-review", "reviewer-b")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(request_posts(gh)), 1)
+
+    def test_usage_errors_make_no_gh_call(self):
+        gh = FakeGh()
+        code, _out, _err = self.run_verb(
+            gh, "7", "--role", "reviewer", "--agent", "rev-b",
+            "--request-review", "x")
+        self.assertEqual(code, 2)
+        self.assertEqual(gh.calls, [])
+        gh = FakeGh()
+        code, _out, _err = self.run_verb(
+            gh, *self.ARGV, "--request-review", "author-a")
+        self.assertEqual(code, 2)
+        self.assertEqual(gh.calls, [])
+
+
+class RunRereviewTest(RunTestBase):
+    ARGV = ("7", "--role", "author", "--agent", "author-a")
+
+    def room_comments(self):
+        return [card_comment(5, "reviewer-b", role="reviewer"),
+                waiting(10, to="author-a", opener="reviewer-b")]
+
+    def moving_hook(self, gh, head="bbb2222", close=True):
+        def hook(_n):
+            if head:
+                gh.head = head
+            if close:
+                gh.state = "MERGED"
+        return hook
+
+    def test_a_moved_head_opens_one_re_review(self):
+        gh = FakeGh(comments=self.room_comments(), head="aaa1111")
+        runner = FakeRunner(hook=self.moving_hook(gh))
+        code, out, err = self.run_verb(gh, *self.ARGV, runner=runner)
+        self.assertEqual(code, 0, err)
+        posts = request_posts(gh)
+        self.assertEqual(len(posts), 1, gh.posts())
+        self.assertEqual(posts[0].agent, "author-a")
+        self.assertEqual(posts[0].to, "reviewer-b")
+        self.assertEqual(posts[0].skill, "review-finding")
+        self.assertEqual(posts[0].metadata["head"], "bbb2222")
+        self.assertIn("re-review requested from reviewer-b", err)
+
+    def test_an_existing_request_at_the_new_head_opens_none(self):
+        comments = self.room_comments() + [
+            msg_comment(11, "author-a", text="again",
+                        state="input-required", round=1, to="reviewer-b",
+                        skill="review-finding", head="bbb2222")]
+        gh = FakeGh(comments=comments, head="aaa1111")
+        runner = FakeRunner(hook=self.moving_hook(gh))
+        code, out, err = self.run_verb(gh, *self.ARGV, runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(request_posts(gh), [])
+
+    def test_an_unmoved_head_opens_none(self):
+        gh = FakeGh(comments=self.room_comments(), head="aaa1111")
+        runner = FakeRunner(hook=self.moving_hook(gh, head=None))
+        code, out, err = self.run_verb(gh, *self.ARGV, runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(request_posts(gh), [])
+
+    def test_a_reviewer_run_opens_none(self):
+        gh = FakeGh(comments=[waiting(10, to="reviewer-b")], login="rev",
+                    pr_author="mikkel", head="aaa1111")
+        runner = FakeRunner(hook=self.moving_hook(gh))
+        code, out, err = self.run_verb(
+            gh, "7", "--role", "reviewer", "--agent", "reviewer-b",
+            runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(request_posts(gh), [])
+
+    def test_an_unreadable_head_warns_and_the_run_still_ends(self):
+        gh = FakeGh(comments=self.room_comments(), head="aaa1111")
+        real = gh.__call__
+
+        def flaky(args, input=None):
+            if args[:2] == ["pr", "view"] and any(
+                    "headRefOid" in a for a in args):
+                return 1, "", "boom"
+            return real(args, input=input)
+
+        flaky.posts = gh.posts
+        runner = FakeRunner(hook=self.moving_hook(gh, head=None))
+        code, out, err = _run(
+            ["run"] + list(self.ARGV) + ["--root", self.root], flaky,
+            seams={"sleep": FakeSleep(), "clock": FakeClock(),
+                   "runner": runner, "preflight": FakePreflight()})
+        self.assertEqual(code, 0, err)
+        self.assertIn("warning: could not read the head", err)
+        self.assertEqual(request_posts(gh), [])
+        self.assertEqual(self.summary(out)["reason"], "closed")
 
 
 if __name__ == "__main__":
