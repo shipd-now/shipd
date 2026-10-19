@@ -312,6 +312,22 @@ jobs:
               while lines and not lines[-1].strip():
                   lines.pop()
 
+          def drop_blocks(rows):
+              # The CLI echoes each tool call as a block: a line starting with
+              # a bullet and a space, plus the lines right after it whose
+              # left-trimmed text starts with a box-drawing bar or corner.
+              kept, in_block = [], False
+              for row in rows:
+                  if row.startswith("\u25cf "):
+                      in_block = True
+                  elif in_block and row.lstrip().startswith(("\u2502", "\u2514")):
+                      pass
+                  else:
+                      in_block = False
+                      kept.append(row)
+              return kept
+
+          lines = drop_blocks(lines)
           trim(lines)
           state = "completed"
           if lines and lines[-1].rstrip() == marker:

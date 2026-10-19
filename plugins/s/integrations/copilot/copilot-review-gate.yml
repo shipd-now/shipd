@@ -13,8 +13,11 @@
 #   * CLI reviewer — the secret is set. This workflow performs the review
 #     itself: it checks the reviewed commit out, installs the engine's optional
 #     tooling and a pinned `@github/copilot` CLI, and runs that CLI headless
-#     over the base ref's copy of .github/skills/code-review/SKILL.md. The CLI
-#     executes the engine and authors its own report, so the verdict marker is
+#     over the base ref's copy of .github/skills/code-review/SKILL.md. The
+#     workflow itself first runs the engine's `files` and `diff` with the base
+#     first and the head second (the base ref's copy of the engine, so the
+#     change under review cannot rewrite it) and hands the saved output to the
+#     reviewer, which authors its own report, so the verdict marker is
 #     really produced and the resulting status is a strict one. The review text
 #     is published as a pull-request review — carrying one anchored inline
 #     comment per finding this workflow could verify against the diff it read
@@ -72,6 +75,18 @@
 # that reliably exists, so it is the one that waits. The
 # `pull_request_review` path is kept for any submission GitHub does route.
 #
+# Fail closed on a review that covered nothing: when the engine fails, or
+# reports 0 files while the pull request changes at least one (or its file
+# list cannot be read), the review is "not grounded". The gate then submits no
+# APPROVE or REQUEST_CHANGES, never arms fast-pass, ignores
+# SHIPD_GATE_FAIL_OPEN, re-posts `semantic-review` as `pending` with a "Review
+# not grounded" description, publishes any captured text as a COMMENT opening
+# with a "Not a verdict" notice, and fails the job. The grounding outcome and
+# count cross to the later steps as step outputs, which the reviewer cannot
+# rewrite, never as workspace files. The posted body is the report alone: the
+# CLI runs with `-s`, and the publisher cuts the text to the last `## Findings`
+# header through the verdict marker before classifying it.
+#
 # Timeout semantics: a CLI run that exits nonzero or exceeds its bound, and a
 # poll that finds no review of its head within its window, both leave the status
 # `pending` and **fail the job**. Nothing was judged, so no verdict is invented;
@@ -99,6 +114,11 @@
 #     account-level "Copilot Requests" permission — so a steered reviewer holds
 #     no credential with which to post a status, comment, or push: it can spend
 #     credits and write a misleading report, and that is the worst of it.
+#   * The grounding step binds neither the secret nor `github.token`. It runs
+#     the base ref's copy of the engine and writes only runner-temp files and
+#     its own step outputs; the classify-and-post step trusts those outputs
+#     (bound by expression, so no earlier step can overwrite them) and ignores
+#     the files, which the reviewer can rewrite.
 #   * The classify-and-post step's environment binds `github.token` and not the
 #     secret. It reads the captured text out of a workspace file and decides
 #     the status by this workflow's own rules, never the reviewer's — and it
@@ -234,6 +254,92 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ripgrep
 
+      # The grounding, computed by the workflow rather than chosen by the
+      # model. A reviewer left to run the engine itself can reverse the refs,
+      # see 0 files, and report "no problems" on a pull request it never read;
+      # so this step runs the engine's `files` and `diff` with the base first
+      # and the head second, saves both outputs for the reviewer to read, and
+      # reports the outcome and the files count as step outputs. The reviewer
+      # runs with `--allow-all-tools` and can rewrite anything in the runner
+      # temp directory, but not an earlier step's outputs, so the publishing
+      # step trusts these outputs and never the files. The engine is the base
+      # ref's copy, pinned the way the reviewer instructions are, so a pull
+      # request cannot rewrite the engine to fake a non-empty grounding. No
+      # secret and no `github.token` is bound here, and the step always exits
+      # zero so the later steps run and post the `semantic-review` status.
+      - name: Ground the review in the engine's own output
+        id: grounding
+        if: >-
+          github.event_name == 'pull_request'
+          && env.COPILOT_CLI_REVIEWER == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == 'pull_request' \
+                && "${COPILOT_CLI_REVIEWER:-}" == 'true' ]]; then
+            engine_path=".github/skills/code-review/scripts/semdiff.py"
+            engine="${RUNNER_TEMP:-.}/shipd-copilot-review-semdiff.py"
+            files_json="${RUNNER_TEMP:-.}/shipd-copilot-review-semdiff-files.json"
+            diff_json="${RUNNER_TEMP:-.}/shipd-copilot-review-semdiff-diff.json"
+            rm -f "$engine" "$files_json" "$diff_json"
+            outcome=ok
+            files=0
+            # Best-effort top-ups, as the reviewer step does: the checkout
+            # covers the reviewed commit, not necessarily the base branch.
+            git fetch --no-tags --quiet origin "$BASE_SHA" || true
+            git fetch --no-tags --quiet origin \
+              "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF" || true
+            base_commit="$(git rev-parse --verify --quiet \
+              "origin/$BASE_REF^{commit}" || true)"
+            if [[ -z "$base_commit" ]]; then
+              echo "The base ref $BASE_REF could not be resolved, so the" \
+                "review engine cannot be pinned to it; semantic-review is" \
+                "not grounded." >&2
+              outcome=failed
+            elif git cat-file -e "$base_commit:$engine_path" 2>/dev/null; then
+              if ! git show "$base_commit:$engine_path" > "$engine"; then
+                echo "The base ref $BASE_REF carries $engine_path but it" \
+                  "could not be read; semantic-review is not grounded."
+                outcome=failed
+              fi
+            elif [[ -f "$engine_path" ]]; then
+              # The pull request that installs the integration: the base has
+              # no engine to pin to, so the head copy is used and the run says
+              # so.
+              echo "The base ref $BASE_REF carries no $engine_path; using" \
+                "the head copy of it instead."
+              cp "$engine_path" "$engine"
+            else
+              echo "No review engine at $engine_path; semantic-review is" \
+                "not grounded."
+              outcome=failed
+            fi
+            if [[ "$outcome" == ok ]]; then
+              if ! python3 "$engine" files "$BASE_SHA" "$HEAD_SHA" \
+                  > "$files_json" \
+                  || ! python3 "$engine" diff "$BASE_SHA" "$HEAD_SHA" \
+                  > "$diff_json"; then
+                echo "The review engine failed on $HEAD_SHA; semantic-review" \
+                  "is not grounded."
+                outcome=failed
+              fi
+            fi
+            if [[ "$outcome" == ok ]]; then
+              if ! files="$(python3 -c 'import json, sys; n = json.load(open(sys.argv[1]))["summary"]["files"]; assert type(n) is int and n >= 0; print(n)' "$files_json")"; then
+                echo "The review engine's files output carries no summary" \
+                  "files count; semantic-review is not grounded."
+                outcome=failed
+                files=0
+              fi
+            fi
+            echo "outcome=$outcome" >> "${GITHUB_OUTPUT:-/dev/null}"
+            echo "files=$files" >> "${GITHUB_OUTPUT:-/dev/null}"
+          fi
+
       # The reviewer, alone with its own credential. This step's environment
       # binds the Copilot PAT and nothing else: `github.token` is not here, so
       # a reviewer steered by adversarial content in the diff it is reading
@@ -256,6 +362,10 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
+          # The grounding step's outputs, bound from the step expressions: an
+          # earlier step cannot overwrite them through $GITHUB_ENV.
+          GROUNDING_OUTCOME: ${{ steps.grounding.outputs.outcome }}
+          GROUNDING_FILES: ${{ steps.grounding.outputs.files }}
         run: |
           set -euo pipefail
           # The CLI reviewer's runtime bound. This default is what every run on
@@ -279,9 +389,17 @@ jobs:
           # installed at.
           instructions_file="${RUNNER_TEMP:-.}/shipd-copilot-review-skill.md"
           skill_path=".github/skills/code-review/SKILL.md"
+          # The engine output the grounding step saved, named in the prompt so
+          # the model never picks refs.
+          grounding_files="${RUNNER_TEMP:-.}/shipd-copilot-review-semdiff-files.json"
+          grounding_diff="${RUNNER_TEMP:-.}/shipd-copilot-review-semdiff-diff.json"
 
+          # A review with no grounding judged nothing, so the Copilot run is
+          # skipped: it would spend credits on a verdict the publishing step
+          # refuses. That step re-posts `pending` and fails the job.
           if [[ "$EVENT_NAME" == 'pull_request' \
-                && -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then
+                && -n "${COPILOT_GITHUB_TOKEN:-}" \
+                && "${GROUNDING_OUTCOME:-}" == 'ok' ]]; then
             # The CLI reviewer. Unlike GitHub's code-review surface, this one
             # can execute the engine and author its own report, which is what
             # makes the resulting status strict rather than fail-open.
@@ -350,8 +468,15 @@ jobs:
 
           Follow the review contract in $instructions_file exactly: run the
           bundled engine it names, reason from that structural output, apply
-          its severity rubric, and end with the verdict it mandates. Diff
-          $BASE_SHA against the reviewed commit $HEAD_SHA.
+          its severity rubric, and end with the verdict it mandates.
+
+          The workflow has already run the contract's files and diff
+          subcommands for this pull request, base $BASE_SHA against the
+          reviewed commit $HEAD_SHA, and saved their output:
+          the files output is in $grounding_files and the
+          diff output is in $grounding_diff. Read those two files as the
+          output of steps 1 and 2. Do not run the files or diff subcommands
+          yourself; context lookups stay allowed.
 
           Do not post anything to GitHub yourself: no review, no comment, no
           status, no label. The workflow that invoked you publishes the result.
@@ -377,13 +502,20 @@ jobs:
             # A run that fails or is killed judged nothing, so its partial
             # output is dropped: the next step then finds no file, posts
             # nothing further, and the `pending` above stands.
-            if ! timeout "$cli_timeout" copilot -p "$prompt" \
+            # `-s` prints only the agent's response, without the run
+            # statistics.
+            if ! timeout "$cli_timeout" copilot -p "$prompt" -s \
                 --allow-all-tools --add-dir "${RUNNER_TEMP:-.}" \
                 > "$body_file"; then
               echo "The Copilot CLI review of $HEAD_SHA failed or exceeded" \
                 "${cli_timeout}s; semantic-review stays pending."
               rm -f "$body_file"
             fi
+          elif [[ "$EVENT_NAME" == 'pull_request' \
+                  && -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then
+            echo "The review engine produced no grounding for $HEAD_SHA;" \
+              "skipping the Copilot CLI review, semantic-review stays pending."
+            rm -f "$body_file" "$findings_file"
           fi
 
       # The publisher, alone with the workflow's own credential. The secret is
@@ -414,6 +546,11 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REVIEW_BODY: ${{ github.event.review.body }}
+          # The grounding step's outputs. Like the strictness knob above, they
+          # come from step expressions, so an earlier step cannot overwrite
+          # them through $GITHUB_ENV.
+          GROUNDING_OUTCOME: ${{ steps.grounding.outputs.outcome }}
+          GROUNDING_FILES: ${{ steps.grounding.outputs.files }}
         run: |
           set -euo pipefail
           # Every `gh` call in this step goes through this path, not through a
@@ -466,11 +603,91 @@ jobs:
 
           if [[ "$EVENT_NAME" == 'pull_request' \
                 && "${COPILOT_CLI_REVIEWER:-false}" == 'true' ]]; then
+            # The pull request's own changed-files list, read once and before
+            # anything else: it is the count the engine's grounding is
+            # checked against, and the diff the payload builder below verifies
+            # findings against. That diff has to cover every changed file: a
+            # truncated read is indistinguishable downstream from a path the
+            # pull request never touched, so it would silently withhold the
+            # anchoring a finding was computed for instead of reporting the
+            # finding as unplaceable. The read is best effort for anchoring,
+            # but a failed read counts as "may hold files" for the grounding
+            # check below.
+            files_file="${RUNNER_TEMP:-.}/shipd-copilot-review-files.json"
+            count_file="${RUNNER_TEMP:-.}/shipd-copilot-review-files-count.txt"
+            if ! "$gh_bin" api --paginate \
+                "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" \
+                > "$files_file"; then
+              echo "The diff of $HEAD_SHA could not be read; the review will" \
+                "be posted without inline comments."
+              : > "$files_file"
+            fi
+            # The entries in that list, or `unknown` when it cannot be parsed.
+            # An empty file is a failed read, not an empty pull request: a
+            # successful read of no files is `[]`.
+            "$py_bin" - "$files_file" "$count_file" <<'PY'
+          import json
+          import sys
+
+          count = "unknown"
+          try:
+              with open(sys.argv[1], encoding="utf-8") as handle:
+                  text = handle.read()
+              decoder = json.JSONDecoder()
+              index, total, pages = 0, 0, 0
+              while True:
+                  while index < len(text) and text[index].isspace():
+                      index += 1
+                  if index >= len(text):
+                      break
+                  page, index = decoder.raw_decode(text, index)
+                  if not isinstance(page, list):
+                      raise ValueError("not a list")
+                  total += len(page)
+                  pages += 1
+              if pages:
+                  count = str(total)
+          except (OSError, ValueError):
+              pass
+          with open(sys.argv[2], "w", encoding="utf-8") as handle:
+              handle.write(count)
+          PY
+            pr_file_count="$(<"$count_file")"
+            # Grounded means the engine ran and its files count is believable.
+            # A review of 0 files on a pull request that changes at least one
+            # (or whose file list could not be read) judged nothing, however
+            # confident its marker: it never decides the status. A count of 0
+            # on a pull request that really changes no files is grounded.
+            ungrounded=
+            if [[ "${GROUNDING_OUTCOME:-}" != 'ok' \
+                  || ! "${GROUNDING_FILES:-}" =~ ^[0-9]+$ ]]; then
+              ungrounded=engine
+              ungrounded_description="Review not grounded: the review engine failed on this commit; no verdict posted."
+              ungrounded_notice="The review engine failed on this commit, so the text below was not grounded in the pull request's files and no verdict was posted."
+            elif [[ "$GROUNDING_FILES" == 0 && "$pr_file_count" != 0 ]]; then
+              ungrounded=empty
+              if [[ "$pr_file_count" == unknown ]]; then
+                seen_of="an unknown number of"
+              else
+                seen_of="$pr_file_count"
+              fi
+              ungrounded_description="Review not grounded: the review engine saw 0 of $seen_of changed files; no verdict posted."
+              ungrounded_notice="The review engine saw 0 of $seen_of changed files, so the text below was not grounded in the pull request's files and no verdict was posted."
+            fi
+            if [[ -n "$ungrounded" ]]; then
+              echo "$ungrounded_description"
+            fi
             # The CLI reviewer's own report, captured by the step above. Its
             # credential is gone from here, so the presence boolean selects
             # this path and the file that step left behind — or did not —
             # says whether there is anything to classify.
             if [[ ! -f "$body_file" ]]; then
+              if [[ -n "$ungrounded" ]]; then
+                # The reviewer was skipped: nothing was written, so there is
+                # no text to publish, only the status to put back.
+                post_status pending "$ungrounded_description"
+                exit 1
+              fi
               echo "The Copilot CLI review of $HEAD_SHA captured no output;" \
                 "semantic-review stays pending. Nothing was judged, so no" \
                 "verdict is invented — see the reviewer step's own log for" \
@@ -478,8 +695,68 @@ jobs:
                 "\"exceeded your monthly quota\"." >&2
               exit 1
             fi
-            body="$(<"$body_file")"
-            comment_file="$body_file"
+            # Cut the captured text down to the report. The verdict is read
+            # from, and the review published as, the same cleaned text. With
+            # a verdict marker, the report is the last `## Findings` header
+            # before the last marker line, through that marker line; with no
+            # marker, from the last header to the end; with no header, the
+            # whole text minus the CLI's tool-call transcript blocks.
+            report_file="${RUNNER_TEMP:-.}/shipd-copilot-review-report.md"
+            "$py_bin" - "$body_file" "$report_file" <<'PY'
+          import sys
+
+          MARKERS = ("<!-- shipd-verdict: ship-it -->",
+                     "<!-- shipd-verdict: fix-required -->")
+
+          with open(sys.argv[1], encoding="utf-8", errors="replace") as handle:
+              text = handle.read().replace("\r", "")
+          lines = text.split("\n")
+
+
+          def last_header(before):
+              for index in range(before - 1, -1, -1):
+                  if lines[index].lstrip().startswith("## Findings"):
+                      return index
+              return None
+
+
+          def without_blocks(rows):
+              kept, in_block = [], False
+              for row in rows:
+                  if row.startswith("\u25cf "):
+                      in_block = True
+                  elif in_block and row.lstrip().startswith(("\u2502", "\u2514")):
+                      pass
+                  else:
+                      in_block = False
+                      kept.append(row)
+              return kept
+
+
+          marker = None
+          for index in range(len(lines) - 1, -1, -1):
+              if lines[index].strip() in MARKERS:
+                  marker = index
+                  break
+          end = len(lines) if marker is None else marker + 1
+          start = last_header(end)
+          kept = lines[start:end] if start is not None else without_blocks(lines)
+          with open(sys.argv[2], "w", encoding="utf-8") as handle:
+              handle.write("\n".join(kept).rstrip("\n") + "\n")
+          PY
+            body="$(<"$report_file")"
+            comment_file="$report_file"
+            if [[ -n "$ungrounded" ]]; then
+              # An ungrounded review is published for an operator to read, but
+              # as a notice-headed COMMENT: it carries no verdict.
+              notice_file="${RUNNER_TEMP:-.}/shipd-copilot-review-notice.md"
+              {
+                printf '**Not a verdict.** %s\n\n' "$ungrounded_notice"
+                cat "$report_file"
+              } > "$notice_file"
+              comment_file="$notice_file"
+              body="$(<"$notice_file")"
+            fi
             # A marker-less outcome on this path is the gate's own reviewer
             # having produced no verdict, which is a different thing from
             # GitHub's reviewer having produced none — so the status says
@@ -603,7 +880,16 @@ jobs:
             fi
             [[ -z "$scan_body" ]] && break
           done
-          if [[ -n "$matched_state" ]]; then
+          if [[ -n "${ungrounded:-}" ]]; then
+            # An ungrounded review never decides the status, whatever marker
+            # it carries and whatever SHIPD_GATE_FAIL_OPEN says: `pending` goes
+            # back on the commit, no fast-pass arms (the state is not
+            # `success`), and the review below is a COMMENT (no parsed
+            # verdict).
+            matched_state=
+            state=pending
+            description="$ungrounded_description"
+          elif [[ -n "$matched_state" ]]; then
             state="$matched_state"
             description="$matched_description"
           elif [[ "${SHIPD_GATE_FAIL_OPEN:-true}" == "false" ]]; then
@@ -731,25 +1017,13 @@ jobs:
             review_neutral="${RUNNER_TEMP:-.}/shipd-copilot-review-neutral.json"
             # The findings the reviewer left beside its report — claims, not
             # facts: that agent ran `--allow-all-tools` over a diff it cannot
-            # be trusted not to be steered by. So this step reads the pull
-            # request's own diff and checks every path and range against it
-            # before anchoring anything on them. That diff has to cover every
-            # changed file: a truncated read is indistinguishable downstream
-            # from a path the pull request never touched, so it would silently
-            # withhold the anchoring a finding was computed for instead of
-            # reporting the finding as unplaceable. Both reads are best effort:
-            # a missing findings file, or a diff that could not be read,
+            # be trusted not to be steered by. So this step checks every path
+            # and range against the pull request's own diff, read at the top
+            # of this step into $files_file, before anchoring anything on
+            # them. A missing findings file, or a diff that could not be read,
             # anchors nothing and posts the body alone.
             findings_file="${RUNNER_TEMP:-.}/shipd-copilot-review-findings.json"
-            files_file="${RUNNER_TEMP:-.}/shipd-copilot-review-files.json"
-            if ! "$gh_bin" api --paginate \
-                "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" \
-                > "$files_file"; then
-              echo "The diff of $HEAD_SHA could not be read; the review will" \
-                "be posted without inline comments."
-              : > "$files_file"
-            fi
-            REVIEW_EVENT="$review_event" "$py_bin" - "$comment_file" \
+            REVIEW_UNGROUNDED="$ungrounded" REVIEW_EVENT="$review_event" "$py_bin" - "$comment_file" \
               "$findings_file" "$files_file" "$review_payload" \
               "$review_fallback" "$review_neutral" <<'PY'
           """Shape the reviewed text and the reviewer's findings into a review payload.
@@ -963,7 +1237,9 @@ jobs:
 
           payload = {"commit_id": os.environ["HEAD_SHA"],
                      "event": os.environ.get("REVIEW_EVENT") or "COMMENT",
-                     "body": fold(body, prose(unverified) + footer(files)),
+                     "body": fold(body, prose(unverified)
+                                  + ([] if os.environ.get("REVIEW_UNGROUNDED")
+                                     else footer(files))),
                      "comments": comments}
           with open(payload_path, "w", encoding="utf-8") as handle:
               json.dump(payload, handle)
@@ -1003,4 +1279,11 @@ jobs:
                   --input "$review_neutral"
               fi
             fi
+          fi
+
+          # An ungrounded review judged nothing: the notice-headed COMMENT is
+          # out and `pending` stands, and the job fails so the run does not
+          # read as a pass.
+          if [[ -n "${ungrounded:-}" ]]; then
+            exit 1
           fi

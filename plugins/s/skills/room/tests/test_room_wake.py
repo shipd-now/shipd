@@ -598,6 +598,34 @@ class ReplyScriptTest(WakeScriptCase):
                          [["close", "7", "--task", "42", "--state", "failed",
                            "--reason", "wake-runner-failed"]])
 
+    # -- Scenario: Room wake reply drops the CLI transcript -----------------
+
+    BLOCK = ("\u25cf Read src/app.py\n"
+             "  \u2502 src/app.py\n"
+             "  \u2514 120 lines read\n")
+
+    def test_transcript_blocks_are_stripped_from_the_posted_reply(self):
+        self.reply("First paragraph.\n\n%s\nSecond paragraph.\n" % self.BLOCK)
+        argv = self.message()
+        self.assertEqual(argv[7], "completed")
+        self.assertIn("First paragraph.", argv[9])
+        self.assertIn("Second paragraph.", argv[9])
+        for glyph in ("\u25cf", "\u2502", "\u2514"):
+            self.assertNotIn(glyph, argv[9])
+
+    def test_the_marker_still_asks_back_after_cleaning(self):
+        self.reply("Which branch?\n%s%s\n" % (self.BLOCK, REPLY_MARKER))
+        argv = self.message()
+        self.assertEqual(argv[7], "input-required")
+        self.assertNotIn(REPLY_MARKER, argv[9])
+        self.assertNotIn("\u25cf", argv[9])
+
+    def test_a_transcript_only_reply_fails_the_task(self):
+        self.reply(self.BLOCK)
+        self.assertEqual([c["argv"] for c in self.calls()],
+                         [["close", "7", "--task", "42", "--state", "failed",
+                           "--reason", "wake-runner-failed"]])
+
     def test_a_refused_message_fails_the_job(self):
         self.can("message", "", code=1)
         self.reply("Done.\n", expect_failure=True)
