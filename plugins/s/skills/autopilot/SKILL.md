@@ -3,9 +3,9 @@ name: autopilot
 description: >-
   Drive an approved epic's unplanned members to shipped PRs unattended: plan →
   gate → build → auto-merging PR per member over the configured pipeline, in
-  `After`, then risk-ascending order, one worktree/branch each. Preflights the epic, confirms
-  the run controls, runs the autopilot in the foreground, and relays its report
-  with resume pointers for any parked members. Use when asked to "autopilot an
+  `After`, then risk-ascending order, one worktree/branch each. Runs the launch
+  preflight, confirms the run controls as the last question, runs the autopilot,
+  and relays its report with resume pointers for any parked members. Use when asked to "autopilot an
   epic", "deliver an epic", "ship the epic's members", or "/s:autopilot".
   Trigger phrases: "autopilot", "deliver", "ship the epic", "/s:autopilot".
 ---
@@ -15,8 +15,9 @@ description: >-
 You are the **Autopilot wrapper**. Your job is thin: preflight one epic, confirm
 the run controls with the user, run the autopilot **in the foreground**, and
 relay its report. You **never plan, build, gate, review, or answer a driven
-session's questions yourself** — the autopilot drives real headless sessions and
-owns every stage decision. You only orchestrate the launch and relay the result.
+session's questions yourself** — and after the confirmation you never ask one
+either. The autopilot drives real headless sessions and owns every stage
+decision. You only orchestrate the launch and relay the result.
 
 Requirements: this repo must have the resolved content-directory layout
 (default `.shipd/`) and the named epic must exist and be **approved**
@@ -51,23 +52,31 @@ required argument to `/s:autopilot <epic>`.
 
 ## Phase 1 — Preflight (read-only; drives nothing)
 
-1. **Confirm the epic is approved.** Run `epic-show` and read the status line:
+1. **Run the launch preflight.** Compose the rubric and relay every line it
+   prints:
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> --preflight
+   ```
+   It prints one `ok|warn|fail <check> — <detail>` line per check, then either
+   `preflight: ok` or `preflight: <n> problem(s)`. If **any** line is `fail`,
+   **stop here before the run controls are confirmed**: print the failing lines
+   with the remedies they name, ask nothing, and drive nothing. `warn` lines are
+   not failures — carry every one of them into the Phase 2 confirmation brief.
+   A passed preflight means every driven member is `ready` (its `members` check
+   fails on `unplanned`, `draft`, and `rejected`), so the in-session drive's
+   first `--waves` call returns build waves only.
+2. **Show the roster.** Run `epic-show` and relay it — the output lists every
+   member and its derived state:
    ```
    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" epic-show <epic>
    ```
-   - If the epic is missing, or its status is `draft` or `complete` (anything
-     other than `ready`/`active`), **stop here**: report that the epic is not
-     approved for delivery (a `draft` epic still needs `epic-set-status ready`;
-     a `complete` epic has nothing left to drive) and drive nothing. Do not run
-     the autopilot.
-2. **Show the roster.** The `epic-show` output already lists every member and
-   its derived state — relay it. What gets driven depends on the mode decided
-   above: the **detached** run drives only the members shown as `unplanned`, in
-   `After`, then risk-ascending order, and reports every other state (`ready`, `rejected`,
-   `active`, `archived`, …) without touching them. The **in-session** drive
-   additionally drives members shown as `ready` (entering at the `build`
-   stage — see Entry stage per member below), so only states other than
-   `unplanned` and `ready` are left undriven and merely reported.
+   What gets driven depends on the mode decided above: the **detached** run
+   drives only the members shown as `unplanned`, in `After`, then risk-ascending
+   order, and reports every other state (`ready`, `rejected`, `active`,
+   `archived`, …) without touching them. The **in-session** drive additionally
+   drives members shown as `ready` (entering at the `build` stage — see Entry
+   stage per member below), so only states other than `unplanned` and `ready`
+   are left undriven and merely reported.
 3. **Show the resolved pipeline** the run will honor:
    ```
    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" pipeline-show
@@ -83,10 +92,13 @@ required argument to `/s:autopilot <epic>`.
 The autopilot spends real model time and opens real PRs. Before launching,
 **AskUserQuestion** to confirm scope with these controls (surface the dry-run's
 member list so the choice is informed), **naming which mode the run will use**
-(in-session, unless a detached run was requested — see Mode selection above):
+(in-session, unless a detached run was requested — see Mode selection above).
+The brief carries every `warn` line from the Phase 1 preflight. **This
+confirmation is the last question of the run**: after it the in-session drive
+issues no AskUserQuestion and no typed question round.
 
 - **`--max-members N`** — cap how many members this run drives (default:
-  unlimited; every `unplanned` member).
+  unlimited; every driven member).
 - **`--timeout` seconds** — per-session wall-clock budget (default: 1800).
 - **`--max-resumes`** — resumed turns a driven session may spend before its
   grade decides the stage (default: 4).
@@ -228,6 +240,60 @@ unconditionally:
 Run every stage for that member with that worktree (`.worktrees/<member>`) as
 the working directory.
 
+### Pre-build drift step
+
+Run this step **once per member**, when its walk reaches an entry whose `stage`
+is `build`, built-in or replaced, **before that entry's `build-stage`
+heartbeat** and before the entry runs. It never repeats for the member within
+one run.
+
+1. **Sync.** In `.worktrees/<member>` run:
+   ```
+   git fetch origin main
+   git merge --no-edit origin/main
+   ```
+   A non-zero merge runs `git merge --abort` and parks the member as
+   `sync-conflict`; its build entry never runs.
+2. **Measure.** From the repository root run:
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" --root .worktrees/<member> drift <member> --base origin/main --json
+   ```
+   Exit 0 proceeds to the build entry. Exit 4 goes to the judgment below. Any
+   other exit — exit 1 included — parks the member as `drift-error`, naming the
+   command's `Error:` line.
+3. **Judge.** Spawn one general-purpose sub-agent with `.worktrees/<member>` as
+   its working directory and this instruction, verbatim:
+   ```
+   Run /s:drift <member> --base origin/main --json from this worktree and end
+   your turn with that JSON object alone — no prose before or after it.
+   ```
+   Read `verdicts[0].verdict` from its final text. A missing or unparseable
+   object parks the member as `drift-error`.
+4. **Handle the verdict.** `holds` proceeds to the build entry. `conflict` parks
+   the member as `drift-conflict`, naming the verdict's `contradicts`. `revise`
+   spawns one general-purpose sub-agent in the worktree with the **Re-plan
+   instruction** below, then grades from disk: `spec_status.py status <member>`
+   prints `ready`, `spec_lint.py <member>` exits 0, and `spec_gate.py <member>
+   --check` exits 0. A pass proceeds to the build entry; anything else parks the
+   member as `replan-failed`. The step does not repeat.
+
+**Re-plan instruction:**
+```
+Revise the plan for the change `<member>` in place in `planned/<member>/`,
+following the /s:drift verdict's `revise:` pointer and reason: the pointer
+names <revise-pointer>, and the reason is <reason>.
+
+No human is available during this run. Put a decision the repository cannot
+settle to the oracle (spawn agent `s:oracle` with one compact question); on
+INSUFFICIENT adopt your recommended default and record it in the plan's
+ledger. Never open a question round or an AskUserQuestion.
+
+Keep every `**Answered by:** USER` ledger entry and every epic Decision; never
+contradict either — resolve the revision within them.
+
+End by running `spec_gate.py <member> --base origin/main`.
+```
+
 ### Running a wave
 
 The drive runs **one wave at a time**, and always the **first** wave the
@@ -236,7 +302,9 @@ The drive runs **one wave at a time**, and always the **first** wave the
 1. Run **per-member setup** (above) for every member of that wave.
 2. Spawn the **current entry's** sub-agent for each member of the wave
    **together, in the background**, so the whole wave's entry is in flight
-   before any of it is graded. An entry the forms hand to a command instead —
+   before any of it is graded. Before a member's first `build` entry, run the
+   **Pre-build drift step** above first — it must finish before that entry's
+   sub-agent is spawned. An entry the forms hand to a command instead —
    a custom step, a `replace` declaring a `command`, or the `gate` entry — runs
    via Bash in that member's worktree, never as a sub-agent.
 3. **Wait for all of them** to end their turns.
@@ -245,13 +313,14 @@ The drive runs **one wave at a time**, and always the **first** wave the
    repeat from step 2 for the members still walking.
 6. Once every member of the wave has finished its walk, run
    `git fetch origin main` from the main checkout (best effort — a failed fetch
-   does not stop the drive) so the merged-dependency check sees fresh refs,
-   then **re-run the `--waves` mode** with the same `--parallel N` and continue
-   with the first wave it now returns — members that have just reached `ready`
-   reappear there in a build wave, and a blocked member whose dependencies have
-   merged is released into one. Stop when the mode returns no wave; when it
-   returns no wave but a non-empty `blocked`, name each blocked member and its
-   `waiting_on` slugs in the run summary and stop.
+   does not stop the drive), then **re-run the `--waves` mode** with the same
+   `--parallel N` and filter the result as the failure contract below
+   prescribes — drop the parked members, mark held entries to a fixpoint, and
+   skip a wave emptied by the drop. Continue with the first runnable wave it
+   returns: members that have just reached `ready` reappear there in a build
+   wave, and a blocked member whose dependencies have merged is released into
+   one. Stop only when no runnable wave remains and no dependency is being
+   waited for (see the merge wait in the failure contract below).
 
 Members of one wave advance entry by entry together: each round spawns the
 current entry for every member still walking, and a passing member's next entry
@@ -297,6 +366,11 @@ stage's instruction — the same shape `_stage_prompt` produces in
 ```
 Run /s:plan for the change `<member>` — a member of an approved epic.
 Investigate, spec it, and promote it to Status: ready.
+
+No human is available during this run. Put a decision the repository cannot
+settle to the oracle (spawn agent `s:oracle` with one compact question); on
+INSUFFICIENT adopt your recommended default and record it in the plan's
+ledger. Never open a question round or an AskUserQuestion.
 ```
 
 **Build stage instruction:**
@@ -362,9 +436,9 @@ exactly as in the detached driver, where only stage prompts carry the suffix.
 
 **`autopilot` blocks are ignored in-session.** An entry's `autopilot.attempts`,
 `autopilot.timeout`, and `autopilot.max_resumes` are the detached driver's
-retry and session budgets. Interactively the human is the retry loop, so
-enforce no budget from them: a failed stage stops and asks the user exactly as
-the failure contract below prescribes.
+retry and session budgets. The in-session drive ignores them too: a failed
+stage parks the member as `grade-failed <stage>` exactly as the failure
+contract below prescribes.
 
 **Declared build options append one line each** to the build instruction above
 (an entry declaring none leaves that block unchanged), mirroring the detached
@@ -453,29 +527,57 @@ moment a stage sub-agent's turn ends, and **never waits** on a process or watch
 a sub-agent left running. The report is context for the grade, never a
 substitute for it.
 
-### Failure contract: ask, never park
+### Failure contract: park and continue
 
-The in-session drive has a human present, so it never parks a member as
-`needs-human` or `rejected` the way the detached driver does. Instead:
+After the Phase 2 confirmation, no human is present: the drive never issues an
+AskUserQuestion and never opens a typed question round. A failure **parks** the
+member, and the drive carries on with every member that does not depend on it.
 
-- **A failed stage grade** — the sub-agent's turn ends but the stage's grade
-  (above) does not pass — **stops the drive** and puts the situation to the
-  user, naming the member and the stage that failed.
-- **A gate rejection** — `spec_gate.py <member>` exits rejecting the plan's
-  context — is likewise **raised to the user**, not parked as `rejected`.
-- **A command entry exiting non-zero** — a custom step's command, or a
-  replacement's — **stops the drive** the same way, naming both the member and
-  the entry that failed (`custom:<name>` for a custom step, the replaced stage
-  for a replacement) along with the command's exit code and output. It is never
-  retried on an attempt budget (the detached driver's `attempts` are ignored
-  in-session) and the member is never parked.
+A member parks on any of these:
 
-Inside a wave, a stop is observed without cutting the wave short: the wave's
-other **in-flight sub-agents run to their end and are graded**, but **no further
-entry is started for any member and no further wave is begun**. The drive then
-puts **every** stopped member and its stage to the user in **one** report, and
-resumes with those members and stages once the user answers — it never continues
-while such a stop is unanswered.
+- **a failed stage grade** — the grade table above does not pass — reason
+  `grade-failed <stage>`, naming the stage;
+- **a gate rejection** — `spec_gate.py <member>` rejects the plan's context —
+  reason `gate-rejected`;
+- **a command entry exiting non-zero** — reason `command-failed <entry> exit
+  <rc>`, naming `custom:<name>` for a custom step and the replaced stage for a
+  replacement, with the exit code and output;
+- **a Pre-build drift step outcome** — `sync-conflict`, `drift-error`,
+  `drift-conflict`, or `replan-failed`, exactly as that step defines them.
+
+On a park, record the reason in the session, emit
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/heartbeat.py" build-finish <member> --outcome parked
+```
+and start no further entry for that member. The parked set lives in the
+**session only**: no plan status is written for a parked member, and the six
+plan statuses stay as they are.
+
+Inside a wave, a park is observed without cutting the wave short: the wave's
+other **in-flight sub-agents run to their end and are graded**, the next round
+starts for the members still walking, and the drive continues with the next
+wave.
+
+**Every `--waves` re-run** is preceded by `git fetch origin main` from the main
+checkout (best effort — a failed fetch does not stop the drive). Filter what it
+returns:
+
+- drop every parked member from the returned waves;
+- mark as held every `blocked` entry whose `waiting_on` names a parked member or
+  a member already held, repeated to a fixpoint;
+- skip a wave emptied by the drop, and never start a held member.
+
+**Merge wait.** When no runnable wave remains but `blocked` holds entries that
+are not held, the run is waiting on a dependency's merge, not on a human. Poll
+each such `waiting_on` dependency with
+```
+gh pr view change/<dep> --json state
+```
+every `60 seconds`, for at most the confirmed `--timeout` seconds in total.
+Once every waited-on dependency reports `MERGED`, fetch and re-run `--waves`.
+If the bound expires or any dependency reports `CLOSED`, end the run listing
+those members as blocked. A member blocked on a parked or held member is never
+waited for.
 
 ### Resuming an interrupted run
 
@@ -483,7 +585,9 @@ An interrupted in-session run needs **no run-state file**: member state already
 lives on disk (spec status, lint, PR, review gate). Re-invoking the skill for
 the same epic re-reads that state and re-enters each member at the stage its
 current state maps to (see Entry stage per member above) — members already
-advanced pick up where they left off.
+advanced pick up where they left off. A parked member is no exception: once the
+remedy its pointer names is done, re-invoking the skill re-drives it from its
+on-disk state like any other member.
 
 ### Board liveness
 
@@ -511,16 +615,21 @@ sooner.
 
 ### The in-session run summary
 
-When the drive ends (all members done, or stopped for the user), report:
+When the drive ends, report four groups:
 
-- **Shipped** members with their full PR URLs (never just a number), grouped by
-  the wave that ran them.
-- **Stopped for the user**: the member and the stage that stopped the drive
-  (a failed grade or a gate rejection).
-- **Skipped** members with their state (the non-`unplanned`/`ready` states
+- **Shipped** — by wave, each member with its full PR URL (never just a
+  number).
+- **Parked** — each member with its reason, the stage or step that parked it,
+  and the resume pointer the harness reference's table gives for that reason
+  (for example `/s:plan <member>` for a `gate-rejected` or `replan-failed`
+  member). A `drift-conflict` entry names the contradicted `Q<n>` or Decision
+  and the `/s:autopilot <epic>` re-run.
+- **Blocked** — each member either `held by <parked>` (its dependency is parked
+  or itself held) or `waiting on <dep>` (its dependency had not merged when the
+  bound expired or its PR closed), each with the `/s:autopilot <epic>` re-run
+  pointer.
+- **Skipped** — each member with its state (the non-`unplanned`/`ready` states
   from Entry stage per member above).
-- **Blocked** members, when the drive stopped with no wave left, each with the
-  `waiting_on` dependencies that have not yet merged into the base branch.
 
 ## Phase 3 — Detached run: drive the autopilot in the foreground
 
