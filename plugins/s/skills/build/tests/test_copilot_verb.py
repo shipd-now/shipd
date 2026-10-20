@@ -261,14 +261,45 @@ def verdict_branches(text):
 
 
 def gate_job(text):
-    """The body of the gate workflow's single job. Both triggers are served by
-    one job — which event a run is handling is a branch inside its script, not
-    a job of its own — so there is exactly one to return."""
+    """The body of the gate workflow's ``gate`` job. Both triggers are served
+    by that one job — which event a run is handling is a branch inside its
+    script, not a job of its own. The only other job is ``resolve-threads``
+    (:func:`resolve_job`), which holds the write token the review-thread
+    mutation needs and nothing else."""
     jobs = job_blocks(text)
-    if len(jobs) != 1:
-        raise AssertionError("expected exactly one job, found %d: %s"
-                             % (len(jobs), ", ".join(sorted(jobs))))
-    return next(iter(jobs.values()))
+    if "gate" not in jobs:
+        raise AssertionError("expected a `gate` job, found: %s"
+                             % ", ".join(sorted(jobs)))
+    return jobs["gate"]
+
+
+def uncommented(text):
+    """``text`` without its comment lines, so an assertion that a job never
+    *does* something is not tripped by the commentary explaining why."""
+    return "\n".join(line for line in text.splitlines()
+                     if not line.lstrip().startswith("#"))
+
+
+def resolve_job(text):
+    """The body of the gate workflow's ``resolve-threads`` job — the one job
+    granted ``contents: write``, which runs after ``gate`` has posted a
+    decision review and resolves the gate's superseded review threads."""
+    jobs = job_blocks(text)
+    if "resolve-threads" not in jobs:
+        raise AssertionError("expected a `resolve-threads` job, found: %s"
+                             % ", ".join(sorted(jobs)))
+    return jobs["resolve-threads"]
+
+
+def resolve_script(text, substitute="stub"):
+    """The ``resolve-threads`` job's one ``run`` body, runnable under bash,
+    with the Actions expressions replaced by ``substitute`` the way
+    :func:`gate_script` replaces them."""
+    steps = job_steps(resolve_job(text))
+    if len(steps) != 1:
+        raise AssertionError("expected one step in `resolve-threads`, found %d"
+                             % len(steps))
+    return ACTIONS_EXPRESSION.sub(substitute, run_block(steps[0]))
 
 
 def job_steps(job_body):
@@ -745,10 +776,66 @@ class GateWorkflowTemplateTest(unittest.TestCase):
     def test_one_job_serves_both_triggers(self):
         # Both events land in the same job, so the poll and the review-event
         # classification share one script — and one classification block.
+        # The only other job resolves threads and posts nothing.
         jobs = job_blocks(self.text)
-        self.assertEqual(len(jobs), 1,
-                         "expected one job, found: %s" % ", ".join(sorted(jobs)))
+        self.assertEqual(sorted(jobs), ["gate", "resolve-threads"])
         self.assertIn("github.event_name == 'pull_request'", self.guard)
+        self.assertNotIn(STATUS_CONTEXT, uncommented(resolve_job(self.text)))
+
+    def resolve_head(self):
+        """Everything the ``resolve-threads`` job declares before its steps."""
+        job = resolve_job(self.text)
+        return job[:job.index("steps:")]
+
+    def test_only_the_resolve_job_is_granted_contents_write(self):
+        # resolveReviewThread is refused to a token without `contents:
+        # write`. That grant goes to the resolve job alone, at job level, so
+        # the gate job — where the reviewer runs — keeps the read-only
+        # workflow-level contents permission.
+        workflow = [line.strip() for line in yaml_block(self.text,
+                                                        "permissions")]
+        self.assertIn("contents: read", workflow)
+        self.assertNotIn("contents: write", workflow)
+        self.assertNotIn("permissions:", self.guard)
+        self.assertNotIn("contents: write", uncommented(self.job))
+        head = [line.strip() for line in self.resolve_head().splitlines()]
+        self.assertIn("permissions:", head)
+        self.assertIn("contents: write", head)
+        self.assertIn("pull-requests: write", head)
+        self.assertNotIn("statuses: write", head)
+
+    def test_the_resolve_job_runs_only_after_a_posted_decision_for_this_head(
+            self):
+        head = " ".join(self.resolve_head().split())
+        self.assertIn("needs: gate", head)
+        for clause in ("github.event_name == 'pull_request'",
+                       "needs.gate.outputs.resolve_threads == 'true'",
+                       "needs.gate.outputs.head_sha == "
+                       "github.event.pull_request.head.sha"):
+            self.assertIn(clause, head)
+        # No status function in the guard: the implicit `success()` is what
+        # skips this job when `gate` was skipped, failed, or cancelled.
+        for function in ("always()", "failure()", "cancelled()"):
+            self.assertNotIn(function, head)
+
+    def test_the_gate_job_exports_the_posting_steps_outputs(self):
+        outputs = self.guard[self.guard.index("outputs:"):]
+        self.assertIn(
+            "resolve_threads: ${{ steps.verdict.outputs.resolve_threads }}",
+            outputs)
+        self.assertIn("head_sha: ${{ steps.verdict.outputs.head_sha }}",
+                      outputs)
+        self.assertIn("id: verdict", self.posting_step())
+
+    def test_the_resolve_job_runs_no_pull_request_code(self):
+        # It checks nothing out, uses no action, and binds no secret: its
+        # write token only ever reaches `gh api graphql`.
+        job = uncommented(resolve_job(self.text))
+        self.assertNotIn("secrets.", job)
+        self.assertNotIn("checkout", job)
+        self.assertNotIn("uses:", job)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", job)
+        self.assertIn("HEAD_SHA: ${{ needs.gate.outputs.head_sha }}", job)
 
     def test_the_review_event_path_guards_reviewer_and_head_commit(self):
         # A review event is worth a run only for Copilot's own review of the
@@ -1069,11 +1156,13 @@ class GateWorkflowTemplateTest(unittest.TestCase):
         self.assertIn(binding, self.cli_step())
         self.assertIn(binding, self.posting_step())
 
-    def test_thread_resolution_runs_only_in_the_posting_step(self):
-        self.assertNotIn("graphql", self.cli_step())
-        posting = run_block(self.posting_step())
-        self.assertIn('"$gh_bin" api graphql', posting)
-        self.assertIn("resolveReviewThread", posting)
+    def test_thread_resolution_runs_only_in_the_resolve_job(self):
+        self.assertNotIn("graphql", uncommented(self.job))
+        self.assertNotIn("resolveReviewThread", uncommented(self.job))
+        script = resolve_script(self.text)
+        self.assertIn("gh api graphql", script)
+        self.assertIn("resolveReviewThread", script)
+        self.assertIn("reviewThreads(first: 100)", script)
 
     def test_the_prompt_names_the_materialized_instructions_file(self):
         prompt = self.script[self.script.index("prompt="):
@@ -1491,6 +1580,16 @@ if [ "$method" = POST ]; then
           fi
         done < "$STUB_DIR/reject-events"
       fi
+      # A review carrying inline comments, scripted as refused: GitHub
+      # rejecting one comment it will not accept, which costs the whole
+      # anchored review but not the same decision posted body-only.
+      if [ -n "$input" ] && [ -f "$input" ] && [ -f "$STUB_DIR/reject-comments" ] \
+          && ! grep -q '"comments": \[\]' "$input"; then
+        cat "$input" >> "$GH_REJECTED"
+        printf '\n<<<REVIEW>>>\n' >> "$GH_REJECTED"
+        echo "Unprocessable Entity: line could not be resolved" >&2
+        exit 1
+      fi
       if [ -n "$input" ] && [ -f "$input" ]; then
         cat "$input" >> "$GH_REVIEWS"
         printf '\n<<<REVIEW>>>\n' >> "$GH_REVIEWS"
@@ -1668,7 +1767,7 @@ class GateScriptCase(unittest.TestCase):
                 "cli-out", "cli-code", "cli-timeout", "base-skill",
                 "base-missing", "base-unreadable", "files", "cli-findings",
                 "reject-events", "base-engine", "engine-files", "engine-code",
-                "threads", "threads-fail", "resolve-fail")
+                "threads", "threads-fail", "resolve-fail", "reject-comments")
 
     def setUp(self):
         self.assertTrue(os.path.isfile(GATE_TEMPLATE),
@@ -1707,6 +1806,10 @@ class GateScriptCase(unittest.TestCase):
                       "the posting step no longer names %s, so the stub "
                       "substitution below would not bind" % PY_PATH)
         self.script = script.replace(PY_PATH, sys.executable)
+        # The `resolve-threads` job's script. It runs in a job of its own with
+        # no reviewer before it, so it finds `gh` and `python3` on PATH like
+        # the pending step does, and the stubs bind without a rewrite.
+        self.resolve_script = resolve_script(read(GATE_TEMPLATE))
         # The checkout the CLI path runs in: the reviewed commit's own copy of
         # the review skill, at the path the workflow reads it from. It is the
         # fallback source, never the preferred one.
@@ -1782,7 +1885,7 @@ class GateScriptCase(unittest.TestCase):
              files=None, findings=None, pr_author="pr-author",
              reject_events=(), engine_files=None, engine_code=None,
              base_engine=None, fast_pass="", threads=None, threads_fail=False,
-             resolve_fail=(), review_model=None):
+             resolve_fail=(), review_model=None, reject_comments=False):
         """Run the gate script for ``event`` and return the statuses it posted,
         in order — one dict of ``-f key=value`` fields per post, with the URL
         it posted to under ``"url"``. What the run logged is left on
@@ -1831,7 +1934,14 @@ class GateScriptCase(unittest.TestCase):
         ``reviewThreads`` query serves them (see :func:`thread`), and
         ``threads_fail`` makes that query fail; ``resolve_fail`` lists thread
         ids whose resolve mutation fails. ``review_model`` is the
-        ``SHIPD_REVIEW_MODEL`` repository variable: ``None`` drops it."""
+        ``SHIPD_REVIEW_MODEL`` repository variable: ``None`` drops it.
+        ``reject_comments`` makes GitHub refuse any review that carries
+        inline comments, so the decision lands only through the plain retry.
+
+        After a gate run that exits zero, the ``resolve-threads`` job's
+        script runs too when the run's step outputs ask for it; what it
+        printed is appended to ``self.stdout``, and ``self.resolve_ran``
+        says whether it ran."""
         for name in os.listdir(self.tmp):
             if name in self.SCRIPTED or name.split(".")[0] in self.SCRIPTED:
                 os.remove(os.path.join(self.tmp, name))
@@ -1871,6 +1981,8 @@ class GateScriptCase(unittest.TestCase):
             self.plant("base-engine", base_engine)
         if reject_events:
             self.plant("reject-events", "\n".join(reject_events) + "\n")
+        if reject_comments:
+            self.plant("reject-comments", "")
         if isinstance(threads, str):
             self.plant("threads", threads)
         elif threads is not None:
@@ -1989,7 +2101,45 @@ class GateScriptCase(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
         self.stdout = result.stdout
         self.stderr = result.stderr
+        self.outputs = self.step_outputs(env["GITHUB_OUTPUT"])
+        self.resolve_ran = False
+        # The `resolve-threads` job, run the way the runner would: only after
+        # a `gate` job that succeeded, on a `pull_request` event, and only
+        # when its outputs say a decision review was posted for this head.
+        # It is a job of its own, so the hostile PATH shim above — a write
+        # by a reviewer step of the `gate` job — never reaches it.
+        if (result.returncode == 0 and event == "pull_request"
+                and self.outputs.get("resolve_threads") == "true"
+                and self.outputs.get("head_sha") == self.HEAD):
+            self.resolve_ran = True
+            resolve_path = os.path.join(self.tmp, "resolve.sh")
+            with open(resolve_path, "w", encoding="utf-8") as fh:
+                fh.write(self.resolve_script)
+            resolve_env = dict(env)
+            resolve_env["PATH"] = self.stub_bin + os.pathsep + os.environ.get(
+                "PATH", "")
+            resolve_env["HEAD_SHA"] = self.outputs["head_sha"]
+            resolved = subprocess.run(["bash", resolve_path], cwd=self.tmp,
+                                      env=resolve_env, capture_output=True,
+                                      text=True, timeout=run_timeout)
+            self.assertEqual(resolved.returncode, 0,
+                             "the resolve-threads job failed: "
+                             + resolved.stderr)
+            self.stdout += resolved.stdout
+            self.stderr += resolved.stderr
         return self.posted()
+
+    @staticmethod
+    def step_outputs(path):
+        """``{name: value}`` from a ``$GITHUB_OUTPUT`` file, the last write of
+        each name winning, as the runner reads it."""
+        outputs = {}
+        if os.path.exists(path):
+            for line in read(path).splitlines():
+                name, sep, value = line.partition("=")
+                if sep:
+                    outputs[name] = value
+        return outputs
 
     def graphql_calls(self):
         """The GraphQL calls the last run made, each as its argument list."""
@@ -2510,8 +2660,9 @@ class GateReviewPostTest(GateScriptCase):
 
 class GateThreadResolveTest(GateScriptCase):
     """A grounded decision review supersedes the gate's own earlier threads, so
-    the posting step resolves them before it posts — and never touches anyone
-    else's (copilot-review-skill gate-resolves-superseded-threads)."""
+    once it is posted the `resolve-threads` job resolves them — and never
+    touches anyone else's (copilot-review-skill
+    gate-resolves-superseded-threads)."""
 
     SECRET = GateReviewPostTest.SECRET
     EARLIER = "0" * 39 + "e"
@@ -2523,16 +2674,53 @@ class GateThreadResolveTest(GateScriptCase):
         kwargs.setdefault("findings", [])
         return self.gate(**kwargs)
 
-    def test_a_fix_required_review_resolves_the_gates_earlier_thread_first(self):
+    def test_a_fix_required_review_resolves_the_gates_earlier_thread_after(
+            self):
         posts = self.cli_gate(threads=[
             thread("T_old", "github-actions", self.EARLIER)])
         self.assertStates(posts, ["pending", "failure"])
+        self.assertEqual(self.outputs.get("resolve_threads"), "true")
+        self.assertEqual(self.outputs.get("head_sha"), self.HEAD)
         self.assertEqual(self.resolved(), ["T_old"])
-        self.assertEqual(self.order(), ["resolve T_old", "review"],
-                         "the stale thread was not resolved before the "
-                         "new review was posted")
+        self.assertEqual(self.order(), ["review", "resolve T_old"],
+                         "the stale thread was not resolved after the new "
+                         "review was posted")
         self.assertIn("Resolved superseded gate review thread T_old.",
                       self.stdout)
+
+    def test_the_gate_job_itself_makes_no_graphql_call(self):
+        # Every thread call belongs to the `resolve-threads` job: the gate
+        # job's token is read-only on contents and could not make them.
+        self.cli_gate(threads=[thread("T_old", "github-actions", self.EARLIER)])
+        self.assertTrue(self.resolve_ran)
+        self.assertNotIn("graphql", uncommented(self.script))
+        self.assertNotIn("resolveReviewThread", uncommented(self.script))
+
+    def test_a_plain_retry_of_the_decision_still_resolves(self):
+        # GitHub refused the anchored review but took the same decision
+        # without its inline comments: the decision is posted, so the
+        # superseded threads are resolved after it.
+        posts = self.cli_gate(
+            files=GateReviewPostTest.FILES,
+            findings=[GateReviewPostTest.ANCHORED],
+            threads=[thread("T_old", "github-actions", self.EARLIER)],
+            reject_comments=True)
+        self.assertStates(posts, ["pending", "failure"])
+        self.assertEqual(self.reviews()[-1]["event"], "REQUEST_CHANGES")
+        self.assertEqual(self.reviews()[-1]["comments"], [])
+        self.assertEqual(self.order(), ["review", "resolve T_old"])
+
+    def test_a_refused_decision_resolves_nothing(self):
+        # GitHub refused the decision itself, so the run fell back to a
+        # body-only COMMENT that re-anchors no finding: nothing supersedes
+        # the old threads, and no output asks for their resolution.
+        posts = self.cli_gate(reject_events=("REQUEST_CHANGES",), threads=[
+            thread("T_old", "github-actions", self.EARLIER)])
+        self.assertStates(posts, ["pending", "failure"])
+        self.assertEqual(self.reviews()[-1]["event"], "COMMENT")
+        self.assertNotIn("resolve_threads", self.outputs)
+        self.assertFalse(self.resolve_ran)
+        self.assertEqual(self.graphql_calls(), [])
 
     def test_a_ship_it_review_resolves_the_bot_spelling_too(self):
         posts = self.cli_gate(cli_out=GateReviewPostTest.SHIP_REVIEW, threads=[

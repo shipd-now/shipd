@@ -66,7 +66,7 @@ On every pull request opened, updated, or reopened, the gate's job:
   with a "Not a verdict" notice. The job then fails.
 - **The posted body is the report.** The CLI runs with `-s`. The gate keeps the text from the last `## Findings` header through the verdict marker. It closes the body with a `Reviewed N files, +A -D lines.` stat line and a `Model:` line.
 - **The model is a repository variable.** The gate passes `SHIPD_REVIEW_MODEL` to the CLI as `--model`. Unset, the CLI runs its own default, and the `Model:` line reads "Copilot CLI default".
-- **A new decision resolves the gate's old threads.** Before it submits `APPROVE` or `REQUEST_CHANGES`, the gate resolves its unresolved threads from earlier commits. The new review anchors any finding that is still present again. The gate never resolves another author's thread, and a failed resolve only logs a warning.
+- **A new decision resolves the gate's old threads.** After GitHub accepts an `APPROVE` or `REQUEST_CHANGES`, the `resolve-threads` job resolves the gate's earlier-commit threads. The new review has already re-anchored any finding still present. A refused decision resolves nothing. The job never resolves another author's thread, and a failed resolve only logs a warning.
 
 ### The poll fallback mode
 
@@ -174,8 +174,11 @@ no LLM reviewer is immune to such steering. The gate bounds that risk rather tha
 ### Tokens, permissions, and the session flow
 
 The workflow does its repository work with its own `github.token`: `statuses: write` to post the
-status, `pull-requests: write` to poll, review, and resolve its own threads. The only secret it ever reads is the optional
+status, `pull-requests: write` to poll and review. The only secret it ever reads is the optional
 `COPILOT_GITHUB_TOKEN`, whose value reaches nothing but the Copilot CLI's environment.
+
+- **Resolving threads needs `contents: write`.** GitHub refuses `resolveReviewThread` without it.
+  Only the `resolve-threads` job gets it. That job runs no pull request code, and the `gate` job keeps `contents: read`.
 
 - **The review event.** On the CLI path, ship-it submits `APPROVE` and fix-required submits
   `REQUEST_CHANGES`, as `github-actions[bot]`. No marker, or a bot or unreadable author, gives
