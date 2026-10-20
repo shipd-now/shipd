@@ -126,6 +126,11 @@
 #     `gh` by absolute path (against a $GITHUB_PATH shim) and re-binding
 #     SHIPD_GATE_FAIL_OPEN from `vars` in its own step env (against a
 #     $GITHUB_ENV write). See that step's own commentary below.
+#   * The `resolve-threads` job is the only one granted `contents: write`,
+#     which GitHub requires for resolving a review thread. It runs after the
+#     `gate` job has posted a grounded decision review, checks nothing out,
+#     binds no secret, and only calls `gh api graphql`, so the job the
+#     reviewer runs in keeps a token that is read-only on contents.
 #   * The reviewer's instructions are materialized from the *base* ref, so a
 #     change under review cannot rewrite the rules it is reviewed under —
 #     falling back to the head's copy only where the base is confirmed not to
@@ -149,6 +154,8 @@ on:
   pull_request_review:
     types: [submitted]
 
+# The `gate` job's permissions. The `resolve-threads` job declares its own,
+# which replace these for that job alone.
 permissions:
   contents: read
   statuses: write
@@ -177,6 +184,12 @@ jobs:
       || (github.event.review.user.login == 'copilot-pull-request-reviewer[bot]'
       && github.event.review.commit_id == github.event.pull_request.head.sha)
     runs-on: ubuntu-latest
+    # What the `resolve-threads` job below needs from this one: whether the
+    # posting step got a grounded decision review accepted, and for which
+    # head. Both are written only after that review posted successfully.
+    outputs:
+      resolve_threads: ${{ steps.verdict.outputs.resolve_threads }}
+      head_sha: ${{ steps.verdict.outputs.head_sha }}
     env:
       # Whether the CLI reviewer mode is configured. A step's `if:` cannot read
       # the `secrets` context at all, so only the *presence* of the secret is
@@ -551,6 +564,7 @@ jobs:
       #     by an earlier step, which makes this binding win over the
       #     job-level one the other steps use.
       - name: Classify the reviewed text and post the verdict
+        id: verdict
         env:
           GH_TOKEN: ${{ github.token }}
           SHIPD_GATE_FAIL_OPEN: ${{ vars.SHIPD_GATE_FAIL_OPEN }}
@@ -1290,25 +1304,130 @@ jobs:
           with open(neutral_path, "w", encoding="utf-8") as handle:
               json.dump(payload, handle)
           PY
+            # Whether the review below went out as a decision — the anchored
+            # review, or the same decision without its inline comments. Set
+            # only on a POST that succeeded, so a failed post never asks for
+            # the superseded threads to be resolved.
+            decision_posted=
+            if "$gh_bin" api --method POST \
+                "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+                --input "$review_payload"; then
+              decision_posted=true
+            else
+              # One comment GitHub will not accept rejects the whole review,
+              # and the report matters more than its anchoring: retry with the
+              # body alone rather than leave the pull request without it.
+              echo "The anchored review of $HEAD_SHA was rejected; posting" \
+                "it without inline comments."
+              if "$gh_bin" api --method POST \
+                  "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+                  --input "$review_fallback"; then
+                decision_posted=true
+              else
+                # A refused plain retry of a decision is GitHub declining the
+                # decision (typically the Actions approval setting being off),
+                # not the report: submit the body alone as a COMMENT. A
+                # COMMENT that fails here has no decision to drop, so it still
+                # fails the step.
+                if [[ "$review_event" == "COMMENT" ]]; then
+                  exit 1
+                fi
+                echo "::warning::The $review_event decision was not" \
+                  "recorded: GitHub refused it. Turn on 'Allow GitHub" \
+                  "Actions to create and approve pull requests' under" \
+                  "Settings, Actions, General, Workflow permissions to let" \
+                  "the CI reviewer approve. Posting the review as a comment."
+                "$gh_bin" api --method POST \
+                  "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+                  --input "$review_neutral"
+              fi
+            fi
             # A grounded decision is a full re-review of the pull request, so
             # it supersedes every thread this gate opened on an earlier
-            # commit: a finding still present is anchored again by the review
-            # below, and a fixed one is gone. Left open, those threads keep a
-            # repository that requires conversation resolution blocked after
-            # the gate itself approved. So they are resolved first, before the
-            # new decision lands. Only the gate's own threads: a first comment
-            # by `github-actions[bot]` (GraphQL reports a bot's login without
-            # the `[bot]` suffix, so both spellings count), unresolved, and
-            # made on a commit other than this head. A COMMENT, an ungrounded
-            # review, and the poll paths judged nothing, so they resolve
-            # nothing. Anything that goes wrong here only warns: the status
-            # is already posted, and these calls must never change it. Only the first
-            # 100 threads are read.
-            if [[ "$review_event" != COMMENT && -z "${ungrounded:-}" ]]; then
-              threads_file="${RUNNER_TEMP:-.}/shipd-copilot-review-threads.json"
-              stale_file="${RUNNER_TEMP:-.}/shipd-copilot-review-stale-threads.txt"
-              rm -f "$threads_file" "$stale_file"
-              threads_query='query($owner: String!, $name: String!, $number: Int!) {
+            # commit: a finding still present was anchored again by the
+            # review just posted, and a fixed one is gone. Left open, those
+            # threads keep a repository that requires conversation resolution
+            # blocked after the gate itself approved. This step cannot resolve
+            # them: GitHub refuses `resolveReviewThread` to a token without
+            # `contents: write`, and this job's token must stay read-only on
+            # contents because the reviewer ran in it. So the step only says
+            # so, through its outputs, and the `resolve-threads` job — which
+            # holds that grant and runs no pull-request code — resolves them.
+            # Only a decision that was really posted counts: a COMMENT, an
+            # ungrounded review, the body-only COMMENT a refused decision
+            # degrades to (it anchors no finding), and the poll paths judged
+            # or re-anchored nothing, so they ask for nothing.
+            if [[ -n "$decision_posted" && "$review_event" != COMMENT \
+                  && -z "${ungrounded:-}" ]]; then
+              echo "resolve_threads=true" >> "${GITHUB_OUTPUT:-/dev/null}"
+              echo "head_sha=$HEAD_SHA" >> "${GITHUB_OUTPUT:-/dev/null}"
+            fi
+          fi
+
+          # An ungrounded review judged nothing: the notice-headed COMMENT is
+          # out and `pending` stands, and the job fails so the run does not
+          # read as a pass.
+          if [[ -n "${ungrounded:-}" ]]; then
+            exit 1
+          fi
+
+  resolve-threads:
+    name: Resolve the gate's superseded review threads
+    # Runs after the `gate` job, and only when its posting step reported a
+    # grounded APPROVE or REQUEST_CHANGES that GitHub accepted for the head
+    # this run was triggered for. A guard with no status function carries the
+    # implicit `success()`, so a `gate` job that was skipped (a review event
+    # by anyone but Copilot, or of an older commit), failed, or was cancelled
+    # skips this one too. The review-event path posts no review of its own,
+    # so it never sets the outputs either. The workflow-level concurrency
+    # group covers this job as well: a new push cancels the whole run, and
+    # the new head's own run resolves whatever this one left open, since it
+    # selects every gate thread made on a commit other than its own head.
+    needs: gate
+    if: >-
+      github.event_name == 'pull_request'
+      && needs.gate.outputs.resolve_threads == 'true'
+      && needs.gate.outputs.head_sha == github.event.pull_request.head.sha
+    runs-on: ubuntu-latest
+    # The one job granted `contents: write`. GitHub refuses the
+    # `resolveReviewThread` mutation to a workflow token without it — measured
+    # as "Resource not accessible by integration" under `contents: read` with
+    # `pull-requests: write` — although the mutation changes no repository
+    # content. Granted here, at job level, rather than to the workflow, so the
+    # `gate` job, where the Copilot CLI runs over a diff it cannot be trusted
+    # not to be steered by, never holds a write token for contents. This job
+    # checks nothing out, uses no action, binds no secret, and runs no code
+    # from the pull request: its token only ever reaches `gh api graphql`.
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Resolve the gate's threads from earlier commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # The head the decision review was posted for, which the guard
+          # above already matched against the event's own head.
+          HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          # Only the gate's own threads: a first comment by
+          # `github-actions[bot]` (GraphQL reports a bot's login without the
+          # `[bot]` suffix, so both spellings count), unresolved, and made on
+          # a commit other than this head — the review just posted anchored
+          # its own threads on this head, so they are never touched. Only the
+          # first 100 threads are read. Anything that goes wrong here only
+          # warns and the job still passes: the status and the review are
+          # already posted, and these calls must never change them.
+          #
+          # A plain PATH lookup for `gh` and `python3` is fine here, unlike in
+          # the `gate` job's posting step: no reviewer ran in this job, so
+          # there is no $GITHUB_PATH entry of the reviewer's to find.
+          threads_file="${RUNNER_TEMP:-.}/shipd-copilot-review-threads.json"
+          stale_file="${RUNNER_TEMP:-.}/shipd-copilot-review-stale-threads.txt"
+          rm -f "$threads_file" "$stale_file"
+          threads_query='query($owner: String!, $name: String!, $number: Int!) {
             repository(owner: $owner, name: $name) {
               pullRequest(number: $number) {
                 reviewThreads(first: 100) {
@@ -1323,17 +1442,17 @@ jobs:
               }
             }
           }'
-              resolve_mutation='mutation($threadId: ID!) {
+          resolve_mutation='mutation($threadId: ID!) {
             resolveReviewThread(input: {threadId: $threadId}) {
               thread { isResolved }
             }
           }'
-              if ! "$gh_bin" api graphql -f query="$threads_query" \
-                  -f owner="${REPO%%/*}" -f name="${REPO#*/}" \
-                  -F number="$PR_NUMBER" > "$threads_file"; then
-                echo "::warning::Could not list the review threads of PR" \
-                  "#$PR_NUMBER, so the gate's superseded threads stay open."
-              elif ! "$py_bin" - "$threads_file" "$stale_file" <<'PY'
+          if ! gh api graphql -f query="$threads_query" \
+              -f owner="${REPO%%/*}" -f name="${REPO#*/}" \
+              -F number="$PR_NUMBER" > "$threads_file"; then
+            echo "::warning::Could not list the review threads of PR" \
+              "#$PR_NUMBER, so the gate's superseded threads stay open."
+          elif ! python3 - "$threads_file" "$stale_file" <<'PY'
           """Select the gate's own unresolved threads made on an earlier commit.
 
           Reads the GraphQL reviewThreads answer and writes one thread id per line.
@@ -1365,56 +1484,18 @@ jobs:
           with open(sys.argv[2], "w", encoding="utf-8") as handle:
               handle.write("".join(thread + "\n" for thread in stale))
           PY
-              then
-                echo "::warning::Could not read the review threads of PR" \
-                  "#$PR_NUMBER, so the gate's superseded threads stay open."
+          then
+            echo "::warning::Could not read the review threads of PR" \
+              "#$PR_NUMBER, so the gate's superseded threads stay open."
+          else
+            while IFS= read -r thread_id; do
+              [[ -n "$thread_id" ]] || continue
+              if gh api graphql -f query="$resolve_mutation" \
+                  -f threadId="$thread_id" > /dev/null; then
+                echo "Resolved superseded gate review thread $thread_id."
               else
-                while IFS= read -r thread_id; do
-                  [[ -n "$thread_id" ]] || continue
-                  if "$gh_bin" api graphql -f query="$resolve_mutation" \
-                      -f threadId="$thread_id" > /dev/null; then
-                    echo "Resolved superseded gate review thread $thread_id."
-                  else
-                    echo "::warning::Could not resolve the superseded gate" \
-                      "review thread $thread_id; it stays open."
-                  fi
-                done < "$stale_file"
+                echo "::warning::Could not resolve the superseded gate" \
+                  "review thread $thread_id; it stays open."
               fi
-            fi
-            if ! "$gh_bin" api --method POST \
-                "repos/$REPO/pulls/$PR_NUMBER/reviews" \
-                --input "$review_payload"; then
-              # One comment GitHub will not accept rejects the whole review,
-              # and the report matters more than its anchoring: retry with the
-              # body alone rather than leave the pull request without it.
-              echo "The anchored review of $HEAD_SHA was rejected; posting" \
-                "it without inline comments."
-              if ! "$gh_bin" api --method POST \
-                  "repos/$REPO/pulls/$PR_NUMBER/reviews" \
-                  --input "$review_fallback"; then
-                # A refused plain retry of a decision is GitHub declining the
-                # decision (typically the Actions approval setting being off),
-                # not the report: submit the body alone as a COMMENT. A
-                # COMMENT that fails here has no decision to drop, so it still
-                # fails the step.
-                if [[ "$review_event" == "COMMENT" ]]; then
-                  exit 1
-                fi
-                echo "::warning::The $review_event decision was not" \
-                  "recorded: GitHub refused it. Turn on 'Allow GitHub" \
-                  "Actions to create and approve pull requests' under" \
-                  "Settings, Actions, General, Workflow permissions to let" \
-                  "the CI reviewer approve. Posting the review as a comment."
-                "$gh_bin" api --method POST \
-                  "repos/$REPO/pulls/$PR_NUMBER/reviews" \
-                  --input "$review_neutral"
-              fi
-            fi
-          fi
-
-          # An ungrounded review judged nothing: the notice-headed COMMENT is
-          # out and `pending` stands, and the job fails so the run does not
-          # read as a pass.
-          if [[ -n "${ungrounded:-}" ]]; then
-            exit 1
+            done < "$stale_file"
           fi
