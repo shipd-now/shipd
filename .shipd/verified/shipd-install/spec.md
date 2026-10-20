@@ -192,9 +192,9 @@ exit `2` naming the ref whose manifest it could not read or parse.
 
 The repository's CI workflow (`.github/workflows/ci.yml`) SHALL run the guard
 on pull request events against the pull request's base branch, and its checkout
-step SHALL fetch enough history for that base ref to resolve. The workflow SHALL
-NOT run the guard on pushes to `main`, where a squash merge leaves no base
-version to compare.
+step SHALL fetch enough history for that base ref to resolve. On pushes to
+`main` the guard runs against the pushed commit's first parent instead, as the
+main-branch plugin version check requires.
 
 #### Scenario: A plugin change without a bump fails
 - **GIVEN** a change touching `plugins/s/skills/build/tests/test_thing.py`
@@ -233,11 +233,35 @@ version to compare.
 - **WHEN** the script cannot read or parse the manifest at a named ref
 - **THEN** it exits `2` and its message names that ref
 
-#### Scenario: CI runs the guard on pull requests only
+#### Scenario: CI runs the pull request guard against the base branch
 - **WHEN** `.github/workflows/ci.yml` is inspected
-- **THEN** it carries a step invoking `version_guard.py` conditioned on the
-  event being a pull request, and its checkout step sets `fetch-depth: 0`
+- **THEN** it carries a step invoking `version_guard.py` against the pull
+  request's base branch, conditioned on the event being a pull request, and its
+  checkout step sets `fetch-depth: 0`
 
 #### Scenario: The change bumps the version it guards
 - **WHEN** this change's own manifest is inspected
 - **THEN** its version exceeds `0.6.222`
+
+### Requirement: Main-branch plugin version check
+id: plugin-version-main-check
+
+Two pull requests can each pass the pull request version guard against an older `main` and still land the same plugin version. When a commit is pushed to `main`, the repository's CI workflow SHALL run `plugins/s/skills/build/scripts/version_guard.py` with the commit's first parent as the base and the pushed commit as the head, reusing the guard's comparison rather than a second implementation. If the guard reports a finding or cannot read a manifest, then the step SHALL fail, SHALL emit a GitHub error annotation carrying the guard's output, which names the parent's version and the pushed commit's version, and SHALL tell the reader to land a follow-up pull request that bumps `plugins/s/.claude-plugin/plugin.json`. The step SHALL run only on push events and SHALL carry no CI scope guard.
+
+#### Scenario: A duplicate version on main fails loudly
+- **GIVEN** a parent commit whose manifest carries `0.6.319`
+- **WHEN** a commit that edits `plugins/s/skills/build/scripts/x.py` and keeps `0.6.319` runs the main check step
+- **THEN** the step exits non-zero, and its output names `0.6.319` for both commits and asks for a follow-up version bump
+
+#### Scenario: An advanced version on main passes
+- **GIVEN** a parent commit whose manifest carries `0.6.319`
+- **WHEN** a commit that edits `plugins/s/` and carries `0.6.320` runs the main check step
+- **THEN** the step exits 0
+
+#### Scenario: A change outside the plugin passes on main
+- **WHEN** a commit that edits only `.shipd/epics/x/epic.md` runs the main check step
+- **THEN** the step exits 0
+
+#### Scenario: The check runs on push and ignores the scope
+- **WHEN** `.github/workflows/ci.yml` is inspected
+- **THEN** the workflow triggers on push to `main`, and a step invoking `version_guard.py` with the parent commit as base is conditioned on the push event and carries no `scope` guard

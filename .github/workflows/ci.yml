@@ -34,28 +34,40 @@ jobs:
           python3 plugins/s/skills/build/scripts/version_guard.py \
             --base "origin/${{ github.base_ref }}" --head HEAD
 
+      - name: Check the plugin version on main
+        if: github.event_name == 'push'
+        run: |
+          status=0
+          finding="$(python3 plugins/s/skills/build/scripts/version_guard.py --base HEAD^1 --head HEAD 2>&1)" || status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::error title=Plugin version not advanced on main::${finding}"
+            echo "This commit reached main without a plugin version above its parent's, so two merges may share one version. Land a follow-up pull request that bumps plugins/s/.claude-plugin/plugin.json above the version now on main." >&2
+            exit "$status"
+          fi
+          echo "plugin version check passed against the parent commit"
+
       - name: Run engine test suite
-        if: steps.scope.outputs.fast != 'true'
+        if: steps.scope.outputs.scope != 'content'
         run: python3 -m unittest discover -s plugins/s/skills/build/tests -v
 
       - name: Run eval harness test suite
-        if: steps.scope.outputs.fast != 'true'
+        if: steps.scope.outputs.scope != 'content'
         run: python3 -m unittest discover -s evals/tests -v
 
       - name: Run tools test suite
-        if: steps.scope.outputs.fast != 'true'
+        if: steps.scope.outputs.scope != 'content'
         run: python3 -m unittest discover -s tools/tests -v
 
       - name: Install third-party deps (board tui)
-        if: steps.scope.outputs.fast != 'true'
+        if: steps.scope.outputs.scope != 'content'
         run: python3 -m pip install -r requirements.txt
 
       - name: Run textual-dependent test suite
-        if: steps.scope.outputs.fast != 'true'
+        if: steps.scope.outputs.scope != 'content'
         run: python3 -m unittest discover -s plugins/s/skills/build/tests_textual -v
 
       - name: Install difftastic for the review engine
-        if: steps.scope.outputs.fast != 'true'
+        if: steps.scope.outputs.scope != 'content'
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.local/bin"
@@ -75,27 +87,27 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run review test suite
-        if: steps.scope.outputs.fast != 'true'
+        if: steps.scope.outputs.scope != 'content'
         run: python3 -m unittest discover -s plugins/s/skills/review/tests -v
 
       - name: Run video-ingest test suite
-        if: steps.scope.outputs.fast != 'true'
+        if: steps.scope.outputs.scope != 'content'
         run: python3 -m unittest discover -s plugins/s/skills/video-ingest/tests -v
 
       - name: Run drive test suite
-        if: steps.scope.outputs.fast != 'true'
+        if: steps.scope.outputs.scope != 'content'
         run: python3 -m unittest discover -s plugins/s/skills/drive/tests -v
 
       - name: Run document test suite
-        if: steps.scope.outputs.fast != 'true'
+        if: steps.scope.outputs.scope != 'content'
         run: python3 -m unittest discover -s plugins/s/skills/document/tests -v
 
       - name: Run workspace test suite
-        if: steps.scope.outputs.fast != 'true'
+        if: steps.scope.outputs.scope != 'content'
         run: python3 -m unittest discover -s plugins/s/skills/workspace/tests -v
 
       - name: Run room test suite
-        if: steps.scope.outputs.fast != 'true'
+        if: steps.scope.outputs.scope != 'content'
         run: python3 -m unittest discover -s plugins/s/skills/room/tests -v
 
       - name: Lint master spec library

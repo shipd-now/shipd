@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Classify a pull request's changed paths for the CI fast path.
+"""Classify a pull request's changed paths into a CI scope.
 
-Prints ``fast=true`` only when every changed path lies under an allowlisted
-planning-content directory; anything else, and any failure, prints
-``fast=false``. The script always exits 0, so a broken classifier costs time,
-never test coverage. Stdlib only.
+Prints ``scope=content`` only when every changed path lies under an
+allowlisted planning-content directory, which lets CI skip its test suites;
+anything else, and any failure, prints ``scope=full``. The script always
+exits 0, so a broken classifier costs time, never test coverage. Stdlib only.
 """
 
 import argparse
@@ -14,17 +14,24 @@ import sys
 # The one constant to widen if a directory proves safe to skip tests for.
 ALLOWED_PREFIXES = (".shipd/epics/", ".shipd/research/", ".shipd/docs/")
 
+# The two CI scopes: planning content only, or everything else.
+CONTENT = "content"
+FULL = "full"
+
 
 def classify(paths):
-    """Return True only for a non-empty list of allowlisted, clean paths."""
+    """Return CONTENT only for a non-empty list of allowlisted, clean paths.
+
+    Every other list returns FULL.
+    """
     if not paths:
-        return False
+        return FULL
     for path in paths:
         if "\\" in path or ".." in path.split("/"):
-            return False
+            return FULL
         if not path.startswith(ALLOWED_PREFIXES):
-            return False
-    return True
+            return FULL
+    return CONTENT
 
 
 def changed_paths(base, head):
@@ -49,7 +56,7 @@ def main(argv=None):
     parser.add_argument("--github-output")
     args = parser.parse_args(argv)
 
-    fast = False
+    scope = FULL
     if args.event != "pull_request":
         reason = f"event {args.event!r} is not pull_request"
     else:
@@ -59,13 +66,13 @@ def main(argv=None):
             paths = None
             reason = f"git diff failed: {exc}"
         if paths is not None:
-            fast = classify(paths)
+            scope = classify(paths)
             reason = (
                 f"all {len(paths)} changed path(s) are allowlisted"
-                if fast
+                if scope == CONTENT
                 else f"{len(paths)} changed path(s) include non-allowlisted content"
             )
-    line = f"fast={'true' if fast else 'false'}"
+    line = f"scope={scope}"
     print(f"{line} ({reason})")
     if args.github_output:
         try:

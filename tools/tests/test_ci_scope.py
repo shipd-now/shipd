@@ -1,4 +1,4 @@
-"""Tests for tools/ci_scope.py, the CI fast-path path classifier."""
+"""Tests for tools/ci_scope.py, the CI scope path classifier."""
 
 import re
 import subprocess
@@ -42,47 +42,49 @@ class ClassifyTests(unittest.TestCase):
     def setUpClass(cls):
         cls.mod = _load()
 
-    def test_epic_and_research_paths_are_fast(self):
-        self.assertTrue(
+    def test_epic_and_research_paths_are_content(self):
+        self.assertEqual(
             self.mod.classify(
                 [".shipd/epics/x/epic.md", ".shipd/research/y/report.md"]
-            )
+            ),
+            "content",
         )
 
-    def test_docs_path_is_fast(self):
-        self.assertTrue(self.mod.classify([".shipd/docs/z/doc.md"]))
+    def test_docs_path_is_content(self):
+        self.assertEqual(self.mod.classify([".shipd/docs/z/doc.md"]), "content")
 
     def test_mixed_is_full(self):
-        self.assertFalse(
+        self.assertEqual(
             self.mod.classify(
                 [
                     ".shipd/epics/x/epic.md",
                     "plugins/s/skills/build/scripts/spec_lint.py",
                 ]
-            )
+            ),
+            "full",
         )
 
     def test_verified_is_full(self):
-        self.assertFalse(self.mod.classify([".shipd/verified/x/spec.md"]))
+        self.assertEqual(self.mod.classify([".shipd/verified/x/spec.md"]), "full")
 
     def test_top_level_docs_is_full(self):
-        self.assertFalse(self.mod.classify(["docs/customise.md"]))
+        self.assertEqual(self.mod.classify(["docs/customise.md"]), "full")
 
     def test_planned_and_completed_are_full(self):
-        self.assertFalse(self.mod.classify([".shipd/planned/x/plan.md"]))
-        self.assertFalse(self.mod.classify([".shipd/completed/x/plan.md"]))
+        self.assertEqual(self.mod.classify([".shipd/planned/x/plan.md"]), "full")
+        self.assertEqual(self.mod.classify([".shipd/completed/x/plan.md"]), "full")
 
     def test_empty_list_is_full(self):
-        self.assertFalse(self.mod.classify([]))
+        self.assertEqual(self.mod.classify([]), "full")
 
     def test_dotdot_segment_is_full(self):
-        self.assertFalse(self.mod.classify([".shipd/epics/../../x.py"]))
+        self.assertEqual(self.mod.classify([".shipd/epics/../../x.py"]), "full")
 
     def test_backslash_is_full(self):
-        self.assertFalse(self.mod.classify([".shipd/epics\\x\\epic.md"]))
+        self.assertEqual(self.mod.classify([".shipd/epics\\x\\epic.md"]), "full")
 
     def test_script_itself_is_full(self):
-        self.assertFalse(self.mod.classify(["tools/ci_scope.py"]))
+        self.assertEqual(self.mod.classify(["tools/ci_scope.py"]), "full")
 
 
 class CliTests(unittest.TestCase):
@@ -107,7 +109,7 @@ class CliTests(unittest.TestCase):
         _git(repo, "add", "-A")
         _git(repo, "commit", "-q", "-m", "change")
 
-    def test_epic_only_prints_fast_true_and_writes_output(self):
+    def test_epic_only_prints_content_and_writes_output(self):
         repo = self.make_repo()
         self.commit(repo, {".shipd/epics/x/epic.md": "# x\n"})
         out = repo / "gh_output"
@@ -116,10 +118,10 @@ class CliTests(unittest.TestCase):
             "--github-output", str(out), cwd=repo,
         )
         self.assertEqual(r.returncode, 0)
-        self.assertIn("fast=true", r.stdout)
-        self.assertEqual(out.read_text().splitlines(), ["fast=true"])
+        self.assertIn("scope=content", r.stdout)
+        self.assertEqual(out.read_text().splitlines(), ["scope=content"])
 
-    def test_mixed_prints_fast_false(self):
+    def test_mixed_prints_full(self):
         repo = self.make_repo()
         self.commit(
             repo,
@@ -130,7 +132,7 @@ class CliTests(unittest.TestCase):
             cwd=repo,
         )
         self.assertEqual(r.returncode, 0)
-        self.assertIn("fast=false", r.stdout)
+        self.assertIn("scope=full", r.stdout)
 
     def test_rename_out_of_allowlist_is_full(self):
         repo = self.make_repo()
@@ -144,7 +146,7 @@ class CliTests(unittest.TestCase):
             "--event", "pull_request", "--base", "main", "--head", "HEAD",
             cwd=repo,
         )
-        self.assertIn("fast=false", r.stdout)
+        self.assertIn("scope=full", r.stdout)
 
     def test_push_event_is_full(self):
         repo = self.make_repo()
@@ -153,7 +155,7 @@ class CliTests(unittest.TestCase):
             "--event", "push", "--base", "main", "--head", "HEAD", cwd=repo
         )
         self.assertEqual(r.returncode, 0)
-        self.assertIn("fast=false", r.stdout)
+        self.assertIn("scope=full", r.stdout)
 
     def test_bad_base_ref_is_full_and_exits_zero(self):
         repo = self.make_repo()
@@ -164,11 +166,11 @@ class CliTests(unittest.TestCase):
             "--head", "HEAD", "--github-output", str(out), cwd=repo,
         )
         self.assertEqual(r.returncode, 0)
-        self.assertIn("fast=false", r.stdout)
-        self.assertEqual(out.read_text().splitlines(), ["fast=false"])
+        self.assertIn("scope=full", r.stdout)
+        self.assertEqual(out.read_text().splitlines(), ["scope=full"])
 
 CI_YML = Path(__file__).resolve().parent.parent.parent / ".github" / "workflows" / "ci.yml"
-GUARD = "if: steps.scope.outputs.fast != 'true'"
+GUARD = "if: steps.scope.outputs.scope != 'content'"
 
 
 def _steps(text):
@@ -207,9 +209,13 @@ class CiWorkflowTests(unittest.TestCase):
             "Lint docs",
             "Shell syntax checks",
             "Guard the plugin version",
+            "Check the plugin version on main",
         ):
             self.assertIn(name, by_name)
             self.assertNotIn("scope", by_name[name], f"step {name!r} is guarded")
+
+    def test_no_step_reads_the_old_output(self):
+        self.assertNotIn("outputs.fast", self.text)
 
 
 if __name__ == "__main__":
