@@ -1088,6 +1088,11 @@ def build_parser():
                    dest="request_review", metavar="AGENT",
                    help="open a review-finding task addressed to AGENT "
                         "after joining (repeatable; needs --role author)")
+    p.add_argument("--ci-reviewer", default="github-actions[bot]",
+                   dest="ci_reviewer", metavar="LOGIN",
+                   help="CI reviewer whose fix-required review of the head "
+                        "starts an author turn; empty disables (default: "
+                        "github-actions[bot]; ignored unless --role author)")
     p.set_defaults(func=None)
 
     return parser, sub.choices

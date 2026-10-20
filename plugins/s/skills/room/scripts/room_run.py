@@ -33,6 +33,10 @@ import spec_common  # noqa: E402
 PLUGIN_DIR = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
 DEFAULT_SKILLS = ("review-finding", "question", "status")
 FAILURE_REASONS = ("turn-failed", "watch-failed")
+FIX_REQUIRED_MARKER = "<!-- shipd-verdict: fix-required -->"
+SHIP_IT_MARKER = "<!-- shipd-verdict: ship-it -->"
+IDLE_WATCH_LINE = "watch: no actionable task"
+SLICE_INTERVALS = 4
 
 
 def _model_base(root):
@@ -100,6 +104,69 @@ def _head(gh, number, repo, warned):
         return ""
     head = data.get("headRefOid") if isinstance(data, dict) else None
     return head if isinstance(head, str) else ""
+
+
+def _fix_required(body):
+    """Whether ``body``'s verdict is fix-required, read as the CI gate reads
+    it: the last line that, stripped, equals a verdict marker. A marker
+    quoted anywhere else is prose, not a verdict."""
+    for line in reversed(body.splitlines()):
+        line = line.strip()
+        if line in (FIX_REQUIRED_MARKER, SHIP_IT_MARKER):
+            return line == FIX_REQUIRED_MARKER
+    return False
+
+
+def _ci_reviews(gh, repo, number, login, head, warned):
+    """The reviews by ``login`` (case-insensitive) of ``head`` whose
+    verdict line is the fix-required marker, oldest first. A failed or unparseable
+    read warns once (tracked in ``warned``) and returns ``[]``."""
+    rc, out, _err = gh(["api", "--paginate",
+                        "repos/%s/pulls/%d/reviews" % (repo, number)])
+    reviews = None
+    if rc == 0:
+        # ``--paginate`` without ``--slurp`` prints one JSON array per page.
+        reviews, decoder, pos, text = [], json.JSONDecoder(), 0, out or ""
+        try:
+            while True:
+                while pos < len(text) and text[pos].isspace():
+                    pos += 1
+                if pos >= len(text):
+                    break
+                page, pos = decoder.raw_decode(text, pos)
+                if not isinstance(page, list):
+                    raise ValueError("not a review list")
+                reviews.extend(page)
+        except ValueError:
+            reviews = None
+    if reviews is None:
+        if "ci-reviews" not in warned:
+            warned.add("ci-reviews")
+            sys.stderr.write("warning: could not read the reviews of %s#%d\n"
+                             % (repo, number))
+        return []
+    wanted = login.lower()
+    found = []
+    for review in reviews:
+        if not isinstance(review, dict):
+            continue
+        user = review.get("user")
+        who = user.get("login") if isinstance(user, dict) else None
+        body = review.get("body")
+        if isinstance(who, str) and who.lower() == wanted and \
+                review.get("commit_id") == head and \
+                isinstance(body, str) and _fix_required(body):
+            found.append(review)
+    return found
+
+
+def _ci_prompt(url, review, login, head):
+    return ("The CI reviewer @%s asked for fixes on %s at head %s: %s. Read "
+            "that review and its inline comments with gh. For each finding, "
+            "fix it, commit, and push to the pull request branch, or reply "
+            "on the pull request with the concrete reason it is wrong. Do "
+            "not approve or merge."
+            % (login, url, head[:7], review.get("html_url")))
 
 
 def _first_to(task):
@@ -249,48 +316,80 @@ def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
     reason = None
     closed = None
     failure = None
+    ci = opts.role == "author" and bool(opts.ci_reviewer)
+    handled = set()
+    check_ci = ci
     while reason is None:
         remaining = opts.budget - (clock() - start)
-        if remaining <= 0:
+        review = None
+        if check_ci:
+            check_ci = False
+            review = _next_ci_review(gh, repo, number, opts.ci_reviewer,
+                                     handled, warned)
+        if review is None and remaining <= 0:
             reason = "budget"
             break
-        watch_ns = argparse.Namespace(
-            pr=opts.pr, agent=agent, root=opts.root, repo=opts.repo,
-            max_rounds=opts.max_rounds, since=cursor,
-            interval=opts.interval, timeout=remaining, once=False)
-        captured = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(captured):
-                room.cmd_watch(watch_ns, gh, sleep, clock, parser)
-        except room.RoomError as exc:
-            reason, failure = "watch-failed", str(exc)
-            break
-        lines = []
-        for text in captured.getvalue().splitlines():
+        tasks = []
+        if review is not None:
+            turns += 1
+            sys.stderr.write("room run: turn %d on CI review %s by %s\n" % (
+                turns, review.get("id"), opts.ci_reviewer))
+            turn_prompt = _ci_prompt(url, review, opts.ci_reviewer,
+                                     review.get("commit_id") or "")
+        else:
+            slice_timeout = min(remaining, opts.interval * SLICE_INTERVALS) \
+                if ci else remaining
+            watch_ns = argparse.Namespace(
+                pr=opts.pr, agent=agent, root=opts.root, repo=opts.repo,
+                max_rounds=opts.max_rounds, since=cursor,
+                interval=opts.interval, timeout=slice_timeout, once=False)
+            captured = io.StringIO()
+            quiet = io.StringIO()
             try:
-                obj = json.loads(text)
-            except ValueError:
-                continue
-            if isinstance(obj, dict):
-                lines.append(obj)
-        closed_line = next((l for l in lines if "closed" in l), None)
-        tasks = [l for l in lines if "closed" not in l]
-        if closed_line is not None:
-            reason, closed = "closed", closed_line["closed"]
-            cursor = _line_cursor(closed_line, cursor)
-            break
-        if not tasks:
-            reason = "budget"
-            break
-        turns += 1
-        sys.stderr.write("room run: turn %d on task(s) %s\n" % (
-            turns, ", ".join("#%s" % t.get("task") for t in tasks)))
+                with contextlib.redirect_stdout(captured):
+                    if ci:
+                        with contextlib.redirect_stderr(quiet):
+                            room.cmd_watch(watch_ns, gh, sleep, clock, parser)
+                    else:
+                        room.cmd_watch(watch_ns, gh, sleep, clock, parser)
+            except room.RoomError as exc:
+                reason, failure = "watch-failed", str(exc)
+                break
+            finally:
+                for text in quiet.getvalue().splitlines():
+                    if not text.startswith(IDLE_WATCH_LINE):
+                        sys.stderr.write(text + "\n")
+            lines = []
+            for text in captured.getvalue().splitlines():
+                try:
+                    obj = json.loads(text)
+                except ValueError:
+                    continue
+                if isinstance(obj, dict):
+                    lines.append(obj)
+            closed_line = next((l for l in lines if "closed" in l), None)
+            tasks = [l for l in lines if "closed" not in l]
+            if closed_line is not None:
+                reason, closed = "closed", closed_line["closed"]
+                cursor = _line_cursor(closed_line, cursor)
+                break
+            if not tasks:
+                if ci:
+                    check_ci = True
+                    continue
+                reason = "budget"
+                break
+            turns += 1
+            sys.stderr.write("room run: turn %d on task(s) %s\n" % (
+                turns, ", ".join("#%s" % t.get("task") for t in tasks)))
+            turn_prompt = prompt
         before = _head(gh, number, repo, warned) \
             if opts.role == "author" else ""
-        ok, why, new_id = runner(prompt, root, session_id, turns - 1)
+        ok, why, new_id = runner(turn_prompt, root, session_id, turns - 1)
         if new_id:
             session_id = new_id
-        cursor = _line_cursor(tasks[-1], cursor)
+        if tasks:
+            cursor = _line_cursor(tasks[-1], cursor)
         if ok and opts.role == "author":
             after = _head(gh, number, repo, warned)
             if before and after and before != after:
@@ -312,6 +411,21 @@ def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
         cli_common.err("%s: %s" % (reason, failure))
         return 1
     return 0
+
+
+def _next_ci_review(gh, repo, number, login, handled, warned):
+    """The newest unhandled fix-required review of the current head by
+    ``login``, with every matching review marked handled; ``None`` when
+    there is none."""
+    head = _head(gh, number, repo, warned)
+    if not head:
+        return None
+    fresh = [r for r in _ci_reviews(gh, repo, number, login, head, warned)
+             if r.get("id") not in handled]
+    if not fresh:
+        return None
+    handled.update(r.get("id") for r in fresh)
+    return fresh[-1]
 
 
 def _line_cursor(line, default):

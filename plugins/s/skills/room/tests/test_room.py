@@ -46,8 +46,10 @@ class FakeGh:
     def __init__(self, number=7, repo="o/r", comments=None,
                  review_comments=None, pages=1, fail=None, state="OPEN",
                  delete_fail=False, login="bot", user_fail=False,
-                 threads=None, pr_author="pr-author", head=None):
+                 threads=None, pr_author="pr-author", head=None,
+                 reviews=None):
         self.head = head
+        self.reviews = [dict(r) for r in (reviews or [])]
         self.pr_author = pr_author
         self.threads = [dict(t) for t in (threads or [])]
         self.login = login
@@ -200,6 +202,12 @@ class FakeGh:
                 return 1, "", "no such thread"
             return 0, json.dumps({"data": {"repository": {"pullRequest": {
                 "reviewThreads": {"nodes": self.threads}}}}}), ""
+        if "repos/%s/pulls/%d/reviews" % (self.repo, self.number) in args:
+            if "--paginate" not in args:
+                raise AssertionError("reviews read without --paginate")
+            return 0, "".join(json.dumps(self.reviews[i:i + 2])
+                              for i in range(0, len(self.reviews), 2))\
+                or "[]", ""
         issue_list = "repos/%s/issues/%d/comments?per_page=100" % (
             self.repo, self.number)
         review_list = "repos/%s/pulls/%d/comments?per_page=100" % (

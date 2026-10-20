@@ -65,6 +65,28 @@ re-review task. It goes to each reviewer who filed a finding to the author and
 to each agent that `--request-review` named. Each reviewer gets one task
 per head, so a rerun does not repeat it.
 
+## Act on the CI reviewer's findings
+
+An author run also reads the pull request's reviews. When the CI reviewer
+posts a "Fix required" review of the current head, the run spends one turn on
+it. The prompt names the review and tells the author to fix the findings and
+push, or to reply with the reason a finding is wrong. The turn counts toward
+`--max-turns`.
+
+- The review must come from the `--ci-reviewer` login, belong to the current
+  head, and carry the fix-required marker as its verdict line. The run reads
+  the verdict as the CI gate does: the last line that is a verdict marker. A
+  marker quoted in prose, "Ship it" reviews, and comments start nothing.
+- The run handles each review once.
+- A pushed fix re-runs the CI reviewer and opens the re-review tasks.
+- A reply does not clear the CI verdict. Only a new push re-runs the CI
+  reviewer, and a person decides otherwise.
+
+To watch for these reviews, the run waits in slices of four `--interval`
+periods and checks the reviews between slices. `--ci-reviewer ""` turns this
+off and keeps one wait over the whole budget. Reviewer and `ci` runs ignore
+the flag.
+
 ## Set the limits
 
 | Flag | Default | Meaning |
@@ -76,6 +98,7 @@ per head, so a rerun does not repeat it.
 | `--turn-timeout` | `1800` | Seconds one turn may run. |
 | `--interval` | `30` | Seconds between polls. |
 | `--request-review` | none | Open a review task for this agent. Repeatable. Author role only. |
+| `--ci-reviewer` | `github-actions[bot]` | The CI reviewer whose fix-required review starts an author turn. Empty disables. Author role only. |
 
 ## Read the result
 
