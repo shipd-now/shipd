@@ -3612,6 +3612,29 @@ class CopilotRoomWakeVerbTest(CopilotVerbCase):
         with open(self.path(relative), "rb") as fh:
             return fh.read()
 
+    def bundled_room(self, *argv):
+        """Run the installed ``room.py`` isolated (-I -B) from the root."""
+        return subprocess.run(
+            [sys.executable, "-I", "-B", self.path(ROOM_ROOM_PY)]
+            + list(argv),
+            cwd=self.root, capture_output=True, text=True, timeout=60)
+
+    def test_every_wake_verb_loads_from_the_bundle(self):
+        self.install_room()
+        for verb in ("join", "list", "whoami", "message", "close", "watch"):
+            result = self.bundled_room(verb, "--help")
+            self.assertEqual(result.returncode, 0, (verb, result.stderr))
+            self.assertNotIn("Traceback", result.stderr, verb)
+
+    def test_bundled_run_fails_with_one_error_line(self):
+        self.install_room()
+        result = self.bundled_room("run", "1", "--role", "reviewer")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
+        self.assertTrue(result.stderr.startswith("Error:"), result.stderr)
+        self.assertIn("shipd room run", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_add_room_installs_the_wake_set_only(self):
         self.install_room()
         self.assertEqual(self.tree(), set(ROOM_MANAGED))
