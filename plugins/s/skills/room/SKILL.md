@@ -40,6 +40,15 @@ plugin snapshot the session is running.
 Every verb below runs as `"${CLAUDE_PLUGIN_ROOT}/bin/shipd" room <verb> …`;
 the steps write it as `shipd room <verb>` for short.
 
+## Harness plan mode
+
+**Harness plan mode never replaces this skill's output.** When the session
+is in Claude Code plan mode, run only this skill's read-only steps. Stop
+before the first write and ask the user to exit plan mode and re-invoke.
+Never write the harness plan file, call `ExitPlanMode`, or mix in plan
+mode's outputs. Details:
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/harness-plan-mode.md`.
+
 ## Who you are in the room
 
 The verbs resolve the acting agent's name themselves: `--agent`, then the

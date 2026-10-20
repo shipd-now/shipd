@@ -29,6 +29,15 @@ v<version>` in your first user-visible status sentence (e.g. "shipd:pr
 v0.6.307 — writing the PR for change/add-x"), so the user can always see which
 plugin snapshot the session is running.
 
+## Harness plan mode
+
+**Harness plan mode never replaces this skill's output.** When the session
+is in Claude Code plan mode, run only this skill's read-only steps. Stop
+before the first write and ask the user to exit plan mode and re-invoke.
+Never write the harness plan file, call `ExitPlanMode`, or mix in plan
+mode's outputs. Details:
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/harness-plan-mode.md`.
+
 ## The flow
 
 1. **Read the change.** On a `change/<slug>` branch, read the change with

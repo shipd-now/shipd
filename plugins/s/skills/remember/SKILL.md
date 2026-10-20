@@ -54,6 +54,15 @@ An **optional invocation argument** carries the preference to capture (e.g.
 "prefers vim over vscode", or a subject keyword). When present, extract candidates
 from it; when absent, extract candidates from the session (see the flow below).
 
+## Harness plan mode
+
+**Harness plan mode never replaces this skill's output.** When the session
+is in Claude Code plan mode, run only this skill's read-only steps. Stop
+before the first write and ask the user to exit plan mode and re-invoke.
+Never write the harness plan file, call `ExitPlanMode`, or mix in plan
+mode's outputs. Details:
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/harness-plan-mode.md`.
+
 ## 1. Resolve the personal store
 
 Resolve the personal memory store and its health first:
