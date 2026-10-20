@@ -117,7 +117,7 @@ them as its last three lines.
 
 | Check | `ok` when |
 | --- | --- |
-| `protection` | the default branch requires the `semantic-review` status context |
+| `protection` | the default branch requires the `semantic-review` status context; without admin access, GitHub hides that detail, so `ok` says the branch is protected and the details need admin access |
 | `automerge` | the repository allows auto-merge, so `gh pr merge --auto` can arm |
 | `copilot-secret` | `COPILOT_GITHUB_TOKEN` is set, so runs take the CLI reviewer mode |
 

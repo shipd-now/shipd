@@ -2529,8 +2529,9 @@ class DoctorCheckTest(unittest.TestCase):
         probes = {"branches/main/protection": protection_response,
                   "rules/branches/main":
                       self.ok_json([]) if rules is None else rules}
-        if branch is not None:
-            probes["branches/main"] = branch
+        # The single-branch probe answers 404 unless a test supplies a
+        # payload: an unreadable fallback leaves every outcome as it was.
+        probes["branches/main"] = self.HTTP_404 if branch is None else branch
         context, run = self.resolve_context(
             self.gh_responses(repo or self.repo_payload(), probes))
         return shipd.check_protection(context, run=run)
@@ -2595,6 +2596,35 @@ class DoctorCheckTest(unittest.TestCase):
             self.HTTP_403,
             repo=self.repo_payload(permissions={"admin": False}),
             branch=self.ok_json({"name": "main", "protected": False}))
+        self.assertEqual((level, name), ("warn", "protection"))
+        self.assertIn("not protected", detail)
+
+    def test_a_404_on_a_protected_branch_is_not_called_unprotected(self):
+        """A token without admin gets 404, not 403, from the protection read
+        on a protected branch; the branch payload's ``protected: true`` is
+        the answer, so the line is ``ok`` and names the unreadable details."""
+        level, name, detail = self.protection(
+            self.HTTP_404,
+            repo=self.repo_payload(permissions={"admin": False}),
+            branch=self.ok_json({"name": "main", "protected": True}))
+        self.assertEqual((level, name), ("ok", "protection"), detail)
+        self.assertIn("details need admin access", detail)
+        self.assertIn("`main`", detail)
+        self.assertNotIn("not protected", detail)
+        self.assertIn("api repos/%s/branches/main" % self.NWO, self.gh_calls)
+
+    def test_a_404_on_an_unprotected_branch_still_warns(self):
+        level, name, detail = self.protection(
+            self.HTTP_404,
+            repo=self.repo_payload(permissions={"admin": False}),
+            branch=self.ok_json({"name": "main", "protected": False}))
+        self.assertEqual((level, name), ("warn", "protection"))
+        self.assertIn("not protected", detail)
+        self.assertIn("lacks admin permission", detail)
+
+    def test_a_404_with_an_unreadable_branch_payload_still_warns(self):
+        level, name, detail = self.protection(
+            self.HTTP_404, branch=self.HTTP_403)
         self.assertEqual((level, name), ("warn", "protection"))
         self.assertIn("not protected", detail)
 
@@ -3054,6 +3084,7 @@ class DoctorCheckTest(unittest.TestCase):
                               permissions={"admin": False}),
             {"branches/main/protection": self.HTTP_404,
              "rules/branches/main": self.ok_json([]),
+             "branches/main": self.HTTP_404,
              "actions/secrets": self.ok_json({"secrets": []})})
         context, run = self.resolve_context(responses)
         results = [shipd.check_protection(context, run=run),

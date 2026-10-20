@@ -907,10 +907,17 @@ when a ruleset protects the branch (the rules list is non-empty) or classic
 protection does, and the union omits `semantic-review`, it SHALL `warn`
 naming the missing context and, for a ruleset, saying so; only when neither
 source protects the branch (classic 404 and an empty rules list) SHALL it
-`warn` naming the unprotected default branch. When the classic probe is 403
-(no admin) the check SHALL consult the rules list before the branches
-listing's `protected` boolean, and a rules-list probe that fails SHALL leave
-the classic outcome standing, never a false alarm.
+`warn` naming the unprotected default branch, and then only when the
+single-branch payload does not report the branch `protected: true`. When the
+classic probe is 403 or 404, the check SHALL consult the rules list before the
+single-branch payload's `protected` boolean, and a rules-list probe that fails
+SHALL leave the classic outcome standing, never a false alarm. If the classic
+probe is 404, the rules list decides nothing, and the single-branch payload
+reports `protected: true`, then the check SHALL report `ok` saying the branch
+is protected with its details needing admin access and its required status
+contexts not checked, and SHALL NOT say the branch is not protected; a payload
+reporting `protected: false`, or one that cannot be read, SHALL leave the
+unprotected warning standing.
 
 The `automerge` check SHALL report `ok` when the repository payload's
 `allow_auto_merge` is `true`; when it is `false` and the resolved `pr-mode`
@@ -971,6 +978,19 @@ being on is a consented setting, so neither state is a problem to report.
   branches listing reports the default branch `protected: true`
 - **THEN** the `protection` line begins `ok` and notes the required contexts
   could not be verified without admin
+
+#### Scenario: A 404 on a protected branch is not called unprotected
+- **WHEN** `shipd doctor` runs where the protection probe returns 404, the
+  effective branch rules are empty, and the single-branch payload reports the
+  default branch `protected: true`
+- **THEN** the `protection` line begins `ok`, says the details need admin
+  access, and does not say the branch is not protected
+
+#### Scenario: A 404 on an unprotected branch still warns
+- **WHEN** `shipd doctor` runs where the protection probe returns 404, the
+  effective branch rules are empty, and the single-branch payload reports the
+  default branch `protected: false`
+- **THEN** a `warn protection — ` line names the unprotected default branch
 
 #### Scenario: Draft pr-mode waives the automerge warning
 - **WHEN** `shipd doctor` runs where `allow_auto_merge` is `false` and the

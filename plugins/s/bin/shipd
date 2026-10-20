@@ -1194,10 +1194,20 @@ def check_protection(context, run=_gh_run):
                 "`semantic-review` status context — the gate's verdict is "
                 "ignored at merge time%s"
                 % (branch, context["nwo"], _admin_note(context)))
-    if status == 404:
-        return ("warn", "protection", unprotected + _admin_note(context))
-    if status == 403:
+    if status in (403, 404):
+        # Neither status is proof the branch is unprotected: GitHub answers a
+        # token without admin permission with 404 (or 403) on the protection
+        # read even where protection exists, while the single-branch payload
+        # still reports the ``protected`` boolean.
         protected = _branch_protected(context, branch, run=run)
+        if status == 404:
+            if protected:
+                return ("ok", "protection",
+                        "`%s` is protected (details need admin access) — its "
+                        "required status contexts were not checked: the "
+                        "protection details returned HTTP 404 on %s"
+                        % (branch, context["nwo"]))
+            return ("warn", "protection", unprotected + _admin_note(context))
         if protected is None:
             return ("ok", "protection",
                     "could not be verified: reading `%s`'s protection needs "
