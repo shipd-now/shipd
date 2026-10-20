@@ -8,6 +8,7 @@ Every GitHub call goes through ``FakeGh`` and every turn through a
 import json
 import os
 import sys
+import tempfile
 import unittest
 import unittest.mock
 
@@ -768,6 +769,40 @@ class RunAnyPushRereviewTest(RunTestBase):
         self.assertEqual(code, 0, err)
         self.assertEqual(request_posts(gh), [])
         self.assertEqual(runner.calls, [])
+
+
+class RunMissingModuleTest(RunTestBase):
+    def test_missing_room_run_fails_with_one_error_line(self):
+        gh = FakeGh()
+        with unittest.mock.patch.dict(sys.modules, {"room_run": None}):
+            code, out, err = self.run_verb(gh, "7", "--role", "reviewer")
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertEqual(len(err.splitlines()), 1, err)
+        self.assertTrue(err.startswith("Error:"), err)
+        self.assertIn("room_run", err)
+        self.assertIn("shipd room run", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(gh.calls, [])
+
+    def test_a_genuine_import_bug_in_room_run_propagates(self):
+        import room
+        saved_path = list(sys.path)
+        saved_mod = sys.modules.pop("room_run", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                with open(os.path.join(tmp, "room_run.py"), "w") as fh:
+                    fh.write("import shipd_no_such_module_xyz\n")
+                sys.path.insert(0, tmp)
+                with self.assertRaises(ModuleNotFoundError) as ctx:
+                    room.main(["run", "7", "--role", "reviewer",
+                               "--root", self.root], gh=FakeGh())
+            self.assertEqual(ctx.exception.name, "shipd_no_such_module_xyz")
+        finally:
+            sys.path[:] = saved_path
+            sys.modules.pop("room_run", None)
+            if saved_mod is not None:
+                sys.modules["room_run"] = saved_mod
 
 
 if __name__ == "__main__":

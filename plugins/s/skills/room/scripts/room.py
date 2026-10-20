@@ -70,6 +70,9 @@ class RoomError(Exception):
     """A fatal room outcome, reported once as an ``Error:`` line (exit 1)."""
 
 
+RUN_MODULES = ("room_run", "session_driver")
+
+
 # ---------------------------------------------------------------------------
 # The gh seam
 # ---------------------------------------------------------------------------
@@ -1138,7 +1141,15 @@ def main(argv=None, gh=None, sleep=time.sleep, clock=time.monotonic,
         if opts.verb == "watch":
             return cmd_watch(opts, gh, sleep, clock, verbs["watch"])
         if opts.verb == "run":
-            import room_run
+            try:
+                import room_run
+            except ImportError as exc:
+                if exc.name not in RUN_MODULES:
+                    raise
+                raise RoomError(
+                    "`run` needs %s.py, which this copy of room.py lacks "
+                    "(the room wake bundle omits it); run it locally with "
+                    "`shipd room run`" % exc.name)
             return room_run.cmd_run(opts, verbs["run"], gh, runner,
                                     sleep, clock, preflight=preflight)
         return opts.func(opts, verbs[opts.verb], gh)
