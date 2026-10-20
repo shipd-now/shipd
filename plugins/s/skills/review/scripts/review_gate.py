@@ -13,6 +13,12 @@ Subcommands:
        [--model <tier>]        status on the PR's head SHA; the disposition
                               scope selects the status mapping and both
                               options are recorded in the summary
+       [--status set|off|auto] `off` sets no status and runs no fast-pass;
+                              `auto` is `off` where the CI gate workflow
+                              exists at the base commit (or cannot be read)
+       [--room-agent <name>]  speak as that room agent: finding tasks and the
+       [--room-to <name>]     review heading name it, the review body carries
+                              the full summary; --room-to addresses each task
   reply <pr> <comment-id>     post a reply onto the finding thread rooted at
        --body <text>          the given review comment (REST in_reply_to)
   autoreply <pr>              post the canonical policy reply onto every
@@ -83,6 +89,9 @@ BRAND_LINE = "**☕ shipd** semantic review"
 # skill an anchored finding's task asks a picker to have.
 ROOM_AGENT = "semantic-review"
 ROOM_SKILL = "review-finding"
+# The CI gate workflow whose presence at the PR's base commit means the gate,
+# not this poster, owns the `semantic-review` status (`--status auto`).
+GATE_WORKFLOW_PATH = ".github/workflows/copilot-review-gate.yml"
 PLUGIN_MANIFEST = os.path.normpath(
     os.path.join(HERE, "..", "..", "..", ".claude-plugin", "plugin.json"))
 
@@ -725,10 +734,12 @@ def _plugin_version():
         return ""
 
 
-def _room(repo, number):
-    """The room ``post`` threads to every renderer: the PR's context id and
-    the gate's fixed agent name."""
-    return {"context": "%s#%d" % (repo, number), "agent": ROOM_AGENT}
+def _room(repo, number, agent=ROOM_AGENT, to=None):
+    """The room ``post`` threads to every renderer: the PR's context id, the
+    speaking agent (the gate's fixed name unless ``--room-agent`` names one)
+    and, where ``--room-to`` names one, the agent each finding task is
+    addressed to."""
+    return {"context": "%s#%d" % (repo, number), "agent": agent, "to": to}
 
 
 def _room_card_line(room):
@@ -744,7 +755,7 @@ def _room_card_line(room):
 def _room_finding_line(room, f, path, line, digest):
     """An anchored finding's Message marker line: an ``input-required``
     round-1 task for any agent with the `review-finding` skill, addressed to
-    no one. No ``taskId`` — the review POST returns no per-comment ids, so
+    no one (or to ``room["to"]`` when ``--room-to`` named an agent). No ``taskId`` — the review POST returns no per-comment ids, so
     ``build_tasks`` takes the inline comment's own id. The data part carries
     this site's identity ``digest`` so a picker needs no prose parsing."""
     msg = room_schema.Message(
@@ -755,8 +766,9 @@ def _room_finding_line(room, f, path, line, digest):
                          "line": line, "hash": digest, "why": f.get("why"),
                          "fix": f.get("fix")}}),
         context_id=room["context"], agent=room["agent"],
-        metadata={"round": 1, "skill": ROOM_SKILL,
-                  "state": "input-required"})
+        metadata=dict({"round": 1, "skill": ROOM_SKILL,
+                       "state": "input-required"},
+                      **({"to": room["to"]} if room.get("to") else {})))
     return room_schema.render_marker(
         room_schema.MESSAGE_MARKER, room_schema.message_to_dict(msg))
 
@@ -906,25 +918,30 @@ def _review_event(state, login, author):
 
 
 def _post_review(gh, repo, number, sha, anchored, event, login,
-                 commentable=None, room=None):
+                 commentable=None, room=None, summary=None):
     """Post one review of ``event`` with the ``anchored`` inline comments, each
     carrying its finding's committable suggestion where ``commentable`` — the
     per-path RIGHT-side line sets ``post`` already computed — admits one.
     ``login`` is the acting login for the heading. Given a ``room``, every
     inline comment opens a PR-room task. Returns True on success, False on
-    rejection (e.g. a 422 from an un-anchorable line)."""
+    rejection (e.g. a 422 from an un-anchorable line). The heading speaks as
+    the room's agent; given ``summary`` (the rendered full summary, minus its
+    hidden marker line) the body is the heading, a blank line, then that
+    summary, in place of the pointer."""
     comments = [
         _review_comment(f, p, ln,
                         None if commentable is None
                         else commentable.get(p, set()),
                         location_index=idx, room=room)
         for f, p, ln, idx in anchored]
-    heading = "### " + room_schema.speaker_heading(ROOM_AGENT, "reviewer",
-                                                    login, brand=True)
+    heading = "### " + room_schema.speaker_heading(
+        (room or {}).get("agent") or ROOM_AGENT, "reviewer", login,
+        brand=True)
     pointer = ("Semantic review: %d inline comments. Full report in the "
                "summary comment." % len(comments) if comments else
                "Semantic review posted. Full report in the summary comment.")
-    body = "%s\n%s" % (heading, pointer)
+    body = ("%s\n\n%s" % (heading, summary) if summary
+            else "%s\n%s" % (heading, pointer))
     payload = json.dumps({"commit_id": sha, "event": event,
                           "body": body, "comments": comments})
     rc, _out, _err = gh(["api", "repos/%s/pulls/%d/reviews" % (repo, number),
@@ -932,7 +949,32 @@ def _post_review(gh, repo, number, sha, anchored, event, login,
     return rc == 0
 
 
-def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
+def _gate_workflow_present(gh, repo, base_sha):
+    """Whether the CI gate workflow exists at the PR's base commit:
+    ``"present"`` (the read succeeded), ``"absent"`` (``HTTP 404``) or
+    ``"unreadable"`` (any other failure), with the failure text second."""
+    rc, _out, err = gh(["api", "repos/%s/contents/%s?ref=%s"
+                        % (repo, GATE_WORKFLOW_PATH, base_sha)])
+    if rc == 0:
+        return "present", ""
+    if "HTTP 404" in (err or ""):
+        return "absent", ""
+    return "unreadable", (err or "").strip()
+
+
+def _review_body_summary(text):
+    """``render_summary`` text without its hidden marker line and the blank
+    line after it, for use as a review body."""
+    lines = text.splitlines()
+    if lines and lines[0] == MARKER:
+        lines = lines[1:]
+        if lines and not lines[0].strip():
+            lines = lines[1:]
+    return "\n".join(lines) + "\n"
+
+
+def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
+         status="set", room_agent=None, room_to=None):
     """Publish ``review`` (a parsed /s:review --json object) to pull request
     ``pr`` through the ``gh`` seam. ``disposition`` is the acting review-stage
     scope (see ``status_state``) and ``model`` the tier the reviewing session
@@ -941,7 +983,12 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
     base through; it defaults to the real ``git`` binary (``_default_git``),
     resolved lazily here rather than frozen as the parameter's own default so
     a test can patch the module attribute instead of threading the fake
-    through every call. Returns a small result dict."""
+    through every call. ``status`` is ``set`` (today's behaviour), ``off``
+    (set no status, run no fast-pass) or ``auto`` (``off`` where the CI gate
+    workflow exists at the base commit or cannot be read, else ``set``).
+    ``room_agent`` makes the finding tasks and the review heading speak as
+    that agent and puts the full summary in the review body; ``room_to``
+    addresses each finding task to an agent. Returns a small result dict."""
     git = git or _default_git
     number, base_sha, sha, pr_url = _resolve_pr(gh, pr)
     pr_merge_base = _pr_merge_base(git, base_sha, sha)
@@ -956,8 +1003,23 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
               "but the review's endpoints.merge_base is %r"
               % (pr_merge_base, payload_merge_base))
     repo = _resolve_repo(gh)
-    # The PR room every summary upsert and review POST below carries.
+    # The PR room every summary upsert below carries; the reviews' own room
+    # speaks as ``--room-agent`` while the summary card keeps the gate's name.
     room = _room(repo, number)
+    review_room = (_room(repo, number, room_agent, room_to)
+                   if room_agent else room)
+    skip_reason = None
+    if status == "off":
+        skip_reason = "--status off"
+    elif status == "auto":
+        found, detail = _gate_workflow_present(gh, repo, base_sha)
+        if found == "present":
+            skip_reason = "gate workflow present"
+        elif found == "unreadable":
+            skip_reason = "gate workflow unreadable"
+            out("warning: could not read %s at %s (%s); leaving the "
+                "semantic-review status alone"
+                % (GATE_WORKFLOW_PATH, base_sha[:7], detail or "no error"))
     files = _pr_files(gh, repo, number)
     commentable = {f.get("filename"): commentable_lines(f.get("patch") or "")
                    for f in files}
@@ -972,8 +1034,9 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
         gh, repo, number,
         render_summary(review, unanchored, disposition, model, files,
                        room=room, head=sha, earlier=earlier))
-    _set_status(gh, repo, sha, state,
-                _status_description(review, disposition), comment_url)
+    if skip_reason is None:
+        _set_status(gh, repo, sha, state,
+                    _status_description(review, disposition), comment_url)
     out("summary comment: %s" % (comment_url or "(created)"))
 
     login = _acting_login(gh)
@@ -991,8 +1054,12 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
         # finding is already folded here, suggestion or not — and the same
         # sets it consulted then decide whether a suggestion's range is
         # committable, rather than a second anchoring pass over the diff.
+        body_summary = (
+            _review_body_summary(render_summary(
+                review, unanchored, disposition, model, files))
+            if room_agent else None)
         if _post_review(gh, repo, number, sha, anchored, event, login,
-                        commentable, room=room):
+                        commentable, room=review_room, summary=body_summary):
             submitted = event
         else:
             # An inline review was rejected: fold every finding into the
@@ -1006,12 +1073,16 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
                     render_summary(review, findings, disposition, model,
                                    files, room=room, head=sha,
                                    earlier=earlier))
+            if room_agent and anchored:
+                body_summary = _review_body_summary(render_summary(
+                    review, findings, disposition, model, files))
             if _post_review(gh, repo, number, sha, [], event, login,
-                            room=room):
+                            room=review_room, summary=body_summary):
                 submitted = event
             elif event != NEUTRAL_EVENT:
                 if _post_review(gh, repo, number, sha, [], NEUTRAL_EVENT,
-                                login, room=room):
+                                login, room=review_room,
+                                summary=body_summary):
                     submitted = NEUTRAL_EVENT
                     out("review decision %s was not recorded; submitted a "
                         "comment review instead" % event)
@@ -1022,7 +1093,9 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
     # Fast-pass auto-merge logic
     fast_pass_armed = False
     fast_pass_outcome_line = None
-    if fast_pass_eligible(review):
+    if skip_reason is not None:
+        pass
+    elif fast_pass_eligible(review):
         # Check if SHIPD_FAST_PASS variable is set
         rc, _, _ = gh(["variable", "get", "SHIPD_FAST_PASS"])
         if rc == 0:
@@ -1049,11 +1122,14 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None):
                        fast_pass_outcome=fast_pass_outcome_line,
                        room=room, head=sha, earlier=earlier))
 
-    out("semantic-review status: %s" % state)
+    if skip_reason is None:
+        out("semantic-review status: %s" % state)
+    else:
+        out("semantic-review status: not set (%s)" % skip_reason)
     return {"state": state, "summary_url": comment_url,
             "anchored": len(anchored), "unanchored": len(unanchored),
             "disposition": disposition, "fast_pass_armed": fast_pass_armed,
-            "review_event": submitted}
+            "review_event": submitted, "status_set": skip_reason is None}
 
 
 def _enabled(value):
@@ -1459,7 +1535,9 @@ def _load_review(src):
 def _cmd_post(args, gh, git=None):
     review = _load_review(args.from_)
     result = post(args.pr, review, gh, out=lambda m: print(m, file=sys.stderr),
-                  disposition=args.disposition, model=args.model, git=git)
+                  disposition=args.disposition, model=args.model, git=git,
+                  status=args.status, room_agent=args.room_agent,
+                  room_to=args.room_to)
     print(json.dumps(result))
     return 0
 
@@ -1512,6 +1590,18 @@ def main(argv=None, gh=None):
     p.add_argument("--model", default=None,
                    help="the model tier the reviewing session ran on, recorded "
                         "verbatim in the summary comment")
+    p.add_argument("--status", choices=("set", "off", "auto"), default="set",
+                   help="set: set the semantic-review status (default); off: "
+                        "set none and run no fast-pass; auto: off where the "
+                        "CI gate workflow exists at the PR's base commit (or "
+                        "cannot be read), else set")
+    p.add_argument("--room-agent", default=None,
+                   help="speak as this room agent: finding tasks and the "
+                        "review heading name it, and the review body carries "
+                        "the full summary")
+    p.add_argument("--room-to", default=None,
+                   help="address each finding task to this room agent "
+                        "(needs --room-agent)")
     p.set_defaults(func=_cmd_post)
 
     rp = sub.add_parser("reply", help="reply onto a finding thread")
@@ -1554,6 +1644,8 @@ def main(argv=None, gh=None):
     pv.set_defaults(func=_cmd_prior)
 
     args = parser.parse_args(argv)
+    if args.cmd == "post" and args.room_to and not args.room_agent:
+        parser.error("--room-to needs --room-agent")
     try:
         return args.func(args, gh)
     except ReviewGateError as exc:

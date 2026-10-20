@@ -75,6 +75,17 @@ comments and the same event. If that is rejected too, it submits a body-only
 `COMMENT` review and prints that the decision was not recorded. The result
 carries `review_event`, the event actually submitted, or `null`.
 
+## Room-reviewer flags
+
+`review_gate.py post` takes three optional flags for an agent that reviews
+through the pull request's room. A post without them behaves as before.
+
+| flag | effect |
+|---|---|
+| `--status set\|off\|auto` | `set` (default) sets the `semantic-review` status and runs fast-pass. `off` sets no status, makes no fast-pass or merge call, and prints `semantic-review status: not set (<reason>)`. The review event still follows the status the disposition would set. `auto` reads `.github/workflows/copilot-review-gate.yml` at the base commit once. Exit 0 means the CI gate owns the status, so `auto` acts as `off`. `HTTP 404` means no gate, so `auto` acts as `set`. Any other failure acts as `off` and prints one warning, so an unreadable repository never has its gate's status overwritten. |
+| `--room-agent <name>` | Finding tasks speak as `<name>`, and the review heading names it. The review body is the heading and the full summary: brand line, verdict, findings table, additional findings, and the `Reviewed` footer. The body carries no hidden marker and no Earlier-reviews block. The shared summary comment is still edited in place, and its card still names `semantic-review`. |
+| `--room-to <name>` | Each finding task is addressed to `<name>`. The flag needs `--room-agent`; without it the poster exits `2`. |
+
 ## The `lint` configuration key
 
 `lint` is an optional top-level key in `.shipd-config.json`. It configures the

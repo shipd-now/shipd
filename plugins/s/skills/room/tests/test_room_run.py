@@ -535,6 +535,28 @@ class RunCiReviewTest(RunTestBase):
         self.assertEqual(summary["turns"], 1)
         self.assertEqual(summary["reason"], "budget")
 
+    BRANDED = "**\u2615 shipd** semantic review\n\n"
+
+    def test_a_branded_fix_required_review_runs_one_turn(self):
+        body = (self.BRANDED + "## Findings: \u274c Fix required\n\nBad.\n\n"
+                + MARKER + "\n")
+        gh = FakeGh(head="aaa1111", reviews=[ci_review(41, body=body)])
+        runner = FakeRunner()
+        code, _out, err = self.run_ci(gh, runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(runner.calls), 1)
+        self.assertIn("%s#pullrequestreview-41" % URL, runner.calls[0][0])
+
+    def test_a_branded_ship_it_review_runs_no_turn(self):
+        body = (self.BRANDED + "## Findings: \u2705 Ship it\n\n"
+                "No problems found.\n\n"
+                "<!-- shipd-verdict: ship-it -->\n")
+        gh = FakeGh(head="aaa1111", reviews=[ci_review(42, body=body)])
+        runner = FakeRunner()
+        code, _out, err = self.run_ci(gh, runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(runner.calls, [])
+
     def test_other_reviews_run_no_turn(self):
         gh = FakeGh(head="aaa1111", reviews=[
             ci_review(1, body="Ship it"),

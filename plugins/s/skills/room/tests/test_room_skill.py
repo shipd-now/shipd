@@ -209,6 +209,42 @@ class DocsTest(unittest.TestCase):
                          result.stdout + result.stderr)
 
 
+class ReviewerReviewTest(unittest.TestCase):
+    """room-skill-reviewer-review."""
+
+    HARNESS_BODY = os.path.join(PLUGIN_ROOT, "harness", "bodies", "room.md")
+    REFERENCE = os.path.join(PLUGIN_ROOT, "harness", "references", "room.md")
+    RUN_DOC = os.path.join(REPO_ROOT, "docs", "room-run.md")
+
+    def test_skill_names_the_review_command_and_its_options(self):
+        text = _read(SKILL_PATH)
+        for needle in ("/s:review", "status=auto", "room-agent=",
+                       "room-to=", "last_agent"):
+            self.assertIn(needle, text)
+        self.assertLess(text.index("shipd room whoami"),
+                        text.index("/s:review"))
+
+    def test_skill_states_both_status_cases_and_forbids_a_freeform_review(self):
+        text = _read(SKILL_PATH)
+        for needle in ("semantic-review", "gh pr review",
+                       ".github/workflows/copilot-review-gate.yml"):
+            self.assertIn(needle, text)
+
+    def test_harness_body_and_reference_carry_the_rule(self):
+        rendered = hb.render("room", ("background-tasks",), refs_dir=REFS)
+        for label, text in (("body", rendered),
+                            ("reference", _read(self.REFERENCE))):
+            for needle in ("/s:review", "status=auto", "room-to=",
+                           "copilot-review-gate.yml"):
+                self.assertIn(needle, text, "%s lacks %s" % (label, needle))
+
+    def test_the_how_to_names_the_branded_review_and_both_status_cases(self):
+        text = _read(self.RUN_DOC)
+        for needle in ("/s:review", "semantic-review",
+                       "copilot-review-gate.yml"):
+            self.assertIn(needle, text)
+
+
 class SkillIdentityTest(unittest.TestCase):
     """room-skill-identity-check and agent-identity-docs-version."""
 

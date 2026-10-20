@@ -462,7 +462,7 @@ id: gate-review-grounding
 
 Where the CLI reviewer is configured on a `pull_request` event, the review-gate workflow template SHALL run a grounding step before the reviewer step. The grounding step SHALL bind neither the reviewer secret nor `github.token`. It SHALL run the review engine's `files` and `diff` subcommands with the pull request's base SHA first and its head SHA second, and SHALL write each output to a file in the runner temp directory. It SHALL report `outcome` (`ok` or `failed`) and `files` (the files output's summary file count) as step outputs, and SHALL exit zero whatever the engine did. The engine it runs SHALL be the base ref's copy of `.github/skills/code-review/scripts/semdiff.py`, resolved the way the reviewer instructions are pinned, and the reviewed commit's copy only where the base tree has no such file. The reviewer prompt SHALL name both grounding files and SHALL tell the reviewer not to run `files` or `diff` itself. The reviewer step SHALL skip the Copilot CLI when the outcome is not `ok`.
 
-The posting step SHALL read the grounding outcome and count from the step outputs, never from the workspace files. If the outcome is not `ok`, or the count is `0` while the pull request's changed-files read lists at least one file or failed, then the posting step SHALL re-post `semantic-review` as `pending` with a description starting `Review not grounded:` and naming the cause. It SHALL submit no `APPROVE` or `REQUEST_CHANGES` review and SHALL NOT arm fast-pass. Any body it publishes SHALL go out as a `COMMENT` review opening with a "Not a verdict" notice. It SHALL ignore `SHIPD_GATE_FAIL_OPEN` on this path and SHALL exit non-zero.
+The posting step SHALL read the grounding outcome and count from the step outputs, never from the workspace files. If the outcome is not `ok`, or the count is `0` while the pull request's changed-files read lists at least one file or failed, then the posting step SHALL re-post `semantic-review` as `pending` with a description starting `Review not grounded:` and naming the cause. It SHALL submit no `APPROVE` or `REQUEST_CHANGES` review and SHALL NOT arm fast-pass. Any body it publishes SHALL go out as a `COMMENT` review that opens with the brand line, then one blank line, then a "Not a verdict" notice. It SHALL ignore `SHIPD_GATE_FAIL_OPEN` on this path and SHALL exit non-zero.
 
 #### Scenario: The engine runs base first, head second
 - **WHEN** the gate script runs on the CLI path with the stub engine
@@ -479,7 +479,7 @@ The posting step SHALL read the grounding outcome and count from the step output
 #### Scenario: A zero-file grounding never approves
 - **GIVEN** the engine reports 0 files, the changed-files read lists one file, and the reviewer ends with the ship-it marker
 - **WHEN** the gate script runs with the fail-open default
-- **THEN** the last status posted is `pending` with a `Review not grounded:` description, the one review submitted is a `COMMENT` whose body opens with the notice, no merge is armed, and the run exits non-zero
+- **THEN** the last status posted is `pending` with a `Review not grounded:` description, the one review submitted is a `COMMENT` whose body opens with the brand line followed by the notice, no merge is armed, and the run exits non-zero
 
 #### Scenario: A failed engine skips the reviewer
 - **WHEN** the engine exits non-zero
@@ -492,7 +492,7 @@ The posting step SHALL read the grounding outcome and count from the step output
 ### Requirement: Gate workflow posts only the review report
 id: gate-report-extraction
 
-The review-gate workflow template SHALL invoke the Copilot CLI with `-s`. Before classifying, the posting step SHALL reduce the captured text to the report on the CLI path. It SHALL keep from the last line starting with `## Findings` that precedes the last verdict-marker line, through that marker line. With no marker, it SHALL keep from the last `## Findings` line to the end. With no such line, it SHALL keep the text minus every tool-call transcript block: a line starting with `●` and a space, plus the lines right after it whose left-trimmed text starts with `│` or `└`. The verdict SHALL be classified from the reduced text, and the reduced text SHALL be the body that is published.
+The review-gate workflow template SHALL invoke the Copilot CLI with `-s`. Before classifying, the posting step SHALL reduce the captured text to the report on the CLI path. It SHALL keep from the last line starting with `## Findings` that precedes the last verdict-marker line, through that marker line. With no marker, it SHALL keep from the last `## Findings` line to the end. With no such line, it SHALL keep the text minus every tool-call transcript block: a line starting with `●` and a space, plus the lines right after it whose left-trimmed text starts with `│` or `└`. The verdict SHALL be classified from the reduced text. The published body SHALL be the brand line `**☕ shipd** semantic review` (the same text as `BRAND_LINE` in `review_gate.py`), one blank line, then the reduced text, with the footer folded in as `gate-body-footer` states. If the body's first non-blank line already equals the brand line, then the posting step SHALL NOT add a second one. Because the brand line opens the body and the verdict is read by the backwards marker scan, an unbranded body and a branded one SHALL classify to the same verdict.
 
 #### Scenario: The CLI runs silent
 - **WHEN** the stubbed CLI's arguments are read
@@ -501,11 +501,23 @@ The review-gate workflow template SHALL invoke the Copilot CLI with `-s`. Before
 #### Scenario: Narration and transcript are dropped
 - **GIVEN** CLI output carrying narration and tool-call blocks, then a `## Findings: ✅ Ship it` report ending in the ship-it marker, then trailing narration
 - **WHEN** the gate script runs
-- **THEN** the published body starts at the `## Findings` line, holds no `●` line, keeps the marker as its last line equal to a marker, and the status is `success`
+- **THEN** the published body's first line is the brand line, its third line is the `## Findings` line, it holds no `●` line, it keeps the marker as its last line equal to a marker, and the status is `success`
 
 #### Scenario: Header-less output loses only its transcript blocks
 - **WHEN** the CLI output has no `## Findings` line
-- **THEN** the published body keeps the prose but holds no tool-call block lines
+- **THEN** the published body opens with the brand line and keeps the prose but holds no tool-call block lines
+
+#### Scenario: A brand line the reviewer wrote is not doubled
+- **WHEN** the CLI output is header-less and its first non-blank line is already the brand line
+- **THEN** the published body carries the brand line exactly once
+
+#### Scenario: A branded fix-required body still fails the check
+- **WHEN** the CLI output is a `## Findings: ❌ Fix required` report ending in the fix-required marker, preceded by a brand line
+- **THEN** the status posted is `failure`, the review event is `REQUEST_CHANGES`, and the published body carries the brand line exactly once
+
+#### Scenario: The workflow's brand line matches the poster's
+- **WHEN** the copilot verb test reads the workflow template
+- **THEN** it contains `review_gate.BRAND_LINE` verbatim
 
 ### Requirement: Contract reads supplied grounding
 id: skill-supplied-grounding

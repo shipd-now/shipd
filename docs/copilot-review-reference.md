@@ -63,8 +63,9 @@ On every pull request opened, updated, or reopened, the gate's job:
   gate posts `pending` with a "Review not grounded" description. It submits no
   `APPROVE` or `REQUEST_CHANGES`, arms no fast-pass, and ignores
   `SHIPD_GATE_FAIL_OPEN`. Any captured text goes out as a `COMMENT` that opens
-  with a "Not a verdict" notice. The job then fails.
-- **The posted body is the report.** The CLI runs with `-s`. The gate keeps the text from the last `## Findings` header through the verdict marker. It closes the body with a `Reviewed N files, +A -D lines.` stat line and a `Model:` line.
+  with the brand line and a "Not a verdict" notice, in that order. The job
+  then fails.
+- **The posted body is the report.** The CLI runs with `-s`. The gate keeps the text from the last `## Findings` header through the verdict marker. It opens the body with the `**☕ shipd** semantic review` brand line and a blank line, and never adds the line twice. It closes the body with a `Reviewed N files, +A -D lines.` stat line and a `Model:` line.
 - **The model is a repository variable.** The gate passes `SHIPD_REVIEW_MODEL` to the CLI as `--model`. Unset, the CLI runs its own default, and the `Model:` line reads "Copilot CLI default".
 - **A new decision resolves the gate's old threads.** After GitHub accepts an `APPROVE` or `REQUEST_CHANGES`, the `resolve-threads` job resolves the gate's earlier-commit threads. The new review has already re-anchored any finding still present. A refused decision resolves nothing. The job never resolves another author's thread, and a failed resolve only logs a warning.
 
