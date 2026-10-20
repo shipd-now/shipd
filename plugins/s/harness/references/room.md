@@ -71,8 +71,9 @@ credential source and `may_approve`. The source follows `gh`'s order:
 `GH_TOKEN` then `GITHUB_TOKEN` on `github.com` or a `ghe.com` subdomain, or
 `GH_ENTERPRISE_TOKEN` then `GITHUB_ENTERPRISE_TOKEN` on an Enterprise Server
 host, then `GH_CONFIG_DIR`, then `gh-login`. It exits 1 with an `Error:` line
-when the login equals the author, ignoring case, or cannot be read. The agent relays that line and stops:
-GitHub does not count an author's approval of their own pull request.
+when the login equals the author, ignoring case, or cannot be read. The agent
+relays that line and stops: GitHub does not count an author's approval of their
+own pull request.
 
 ## The stop list
 
