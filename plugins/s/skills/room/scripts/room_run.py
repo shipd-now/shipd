@@ -198,7 +198,7 @@ def _open_request(gh, repo, number, context, agent, target, head, text,
 
 
 def _re_review(gh, repo, number, context, agent, opts, head, memo):
-    """After a head-moving author turn, open one re-review task per target
+    """After the head moved, open one re-review task per target
     lacking one at ``head``: the ``--request-review`` agents plus every
     reviewer-role agent who opened a task addressed to this agent."""
     cards, tasks, _raw, _comments = room._read_room(gh, repo, number)
@@ -215,6 +215,22 @@ def _re_review(gh, repo, number, context, agent, opts, head, memo):
                       _re_review_text(agent, head), memo)
         sys.stderr.write("room run: re-review requested from %s at %s\n"
                          % (target, head[:7]))
+
+
+def _sync_head(gh, repo, number, context, agent, opts, known, memo, warned):
+    """Re-read the head after a slice or a turn; when it differs from the
+    last ``known`` head, whoever pushed it, open the re-reviews at the new
+    head. Returns the new last known head. A failed read keeps ``known`` and
+    opens nothing, and an empty ``known`` only learns the head."""
+    head = _head(gh, number, repo, warned)
+    if not head:
+        return known
+    if known and head != known:
+        try:
+            _re_review(gh, repo, number, context, agent, opts, head, memo)
+        except room.RoomError as exc:
+            sys.stderr.write("warning: re-review request failed: %s\n" % exc)
+    return head
 
 
 def _kick_off_text(agent, head):
@@ -294,15 +310,19 @@ def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
 
     memo = {}
     warned = set()
+    author = opts.role == "author"
+    known = ""
     if opts.request_review:
         _cards, tasks, _raw, _comments = room._read_room(gh, repo, number)
-        head = _head(gh, number, repo, warned)
+        head = known = _head(gh, number, repo, warned)
         for name in dict.fromkeys(opts.request_review):
             if _has_request(tasks, agent, name):
                 continue
             _open_request(gh, repo, number, context, agent, name, head,
                           _kick_off_text(agent, head), memo)
             sys.stderr.write("room run: review requested from %s\n" % name)
+    elif author:
+        known = _head(gh, number, repo, warned)
 
     if runner is None:
         runner = _default_runner(opts, root, model_base)
@@ -317,7 +337,7 @@ def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
     reason = None
     closed = None
     failure = None
-    ci = opts.role == "author" and bool(opts.ci_reviewer)
+    ci = author and bool(opts.ci_reviewer)
     handled = set()
     check_ci = ci
     while reason is None:
@@ -339,7 +359,7 @@ def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
                                      review.get("commit_id") or "")
         else:
             slice_timeout = min(remaining, opts.interval * SLICE_INTERVALS) \
-                if ci else remaining
+                if author else remaining
             watch_ns = argparse.Namespace(
                 pr=opts.pr, agent=agent, root=opts.root, repo=opts.repo,
                 max_rounds=opts.max_rounds, since=cursor,
@@ -348,7 +368,7 @@ def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
             quiet = io.StringIO()
             try:
                 with contextlib.redirect_stdout(captured):
-                    if ci:
+                    if author:
                         with contextlib.redirect_stderr(quiet):
                             room.cmd_watch(watch_ns, gh, sleep, clock, parser)
                     else:
@@ -375,8 +395,10 @@ def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
                 cursor = _line_cursor(closed_line, cursor)
                 break
             if not tasks:
-                if ci:
-                    check_ci = True
+                if author:
+                    known = _sync_head(gh, repo, number, context, agent,
+                                       opts, known, memo, warned)
+                    check_ci = ci
                     continue
                 reason = "budget"
                 break
@@ -384,22 +406,14 @@ def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
             sys.stderr.write("room run: turn %d on task(s) %s\n" % (
                 turns, ", ".join("#%s" % t.get("task") for t in tasks)))
             turn_prompt = prompt
-        before = _head(gh, number, repo, warned) \
-            if opts.role == "author" else ""
         ok, why, new_id = runner(turn_prompt, root, session_id, turns - 1)
         if new_id:
             session_id = new_id
         if tasks:
             cursor = _line_cursor(tasks[-1], cursor)
-        if ok and opts.role == "author":
-            after = _head(gh, number, repo, warned)
-            if before and after and before != after:
-                try:
-                    _re_review(gh, repo, number, context, agent, opts,
-                               after, memo)
-                except room.RoomError as exc:
-                    sys.stderr.write(
-                        "warning: re-review request failed: %s\n" % exc)
+        if ok and author:
+            known = _sync_head(gh, repo, number, context, agent, opts,
+                               known, memo, warned)
         if not ok:
             reason, failure = "turn-failed", why
         elif turns >= opts.max_turns:

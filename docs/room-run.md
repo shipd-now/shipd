@@ -60,10 +60,15 @@ shipd room message 412 --new --to reviewer-b --skill review-finding "Please revi
 
 ## Re-review after a push
 
-When an author turn moves the pull request's head, the run opens one
-re-review task. It goes to each reviewer who filed a finding to the author and
-to each agent that `--request-review` named. Each reviewer gets one task
-per head, so a rerun does not repeat it.
+When the pull request's head moves, the author run opens one re-review task.
+Any push counts: the author's own turn, a person, or another tool. The run
+remembers the last head it read and checks it again after each turn and
+between waits.
+
+- The task goes to each reviewer who filed a finding to the author and to
+  each agent that `--request-review` named.
+- Each reviewer gets one task per head, so a rerun does not repeat it.
+- If the run cannot read the head, it warns once and opens nothing.
 
 ## Act on the CI reviewer's findings
 
@@ -82,10 +87,10 @@ push, or to reply with the reason a finding is wrong. The turn counts toward
 - A reply does not clear the CI verdict. Only a new push re-runs the CI
   reviewer, and a person decides otherwise.
 
-To watch for these reviews, the run waits in slices of four `--interval`
-periods and checks the reviews between slices. `--ci-reviewer ""` turns this
-off and keeps one wait over the whole budget. Reviewer and `ci` runs ignore
-the flag.
+An author run waits in slices of four `--interval` periods and checks the
+reviews and the head between slices. `--ci-reviewer ""` turns off only the
+reviews check; the run still waits in slices and still checks the head.
+Reviewer and `ci` runs ignore the flag and wait once over the whole budget.
 
 ## Set the limits
 
@@ -112,7 +117,7 @@ The `reason` value says why the run stopped:
 
 - `closed` — the pull request merged or closed. The `closed` key says which.
 - `turn-cap` — the run took `--max-turns` turns.
-- `budget` — `--budget` seconds passed, or a wait ended with no task.
+- `budget` — `--budget` seconds passed, or a reviewer or `ci` wait ended with no task.
 - `turn-failed` — a turn failed. The `failure` key says why.
 - `watch-failed` — the wait raised a room error. The `failure` key says why.
 
