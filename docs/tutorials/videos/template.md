@@ -6,7 +6,8 @@ Every episode of the shipd video series follows one structure. This guide
 walks you through filling it in. Copy the skeleton at the end, then complete
 one numbered step per section.
 
-Each episode runs five minutes and holds four to six beats. The
+The intro, Episode 0, runs three minutes. Every other episode runs five
+minutes. Each episode holds four to six beats. The
 [series overview](index.md) lists the episodes and their roadmap groups.
 
 ## Steps
