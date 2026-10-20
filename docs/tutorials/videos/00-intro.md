@@ -21,7 +21,7 @@ You are about to learn shipd, but you may not know why it exists. This episode i
 
 **On screen:** The author on camera. A title card reads "Late July 2025: tickets".
 
-**Narration:** In late July 2025, I began asking an AI coding agent for tickets. Each ticket planned one piece of work. It worked surprisingly well. I kept asking, and the agent kept planning.
+**Narration:** In late July 2025, I began asking an AI coding agent for tickets. Each ticket planned one piece of work. It worked surprisingly well.
 
 ### 0:40–1:20 A template and copied skills
 

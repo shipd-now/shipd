@@ -18,7 +18,7 @@ At that stage the tools had no name and no repository. I copied the skills from 
 
 ## Review and pull requests
 
-Next came a review feature and a pull-request feature. They grew from the same habit: I wanted the agent to do the repeatable steps of my own work.
+Next came a review feature and a pull-request feature.
 
 ## automikk
 
