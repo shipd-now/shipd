@@ -140,7 +140,8 @@ comment's leading marker, and each folded-findings bullet — which is
 sanctioned too, even though it never appears in the report body you write.
 That posting step also closes the posted body with one stat line,
 `Reviewed N files, +A -D lines.`, counted from the pull request's own file
-list. Do not write that line yourself.
+list, and a `Model:` line naming the reviewing model. Do not write either
+line yourself.
 
 **Also write the findings as data.** Beside the report body, write a
 machine-readable findings file at
@@ -266,10 +267,11 @@ second marker below it.
   whose prompt names this file instead of restating the rubric. Whichever one
   is reading, the workflow, the rubric, and the verdict rule above are the
   review.
-- **No repository-side model selection.** The GitHub Copilot code-review
-  surface exposes no repository-side option to pin the model this review runs
-  on, so nothing here configures one. This is documented rather than faked; it
-  will be revisited if GitHub exposes a real option.
+- **No repository-side model selection on GitHub's surface.** The GitHub
+  Copilot code-review surface exposes no repository-side option to pin the
+  model this review runs on, so nothing here configures one there. The gate
+  workflow's CLI reviewer is the exception: it passes the repository variable
+  `SHIPD_REVIEW_MODEL` to the CLI as `--model` when that variable is set.
 - **This review can be the merge gate.** Where the repository installs
   `.github/workflows/copilot-review-gate.yml`, that workflow reads the verdict
   marker above out of the review text — this body, or the report the CLI

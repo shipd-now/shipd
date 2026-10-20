@@ -1061,6 +1061,20 @@ class GateWorkflowTemplateTest(unittest.TestCase):
                       "the posting step does not re-bind the strictness knob "
                       "from the vars context, so a GITHUB_ENV write wins")
 
+    def test_both_reviewer_steps_bind_the_model_variable_from_vars(self):
+        # The CLI step runs the model it names and the posting step writes it
+        # into the footer; each re-binds it in its own `env:`, so a
+        # $GITHUB_ENV write by an earlier step can change neither.
+        binding = "SHIPD_REVIEW_MODEL: ${{ vars.SHIPD_REVIEW_MODEL }}"
+        self.assertIn(binding, self.cli_step())
+        self.assertIn(binding, self.posting_step())
+
+    def test_thread_resolution_runs_only_in_the_posting_step(self):
+        self.assertNotIn("graphql", self.cli_step())
+        posting = run_block(self.posting_step())
+        self.assertIn('"$gh_bin" api graphql', posting)
+        self.assertIn("resolveReviewThread", posting)
+
     def test_the_prompt_names_the_materialized_instructions_file(self):
         prompt = self.script[self.script.index("prompt="):
                              self.script.index('timeout "$cli_timeout"')]
@@ -1416,6 +1430,35 @@ if [ "$1" = pr ]; then
   for arg in "$@"; do printf '%s\n' "$arg"; done >> "$GH_COMMENTS"
   exit 0
 fi
+# GraphQL: the review-thread query and the resolve mutation. Every call's
+# arguments are logged; a resolve logs its thread id, and its place in the
+# order log beside the review POSTs, unless that id is scripted to fail.
+if [ "$1" = api ] && [ "$2" = graphql ]; then
+  for arg in "$@"; do printf '%s\n<<<ARG>>>\n' "$arg"; done >> "$GH_GRAPHQL"
+  case "$*" in
+    *resolveReviewThread*)
+      id=
+      for arg in "$@"; do
+        case "$arg" in threadId=*) id="${arg#threadId=}" ;; esac
+      done
+      if [ -f "$STUB_DIR/resolve-fail" ] && grep -qx "$id" "$STUB_DIR/resolve-fail"; then
+        echo "GraphQL: Resource not accessible by integration" >&2
+        exit 1
+      fi
+      printf '%s\n' "$id" >> "$GH_RESOLVED"
+      printf 'resolve %s\n' "$id" >> "$GH_ORDER"
+      printf '{"data":{"resolveReviewThread":{"thread":{"isResolved":true}}}}'
+      exit 0 ;;
+  esac
+  if [ -f "$STUB_DIR/threads-fail" ]; then
+    echo "GraphQL: Something went wrong" >&2
+    exit 1
+  fi
+  if [ -f "$STUB_DIR/threads" ]; then cat "$STUB_DIR/threads"
+  else printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
+  fi
+  exit 0
+fi
 url=
 method=
 input=
@@ -1451,6 +1494,7 @@ if [ "$method" = POST ]; then
       if [ -n "$input" ] && [ -f "$input" ]; then
         cat "$input" >> "$GH_REVIEWS"
         printf '\n<<<REVIEW>>>\n' >> "$GH_REVIEWS"
+        printf 'review\n' >> "$GH_ORDER"
       fi ;;
   esac
   exit 0
@@ -1600,6 +1644,16 @@ BASE_SKILL = "# Review contract, as the base ref carries it.\n"
 HEAD_SKILL = "# Review contract, as the reviewed commit carries it.\n"
 
 
+def thread(thread_id, login, oid, resolved=False):
+    """One review thread as the GraphQL ``reviewThreads`` query serves it: its
+    id, whether it is resolved, and its first comment's author and the commit
+    that comment was made on (``None`` for a commit GitHub no longer has)."""
+    commit = {"oid": oid} if oid is not None else None
+    return {"id": thread_id, "isResolved": resolved,
+            "comments": {"nodes": [{"author": {"login": login},
+                                    "originalCommit": commit}]}}
+
+
 class GateScriptCase(unittest.TestCase):
     """Base for the tests that *run* the gate job's script (copilot-review-skill
     gate-workflow-template): the step body is extracted from the template and
@@ -1613,7 +1667,8 @@ class GateScriptCase(unittest.TestCase):
     SCRIPTED = ("ids", "head", "body", "reviews-calls", "head-calls",
                 "cli-out", "cli-code", "cli-timeout", "base-skill",
                 "base-missing", "base-unreadable", "files", "cli-findings",
-                "reject-events", "base-engine", "engine-files", "engine-code")
+                "reject-events", "base-engine", "engine-files", "engine-code",
+                "threads", "threads-fail", "resolve-fail")
 
     def setUp(self):
         self.assertTrue(os.path.isfile(GATE_TEMPLATE),
@@ -1726,7 +1781,8 @@ class GateScriptCase(unittest.TestCase):
              base_unreadable=False, expect_failure=False, path_shim=False,
              files=None, findings=None, pr_author="pr-author",
              reject_events=(), engine_files=None, engine_code=None,
-             base_engine=None, fast_pass=""):
+             base_engine=None, fast_pass="", threads=None, threads_fail=False,
+             resolve_fail=(), review_model=None):
         """Run the gate script for ``event`` and return the statuses it posted,
         in order — one dict of ``-f key=value`` fields per post, with the URL
         it posted to under ``"url"``. What the run logged is left on
@@ -1769,7 +1825,13 @@ class GateScriptCase(unittest.TestCase):
         than misbehave (the shipped one classified a 65,000-space body in ~64s
         on the runner's bash, and minutes locally), and a poll that never
         notices a moved head spins forever — an unbounded ``run`` would stall
-        the whole suite instead of reporting either."""
+        the whole suite instead of reporting either.
+
+        ``threads`` is the pull request's review threads as the GraphQL
+        ``reviewThreads`` query serves them (see :func:`thread`), and
+        ``threads_fail`` makes that query fail; ``resolve_fail`` lists thread
+        ids whose resolve mutation fails. ``review_model`` is the
+        ``SHIPD_REVIEW_MODEL`` repository variable: ``None`` drops it."""
         for name in os.listdir(self.tmp):
             if name in self.SCRIPTED or name.split(".")[0] in self.SCRIPTED:
                 os.remove(os.path.join(self.tmp, name))
@@ -1809,6 +1871,16 @@ class GateScriptCase(unittest.TestCase):
             self.plant("base-engine", base_engine)
         if reject_events:
             self.plant("reject-events", "\n".join(reject_events) + "\n")
+        if isinstance(threads, str):
+            self.plant("threads", threads)
+        elif threads is not None:
+            self.plant("threads", json.dumps(
+                {"data": {"repository": {"pullRequest": {
+                    "reviewThreads": {"nodes": threads}}}}}))
+        if threads_fail:
+            self.plant("threads-fail", "")
+        if resolve_fail:
+            self.plant("resolve-fail", "\n".join(resolve_fail) + "\n")
         if findings is not None:
             self.plant("cli-findings", findings if isinstance(findings, str)
                        else json.dumps(findings))
@@ -1817,7 +1889,10 @@ class GateScriptCase(unittest.TestCase):
             fh.write(self.script)
         for name in ("gh-args", "comments-args", "copilot-args",
                      "timeout-args", "npm-args", "git-args", "shim-args",
-                     "gh-reviews", "gh-rejected",
+                     "gh-reviews", "gh-rejected", "gh-graphql",
+                     "gh-resolved", "gh-order",
+                     "shipd-copilot-review-threads.json",
+                     "shipd-copilot-review-stale-threads.txt",
                      "shipd-copilot-review-skill.md",
                      "shipd-copilot-review-body.md",
                      "shipd-copilot-review-payload.json",
@@ -1850,6 +1925,9 @@ class GateScriptCase(unittest.TestCase):
             "GH_COMMENTS": os.path.join(self.tmp, "comments-args"),
             "GH_REVIEWS": os.path.join(self.tmp, "gh-reviews"),
             "GH_REJECTED": os.path.join(self.tmp, "gh-rejected"),
+            "GH_GRAPHQL": os.path.join(self.tmp, "gh-graphql"),
+            "GH_RESOLVED": os.path.join(self.tmp, "gh-resolved"),
+            "GH_ORDER": os.path.join(self.tmp, "gh-order"),
             "COPILOT_ARGS": os.path.join(self.tmp, "copilot-args"),
             "TIMEOUT_ARGS": os.path.join(self.tmp, "timeout-args"),
             "NPM_ARGS": os.path.join(self.tmp, "npm-args"),
@@ -1889,6 +1967,10 @@ class GateScriptCase(unittest.TestCase):
             env["SHIPD_GATE_FAIL_OPEN"] = fail_open
         if fast_pass:
             env["SHIPD_FAST_PASS"] = fast_pass
+        if review_model is None:
+            env.pop("SHIPD_REVIEW_MODEL", None)
+        else:
+            env["SHIPD_REVIEW_MODEL"] = review_model
         with open(env["GITHUB_OUTPUT"], "w", encoding="utf-8"):
             pass
         try:
@@ -1908,6 +1990,28 @@ class GateScriptCase(unittest.TestCase):
         self.stdout = result.stdout
         self.stderr = result.stderr
         return self.posted()
+
+    def graphql_calls(self):
+        """The GraphQL calls the last run made, each as its argument list."""
+        path = os.path.join(self.tmp, "gh-graphql")
+        if not os.path.exists(path):
+            return []
+        calls = []
+        for arg in read(path).split("\n<<<ARG>>>\n")[:-1]:
+            if arg == "api":
+                calls.append([])
+            calls[-1].append(arg)
+        return calls
+
+    def resolved(self):
+        """The thread ids the last run resolved, in order."""
+        path = os.path.join(self.tmp, "gh-resolved")
+        return read(path).split() if os.path.exists(path) else []
+
+    def order(self):
+        """The resolves and review POSTs of the last run, in the order made."""
+        path = os.path.join(self.tmp, "gh-order")
+        return read(path).splitlines() if os.path.exists(path) else []
 
     def posted(self):
         """The recorded **status** posts, in order. The CLI path's review POST
@@ -2402,6 +2506,162 @@ class GateReviewPostTest(GateScriptCase):
         self.gate(ids="42", body=self.REVIEW, files=self.FILES,
                   findings=[self.ANCHORED])
         self.assertEqual(self.reviews(), [])
+
+
+class GateThreadResolveTest(GateScriptCase):
+    """A grounded decision review supersedes the gate's own earlier threads, so
+    the posting step resolves them before it posts — and never touches anyone
+    else's (copilot-review-skill gate-resolves-superseded-threads)."""
+
+    SECRET = GateReviewPostTest.SECRET
+    EARLIER = "0" * 39 + "e"
+
+    def cli_gate(self, **kwargs):
+        kwargs.setdefault("secret", self.SECRET)
+        kwargs.setdefault("cli_out", GateReviewPostTest.REVIEW)
+        kwargs.setdefault("files", GateReviewPostTest.FILES)
+        kwargs.setdefault("findings", [])
+        return self.gate(**kwargs)
+
+    def test_a_fix_required_review_resolves_the_gates_earlier_thread_first(self):
+        posts = self.cli_gate(threads=[
+            thread("T_old", "github-actions", self.EARLIER)])
+        self.assertStates(posts, ["pending", "failure"])
+        self.assertEqual(self.resolved(), ["T_old"])
+        self.assertEqual(self.order(), ["resolve T_old", "review"],
+                         "the stale thread was not resolved before the "
+                         "new review was posted")
+        self.assertIn("Resolved superseded gate review thread T_old.",
+                      self.stdout)
+
+    def test_a_ship_it_review_resolves_the_bot_spelling_too(self):
+        posts = self.cli_gate(cli_out=GateReviewPostTest.SHIP_REVIEW, threads=[
+            thread("T_bot", "github-actions[bot]", self.EARLIER),
+            thread("T_gone", "github-actions", None)])
+        self.assertStates(posts, ["pending", "success"])
+        self.assertEqual(self.reviews()[-1]["event"], "APPROVE")
+        self.assertEqual(self.resolved(), ["T_bot", "T_gone"])
+
+    def test_other_threads_are_left_alone(self):
+        self.cli_gate(threads=[
+            thread("T_human", "a-reviewer", self.EARLIER),
+            thread("T_done", "github-actions", self.EARLIER, resolved=True),
+            thread("T_head", "github-actions", self.HEAD),
+            thread("T_mine", "github-actions", self.EARLIER)])
+        self.assertEqual(self.resolved(), ["T_mine"])
+
+    def test_the_query_names_this_pull_request_with_the_workflow_token(self):
+        self.cli_gate(threads=[thread("T_old", "github-actions", self.EARLIER)])
+        calls = self.graphql_calls()
+        self.assertEqual(len(calls), 2)
+        query = calls[0]
+        self.assertTrue(any("reviewThreads" in arg for arg in query))
+        for expected in ("owner=acme", "name=widget", "number=7"):
+            self.assertIn(expected, query)
+        self.assertIn("threadId=T_old", calls[1])
+        self.assertTrue(any("resolveReviewThread" in arg for arg in calls[1]))
+
+    def test_a_comment_review_resolves_nothing(self):
+        posts = self.cli_gate(cli_out=QUOTING_BODY, threads=[
+            thread("T_old", "github-actions", self.EARLIER)])
+        self.assertStates(posts, ["pending", "success"])
+        self.assertEqual(self.reviews()[-1]["event"], "COMMENT")
+        self.assertEqual(self.graphql_calls(), [])
+
+    def test_a_bot_authored_pull_request_resolves_nothing(self):
+        self.cli_gate(pr_author="github-actions[bot]", threads=[
+            thread("T_old", "github-actions", self.EARLIER)])
+        self.assertEqual(self.reviews()[-1]["event"], "COMMENT")
+        self.assertEqual(self.graphql_calls(), [])
+
+    def test_an_ungrounded_review_resolves_nothing(self):
+        self.cli_gate(engine_files=0, expect_failure=True, threads=[
+            thread("T_old", "github-actions", self.EARLIER)])
+        self.assertEqual(self.graphql_calls(), [])
+
+    def test_the_poll_path_resolves_nothing(self):
+        self.gate(ids="42", body=FIX_MARKER + "\n", threads=[
+            thread("T_old", "github-actions", self.EARLIER)])
+        self.assertEqual(self.graphql_calls(), [])
+
+    def test_a_failed_resolve_only_warns(self):
+        posts = self.cli_gate(resolve_fail=["T_a"], threads=[
+            thread("T_a", "github-actions", self.EARLIER),
+            thread("T_b", "github-actions", self.EARLIER)])
+        self.assertStates(posts, ["pending", "failure"])
+        self.assertEqual(self.resolved(), ["T_b"])
+        self.assertEqual(self.reviews()[-1]["event"], "REQUEST_CHANGES")
+        self.assertIn("::warning::", self.stdout)
+        self.assertIn("T_a", self.stdout)
+
+    def test_a_failed_query_only_warns(self):
+        posts = self.cli_gate(threads_fail=True)
+        self.assertStates(posts, ["pending", "failure"])
+        self.assertEqual(self.resolved(), [])
+        self.assertEqual(self.reviews()[-1]["event"], "REQUEST_CHANGES")
+        self.assertIn("::warning::", self.stdout)
+
+    def test_an_unparseable_query_answer_only_warns(self):
+        posts = self.cli_gate(threads="not json")
+        self.assertStates(posts, ["pending", "failure"])
+        self.assertEqual(self.resolved(), [])
+        self.assertEqual(self.reviews()[-1]["event"], "REQUEST_CHANGES")
+        self.assertIn("::warning::", self.stdout)
+
+    def test_a_malformed_thread_is_skipped(self):
+        self.cli_gate(threads=[{"id": 5}, {"isResolved": False}, "junk",
+                               thread("T_ok", "github-actions", self.EARLIER)])
+        self.assertEqual(self.resolved(), ["T_ok"])
+
+
+class GateReviewModelTest(GateScriptCase):
+    """The optional SHIPD_REVIEW_MODEL variable selects the CLI reviewer's
+    model, and the posted footer names whichever model reviewed
+    (copilot-review-skill gate-review-model)."""
+
+    SECRET = GateReviewPostTest.SECRET
+
+    def cli_gate(self, **kwargs):
+        kwargs.setdefault("secret", self.SECRET)
+        kwargs.setdefault("cli_out", GateReviewPostTest.SHIP_REVIEW)
+        kwargs.setdefault("files", [{"filename": "a.py", "additions": 12,
+                                     "deletions": 3}])
+        kwargs.setdefault("findings", [])
+        return self.gate(**kwargs)
+
+    def footer_lines(self):
+        lines = [ln for ln in self.reviews()[-1]["body"].splitlines()
+                 if ln.strip()]
+        self.assertEqual(lines[-1], SHIP_MARKER)
+        return lines[-3:-1]
+
+    def test_a_set_variable_selects_and_names_the_model(self):
+        self.cli_gate(review_model="gpt-5.4")
+        args = self.cli_args()
+        self.assertIn("--model", args)
+        self.assertEqual(args[args.index("--model") + 1], "gpt-5.4")
+        self.assertEqual(self.footer_lines(),
+                         ["Reviewed 1 file, +12 -3 lines.", "Model: gpt-5.4"])
+
+    def test_an_unset_variable_keeps_the_cli_default_and_says_so(self):
+        for value in (None, ""):
+            with self.subTest(value=value):
+                self.cli_gate(review_model=value)
+                self.assertNotIn("--model", self.cli_args())
+                self.assertEqual(self.footer_lines(),
+                                 ["Reviewed 1 file, +12 -3 lines.",
+                                  "Model: Copilot CLI default"])
+
+    def test_an_unreadable_diff_appends_no_model_line_either(self):
+        self.cli_gate(review_model="gpt-5.4", files=[])
+        self.assertEqual(self.reviews()[-1]["body"],
+                         GateReviewPostTest.SHIP_REVIEW)
+
+    def test_an_ungrounded_review_names_no_model(self):
+        self.cli_gate(review_model="gpt-5.4", engine_files=0,
+                      expect_failure=True)
+        for review in self.reviews():
+            self.assertNotIn("Model:", review["body"])
 
 
 class GateVerdictParseTest(GateScriptCase):
