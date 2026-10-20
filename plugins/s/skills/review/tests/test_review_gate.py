@@ -2651,7 +2651,9 @@ class RoomReviewerPostTest(unittest.TestCase):
 
     def test_room_to_alone_is_refused(self):
         gh = self._gh()
-        path = os.path.join(tempfile.mkdtemp(), "r.json")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "r.json")
         with open(path, "w") as handle:
             json.dump(_review(), handle)
         with mock.patch("sys.stderr"), self.assertRaises(SystemExit) as ctx:
