@@ -859,16 +859,15 @@ class WhoamiTest(RoomTestBase):
     """room-whoami-verb: the acting account, the author, the credential
     source, and the refusal of an author or an unreadable login."""
 
-    ENV = {"GH_TOKEN": "", "GH_CONFIG_DIR": ""}
+    CREDENTIAL_VARS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
+                       "GITHUB_ENTERPRISE_TOKEN", "GH_CONFIG_DIR", "GH_HOST")
 
-    def _whoami(self, gh, env=None):
-        merged = dict(self.ENV)
-        merged.update(env or {})
-        merged = {k: v for k, v in merged.items() if v}
+    def _whoami(self, gh, env=None, pr="7"):
+        merged = {k: v for k, v in (env or {}).items() if v}
         base = {k: v for k, v in os.environ.items()
-                if k not in ("GH_TOKEN", "GH_CONFIG_DIR")}
+                if k not in self.CREDENTIAL_VARS}
         with unittest.mock.patch.dict(os.environ, base, clear=True):
-            return self.room(gh, "whoami", "7", env=merged)
+            return self.room(gh, "whoami", pr, env=merged)
 
     def test_second_account_may_approve(self):
         gh = FakeGh(login="reviewer-b", pr_author="mikkel")
@@ -910,12 +909,50 @@ class WhoamiTest(RoomTestBase):
                  ({"GH_CONFIG_DIR": "/tmp/fake-gh-dir"}, "GH_CONFIG_DIR"),
                  ({"GH_TOKEN": secret, "GH_CONFIG_DIR": "/tmp/fake-gh-dir"},
                   "GH_TOKEN"),
+                 ({"GITHUB_TOKEN": secret}, "GITHUB_TOKEN"),
+                 ({"GH_TOKEN": secret, "GITHUB_TOKEN": secret}, "GH_TOKEN"),
+                 ({"GITHUB_TOKEN": secret,
+                   "GH_CONFIG_DIR": "/tmp/fake-gh-dir"}, "GITHUB_TOKEN"),
+                 ({"GH_ENTERPRISE_TOKEN": secret}, "gh-login"),
                  ({}, "gh-login"))
         for env, source in cases:
             gh = FakeGh(login="reviewer-b", pr_author="mikkel")
             code, out, err = self._whoami(gh, env)
             self.assertEqual(code, 0, err)
-            self.assertEqual(json.loads(out)["source"], source)
+            self.assertEqual(json.loads(out)["source"], source, env)
+            self.assertNotIn(secret, out + err)
+
+    def test_enterprise_host_follows_the_enterprise_tokens(self):
+        secret = "fake-token-value-456"
+        url = "https://ghe.example.com/o/r/pull/7"
+        cases = (({"GH_TOKEN": secret, "GH_ENTERPRISE_TOKEN": secret},
+                  "GH_ENTERPRISE_TOKEN"),
+                 ({"GH_ENTERPRISE_TOKEN": secret,
+                   "GITHUB_ENTERPRISE_TOKEN": secret}, "GH_ENTERPRISE_TOKEN"),
+                 ({"GITHUB_ENTERPRISE_TOKEN": secret,
+                   "GH_CONFIG_DIR": "/tmp/fake-gh-dir"},
+                  "GITHUB_ENTERPRISE_TOKEN"),
+                 ({"GH_TOKEN": secret, "GITHUB_TOKEN": secret}, "gh-login"),
+                 ({"GH_TOKEN": secret, "GH_CONFIG_DIR": "/tmp/fake-gh-dir"},
+                  "GH_CONFIG_DIR"))
+        for env, source in cases:
+            gh = FakeGh(login="reviewer-b", pr_author="mikkel")
+            code, out, err = self._whoami(gh, env, pr=url)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(json.loads(out)["source"], source, env)
+            self.assertNotIn(secret, out + err)
+
+    def test_host_comes_from_gh_host_without_a_url(self):
+        secret = "fake-token-value-789"
+        for host, source in (("ghe.example.com", "GH_ENTERPRISE_TOKEN"),
+                             ("acme.ghe.com", "GH_TOKEN"),
+                             ("GitHub.com", "GH_TOKEN")):
+            gh = FakeGh(login="reviewer-b", pr_author="mikkel")
+            code, out, err = self._whoami(
+                gh, {"GH_HOST": host, "GH_TOKEN": secret,
+                     "GH_ENTERPRISE_TOKEN": secret})
+            self.assertEqual(code, 0, err)
+            self.assertEqual(json.loads(out)["source"], source, host)
             self.assertNotIn(secret, out + err)
 
     def test_whoami_writes_nothing_to_github(self):

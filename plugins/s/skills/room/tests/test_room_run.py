@@ -93,6 +93,19 @@ class RunStartTest(RunTestBase):
         self.assertEqual(gh.posts(), [])
         self.assertEqual(runner.calls, [])
 
+    def test_start_line_names_github_token(self):
+        secret = "fake-token-value-run"
+        gh = FakeGh(login="rev", pr_author="mikkel")
+        env = {k: "" for k in ("GH_TOKEN", "GH_ENTERPRISE_TOKEN",
+                               "GITHUB_ENTERPRISE_TOKEN", "GH_CONFIG_DIR",
+                               "GH_HOST")}
+        env["GITHUB_TOKEN"] = secret
+        code, out, err = self.run_verb(
+            gh, "7", "--role", "reviewer", "--agent", "rev-b", env=env,
+            preflight=FakePreflight((False, "stop here")))
+        self.assertIn("room run: acting as @rev (GITHUB_TOKEN)", err)
+        self.assertNotIn(secret, out + err)
+
     def test_signed_out_harness_stops_before_joining(self):
         gh = FakeGh(login="rev", pr_author="mikkel")
         runner = FakeRunner()

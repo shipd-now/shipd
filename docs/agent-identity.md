@@ -60,8 +60,12 @@ the room itself.
    {"login": "reviewer-b", "author": "mikkel", "source": "GH_TOKEN", "may_approve": true}
    ```
 
-   The `source` value is `GH_TOKEN`, `GH_CONFIG_DIR`, or `gh-login`. It never
-   shows a token.
+   The `source` value names the first credential `gh` uses, in `gh`'s
+   order. On `github.com` the order is `GH_TOKEN`, `GITHUB_TOKEN`,
+   `GH_CONFIG_DIR`, then `gh-login`. A CI job that sets only `GITHUB_TOKEN`
+   reports `GITHUB_TOKEN`. On a GitHub Enterprise Server host,
+   `GH_ENTERPRISE_TOKEN` and `GITHUB_ENTERPRISE_TOKEN` take the place of the
+   first two. The source never shows a token.
 
 3. Check the exit code. `whoami` exits `1` with one `Error:` line when `gh`
    cannot read the login. It also exits `1` when the login matches the author,

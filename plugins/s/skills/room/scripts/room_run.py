@@ -262,7 +262,8 @@ def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
     repo, number, context = room._resolve_room(gh, opts.pr, opts.repo)
     login = _check_identity(gh, number, repo, opts.role)
     sys.stderr.write("room run: acting as @%s (%s)\n" % (
-        login, room._credential_source(os.environ)))
+        login, room._credential_source(
+            os.environ, room._room_host(opts.pr, os.environ))))
     model_base = None
     if runner is None or preflight is None:
         model_base = _model_base(root)
