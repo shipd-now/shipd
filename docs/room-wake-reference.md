@@ -17,7 +17,7 @@ their plugin-relative paths under `.github/shipd-room/`.
 | --- | --- |
 | `.github/workflows/room-wake.yml` | The wake workflow. Its first line is the `# shipd-copilot v…` ownership marker. |
 | `.github/shipd-room/.claude-plugin/plugin.json` | The plugin manifest. `room.py` reads its version for the agent card. |
-| `.github/shipd-room/skills/room/scripts/room.py` | The room verbs the workflow runs: `watch`, `list`, `join`, `message`, and `close`. The bundled copy omits `run`, which prints one `Error:` line there. |
+| `.github/shipd-room/skills/room/scripts/room.py` | The room verbs the workflow runs: `watch`, `list`, `join`, `message`, and `close`. The bundled copy omits the modules `run` needs, so `run` prints one `Error:` line there; use `shipd room run` locally. |
 | `.github/shipd-room/skills/room/scripts/room_schema.py` | The room comment schema that `room.py` reads and writes. |
 | `.github/shipd-room/skills/build/scripts/spec_common.py` | The layered config reader that `room.py` imports. |
 | `.github/shipd-room/skills/build/scripts/cli_common.py` | The shared CLI helpers that `room.py` imports. |

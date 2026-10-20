@@ -785,6 +785,20 @@ class RunMissingModuleTest(RunTestBase):
         self.assertNotIn("Traceback", err)
         self.assertEqual(gh.calls, [])
 
+    def test_missing_session_driver_fails_with_one_error_line(self):
+        gh = FakeGh()
+        with unittest.mock.patch.dict(sys.modules, {"session_driver": None}):
+            sys.modules.pop("room_run", None)
+            code, out, err = self.run_verb(gh, "7", "--role", "reviewer")
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertEqual(len(err.splitlines()), 1, err)
+        self.assertTrue(err.startswith("Error:"), err)
+        self.assertIn("session_driver", err)
+        self.assertIn("shipd room run", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(gh.calls, [])
+
     def test_a_genuine_import_bug_in_room_run_propagates(self):
         import room
         saved_path = list(sys.path)
