@@ -1,5 +1,5 @@
 # room-bundle-run
-Status: complete
+Status: verified
 Planned-at: aa3b0a8f7d00cbe7be74eabdf743a958aa11afda
 Gated-hash: 2fcea9ca31e2
 
@@ -26,7 +26,7 @@ the wake without anyone noticing.
   bundle run under `python3 -I -B` for every wake verb's `--help` plus the
   bundled `run`'s one-line failure (copilot verb suite).
 - `docs/room-wake-reference.md` states that the bundle omits `run`.
-- `plugin.json` goes from `0.6.340` to `0.6.341`.
+- `plugin.json` goes from `0.6.341` to `0.6.342`.
 
 Affected capabilities: `room-runner` (added `room-run-missing-modules`),
 `shipd-cli` (added `copilot-room-wake-self-contained`). Impact:
@@ -151,7 +151,7 @@ Evidence:
   `plugins/s/skills/room/tests/test_room_run.py`,
   `plugins/s/skills/build/tests/test_copilot_verb.py`,
   `docs/room-wake-reference.md`, `plugins/s/.claude-plugin/plugin.json`
-  (`0.6.340` on `main`).
+  (`0.6.341` on `main`).
 - Runnable premise: `shipd copilot add --room --root <tmp>` exited 0 and
   wrote exactly the six wake files. From that install,
   `python3 -I <room.py> <verb> --help` exited 0 for `watch`, `list`, `join`,
@@ -170,4 +170,4 @@ Evidence:
   `q-room-bundle-run-missing-modules`).
 - Where the bundle test lives: settled by investigation. The existing
   `CopilotRoomWakeVerbTest` installs through the real verb.
-- Version: settled by investigation, one patch above `main`'s `0.6.340`.
+- Version: settled by investigation, one patch above `main`'s `0.6.341`.

@@ -42,7 +42,7 @@
       `python3 plugins/s/skills/document/scripts/docs_lint.py docs/room-wake-reference.md`
       and confirm exit 0.
 - [x] 2.3 [req: copilot-room-wake-self-contained] Bump `version` in
-      `plugins/s/.claude-plugin/plugin.json` from `0.6.340` to `0.6.341`.
+      `plugins/s/.claude-plugin/plugin.json` from `0.6.341` to `0.6.342`.
 
 ## 3. Verify
 
