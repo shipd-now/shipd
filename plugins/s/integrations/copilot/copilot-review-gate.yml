@@ -1171,6 +1171,7 @@ jobs:
               lines = replacement(finding)
               if lines:
                   parts += ["", "```suggestion"] + lines + ["```"]
+              parts += ["", "<!-- shipd-gate-finding -->"]
               return "\n".join(parts)
 
 
@@ -1414,7 +1415,9 @@ jobs:
           set -euo pipefail
           # Only the gate's own threads: a first comment by
           # `github-actions[bot]` (GraphQL reports a bot's login without the
-          # `[bot]` suffix, so both spellings count), unresolved, and made on
+          # `[bot]` suffix, so both spellings count) whose last non-blank
+          # line is the marker the gate's own inline comments carry (another
+          # Actions workflow's threads lack it), unresolved, and made on
           # a commit other than this head — the review just posted anchored
           # its own threads on this head, so they are never touched. Only the
           # first 100 threads are read. Anything that goes wrong here only
@@ -1435,7 +1438,7 @@ jobs:
                     id
                     isResolved
                     comments(first: 1) {
-                      nodes { author { login } originalCommit { oid } }
+                      nodes { author { login } body originalCommit { oid } }
                     }
                   }
                 }
@@ -1464,6 +1467,7 @@ jobs:
           import sys
 
           GATE = ("github-actions", "github-actions[bot]")
+          MARKER = "<!-- shipd-gate-finding -->"
           with open(sys.argv[1], encoding="utf-8") as handle:
               answer = json.load(handle)
           nodes = answer["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
@@ -1477,6 +1481,11 @@ jobs:
               if not isinstance(first, dict):
                   continue
               if (first.get("author") or {}).get("login") not in GATE:
+                  continue
+              body = first.get("body")
+              lines = [l.strip() for l in body.splitlines() if l.strip()] \
+                  if isinstance(body, str) else []
+              if not lines or lines[-1] != MARKER:
                   continue
               if (first.get("originalCommit") or {}).get("oid") == os.environ["HEAD_SHA"]:
                   continue

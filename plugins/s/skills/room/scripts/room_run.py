@@ -269,6 +269,14 @@ def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
     if not opts.interval > 0:
         parser.error("--interval must be greater than 0, got %s"
                      % opts.interval)
+    if opts.pr is None:
+        import room_run_repo
+        return room_run_repo.cmd_run_repo(opts, parser, gh, runner, sleep,
+                                          clock, preflight)
+    if opts.state is not None:
+        parser.error("--state needs repo mode (omit the pull request)")
+    opts.since = opts.since or (0, 0)
+    opts.budget = 14400.0 if opts.budget is None else opts.budget
     if opts.request_review and opts.role != "author":
         parser.error("--request-review needs --role author")
     root = room._root(opts)
