@@ -8,7 +8,9 @@ agent drives to take part in one:
   join <pr>      post or refresh this agent's own card comment (``--role``
                  sets its role: author, reviewer, or ci)
   list <pr>      the room's cards and tasks
-  whoami <pr>    the acting login, the author, and the credential source;
+  whoami <pr>    the acting login, the author, and the credential source
+                 (gh's order: GH_TOKEN, GITHUB_TOKEN, or the enterprise pair
+                 on a GHES host, then GH_CONFIG_DIR, then gh-login);
                  exits 1 when the login authored the pull request
   message <pr>   open a task (``--new``) or advance one (``--task ID``)
   close <pr>     post a task's terminal message
@@ -520,14 +522,32 @@ def _pr_author(gh, ref, repo):
         return ""
 
 
-def _credential_source(environ):
-    """Which credential the ``gh`` subprocess will use: ``GH_TOKEN``, else
-    ``GH_CONFIG_DIR``, else the shared ``gh`` login. Names only, never a
-    value."""
-    if environ.get("GH_TOKEN"):
-        return "GH_TOKEN"
-    if environ.get("GH_CONFIG_DIR"):
-        return "GH_CONFIG_DIR"
+_URL_HOST = re.compile(r"^https?://([^/]+)/")
+
+
+def _room_host(pr, environ):
+    """The GitHub host the room's ``gh`` calls target: the host of a pull
+    request URL, else ``GH_HOST``, else ``github.com``. Reads no API."""
+    match = _URL_HOST.match(str(pr))
+    if match:
+        return match.group(1)
+    return environ.get("GH_HOST") or "github.com"
+
+
+def _credential_source(environ, host="github.com"):
+    """Which credential the ``gh`` subprocess will use, in gh's own order.
+    For ``github.com`` or a ``ghe.com`` subdomain: ``GH_TOKEN``, else
+    ``GITHUB_TOKEN``; for an Enterprise Server host: ``GH_ENTERPRISE_TOKEN``,
+    else ``GITHUB_ENTERPRISE_TOKEN``. Then ``GH_CONFIG_DIR``, else the shared
+    ``gh`` login. Names only, never a value."""
+    host = (host or "github.com").lower()
+    if host == "github.com" or host.endswith(".ghe.com"):
+        tokens = ("GH_TOKEN", "GITHUB_TOKEN")
+    else:
+        tokens = ("GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
+    for name in tokens + ("GH_CONFIG_DIR",):
+        if environ.get(name):
+            return name
     return "gh-login"
 
 
@@ -679,7 +699,9 @@ def cmd_whoami(opts, parser, gh):
                         "cannot approve their own pull request"
                         % (login, repo, number))
     _emit({"login": login, "author": author,
-           "source": _credential_source(os.environ), "may_approve": True})
+           "source": _credential_source(os.environ,
+                                        _room_host(opts.pr, os.environ)),
+           "may_approve": True})
     return 0
 
 

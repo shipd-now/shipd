@@ -67,7 +67,8 @@ Every verb takes the user's pull request URL as `<pr>`, or `--repo
 
 Before any approving or change-requesting review, an agent runs
 `shipd room whoami <pr>`, which prints the acting login, the author, the
-credential source (`GH_TOKEN`, `GH_CONFIG_DIR` or `gh-login`) and
+credential source (`GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`,
+`GITHUB_ENTERPRISE_TOKEN`, `GH_CONFIG_DIR` or `gh-login`, in `gh`'s order) and
 `may_approve`. It exits 1 with an `Error:` line when the login equals the
 author, ignoring case, or cannot be read. The agent relays that line and stops:
 GitHub does not count an author's approval of their own pull request.
