@@ -124,6 +124,32 @@ It prints the acting login, the author and the credential source, and exits 1
 with an `Error:` line when the login is the author's or unreadable. On a
 non-zero exit, relay the `Error:` line and stop: do not submit the review.
 
+## Reviewing
+
+A surfaced task addressed to you that asks for a review or re-review of the
+pull request, when your card role is `reviewer`:
+
+1. Claim it: `shipd room message <pr> "Reviewing <head>" --task <id> --state working`.
+2. Run `shipd room whoami <pr>`. On a non-zero exit, relay the `Error:` line
+   and stop without posting.
+3. Run `/s:review <pr-url> status=auto room-agent=<to> room-to=<last_agent>`,
+   taking `to` and `last_agent` from the task's watch line. It posts the shared
+   ☕ shipd summary comment, anchored findings that open `review-finding` tasks
+   for the asker, and an approve or request-changes review whose body carries
+   the full summary.
+4. Close the task: `shipd room close <pr> "<verdict>: <summary comment url>" --task <id> --state completed`.
+
+`status=auto` follows one rule. Where `.github/workflows/copilot-review-gate.yml`
+exists on the pull request's base commit, the CI gate owns `semantic-review`
+and the post sets no status. Where that file is absent (the read returns 404),
+the post sets `semantic-review` itself. On any other read failure it sets none.
+
+Never submit a separate freeform `gh pr review`: the review `/s:review` posts
+is the only one. A re-review after a push runs the same command; the one
+summary comment is edited in place, and a new full review lands on the new
+head. Posting that review is not a code change, so the no-code rule below
+still holds.
+
 ## Foreground only
 
 `watch` runs in the foreground, inside the one tool call that waits on it.

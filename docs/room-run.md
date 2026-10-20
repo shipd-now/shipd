@@ -46,13 +46,14 @@ The reviewer role needs an account other than the author's. A reviewer or
 `ci` run on the author's own account exits `1` with one `Error:` line and
 posts nothing. An author on any other account only gets a warning.
 
-## Ask for a review by hand
+The reviewer answers each review task with `/s:review`. That posts the ☕ shipd
+summary, inline findings for the author, and a review with the full summary. The
+reviewer sets `semantic-review` only when
+`.github/workflows/copilot-review-gate.yml` is absent from the base branch. It
+runs in a checkout of the pull request's repository.
 
-To open the review task yourself, skip `--request-review`:
-
-```sh
-shipd room message 412 --new --to reviewer-b --skill review-finding "Please review this pull request."
-```
+To open the review task by hand, skip `--request-review` and run
+`shipd room message 412 --new --to reviewer-b --skill review-finding "Please review this pull request."`.
 
 ## Re-review after a push
 
@@ -76,14 +77,13 @@ the reason a finding is wrong. The turn counts toward `--max-turns`.
   head, and carry the fix-required marker as its verdict line. The run reads
   the verdict as the CI gate does: the last line that is a verdict marker. A
   marker quoted in prose, "Ship it" reviews, and comments start nothing.
-- The run handles each review once. A pushed fix re-runs the CI reviewer.
-- A reply does not clear the CI verdict. Only a new push re-runs the CI
-  reviewer, and a person decides otherwise.
+- The run handles each review once. A reply does not clear the CI verdict.
+  Only a new push re-runs the CI reviewer, and a person decides otherwise.
 
 An author run waits in slices of four `--interval` periods and checks the
 reviews and the head between slices. `--ci-reviewer ""` turns off only the
-reviews check; the run still waits in slices and still checks the head.
-Reviewer and `ci` runs ignore the flag and wait once over the whole budget.
+reviews check; the run still waits in slices and checks the head. Reviewer and
+`ci` runs ignore the flag and wait once over the whole budget.
 
 ## Answer a whole repository
 

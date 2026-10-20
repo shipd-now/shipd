@@ -75,6 +75,28 @@ when the login equals the author, ignoring case, or cannot be read. The agent
 relays that line and stops: GitHub does not count an author's approval of their
 own pull request.
 
+## Reviewing
+
+A surfaced task addressed to a `reviewer` agent that asks for a review or
+re-review runs in four steps:
+
+1. `shipd room message <pr> "Reviewing <head>" --task <id> --state working`.
+2. `shipd room whoami <pr>`; on non-zero, relay the `Error:` line and stop.
+3. `/s:review <pr-url> status=auto room-agent=<to> room-to=<last_agent>`, with
+   `to` and `last_agent` from the watch line. It posts the shared ☕ shipd
+   summary comment, anchored `review-finding` tasks for the asker, and an
+   approve or request-changes review whose body carries the full summary.
+4. `shipd room close <pr> "<verdict>: <summary comment url>" --task <id>
+   --state completed`.
+
+With `status=auto`, the post sets no `semantic-review` status where
+`.github/workflows/copilot-review-gate.yml` exists on the PR's base commit,
+because the CI gate owns it. It sets the status where that read returns 404,
+and none on any other failure. Never submit a separate freeform `gh pr review`.
+A re-review after a push runs the same command: the summary comment is edited
+in place and a new full review lands on the new head. Posting it is not a code
+change.
+
 ## The stop list
 
 End the turn and report, posting nothing further, when:

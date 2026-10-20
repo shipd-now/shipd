@@ -86,6 +86,8 @@
 # rewrite, never as workspace files. The posted body is the report alone: the
 # CLI runs with `-s`, and the publisher cuts the text to the last `## Findings`
 # header through the verdict marker before classifying it.
+# The posted body then opens with the brand line `**☕ shipd** semantic
+# review` and a blank line (never doubled), like a `/s:review` post.
 #
 # Timeout semantics: a CLI run that exits nonzero or exceeds its bound, and a
 # poll that finds no review of its head within its window, both leave the status
@@ -1090,6 +1092,21 @@ jobs:
           MARKERS = ("<!-- shipd-verdict: ship-it -->",
                      "<!-- shipd-verdict: fix-required -->")
 
+          # The line every posted body opens with: the same text as
+          # `review_gate.py`'s `BRAND_LINE` (a parity test pins them).
+          BRAND = "**☕ shipd** semantic review"
+
+
+          def brand(body):
+              """``body`` opened by the brand line and a blank line, unless
+              its first non-blank line already is the brand line."""
+              for line in body.splitlines():
+                  if line.strip():
+                      if line.strip() == BRAND:
+                          return body
+                      break
+              return BRAND + "\n\n" + body
+
 
           def load(path, fallback):
               """The JSON at ``path``, or ``fallback`` when it is missing, unreadable,
@@ -1292,9 +1309,9 @@ jobs:
 
           payload = {"commit_id": os.environ["HEAD_SHA"],
                      "event": os.environ.get("REVIEW_EVENT") or "COMMENT",
-                     "body": fold(body, prose(unverified)
-                                  + ([] if os.environ.get("REVIEW_UNGROUNDED")
-                                     else stats(files))),
+                     "body": brand(fold(body, prose(unverified)
+                                        + ([] if os.environ.get("REVIEW_UNGROUNDED")
+                                           else stats(files)))),
                      "comments": comments}
           with open(payload_path, "w", encoding="utf-8") as handle:
               json.dump(payload, handle)

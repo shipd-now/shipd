@@ -1505,6 +1505,18 @@ class ChangeFieldParityTest(unittest.TestCase):
                         f"{path} does not name change field {field!r}")
 
 
+class PostingRoomOptionsTest(unittest.TestCase):
+    """posting.md names the status and room options and their poster flags."""
+
+    def test_posting_reference_names_the_options(self):
+        with open(os.path.join(REFERENCES_DIR, "posting.md"),
+                  encoding="utf-8") as handle:
+            text = handle.read()
+        for needle in ("status=", "--status", "auto", "room-agent=",
+                       "--room-agent", "room-to=", "--room-to"):
+            self.assertIn(needle, text, "posting.md does not name %r" % needle)
+
+
 class PostingDefaultInvertedTest(unittest.TestCase):
     """Posting fires by default once a pull request is in scope, not only on
     an explicit request. Pinned against both the `SKILL.md` References table

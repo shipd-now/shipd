@@ -54,6 +54,10 @@ WORKFLOW_MARKER = "# shipd-copilot v{version}"
 FIX_MARKER = "<!-- shipd-verdict: fix-required -->"
 SHIP_MARKER = "<!-- shipd-verdict: ship-it -->"
 
+# The brand line the gate puts at the top of every body it posts; the same
+# text as ``review_gate.BRAND_LINE`` (pinned by a parity test below).
+BRAND = "**\u2615 shipd** semantic review"
+
 # The commit-status context the gate posts — the same one review_gate.py uses,
 # so either poster satisfies a required check of that name.
 STATUS_CONTEXT = "semantic-review"
@@ -721,6 +725,16 @@ class GateWorkflowTemplateTest(unittest.TestCase):
     def test_ownership_marker_line_is_present_with_the_placeholder(self):
         self.assertIn(WORKFLOW_MARKER,
                       [line.strip() for line in self.text.splitlines()])
+
+    def test_the_brand_line_matches_the_posters(self):
+        scripts = os.path.join(PLUGIN_ROOT, "skills", "review", "scripts")
+        sys.path.insert(0, scripts)
+        try:
+            import review_gate
+        finally:
+            sys.path.remove(scripts)
+        self.assertEqual(review_gate.BRAND_LINE, BRAND)
+        self.assertIn(review_gate.BRAND_LINE, self.text)
 
     def test_triggers_on_pull_request_and_review_submission(self):
         block = yaml_block(self.text, "on")
@@ -2365,7 +2379,7 @@ class GateCliReviewerTest(GateScriptCase):
         posted = self.reviews()
         self.assertEqual(len(posted), 1,
                          "the reviewed text was not posted as a review")
-        self.assertEqual(posted[0]["body"], self.REVIEW,
+        self.assertEqual(posted[0]["body"], BRAND + "\n\n" + self.REVIEW,
                          "the review does not carry what the gate judged")
         self.assertEqual(posted[0]["event"], "APPROVE")
         self.assertEqual(posted[0]["commit_id"], self.HEAD)
@@ -2866,7 +2880,7 @@ class GateReviewModelTest(GateScriptCase):
     def test_an_unreadable_diff_appends_no_model_line_either(self):
         self.cli_gate(review_model="gpt-5.4", files=[])
         self.assertEqual(self.reviews()[-1]["body"],
-                         GateReviewPostTest.SHIP_REVIEW)
+                         BRAND + "\n\n" + GateReviewPostTest.SHIP_REVIEW)
 
     def test_an_ungrounded_review_names_no_model(self):
         self.cli_gate(review_model="gpt-5.4", engine_files=0,
@@ -2994,7 +3008,7 @@ class GateStrictModeTest(GateScriptCase):
         posted = self.reviews()
         self.assertEqual(len(posted), 1,
                          "strict mode swallowed the reviewer's own text")
-        self.assertEqual(posted[0]["body"], QUOTING_BODY,
+        self.assertEqual(posted[0]["body"], BRAND + "\n\n" + QUOTING_BODY,
                          "the review does not carry what the reviewer wrote")
 
     def test_the_other_paths_still_publish_nothing(self):
@@ -3131,7 +3145,7 @@ class GateGroundingTest(GateScriptCase):
         self.assertEqual(len(reviews), 1)
         self.assertEqual(reviews[0].get("event"), "COMMENT")
         self.assertTrue(reviews[0].get("body", "").startswith(
-            "**Not a verdict.**"), reviews[0].get("body"))
+            BRAND + "\n\n**Not a verdict.**"), reviews[0].get("body"))
 
     def test_a_zero_file_grounding_never_arms_fast_pass(self):
         self.cli_gate(engine_files=0, files=self.ONE_FILE, fast_pass="true",
@@ -3185,7 +3199,8 @@ class GateReportExtractionTest(GateScriptCase):
         posts = self.cli_gate(cli_out=out)
         self.assertStates(posts, ["pending", "success"])
         body = self.reviews()[-1]["body"]
-        self.assertEqual(body.splitlines()[0],
+        self.assertEqual(body.splitlines()[0], BRAND)
+        self.assertEqual(body.splitlines()[2],
                          "## Findings: \u2705 Ship it")
         self.assertNotIn("\u25cf", body)
         self.assertNotIn("goodbye", body)
@@ -3199,7 +3214,8 @@ class GateReportExtractionTest(GateScriptCase):
         posts = self.cli_gate(cli_out=out)
         self.assertStates(posts, ["pending", "success"])
         body = self.reviews()[-1]["body"]
-        self.assertEqual(body.splitlines()[0],
+        self.assertEqual(body.splitlines()[0], BRAND)
+        self.assertEqual(body.splitlines()[2],
                          "## Findings: \u2705 Ship it")
         self.assertIn("## Findings by cohort", body)
         self.assertIn("| High | 0 |", body)
@@ -3215,6 +3231,22 @@ class GateReportExtractionTest(GateScriptCase):
         self.assertNotIn("\u25cf", body)
         self.assertNotIn("\u2502", body)
         self.assertNotIn("\u2514", body)
+
+    def test_a_brand_line_the_reviewer_wrote_is_not_doubled(self):
+        out = (BRAND + "\n\nIntro prose line.\n\n" + SHIP_MARKER + "\n")
+        self.cli_gate(cli_out=out)
+        body = self.reviews()[-1]["body"]
+        self.assertEqual(body.count(BRAND), 1, body)
+        self.assertEqual(body.splitlines()[0], BRAND)
+
+    def test_a_branded_fix_required_body_still_fails_the_check(self):
+        out = (BRAND + "\n\n## Findings: \u274c Fix required\n\nBad.\n\n"
+               + FIX_MARKER + "\n")
+        posts = self.cli_gate(cli_out=out)
+        self.assertStates(posts, ["pending", "failure"])
+        review = self.reviews()[-1]
+        self.assertEqual(review["event"], "REQUEST_CHANGES")
+        self.assertEqual(review["body"].count(BRAND), 1, review["body"])
 
     def test_a_fix_required_marker_in_the_report_still_fails(self):
         out = (self.TRANSCRIPT + "## Findings: Fix required\n\nBad.\n\n"

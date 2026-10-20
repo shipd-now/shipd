@@ -20,8 +20,8 @@ pull request's head does not carry, so it never posts as a side effect.
 
 ## Review stage options
 
-The invoker — a driving session or the user — may pass two options with the
-review. Each carries a default, so an invocation passing neither changes
+The invoker — a driving session or the user — may pass five options with the
+review. Each carries a default, so an invocation passing none changes
 nothing:
 
 - `disposition=<all|high-only|none>` (default `all`) — how much per-finding
@@ -41,6 +41,16 @@ nothing:
   spawns the reviewing session (the autopilot's `review` stage); this skill
   never spawns itself on another model, and interactively the tier is
   informational provenance only.
+- `status=<set|off|auto>` (default `set`) — passes straight through as
+  `--status`. `auto` sets no `semantic-review` status and arms no fast-pass
+  where `.github/workflows/copilot-review-gate.yml` exists at the PR's base
+  commit, because the CI gate owns that status there. It sets a normal status
+  where the read returns 404, and none on any other read failure.
+- `room-agent=<name>` — passes straight through as `--room-agent`. Finding
+  tasks speak as that agent, and the submitted review's body carries the full
+  branded summary under that agent's heading.
+- `room-to=<name>` — passes straight through as `--room-to`. Each finding task
+  is addressed to that agent. It needs `room-agent`.
 
 Never resolve the pipeline configuration yourself — this skill reads no
 `autonomous-pipeline` key and infers no options. Whatever the invoker did not
@@ -99,8 +109,8 @@ The flow:
    shape and rules as Machine output mode) from the findings that survived
    step 3, and write it to a temp path, e.g. `"$TMPDIR/review.json"`.
 5. **Run the poster.** `review_gate.py post <pr> --from "$TMPDIR/review.json"`,
-   adding `--disposition <scope>` and `--model <tier>` when the invoker passed
-   them. It upserts the marker summary comment, posts one inline comment per
+   adding `--disposition <scope>`, `--model <tier>`, `--status <mode>`,
+   `--room-agent <name>` and `--room-to <name>` when the invoker passed them. It upserts the marker summary comment, posts one inline comment per
    anchorable location across a finding's `locations` array (folding a finding
    into the summary only when none of its locations anchor), and sets the
    `semantic-review` commit status on the head SHA by scope — under the default

@@ -58,6 +58,17 @@ Before any approving or change-requesting review, run `shipd room whoami
 <pr>`; when it exits non-zero, relay its `Error:` line and stop without
 submitting the review.
 
+When a task addressed to you, as role `reviewer`, asks for a review or
+re-review: claim it `working`, run `shipd room whoami <pr>` (stop on non-zero),
+run `/s:review <pr-url> status=auto room-agent=<to> room-to=<last_agent>` with
+`to` and `last_agent` from the task's watch line, then `shipd room close <pr>
+"<verdict>: <summary comment url>" --task <id> --state completed`. With
+`status=auto`, the post sets no `semantic-review` status when
+`.github/workflows/copilot-review-gate.yml` exists on the PR's base commit
+(the CI gate owns it), sets it when that read returns 404, and sets none on
+any other failure. Never submit a separate freeform `gh pr review`; posting
+the `/s:review` review is not a code change.
+
 Stop and report, posting nothing more, when `watch` printed a `closed` line
 (report its `open` tasks as unresolved), when `watch` exits 0 with empty stdout
 (report the cursor it printed on stderr; do not loop again), when `message`

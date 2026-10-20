@@ -2487,6 +2487,180 @@ class RoomPostTest(unittest.TestCase):
                          {c["id"] for c in inline})
 
 
+class WorkflowReadGh(FakeGh):
+    """``FakeGh`` that also answers the gate-workflow contents read: ``rc 0``
+    (present), or the ``(rc, stderr)`` pair given as ``contents_fail``."""
+
+    def __init__(self, *, contents_fail=None, **kwargs):
+        super().__init__(**kwargs)
+        self.contents_fail = contents_fail
+
+    def __call__(self, args, input=None):
+        args = list(args)
+        if (args[:1] == ["api"] and len(args) > 1
+                and "/contents/.github/workflows/copilot-review-gate.yml"
+                in args[1]):
+            self.calls.append((args, input))
+            if self.contents_fail is None:
+                return 0, "{}", ""
+            return 1, "", self.contents_fail
+        return super().__call__(args, input)
+
+    def contents_reads(self):
+        return [a for a, _i in self.calls
+                if a[:1] == ["api"] and "/contents/" in a[1]]
+
+    def status_calls(self):
+        return [a for a, _i in self.calls if "/statuses/" in str(a)]
+
+    def merge_calls(self):
+        return [a for a, _i in self.calls if a[:2] == ["pr", "merge"]]
+
+
+NOT_FOUND = "gh: Not Found (HTTP 404)"
+FORBIDDEN = "gh: Forbidden (HTTP 403)"
+
+
+class RoomReviewerPostTest(unittest.TestCase):
+    """gate-poster-room-mode: ``--status``, ``--room-agent``, ``--room-to``."""
+
+    FILES = [{"filename": "a.py", "patch": PATCH_A}]
+
+    def _red(self):
+        return _review(verdict="changes-requested", findings=[
+            {"id": "f1", "severity": "high", "locations": ["a.py:2"],
+             "what": "first", "why": "w", "fix": "x"},
+            {"id": "f2", "severity": "medium", "locations": ["b.py:99"],
+             "what": "second", "why": "w", "fix": "x"}])
+
+    def _gh(self, **kwargs):
+        kwargs.setdefault("files", self.FILES)
+        return WorkflowReadGh(**kwargs)
+
+    def _eligible(self):
+        return _review(
+            verdict="pass",
+            change={"slug": "c", "location": "completed",
+                    "dir": ".shipd/completed/2026-01-01-c"},
+            spec_coverage=[{"scenario": "WHEN x THEN y", "state": "met"}])
+
+    def _post(self, gh, review, **kwargs):
+        lines = []
+        result = review_gate.post("7", review, gh, out=lines.append, **kwargs)
+        return result, lines
+
+    def test_auto_with_the_gate_present_sets_no_status(self):
+        gh = self._gh(variable_get_enabled=True)
+        result, lines = self._post(gh, self._eligible(), status="auto")
+        self.assertEqual(len(gh.contents_reads()), 1)
+        self.assertIn("ref=base456", gh.contents_reads()[0][1])
+        self.assertEqual(gh.status_calls(), [])
+        self.assertEqual(gh.merge_calls(), [])
+        self.assertNotIn("**Fast-pass:**", gh.summary_body())
+        self.assertIn("semantic-review status: not set (gate workflow "
+                      "present)", lines)
+        self.assertEqual(gh.review_posts[-1]["event"], "APPROVE")
+        self.assertEqual(result["review_event"], "APPROVE")
+
+    def test_auto_with_the_gate_absent_sets_the_status(self):
+        gh = self._gh(contents_fail=NOT_FOUND)
+        self._post(gh, self._red(), status="auto")
+        self.assertEqual(gh.posted_status["state"], "failure")
+        self.assertEqual(gh.review_posts[-1]["event"], "REQUEST_CHANGES")
+
+    def test_auto_with_an_unreadable_path_sets_no_status_and_warns(self):
+        gh = self._gh(contents_fail=FORBIDDEN)
+        _result, lines = self._post(gh, self._red(), status="auto")
+        self.assertEqual(gh.status_calls(), [])
+        warnings = [ln for ln in lines if "403" in ln or "unreadable" in ln]
+        self.assertEqual(len(warnings), 2, lines)  # warning + status line
+        self.assertEqual(sum("warning" in ln for ln in lines), 1, lines)
+
+    def test_off_never_reads_the_workflow_path(self):
+        gh = self._gh(variable_get_enabled=True)
+        _result, lines = self._post(gh, self._red(), status="off")
+        self.assertEqual(gh.contents_reads(), [])
+        self.assertEqual(gh.status_calls(), [])
+        self.assertEqual(gh.merge_calls(), [])
+        self.assertIn("semantic-review status: not set (--status off)", lines)
+        self.assertEqual(gh.review_posts[-1]["event"], "REQUEST_CHANGES")
+
+    def test_room_flags_address_the_finding_task(self):
+        import room
+        gh = self._gh()
+        self._post(gh, self._red(), room_agent="reviewer-b",
+                   room_to="author-a")
+        comments = gh.review_posts[0]["comments"]
+        self.assertEqual(len(comments), 1)
+        entries = [(101, room_schema.parse_comments(comments[0]["body"])[0])]
+        message = entries[0][1]
+        self.assertEqual(message.agent, "reviewer-b")
+        self.assertEqual(message.metadata.get("to"), "author-a")
+        self.assertEqual(message.skill, "review-finding")
+        self.assertEqual(message.state, "input-required")
+        cards = [m for m in room_schema.parse_comments(gh.summary_body())
+                 if isinstance(m, room_schema.AgentCard)]
+        self.assertEqual([c.name for c in cards], ["semantic-review"])
+        tasks = room_schema.build_tasks(entries)
+        skills = ("review-finding",)
+        self.assertEqual(
+            [t.id for t in room.actionable_tasks(tasks, "author-a", skills)],
+            [101])
+        self.assertEqual(
+            room.actionable_tasks(tasks, "reviewer-b", skills), [])
+
+    def test_the_room_review_body_carries_the_full_summary(self):
+        gh = self._gh()
+        self._post(gh, self._red(), room_agent="reviewer-b")
+        body = gh.review_posts[0]["body"]
+        self.assertEqual(
+            body.splitlines()[0],
+            "### \u2615 shipd \u00b7 reviewer-b \u00b7 reviewer "
+            "(for @mikkel)")
+        self.assertEqual(body.splitlines()[1], "")
+        self.assertIn(review_gate.BRAND_LINE, body)
+        self.assertIn("## Findings: \u274c Fix required", body)
+        self.assertIn("| 1 | ", body)
+        self.assertIn("### Additional findings", body)
+        self.assertIn("Reviewed ", body)
+        self.assertNotIn("<!-- shipd-semantic-review", body)
+        self.assertNotIn("Earlier reviews", body)
+
+    def test_a_rejected_inline_review_retries_with_the_folded_summary(self):
+        gh = self._gh(review_fail_times=1)
+        self._post(gh, self._red(), room_agent="reviewer-b")
+        retry = gh.review_posts[1]
+        self.assertEqual(retry["comments"], [])
+        self.assertIn("| 2 | ", retry["body"])
+        self.assertNotIn("<!-- shipd-semantic-review", retry["body"])
+
+    def test_a_re_review_edits_one_summary_and_adds_a_full_review(self):
+        gh = self._gh()
+        gh.head_sha = "a" * 40
+        self._post(gh, self._red(), room_agent="reviewer-b")
+        gh.head_sha = "b" * 40
+        self._post(gh, _review(verdict="pass"), room_agent="reviewer-b")
+        self.assertEqual(len(gh.marker_comments()), 1)
+        summary = gh.summary_body()
+        self.assertIn("Earlier reviews", summary)
+        self.assertIn("`aaaaaaa`", summary)
+        self.assertEqual(len(gh.review_posts), 2)
+        second = gh.review_posts[1]["body"]
+        self.assertIn("## Findings: \u2705 Ship it", second)
+        self.assertNotIn("Earlier reviews", second)
+
+    def test_room_to_alone_is_refused(self):
+        gh = self._gh()
+        path = os.path.join(tempfile.mkdtemp(), "r.json")
+        with open(path, "w") as handle:
+            json.dump(_review(), handle)
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit) as ctx:
+            review_gate.main(["post", "7", "--from", path,
+                              "--room-to", "author-a"], gh=gh)
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(gh.calls, [])
+
+
 class EarlierReviewsTest(unittest.TestCase):
     """summary-earlier-reviews: a re-posted summary keeps a collapsed list
     of the verdicts it replaced."""
