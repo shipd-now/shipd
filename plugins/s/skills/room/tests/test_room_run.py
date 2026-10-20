@@ -645,14 +645,129 @@ class RunCiReviewTest(RunTestBase):
         self.assertEqual(reviews_reads(gh), [])
         self.assertEqual(runner.calls, [])
 
-    def test_an_empty_ci_reviewer_keeps_the_single_watch(self):
+    def test_an_empty_ci_reviewer_still_slices(self):
         gh = FakeGh(head="aaa1111", reviews=[ci_review(31)])
+        timeouts = []
+        real = room_run.room.cmd_watch
+
+        def spy(ns, *rest):
+            timeouts.append(ns.timeout)
+            return real(ns, *rest)
+
         runner = FakeRunner()
-        code, out, err = self.run_ci(gh, "--ci-reviewer", "", runner=runner)
+        with unittest.mock.patch.object(room_run.room, "cmd_watch", spy):
+            code, out, err = self.run_ci(gh, "--ci-reviewer", "",
+                                         runner=runner)
         self.assertEqual(code, 0, err)
         self.assertEqual(reviews_reads(gh), [])
         self.assertEqual(runner.calls, [])
-        self.assertIn("no actionable task", err)
+        self.assertGreater(len(timeouts), 1)
+        self.assertTrue(all(t <= 20 for t in timeouts), timeouts)
+        self.assertNotIn("no actionable task", err)
+        self.assertEqual(self.summary(out)["reason"], "budget")
+
+
+def head_moving_gh(gh, head="bbb2222", on_view=2):
+    """Wrap ``gh`` so the fake head moves to ``head`` on the ``on_view``th
+    state read -- a push made by someone else while the run watches."""
+    real = gh.__call__
+    seen = {"n": 0}
+
+    def wrapped(args, input=None):
+        if args[:2] == ["pr", "view"] and "state" in args:
+            seen["n"] += 1
+            if seen["n"] == on_view:
+                gh.head = head
+        return real(args, input=input)
+
+    wrapped.posts = gh.posts
+    return wrapped
+
+
+class RunAnyPushRereviewTest(RunTestBase):
+    ARGV = ("7", "--role", "author", "--agent", "author-a")
+
+    def at_head(self, gh, head="bbb2222"):
+        return [t for t in request_posts(gh)
+                if t.metadata.get("head") == head]
+
+    def test_a_push_between_slices_opens_one_re_review(self):
+        gh = FakeGh(head="aaa1111")
+        runner = FakeRunner()
+        code, out, err = self.run_verb(
+            head_moving_gh(gh), *self.ARGV, "--request-review",
+            "reviewer-b", "--budget", "100", "--interval", "5",
+            runner=runner, clock=FakeClock(step=10))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(runner.calls, [])
+        tasks = self.at_head(gh)
+        self.assertEqual(len(tasks), 1, gh.posts())
+        self.assertEqual(tasks[0].to, "reviewer-b")
+        self.assertEqual(tasks[0].skill, "review-finding")
+        self.assertEqual(len(request_posts(gh)), 2, gh.posts())
+        self.assertIn("re-review requested from reviewer-b at bbb2222", err)
+
+    def test_a_push_with_an_empty_ci_reviewer_opens_one_re_review(self):
+        gh = FakeGh(head="aaa1111")
+        code, out, err = self.run_verb(
+            head_moving_gh(gh), *self.ARGV, "--request-review",
+            "reviewer-b", "--ci-reviewer", "", "--budget", "100",
+            "--interval", "5", clock=FakeClock(step=10))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(self.at_head(gh)), 1, gh.posts())
+
+    def test_the_authors_own_push_is_requested_once(self):
+        gh = FakeGh(comments=[card_comment(5, "reviewer-b", role="reviewer"),
+                              waiting(10, to="author-a",
+                                      opener="reviewer-b")],
+                    head="aaa1111")
+
+        def hook(_n):
+            gh.head = "bbb2222"
+
+        runner = FakeRunner(hook=hook)
+        code, out, err = self.run_verb(
+            gh, *self.ARGV, "--budget", "100", "--interval", "5",
+            runner=runner, clock=FakeClock(step=10))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(runner.calls), 1)
+        tasks = self.at_head(gh)
+        self.assertEqual(len(tasks), 1, gh.posts())
+        self.assertEqual(tasks[0].to, "reviewer-b")
+        self.assertEqual(self.summary(out)["reason"], "budget")
+
+    def test_an_unreadable_start_head_opens_nothing(self):
+        gh = FakeGh(head="aaa1111")
+        real = head_moving_gh(gh)
+        reads = {"n": 0}
+
+        def flaky(args, input=None):
+            if args[:2] == ["pr", "view"] and any(
+                    "headRefOid" in a for a in args):
+                reads["n"] += 1
+                if reads["n"] == 1:
+                    return 1, "", "boom"
+            return real(args, input=input)
+
+        flaky.posts = gh.posts
+        code, out, err = self.run_verb(
+            flaky, *self.ARGV, "--ci-reviewer", "", "--budget", "100",
+            "--interval", "5", clock=FakeClock(step=10))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(err.count("warning: could not read the head"), 1,
+                         err)
+        self.assertEqual(request_posts(gh), [])
+
+    def test_a_reviewer_run_opens_nothing_on_a_push(self):
+        gh = FakeGh(head="aaa1111", login="rev", pr_author="mikkel")
+        runner = FakeRunner()
+        code, out, err = self.run_verb(
+            head_moving_gh(gh), "7", "--role", "reviewer", "--agent",
+            "reviewer-b", "--budget", "100", "--interval", "5",
+            runner=runner, clock=FakeClock(step=10))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(request_posts(gh), [])
+        self.assertEqual(runner.calls, [])
 
 
 if __name__ == "__main__":
