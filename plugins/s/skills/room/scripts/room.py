@@ -17,6 +17,8 @@ agent drives to take part in one:
   watch <pr>     wait for a task that is this agent's turn (NDJSON)
   run <pr>       join once, then answer each task with a headless /s:room
                  turn until the pull request closes or a cap is hit
+  run --repo R   with no <pr>, answer every open pull request that holds a
+                 task for this agent (reviewer or ci), until interrupted
 
 Every GitHub read and write goes through one injectable ``gh`` runner,
 ``gh(args, input=None) -> (rc, stdout, stderr)``, defaulting to the ``gh``
@@ -1077,7 +1079,9 @@ def build_parser():
     p = sub.add_parser("run", parents=[common],
                        help="join once, then answer each task with a "
                             "headless /s:room turn")
-    p.add_argument("pr", help="pull request number, URL, or branch")
+    p.add_argument("pr", nargs="?", default=None,
+                   help="pull request number, URL, or branch; omit it with "
+                        "--repo to answer every open pull request")
     p.add_argument("--role", required=True, choices=room_schema.ROLE_VALUES,
                    help="the agent's role: %s" % ", ".join(
                        room_schema.ROLE_VALUES))
@@ -1094,18 +1098,23 @@ def build_parser():
     p.add_argument("--max-turns", type=_positive_int, default=10,
                    dest="max_turns", metavar="N",
                    help="stop after this many turns (default: 10)")
-    p.add_argument("--budget", type=_positive_float, default=14400.0,
+    p.add_argument("--budget", type=_positive_float, default=None,
                    metavar="S",
-                   help="stop after this many seconds (default: 14400)")
+                   help="stop after this many seconds (default: 14400 for "
+                        "one pull request, no limit in repo mode)")
     p.add_argument("--turn-timeout", type=_positive_float,
                    default=None, dest="turn_timeout", metavar="S",
                    help="seconds one turn may run (default: 1800)")
     p.add_argument("--interval", type=float, default=30.0, metavar="S",
                    help="seconds between polls (default: 30)")
-    p.add_argument("--since", type=_cursor, default=(0, 0),
+    p.add_argument("--since", type=_cursor, default=None,
                    metavar="CURSOR",
                    help="surface only tasks newer than <issue>:<review> "
                         "comment ids (default: 0:0, the backlog)")
+    p.add_argument("--state", default=None, dest="state", metavar="PATH",
+                   help="repo mode: the JSON file holding each pull "
+                        "request's cursor and session (default: "
+                        "~/.shipd/room-run/<owner>/<name>/<agent>.json)")
     p.add_argument("--request-review", action="append", default=[],
                    dest="request_review", metavar="AGENT",
                    help="open a review-finding task addressed to AGENT "
@@ -1141,4 +1150,6 @@ def main(argv=None, gh=None, sleep=time.sleep, clock=time.monotonic,
 
 
 if __name__ == "__main__":
+    # Lazy imports of ``room`` must reuse this module, so one RoomError class.
+    sys.modules.setdefault("room", sys.modules[__name__])
     sys.exit(main())

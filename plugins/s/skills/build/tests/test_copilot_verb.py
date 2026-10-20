@@ -1743,13 +1743,19 @@ BASE_SKILL = "# Review contract, as the base ref carries it.\n"
 HEAD_SKILL = "# Review contract, as the reviewed commit carries it.\n"
 
 
-def thread(thread_id, login, oid, resolved=False):
+GATE_MARKER = "<!-- shipd-gate-finding -->"
+
+
+def thread(thread_id, login, oid, resolved=False,
+           body="**x**\n\n" + GATE_MARKER):
     """One review thread as the GraphQL ``reviewThreads`` query serves it: its
-    id, whether it is resolved, and its first comment's author and the commit
-    that comment was made on (``None`` for a commit GitHub no longer has)."""
+    id, whether it is resolved, and its first comment's author, body, and the
+    commit that comment was made on (``None`` for a commit GitHub no longer
+    has). The default body ends with the gate's finding marker."""
     commit = {"oid": oid} if oid is not None else None
     return {"id": thread_id, "isResolved": resolved,
             "comments": {"nodes": [{"author": {"login": login},
+                                    "body": body,
                                     "originalCommit": commit}]}}
 
 
@@ -2549,6 +2555,16 @@ class GateReviewPostTest(GateScriptCase):
                          ("RIGHT", "RIGHT"))
         self.assertIn("The backoff never resets.", comment["body"])
 
+    def test_every_inline_comment_ends_with_the_gate_marker(self):
+        bare = {k: v for k, v in self.ANCHORED.items()
+                if k != "replacement"}
+        for finding in (self.ANCHORED, bare):
+            with self.subTest(replacement="replacement" in finding):
+                self.cli_gate(findings=[finding])
+                for comment in self.review()["comments"]:
+                    self.assertEqual(comment["body"].splitlines()[-1],
+                                     GATE_MARKER)
+
     def test_a_high_finding_is_anchored(self):
         finding = dict(self.ANCHORED, severity="high",
                        detail="High severity finding.")
@@ -2735,6 +2751,13 @@ class GateThreadResolveTest(GateScriptCase):
             thread("T_human", "a-reviewer", self.EARLIER),
             thread("T_done", "github-actions", self.EARLIER, resolved=True),
             thread("T_head", "github-actions", self.HEAD),
+            thread("T_mine", "github-actions", self.EARLIER)])
+        self.assertEqual(self.resolved(), ["T_mine"])
+
+    def test_another_workflows_thread_is_left_alone(self):
+        self.cli_gate(threads=[
+            thread("T_lint", "github-actions", self.EARLIER,
+                   body="**lint** something"),
             thread("T_mine", "github-actions", self.EARLIER)])
         self.assertEqual(self.resolved(), ["T_mine"])
 
@@ -3308,6 +3331,11 @@ class CopilotVerbTest(CopilotVerbCase):
         self.assertEqual(states[SEMDIFF_PATH], "stale")
         # The skill is only installed when its bundled engine matches.
         self.assertEqual(states[SKILL_PATH], "stale")
+        stale = [l for l in self.cli().stdout.splitlines()
+                 if l.split()[:1] == ["stale"]]
+        self.assertEqual(len(stale), 2, stale)
+        for line in stale:
+            self.assertIn("shipd copilot update", line)
         self.assertEqual(states[WORKFLOW_PATH], "installed")
         self.assertEqual(states[GATE_PATH], "installed")
 
@@ -3321,6 +3349,11 @@ class CopilotVerbTest(CopilotVerbCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.states()[WORKFLOW_PATH], "stale")
         self.assertIn("0.0.1", result.stdout)
+        line = next(l for l in result.stdout.splitlines()
+                    if WORKFLOW_PATH in l)
+        self.assertIn("0.0.1", line)
+        self.assertIn("shipd copilot update", line)
+        self.assertNotIn("copilot add` refreshes", line)
 
     def test_report_marks_a_marker_less_file_foreign(self):
         self.plant(WORKFLOW_PATH, "name: someone else's workflow\n")
@@ -3605,6 +3638,26 @@ class CopilotRoomWakeVerbTest(CopilotVerbCase):
         for relative in ROOM_RUNTIME:
             if relative != ROOM_ROOM_PY:
                 self.assertEqual(states[relative], "installed", relative)
+        stale = [l for l in self.cli().stdout.splitlines()
+                 if l.split()[:1] == ["stale"]]
+        self.assertEqual(len(stale), 2, stale)
+        for line in stale:
+            self.assertIn("shipd copilot update", line)
+            self.assertNotIn("add --room", line)
+
+    def test_stale_wake_lines_name_update(self):
+        self.install_room()
+        self.plant(ROOM_WORKFLOW_PATH,
+                   self.contents(ROOM_WORKFLOW_PATH).replace(
+                       "# shipd-copilot v%s" % self.version,
+                       "# shipd-copilot v0.0.1"))
+        self.plant(ROOM_ROOM_PY, self.contents(ROOM_ROOM_PY) + "\n# edit\n")
+        stale = [l for l in self.cli().stdout.splitlines()
+                 if l.split()[:1] == ["stale"]]
+        self.assertEqual(len(stale), 2, stale)
+        for line in stale:
+            self.assertIn("shipd copilot update", line)
+            self.assertNotIn("add --room", line)
 
     def test_runtime_is_foreign_without_the_workflow_marker(self):
         self.install_room()

@@ -2097,8 +2097,8 @@ def copilot_states(root, version):
                 "foreign", "exists without a shipd-copilot marker")
         elif marker != version:
             states[relative] = (
-                "stale", "marker v%s — `shipd copilot add` refreshes it to v%s"
-                % (marker, version))
+                "stale", "marker v%s — `shipd copilot update` refreshes it to "
+                       "v%s" % (marker, version))
         else:
             states[relative] = ("installed", "shipd-copilot v%s" % version)
 
@@ -2110,8 +2110,8 @@ def copilot_states(root, version):
             "foreign", "the SKILL.md beside it is not shipd-owned")
     elif engine is None or _read_bytes(target) != engine:
         states[COPILOT_SEMDIFF] = (
-            "stale", "differs from the plugin's engine — `shipd copilot add` "
-                     "refreshes it")
+            "stale", "differs from the plugin's engine — `shipd copilot "
+                     "update` refreshes it")
     else:
         states[COPILOT_SEMDIFF] = (
             "installed", "byte-identical to the plugin's engine")
@@ -2121,8 +2121,8 @@ def copilot_states(root, version):
     if (states[COPILOT_SKILL][0] == "installed"
             and states[COPILOT_SEMDIFF][0] != "installed"):
         states[COPILOT_SKILL] = (
-            "stale", "its bundled semdiff.py is %s"
-                     % states[COPILOT_SEMDIFF][0])
+            "stale", "its bundled semdiff.py is %s — `shipd copilot update` "
+                     "refreshes it" % states[COPILOT_SEMDIFF][0])
     return [(relative,) + states[relative] for relative in COPILOT_MANAGED]
 
 
@@ -2146,8 +2146,8 @@ def room_wake_states(root, version):
             workflow = ("foreign", "exists without a shipd-copilot marker")
         elif marker != version:
             workflow = (
-                "stale", "marker v%s — `shipd copilot add --room` refreshes "
-                         "it to v%s" % (marker, version))
+                "stale", "marker v%s — `shipd copilot update` refreshes it "
+                         "to v%s" % (marker, version))
         else:
             workflow = ("installed", "shipd-copilot v%s" % version)
 
@@ -2161,7 +2161,7 @@ def room_wake_states(root, version):
                                 "shipd-owned")
         elif _read_bytes(target) != _read_bytes(str(PLUGIN_ROOT / source)):
             state = ("stale", "differs from the plugin's copy — `shipd "
-                              "copilot add --room` refreshes it")
+                              "copilot update` refreshes it")
         else:
             state = ("installed", "byte-identical to the plugin's copy")
         states.append((relative,) + state)
@@ -2171,7 +2171,8 @@ def room_wake_states(root, version):
         lagging = [state for _relative, state, _detail in states
                    if state != "installed"]
         if lagging:
-            workflow = ("stale", "its bundled room runtime is %s"
+            workflow = ("stale", "its bundled room runtime is %s — `shipd "
+                                 "copilot update` refreshes it"
                                  % ", ".join(sorted(set(lagging))))
     return [(ROOM_WAKE_WORKFLOW,) + workflow] + states
 
