@@ -48,6 +48,15 @@ Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 Run it from the repo root, so `--root` may be omitted and defaults to the cwd —
 the same convention `/s:status` and `/s:build` use.
 
+## Harness plan mode
+
+**Harness plan mode never replaces this skill's output.** When the session
+is in Claude Code plan mode, run only this skill's read-only steps. Stop
+before the first write and ask the user to exit plan mode and re-invoke.
+Never write the harness plan file, call `ExitPlanMode`, or mix in plan
+mode's outputs. Details:
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/harness-plan-mode.md`.
+
 ## 1. Distill the problem into search terms
 
 Turn the user's description into **three to six** search terms. The verb counts

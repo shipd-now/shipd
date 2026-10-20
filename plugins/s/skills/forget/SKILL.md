@@ -50,6 +50,15 @@ remove (e.g. "my editor preference", "the ASCII diagram thing"). When it is
 absent, ask the user what to forget and wait for a description before doing
 anything.
 
+## Harness plan mode
+
+**Harness plan mode never replaces this skill's output.** When the session
+is in Claude Code plan mode, run only this skill's read-only steps. Stop
+before the first write and ask the user to exit plan mode and re-invoke.
+Never write the harness plan file, call `ExitPlanMode`, or mix in plan
+mode's outputs. Details:
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/harness-plan-mode.md`.
+
 ## 1. Resolve the personal store
 
 Resolve the personal memory store first:

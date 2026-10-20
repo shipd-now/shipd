@@ -33,6 +33,15 @@ v<version>` in your first user-visible status sentence (e.g. "shipd:ask v0.6.7 â
 shaping your question and consulting the oracle"), so the user can always see
 which plugin snapshot the session is running.
 
+## Harness plan mode
+
+**Harness plan mode never replaces this skill's output.** When the session
+is in Claude Code plan mode, run only this skill's read-only steps. Stop
+before the first write and ask the user to exit plan mode and re-invoke.
+Never write the harness plan file, call `ExitPlanMode`, or mix in plan
+mode's outputs. Details:
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/harness-plan-mode.md`.
+
 ## Shape one compact question (no interview round)
 
 Distill the user's request into a single **compact question** â€” a
