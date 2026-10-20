@@ -2,10 +2,10 @@
 
 # The shipd video series
 
-The shipd video series teaches the spec-driven workflow in ten episodes of
-five minutes each. Each episode has a script that lists what the viewer sees
-and what the presenter says. Every script follows the same structure, which
-[the template](template.md) defines.
+The shipd video series teaches the spec-driven workflow in a three-minute
+intro and ten episodes of five minutes each. Each episode has a script that
+lists what the viewer sees and what the presenter says. Every script follows
+the same structure, which [the template](template.md) defines.
 
 ## The three groups
 
@@ -19,6 +19,8 @@ question about the work.
   knowledge across repositories, and reports delivery.
 
 ## The episodes
+
+0. [Where shipd came from](00-intro.md)
 
 ### Tactical execution
 
@@ -48,6 +50,7 @@ the episode describes only what the product ships today.
 
 ## Where to start
 
-Watch the episodes in order. Each episode names its prerequisites in the
+Start with Episode 0, which tells where shipd came from, then watch the
+episodes in order. Each episode names its prerequisites in the
 `At a glance` table. A viewer who has used shipd before can start at the
 group that matches the next job.
