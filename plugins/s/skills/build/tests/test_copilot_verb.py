@@ -3233,6 +3233,106 @@ class CopilotRoomWakeVerbTest(CopilotVerbCase):
         self.assertEqual(self.tree(), set())
 
 
+class CopilotUpdateVerbTest(CopilotVerbCase):
+    """``shipd copilot update`` (shipd-cli copilot-update): refresh the four
+    gate files and, only where it is already installed, the room wake set."""
+
+    room_states = CopilotRoomWakeVerbTest.room_states
+    install_room = CopilotRoomWakeVerbTest.install_room
+
+    def snapshot(self):
+        """``{path: bytes}`` for every file under the target root."""
+        found = {}
+        for relative in self.tree():
+            with open(self.path(relative), "rb") as fh:
+                found[relative] = fh.read()
+        return found
+
+    def age(self, relative):
+        """Rewrite the current-version marker at ``relative`` to v0.0.1."""
+        self.plant(relative, self.contents(relative).replace(
+            "shipd-copilot v%s" % self.version, "shipd-copilot v0.0.1"))
+
+    def test_update_refreshes_an_installed_stale_wake_set(self):
+        self.install()
+        self.install_room()
+        self.age(SKILL_PATH)
+        self.age(ROOM_WORKFLOW_PATH)
+        self.plant(ROOM_ROOM_PY, "# an older runtime\n")
+        result = self.cli("update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for relative in MANAGED + ROOM_MANAGED:
+            self.assertIn("wrote %s" % relative, result.stdout)
+        self.assertEqual(self.states(),
+                         {relative: "installed" for relative in MANAGED})
+        self.assertEqual(self.room_states(),
+                         {relative: "installed"
+                          for relative in ROOM_MANAGED})
+
+    def test_update_never_installs_the_wake_set_fresh(self):
+        self.install()
+        self.age(SKILL_PATH)
+        result = self.cli("update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("room wake set: not installed — left as is",
+                      result.stdout)
+        self.assertEqual(self.tree(), set(MANAGED))
+        self.assertEqual(self.states(),
+                         {relative: "installed" for relative in MANAGED})
+
+    def test_update_on_an_empty_root_writes_the_gate_files_only(self):
+        result = self.cli("update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.tree(), set(MANAGED))
+
+    def test_a_foreign_wake_workflow_is_skipped_not_refused(self):
+        self.install()
+        self.plant(ROOM_WORKFLOW_PATH, "name: someone else's wake\n")
+        result = self.cli("update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "room wake set: room-wake.yml is not shipd-owned — left as is",
+            result.stdout)
+        self.assertEqual(self.contents(ROOM_WORKFLOW_PATH),
+                         "name: someone else's wake\n")
+        self.assertEqual(self.tree(), set(MANAGED) | {ROOM_WORKFLOW_PATH})
+
+    def test_a_foreign_gate_file_refuses_the_whole_update(self):
+        self.install()
+        self.install_room()
+        self.age(ROOM_WORKFLOW_PATH)
+        self.plant(GATE_PATH, "name: someone else's gate\n")
+        before = self.snapshot()
+        result = self.cli("update")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(GATE_PATH, result.stderr)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_force_never_writes_a_foreign_wake_set(self):
+        self.plant(GATE_PATH, "name: someone else's gate\n")
+        self.plant(ROOM_WORKFLOW_PATH, "name: someone else's wake\n")
+        result = self.cli("update", "--force")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.contents(ROOM_WORKFLOW_PATH),
+                         "name: someone else's wake\n")
+        self.assertEqual(self.tree(), set(MANAGED) | {ROOM_WORKFLOW_PATH})
+
+    def test_room_flag_is_a_usage_error(self):
+        self.install()
+        self.install_room()
+        self.age(ROOM_WORKFLOW_PATH)
+        before = self.snapshot()
+        result = self.cli("update", "--room")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_bare_report_names_the_update_action(self):
+        result = self.cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("`shipd copilot update` refreshes the gate files and "
+                      "an installed room wake set.", result.stdout)
+
+
 class FastPassMarkerTest(unittest.TestCase):
     """Tests for the fast-pass marker in the copilot skill."""
 

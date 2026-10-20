@@ -7,7 +7,8 @@ description: >-
   check, enable auto-merge, hand off the reviewer token, and verify with
   `shipd doctor`. With the `update` argument, run the refresh-only flow
   instead: re-read the managed files' states, refresh what is stale or
-  absent, and ship the refresh — no settings, no token. Use when asked to
+  absent — and the room wake set where it is already installed — and ship
+  the refresh — no settings, no token. Use when asked to
   set up the review gate, block PRs on the semantic review, turn on the
   merge gate, or refresh an already-installed gate to the running plugin
   version. Trigger phrases: "set up the gate", "install the review gate",
@@ -58,8 +59,9 @@ Parse the invocation argument into exactly one flow:
 - **`update`** — the refresh-only flow for a repository that already
   completed setup: steps 1 and 2 (resolve the binary, preflight) apply
   unchanged, then follow **Update — refresh an installed gate** instead of
-  steps 3–8. It refreshes the four managed files to the running plugin
-  version and ships the refresh; the settings consent round (step 5), the
+  steps 3–8. It refreshes the four managed files — and the room wake set,
+  where the repository already carries it — to the running plugin version
+  and ships the refresh; the settings consent round (step 5), the
   token hand-off (step 7), and the doctor verification (step 8) are
   setup-only and never run here.
 
@@ -307,14 +309,18 @@ the verification could not be read.
 ## Update — refresh an installed gate (`/s:gate update`)
 
 The gate's four managed files are vendored into the repository, so a plugin
-release changes nothing here until they are refreshed. This flow brings an
-already-gated repository to the running plugin version and ships the
-refresh — nothing more. It runs after steps 1 and 2 (binary resolution and
-the same three preflight checks, stopping with the hand-off on any failure),
-and the version announcement rule applies here too.
+release changes nothing here until they are refreshed. The same holds for
+the room wake set (`room-wake.yml` and its bundled runtime under
+`.github/shipd-room/`) that `shipd copilot add --room` installs. This flow
+brings an already-gated repository to the running plugin version and ships
+the refresh — nothing more. It **never installs the room wake set** where
+the repository does not already carry it. It runs after steps 1 and 2
+(binary resolution and the same three preflight checks, stopping with the
+hand-off on any failure), and the version announcement rule applies here
+too.
 
 **The invocation is the consent.** `/s:gate update` names its entire scope —
-refresh the four managed files — so this flow commits and pushes without a
+refresh the installed managed files — so this flow commits and pushes without a
 further confirmation round. Everything wider stays setup-only: **no
 repository setting is touched** — no branch-protection write, no auto-merge
 `PATCH`, no Actions variable, no secret hand-off, no `shipd doctor`
@@ -328,33 +334,45 @@ verification.
 
 The bare verb is read-only. It prints one `<state> <path> — <detail>` line
 per managed file, classifying each as `installed`/`stale`/`foreign`/`absent`
-against the running plugin version. Read the states from those lines —
-**never re-derive versions from file contents yourself.**
+against the running plugin version: the four gate files first, then the
+room wake set under its `room wake set:` heading. Read the states from those
+lines — **never re-derive versions from file contents yourself.**
 
-- **All four `installed` at the running version** — the repository is
-  already current. Report that and stop: no write, no commit, no push.
-- **Any managed path `foreign`** — refuse: name the file and stop. Do not
+The room wake set counts as **installed** only while its `room-wake.yml`
+line reads `installed` or `stale`. Where it reads `absent` or `foreign`, the
+set is not shipd's to refresh: report it and leave it alone — it is never a
+reason to refuse.
+
+- **All four gate files `installed`, and the room wake set all `installed`
+  or not installed** — the repository is already current. Report that and
+  stop: no write, no commit, no push.
+- **Any gate file `foreign`** — refuse: name the file and stop. Do not
   pass `--force` on your own judgement — that overwrites a file somebody
   else wrote. Offer it as a choice only if the user asks to proceed, and say
   what it replaces.
-- **Anything `stale` or `absent`** — refresh.
+- **Any gate file `stale` or `absent`, or any file of an installed room wake
+  set `stale`** — refresh.
 
 ### Refresh, commit, push
 
 ```
-<shipd> copilot add
+<shipd> copilot update
 ```
 
-Relay the verb's per-file report. If it refuses because a managed path is
-foreign, the refusal rule above applies: report the file it named and stop.
+The verb refreshes the four gate files and, where its `room-wake.yml`
+carries the shipd marker, the whole room wake set; a wake set that is absent
+or not shipd-owned stays untouched and gets one `room wake set: … — left as
+is` line. Relay the verb's per-file report. If it refuses because a gate
+file is foreign, the refusal rule above applies: report the file it named
+and stop.
 
-Then commit **exactly the four managed paths** and push the current branch —
-no consent round:
+Then commit **exactly the paths the verb printed on its `wrote <path>`
+lines** — the gate files, plus the room wake files when it refreshed them,
+so both ride the same commit, push, and fallback pull request — and push the
+current branch, with no consent round:
 
 ```bash
-git add .github/skills/code-review \
-        .github/workflows/copilot-code-review.yml \
-        .github/workflows/copilot-review-gate.yml
+git add <every path from a `wrote` line>
 git commit -m "$(python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/brand.py" subject "Refresh the shipd Copilot code-review skill")"
 git push
 ```

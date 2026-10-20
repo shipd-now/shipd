@@ -188,7 +188,8 @@ verbs:
   doctor                     preflight this environment for shipd
   statusline [install|layout]
                              register the shipd statusline, or lay out its segments
-  copilot [add|remove]       maintain the Copilot code-review skill in a repo
+  copilot [add|update|remove]
+                             maintain the Copilot code-review skill in a repo
   gate rules [apply]         report, or apply, the repo's merge-rules ruleset
   vendor [add|remove]        maintain a vendored per-repo shipd install
   harness [list|show|add|remove|status]
@@ -2201,6 +2202,8 @@ def _copilot_report(root, version, states, room_states):
         print("  %s %s — %s" % (state, relative, detail))
     print("`shipd copilot add` installs or refreshes those files; "
           "`shipd copilot remove` deletes the ones it owns.")
+    print("`shipd copilot update` refreshes the gate files and an installed "
+          "room wake set.")
     print("Automatic review is enabled on GitHub, not here — add a branch "
           "ruleset requiring Copilot code review on the protected branch.")
     print("The Copilot code-review surface exposes no repository-side model "
@@ -2211,28 +2214,51 @@ def _copilot_report(root, version, states, room_states):
     return 0
 
 
-def _copilot_add(root, version):
-    """Install or refresh the four managed files. Every payload is prepared
-    before the first write, so a broken template installs nothing."""
-    try:
-        engine = _read_bytes(str(COPILOT_ENGINE))
-        if engine is None:
-            _err("cannot read %s" % COPILOT_ENGINE)
-            return 1
-        payloads = [
-            (COPILOT_SKILL, _copilot_render(COPILOT_SKILL, version), 0o644),
-            (COPILOT_SEMDIFF, engine,
-             stat.S_IMODE(os.stat(COPILOT_ENGINE).st_mode)),
-            (COPILOT_WORKFLOW, _copilot_render(COPILOT_WORKFLOW, version),
-             0o644),
-            (COPILOT_GATE_WORKFLOW,
-             _copilot_render(COPILOT_GATE_WORKFLOW, version), 0o644),
-        ]
-    except (OSError, ValueError) as exc:
-        _err("cannot read the copilot templates in %s: %s"
-             % (COPILOT_TEMPLATES, exc))
-        return 1
+# The closing note ``add`` and ``update`` print after writing the gate files.
+COPILOT_ADD_NOTE = ("Copilot code review reads these from a pull request's "
+                    "head branch. Enable automatic review with a GitHub "
+                    "branch ruleset.")
 
+
+def _copilot_payloads(version):
+    """``[(relative, data, mode)]`` for the four gate files, rendered at
+    ``version``. Raises ``OSError``/``ValueError`` when a source cannot be
+    read, before anything is written."""
+    engine = _read_bytes(str(COPILOT_ENGINE))
+    if engine is None:
+        raise OSError("cannot read %s" % COPILOT_ENGINE)
+    return [
+        (COPILOT_SKILL, _copilot_render(COPILOT_SKILL, version), 0o644),
+        (COPILOT_SEMDIFF, engine,
+         stat.S_IMODE(os.stat(COPILOT_ENGINE).st_mode)),
+        (COPILOT_WORKFLOW, _copilot_render(COPILOT_WORKFLOW, version),
+         0o644),
+        (COPILOT_GATE_WORKFLOW,
+         _copilot_render(COPILOT_GATE_WORKFLOW, version), 0o644),
+    ]
+
+
+def _room_payloads(version):
+    """``[(relative, data, mode)]`` for the room wake set: the rendered
+    workflow and the five runtime files with their source modes. Raises
+    ``OSError``/``ValueError`` when a source cannot be read."""
+    with open(COPILOT_TEMPLATES / ROOM_WAKE_TEMPLATE,
+              encoding="utf-8") as fh:
+        workflow = fh.read().replace("{version}", version).encode("utf-8")
+    payloads = [(ROOM_WAKE_WORKFLOW, workflow, 0o644)]
+    for source in ROOM_RUNTIME:
+        origin = PLUGIN_ROOT / source
+        with open(origin, "rb") as fh:
+            data = fh.read()
+        payloads.append((os.path.join(ROOM_RUNTIME_DIR, source), data,
+                         stat.S_IMODE(os.stat(origin).st_mode)))
+    return payloads
+
+
+def _write_payloads(root, payloads):
+    """Write every prepared payload atomically under ``root``, then print
+    one ``wrote <relative>`` line per file. ``0``, or ``1`` on a failed
+    write."""
     for relative, data, mode in payloads:
         target = os.path.join(root, relative)
         try:
@@ -2242,8 +2268,46 @@ def _copilot_add(root, version):
             return 1
     for relative, _data, _mode in payloads:
         print("wrote %s" % relative)
-    print("Copilot code review reads these from a pull request's head branch. "
-          "Enable automatic review with a GitHub branch ruleset.")
+    return 0
+
+
+def _copilot_add(root, version):
+    """Install or refresh the four managed files. Every payload is prepared
+    before the first write, so a broken template installs nothing."""
+    try:
+        payloads = _copilot_payloads(version)
+    except (OSError, ValueError) as exc:
+        _err("cannot read the copilot templates in %s: %s"
+             % (COPILOT_TEMPLATES, exc))
+        return 1
+    if _write_payloads(root, payloads):
+        return 1
+    print(COPILOT_ADD_NOTE)
+    return 0
+
+
+def _copilot_update(root, version, room_states):
+    """Refresh the four gate files and, only where its workflow carries the
+    shipd-copilot marker, the room wake set (shipd-cli copilot-update). A
+    wake set that is absent or not shipd-owned is left exactly as it is.
+    Every payload is prepared before the first write."""
+    workflow_state = room_states[0][1]
+    room_installed = workflow_state in ("installed", "stale")
+    try:
+        payloads = _copilot_payloads(version)
+        if room_installed:
+            payloads += _room_payloads(version)
+    except (OSError, ValueError) as exc:
+        _err("cannot read the copilot sources in %s: %s"
+             % (PLUGIN_ROOT, exc))
+        return 1
+    if _write_payloads(root, payloads):
+        return 1
+    if workflow_state == "absent":
+        print("room wake set: not installed — left as is")
+    elif not room_installed:
+        print("room wake set: room-wake.yml is not shipd-owned — left as is")
+    print(COPILOT_ADD_NOTE)
     return 0
 
 
@@ -2283,31 +2347,12 @@ def _room_add(root, version):
     workflow and the five runtime files with their source modes — is
     prepared before the first write, so a broken source installs nothing."""
     try:
-        with open(COPILOT_TEMPLATES / ROOM_WAKE_TEMPLATE,
-                  encoding="utf-8") as fh:
-            workflow = fh.read().replace("{version}", version).encode("utf-8")
-        payloads = [(ROOM_WAKE_WORKFLOW, workflow, 0o644)]
-        for source in ROOM_RUNTIME:
-            origin = PLUGIN_ROOT / source
-            with open(origin, "rb") as fh:
-                data = fh.read()
-            payloads.append((os.path.join(ROOM_RUNTIME_DIR, source), data,
-                             stat.S_IMODE(os.stat(origin).st_mode)))
+        payloads = _room_payloads(version)
     except (OSError, ValueError) as exc:
         _err("cannot read the room wake sources in %s: %s"
              % (PLUGIN_ROOT, exc))
         return 1
-
-    for relative, data, mode in payloads:
-        target = os.path.join(root, relative)
-        try:
-            _atomic_write(target, data, mode)
-        except OSError as exc:
-            _err("cannot write %s: %s" % (target, exc))
-            return 1
-    for relative, _data, _mode in payloads:
-        print("wrote %s" % relative)
-    return 0
+    return _write_payloads(root, payloads)
 
 
 def _room_remove(root):
@@ -2348,17 +2393,19 @@ def _room_remove(root):
 
 def cmd_copilot(args):
     """Report on, install, or remove the shipd Copilot code-review skill in a
-    repository. Bare it is read-only; only the explicit words ``add`` and
-    ``remove`` write, and only inside the four managed paths — or, with
-    ``--room``, only inside the room wake set. Nothing here runs ``gh`` or
-    touches the network."""
+    repository. Bare it is read-only; only the explicit words ``add``,
+    ``update``, and ``remove`` write, and only inside the four managed paths
+    — or, with ``--room``, only inside the room wake set; ``update`` also
+    refreshes the wake set where it is already installed. Nothing here runs
+    ``gh`` or touches the network."""
     parser = argparse.ArgumentParser(
         prog="shipd copilot",
         description="Maintain the shipd Copilot code-review skill in a "
                     "repository. Bare, it reports and changes nothing.")
     parser.add_argument(
-        "action", nargs="?", choices=["add", "remove"],
-        help="add: install or refresh the files; remove: delete them "
+        "action", nargs="?", choices=["add", "update", "remove"],
+        help="add: install or refresh the files; update: refresh the gate "
+             "files and an installed room wake set; remove: delete them "
              "(default: report only)")
     parser.add_argument("--root", default=os.getcwd(),
                         help="repository to maintain (default: cwd)")
@@ -2370,6 +2417,9 @@ def cmd_copilot(args):
         help="with add/remove: act on the room wake set (room-wake.yml and "
              "its bundled runtime) instead of the four gate files")
     opts = parser.parse_args(args)
+    if opts.action == "update" and opts.room:
+        parser.error("update refreshes every installed set; --room does not "
+                     "apply")
     root = os.path.abspath(opts.root)
 
     try:
@@ -2382,6 +2432,8 @@ def cmd_copilot(args):
         return _copilot_report(root, version, copilot_states(root, version),
                                room_wake_states(root, version))
 
+    # ``update`` refuses on a foreign gate file only: a wake set it does not
+    # own is skipped, never written, so it is never a reason to refuse.
     states = (room_wake_states(root, version) if opts.room
               else copilot_states(root, version))
 
@@ -2397,6 +2449,8 @@ def cmd_copilot(args):
         if opts.action == "add":
             return _room_add(root, version)
         return _room_remove(root)
+    if opts.action == "update":
+        return _copilot_update(root, version, room_wake_states(root, version))
     if opts.action == "add":
         return _copilot_add(root, version)
     return _copilot_remove(root)

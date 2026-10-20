@@ -1,0 +1,19 @@
+## 1. Test first
+
+- [x] 1.1 [req: copilot-update] In `plugins/s/skills/build/tests/test_copilot_verb.py`, after `CopilotRoomWakeVerbTest`, add `class CopilotUpdateVerbTest(CopilotVerbCase)` with one test per scenario of requirement `copilot-update`: stale gate plus stale wake set (older marker on SKILL.md and "room-wake.yml", drifted runtime room.py) all ten report `installed` after `update`; gate-only install gains no wake path and stdout contains "room wake set: not installed — left as is"; foreign "room-wake.yml" stays byte-unchanged with exit `0`; foreign gate workflow beside a stale wake set exits `1`, names it on stderr, and every file is byte-unchanged; `update --room` exits `2` and the tree is unchanged. Add one more test that `update` on an empty root writes the four gate files only. Run the file and confirm the new tests fail.
+
+## 2. Engine
+
+- [x] 2.1 [req: copilot-update] In `plugins/s/bin/shipd`, split `_copilot_add` and `_room_add` into payload builders `_copilot_payloads(version)` and `_room_payloads(version)` returning `[(relative, data, mode)]`, and a writer `_write_payloads(root, payloads)` that writes each atomically and prints `wrote <relative>` per file, returning `0` or `1`. `_copilot_add` and `_room_add` keep their current output and exit codes by calling them. Run the existing copilot tests and confirm they still pass.
+- [x] 2.2 [req: copilot-update] In `plugins/s/bin/shipd`, add `update` to the `action` choices of `cmd_copilot` (help: "update: refresh the gate files and an installed room wake set"); reject `--room` with `update` through `parser.error("update refreshes every installed set; --room does not apply")`; apply the existing foreign refusal to `copilot_states` only; then call a new `_copilot_update(root, version, room_wake_states(root, version))` that follows plan.md's Implementation (detection by the workflow state being `installed` or `stale`, both skip lines verbatim, every payload built before the first write, the same closing note as `add`).
+- [x] 2.3 [req: copilot-update] In `plugins/s/bin/shipd`, change the usage banner line to `copilot [add|update|remove]` and add the report line "`shipd copilot update` refreshes the gate files and an installed room wake set." after the `add`/`remove` hint in `_copilot_report`. Run the test file and confirm every test passes.
+
+## 3. Skill
+
+- [x] 3.1 [req: gate-update-flow] In `plugins/s/skills/gate/SKILL.md`, update the front-matter description and the `## Arguments` `update` bullet to say the flow refreshes the gate files and, where installed, the room wake set. In `## Update — refresh an installed gate`, rewrite "Read the states" to the already-current rule in plan.md's Implementation (a foreign gate file refuses; an absent or foreign wake set is reported and left alone), replace `<shipd> copilot add` with `<shipd> copilot update` under "Refresh, commit, push", and replace the fixed `git add` list with staging exactly the paths the verb printed on its `wrote` lines, saying the wake files ride the same commit and fallback pull request. State that update never installs the wake set fresh.
+
+## 4. Docs and version
+
+- [x] 4.1 [req: copilot-update] In `docs/room-wake-reference.md`, add `shipd copilot update` to the Verbs block ("refresh the gate files, and these six when installed") and one sentence after it: `update` refreshes the wake set only when "room-wake.yml" carries the marker, and never installs it.
+- [x] 4.2 [req: gate-update-flow] In `docs/copilot-review.md` section 6, extend the `/s:gate update` bullet: it runs `shipd copilot update`, which also refreshes an installed room wake set in the same commit.
+- [x] 4.3 [req: *] Bump `plugins/s/.claude-plugin/plugin.json` version by one patch. Run `docs_lint.py` over `docs/`, the full build test suite, and the other CI suites, and confirm they pass.
