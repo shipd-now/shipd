@@ -136,7 +136,7 @@ shipd copilot
 - **To upgrade, run `add` again.** It is idempotent, and rewrites the files it owns at the current
   version. Run it after every `claude plugin update s@shipd` that moves the plugin version, then
   commit and push the refreshed files.
-- **To pick up new gate behaviour such as grounding, run `/s:gate update`.** It re-renders the files.
+- **To pick up new gate behaviour, run `/s:gate update`.** It re-renders the files and any installed room wake set.
 - **Edit the plugin's templates, not the installed copies.** `add` overwrites them.
 - **To uninstall, run `shipd copilot remove`.** It deletes only the files it owns, prunes the empty
   skill directory, and succeeds when nothing is there. Commit the deletions and push, as with the

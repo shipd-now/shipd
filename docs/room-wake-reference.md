@@ -26,9 +26,14 @@ their plugin-relative paths under `.github/shipd-room/`.
 
 ```bash
 shipd copilot add --room       # install or refresh the six files
+shipd copilot update           # refresh the gate files, and these six when installed
 shipd copilot remove --room    # delete them and prune .github/shipd-room
 shipd copilot                  # report both sets; the wake set comes last
 ```
+
+`update` refreshes the wake set only when `room-wake.yml` carries the
+ownership marker. It never installs the wake set, and it leaves a
+`room-wake.yml` without the marker alone. `/s:gate update` runs it.
 
 Plain `add` and `remove` act on the four review gate files only. They never
 touch the wake set. `remove --room` prunes each emptied directory under
