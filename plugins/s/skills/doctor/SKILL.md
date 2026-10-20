@@ -41,6 +41,15 @@ snapshot the session is running.
 report, and stop. A check that still fails after its remedy ran is reported
 with its residual hint; you never loop, retry, or escalate to a second remedy.
 
+## Harness plan mode
+
+**Harness plan mode never replaces this skill's output.** When the session
+is in Claude Code plan mode, run only this skill's read-only steps. Stop
+before the first write and ask the user to exit plan mode and re-invoke.
+Never write the harness plan file, call `ExitPlanMode`, or mix in plan
+mode's outputs. Details:
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/harness-plan-mode.md`.
+
 ## 1. Resolve the binary
 
 Resolve the `shipd` binary in this order and use the first that exists:

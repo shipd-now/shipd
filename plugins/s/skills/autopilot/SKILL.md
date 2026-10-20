@@ -24,6 +24,15 @@ Requirements: this repo must have the resolved content-directory layout
 (`ready` or `active`). The epic approval is the last human gate; everything
 after it is the autopilot's job.
 
+## Harness plan mode
+
+**Harness plan mode never replaces this skill's output.** When the session
+is in Claude Code plan mode, run only this skill's read-only steps. Stop
+before the first write and ask the user to exit plan mode and re-invoke.
+Never write the harness plan file, call `ExitPlanMode`, or mix in plan
+mode's outputs. Details:
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/harness-plan-mode.md`.
+
 ## Mode selection
 
 The skill drives the epic one of two ways:

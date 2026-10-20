@@ -47,6 +47,15 @@ An **invocation argument** carries what the user wants: a setup step to add
 registered ("list the hooks"), or one to remove ("drop the db-seed hook"). When
 it is absent, ask which of the three they want and wait.
 
+## Harness plan mode
+
+**Harness plan mode never replaces this skill's output.** When the session
+is in Claude Code plan mode, run only this skill's read-only steps. Stop
+before the first write and ask the user to exit plan mode and re-invoke.
+Never write the harness plan file, call `ExitPlanMode`, or mix in plan
+mode's outputs. Details:
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/harness-plan-mode.md`.
+
 ## 1. Resolve the binary and the content directory
 
 Resolve the `shipd` binary in this order and use the first that exists:

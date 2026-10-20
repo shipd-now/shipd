@@ -34,6 +34,15 @@ Paths (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 
 ---
 
+## Harness plan mode
+
+**Harness plan mode never replaces this skill's output.** When the session
+is in Claude Code plan mode, run only this skill's read-only steps. Stop
+before the first write and ask the user to exit plan mode and re-invoke.
+Never write the harness plan file, call `ExitPlanMode`, or mix in plan
+mode's outputs. Details:
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/harness-plan-mode.md`.
+
 ## Pacing
 
 This is a live lesson, not a script that runs to completion. These rules bind

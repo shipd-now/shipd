@@ -87,7 +87,7 @@ change's worktree — create it first with
 `"${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree <change>` and
 work in `.worktrees/<change>` — so the emitted `planned/<change>/` artifacts
 are born on the `change/<change>` branch and travel with the implementation in
-one PR.
+one PR. Under harness plan mode, skip the worktree ("Harness plan mode" below).
 
 Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 - Readiness checklist: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/readiness.md`
@@ -110,6 +110,15 @@ Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
   promotes a change to `ready`)
 
 ---
+
+## Harness plan mode
+
+**Harness plan mode never replaces this skill's output.** When the session
+is in Claude Code plan mode, run only this skill's read-only steps. Stop
+before the first write and ask the user to exit plan mode and re-invoke.
+Never write the harness plan file, call `ExitPlanMode`, or mix in plan
+mode's outputs. Details:
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/harness-plan-mode.md`.
 
 ## Enrichment mode (rejected-change recovery)
 
@@ -453,6 +462,11 @@ conditions still end a turn and wait for the user:
   repository resolves to ("Video entry point" above); the skill reports both
   names and stops without emitting, unless the invocation carries
   `--cross-project`.
+
+- **Harness plan mode** — the session is in Claude Code plan mode ("Harness
+  plan mode" above). Skip the worktree, investigate read-only, and print the
+  findings digest. Then stop before the oracle rung, any question round, and
+  emission, and ask the user to exit plan mode and re-run `/s:plan`.
 
 Anything not on this list proceeds without asking.
 

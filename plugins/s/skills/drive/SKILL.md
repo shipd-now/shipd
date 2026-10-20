@@ -54,6 +54,15 @@ Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 - Targets example: `${CLAUDE_PLUGIN_ROOT}/skills/drive/references/targets.example.json`
   (the four auth recipe kinds, `manual` among them).
 
+## Harness plan mode
+
+**Harness plan mode never replaces this skill's output.** When the session
+is in Claude Code plan mode, run only this skill's read-only steps. Stop
+before the first write and ask the user to exit plan mode and re-invoke.
+Never write the harness plan file, call `ExitPlanMode`, or mix in plan
+mode's outputs. Details:
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/harness-plan-mode.md`.
+
 ## The ordered flow
 
 Run these stages in order. Do not skip a stage or reorder it — each one

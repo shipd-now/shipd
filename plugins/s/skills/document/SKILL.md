@@ -27,6 +27,15 @@ place, and you read it before you write a word.
 example "shipd:document v0.6.202 — rewriting docs/quickstart.md"), so the user
 can see which plugin snapshot the session runs.
 
+## Harness plan mode
+
+**Harness plan mode never replaces this skill's output.** When the session
+is in Claude Code plan mode, run only this skill's read-only steps. Stop
+before the first write and ask the user to exit plan mode and re-invoke.
+Never write the harness plan file, call `ExitPlanMode`, or mix in plan
+mode's outputs. Details:
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/harness-plan-mode.md`.
+
 ## The rules source
 
 The whole standard lives in:

@@ -51,6 +51,15 @@ sweep below. The one exception is the ledger-entry reference below — an
 argument of the form `<change> Q<n>` — which runs a different flow entirely.
 **Every other argument is handled exactly as before.**
 
+## Harness plan mode
+
+**Harness plan mode never replaces this skill's output.** When the session
+is in Claude Code plan mode, run only this skill's read-only steps. Stop
+before the first write and ask the user to exit plan mode and re-invoke.
+Never write the harness plan file, call `ExitPlanMode`, or mix in plan
+mode's outputs. Details:
+`${CLAUDE_PLUGIN_ROOT}/skills/document/references/harness-plan-mode.md`.
+
 ## 0. Ledger-entry reference mode — `/s:teach <change> Q<n>`
 
 **When the invocation argument matches `<change> Q<n>`** (a change slug followed
