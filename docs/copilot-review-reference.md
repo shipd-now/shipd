@@ -55,21 +55,18 @@ On every pull request opened, updated, or reopened, the gate's job:
    status.
 8. Posts the report as a pull-request review, whatever the verdict.
 
-- **The version pin is deliberate.** An unpinned install would let the CLI
-  vendor change what the gate runs. Upgrading bumps that line in the template.
-- **The base-ref pin has one fallback.** Where the base tree carries no
-  `SKILL.md`, the job uses the reviewed commit's copy and logs that. Any other
-  read failure fails the step, so `pending` stands.
-- **A failed or timed-out run leaves `pending`.** The job discards the partial
-  output and posts nothing; `review_gate.py post` is the manual out.
+- **The version pin is deliberate.** An unpinned install would let the CLI vendor change what the gate runs. Upgrading bumps that line in the template.
+- **The base-ref pin has one fallback.** Where the base tree carries no `SKILL.md`, the job uses the reviewed commit's copy and logs that. Any other read failure fails the step, so `pending` stands.
+- **A failed or timed-out run leaves `pending`.** The job discards the partial output and posts nothing; `review_gate.py post` is the manual out.
 - **A review that covered nothing fails closed.** The engine may fail. It may
   also see 0 files on a pull request that changes at least one. Either way the
   gate posts `pending` with a "Review not grounded" description. It submits no
   `APPROVE` or `REQUEST_CHANGES`, arms no fast-pass, and ignores
   `SHIPD_GATE_FAIL_OPEN`. Any captured text goes out as a `COMMENT` that opens
   with a "Not a verdict" notice. The job then fails.
-- **The posted body is the report.** The CLI runs with `-s`. The gate keeps the
-  text from the last `## Findings` header through the verdict marker.
+- **The posted body is the report.** The CLI runs with `-s`. The gate keeps the text from the last `## Findings` header through the verdict marker. It closes the body with a `Reviewed N files, +A -D lines.` stat line and a `Model:` line.
+- **The model is a repository variable.** The gate passes `SHIPD_REVIEW_MODEL` to the CLI as `--model`. Unset, the CLI runs its own default, and the `Model:` line reads "Copilot CLI default".
+- **A new decision resolves the gate's old threads.** Before it submits `APPROVE` or `REQUEST_CHANGES`, the gate resolves its unresolved threads from earlier commits. The new review anchors any finding that is still present again. The gate never resolves another author's thread, and a failed resolve only logs a warning.
 
 ### The poll fallback mode
 
@@ -177,7 +174,7 @@ no LLM reviewer is immune to such steering. The gate bounds that risk rather tha
 ### Tokens, permissions, and the session flow
 
 The workflow does its repository work with its own `github.token`: `statuses: write` to post the
-status, `pull-requests: write` to poll and comment. The only secret it ever reads is the optional
+status, `pull-requests: write` to poll, review, and resolve its own threads. The only secret it ever reads is the optional
 `COPILOT_GITHUB_TOKEN`, whose value reaches nothing but the Copilot CLI's environment.
 
 - **The review event.** On the CLI path, ship-it submits `APPROVE` and fix-required submits
@@ -238,8 +235,7 @@ shipd copilot remove --force     # delete it along with the managed files
 - **The gate is the workflow's, not Copilot's.** Nothing in Copilot code review
   sets a third-party commit status; a review only posts a review. Drop
   `copilot-review-gate.yml` and the Copilot run is advisory again.
-- **No repository-side model selection.** The Copilot code-review surface
-  exposes no option to pin which model the review runs on.
+- **No model selection on the poll fallback.** GitHub's Copilot code-review surface exposes no option to pin its model. Only the CLI reviewer reads `SHIPD_REVIEW_MODEL`.
 - **Skill pickup is relevance-driven.** GitHub loads skills under
   `.github/skills` when they are relevant to the review. The `code-review` name
   is GitHub's recommendation. Expect a good hit rate, not determinism.
