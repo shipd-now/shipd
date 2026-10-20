@@ -1,5 +1,5 @@
 # review-branding
-Status: active
+Status: verified
 Planned-at: aa3b0a8f7d00cbe7be74eabdf743a958aa11afda
 Gated-hash: 746ef0df37c2
 

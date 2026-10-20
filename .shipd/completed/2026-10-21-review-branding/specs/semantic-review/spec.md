@@ -3,7 +3,7 @@
 ### Requirement: Room-reviewer posting options
 id: gate-poster-room-mode
 
-`review_gate.py post` SHALL accept three optional flags: `--status {set,off,auto}` (default `set`), `--room-agent <name>`, and `--room-to <name>`. A post with `--status set` and neither room flag SHALL produce output byte-identical to today's.
+`review_gate.py post` SHALL accept three optional flags: `--status {set,off,auto}` (default `set`), `--room-agent <name>`, and `--room-to <name>`. A post with `--status set` and neither room flag SHALL make the same GitHub writes and print the same lines as today's, except that the result object it prints SHALL gain a `status_set` boolean, true when the post set the `semantic-review` status.
 
 Where `--status off` is passed, `post` SHALL set no `semantic-review` commit status, SHALL make no `SHIPD_FAST_PASS` read and no merge call, SHALL render no `**Fast-pass:**` line in the summary, and SHALL print `semantic-review status: not set (<reason>)` in place of the status line, the reason being `--status off`, `gate workflow present`, or `gate workflow unreadable`. It SHALL still upsert the summary comment, post the anchored inline comments, and submit the review with the event the `gate-review-event` requirement maps from the status state the disposition scope selects.
 
