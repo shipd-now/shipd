@@ -141,6 +141,14 @@ class MainCheckBehaviourTests(unittest.TestCase):
         r = self.run_step(repo)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
+    def test_unreadable_manifest_fails_loudly(self):
+        repo = self.make_repo()
+        self.commit(repo, {MANIFEST_REL: "{not json\n"})
+        r = self.run_step(repo)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("::error", r.stdout)
+        self.assertIn("could not parse", r.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
