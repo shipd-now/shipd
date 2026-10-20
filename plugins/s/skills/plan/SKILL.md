@@ -87,7 +87,7 @@ change's worktree — create it first with
 `"${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree <change>` and
 work in `.worktrees/<change>` — so the emitted `planned/<change>/` artifacts
 are born on the `change/<change>` branch and travel with the implementation in
-one PR.
+one PR. Under harness plan mode, skip the worktree ("Harness plan mode" below).
 
 Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 - Readiness checklist: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/readiness.md`
