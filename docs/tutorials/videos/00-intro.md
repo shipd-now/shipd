@@ -27,13 +27,13 @@ You are about to learn shipd, but you may not know why it exists. This episode i
 
 **On screen:** The author on camera. A title card reads "The ticket template".
 
-**Narration:** Next I wrote a template for the structure of each ticket. Only later did I learn that the practice has a name: spec-driven development. At that stage the tools had no name and no repository. I copied the skills between projects by hand, and I never published them.
+**Narration:** Next I wrote a template for the structure of each ticket. Only later did I learn that the practice has a name: spec-driven development. At first the tools had no name and no single home. Some skills, such as the planning skill, lived in a private repository, and others lived only in my local Claude settings. The set was not coherent, I used each tool as I saw fit, and I never published any of it.
 
 ### 1:20–2:15 Review, pull requests, and automikk
 
 **On screen:** The author on camera. Title cards read "A review and pull-request feature", then "automikk, first commit 2026-07-22".
 
-**Narration:** Then came a review feature and a pull-request feature. The set of tools grew into "automikk", a way for me to replace my own work with automation. The automikk repository dates its first commit 2026-07-22. I used the tools every day, kept improving them, and kept adding skills.
+**Narration:** Then came a review feature and a pull-request feature. I started to think of the set as "automikk", a way for me to replace my own work with automation, before it had a repository. Eventually I put most of it into one repository, and its first commit dates 2026-07-22. I used the tools every day, kept improving them, and kept adding skills.
 
 ### 2:15–3:00 Publishing shipd
 

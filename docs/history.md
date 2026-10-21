@@ -14,7 +14,7 @@ I then wrote a template for the structure of each ticket. Only later did I learn
 
 ## Skills with no name
 
-At that stage the tools had no name and no repository. I copied the skills from one project to the next by hand. I never published them.
+At first the tools had no name and no single home. Some skills, such as the planning skill, lived in a private repository. Others lived only in my local Claude settings. The set was not coherent: I used each tool as I saw fit during development, and I never published any of it.
 
 ## Review and pull requests
 
@@ -22,7 +22,7 @@ Next came a review feature and a pull-request feature.
 
 ## automikk
 
-The set of tools grew into "automikk". It was a way for me to replace my own work with automation. The automikk repository dates its first commit 2026-07-22.
+I started to think of the set as "automikk", a way for me to replace my own work with automation, before it had a repository. Eventually I put most of it into one repository. The automikk repository dates its first commit 2026-07-22.
 
 I used the tools every day. I kept improving them, and I kept adding skills.
 
