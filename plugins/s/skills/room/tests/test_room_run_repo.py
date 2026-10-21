@@ -559,6 +559,20 @@ class RepoAgentLockTest(RepoTestBase):
     def test_a_pr_run_of_the_agent_refuses_repo_mode(self):
         self.assert_refused(fcntl.LOCK_SH)
 
+    def test_a_state_file_beside_the_agent_lock_does_not_refuse_itself(self):
+        gh = FakeRepoGh()
+        state = os.path.join(os.path.dirname(self.agent_lock), "rev-b.json")
+        code, out, err = self.run_repo(
+            gh, env={"HOME": self.home},
+            argv=["run", "--repo", "O/R", "--role", "reviewer", "--agent",
+                  "rev-b", "--state", state])
+        self.assertEqual(code, 130, err)
+        self.assertNotIn("Error:", err)
+
+    def test_the_agent_lock_ignores_the_repository_case(self):
+        self.assertEqual(room_run_repo.agent_lock_path("O/R", "rev-b"),
+                         room_run_repo.agent_lock_path("o/r", "rev-b"))
+
 
 if __name__ == "__main__":
     unittest.main()

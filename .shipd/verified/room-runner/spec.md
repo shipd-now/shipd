@@ -403,8 +403,9 @@ id: room-run-agent-lock
 
 `room run` SHALL lock on the repository and agent, not only on the state
 file. Repo mode SHALL hold an exclusive non-blocking `flock` on
-`~/.shipd/room-run/<owner>/<name>/<agent>.json.lock` for its lifetime,
-whatever `--state` names. PR mode SHALL hold a shared non-blocking `flock` on
+`~/.shipd/room-run/<owner>/<name>/<agent>.json.lock`, with the repository
+lowercased, for its lifetime, whatever `--state` names. When `<state>.lock` is
+another file, repo mode SHALL hold it too. PR mode SHALL hold a shared non-blocking `flock` on
 that same file and an exclusive non-blocking `flock` on
 `<agent>.pr-<number>.lock` in the same directory, both taken after the harness
 preflight and before the run joins the room. If either lock is held, then the

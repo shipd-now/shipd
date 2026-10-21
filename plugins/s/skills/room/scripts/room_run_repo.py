@@ -96,13 +96,14 @@ def save_state(path, state):
 
 def agent_lock_path(repo, agent):
     """The lock every runner of ``agent`` in ``repo`` takes, whatever its
-    ``--state``."""
-    return default_state_path(repo, agent) + ".lock"
+    ``--state``. GitHub names are case-insensitive, so the repository is
+    lowercased."""
+    return default_state_path(repo.lower(), agent) + ".lock"
 
 
 def pr_lock_path(repo, agent, number):
     """The lock a PR-mode runner of ``agent`` takes on PR ``number``."""
-    return os.path.join(os.path.dirname(default_state_path(repo, agent)),
+    return os.path.join(os.path.dirname(agent_lock_path(repo, agent)),
                         "%s.pr-%d.lock" % (agent.replace("/", "_"), number))
 
 
@@ -229,8 +230,10 @@ def cmd_run_repo(opts, parser, gh, runner, sleep, clock, preflight=None):
     agent_lock = agent_lock_path(opts.repo, agent)
     locks = [hold_lock(agent_lock, _refusal(opts.repo, agent, agent_lock))]
     try:
-        if os.path.abspath(path + ".lock") != os.path.abspath(agent_lock):
-            locks.append(hold_lock(path + ".lock",
+        state_lock = path + ".lock"
+        if not (os.path.exists(state_lock)
+                and os.path.samefile(state_lock, agent_lock)):
+            locks.append(hold_lock(state_lock,
                                    "another room run holds %s" % path))
         return _run_loop(opts, parser, gh, runner, sleep, clock, preflight,
                          login, root, agent, path)
