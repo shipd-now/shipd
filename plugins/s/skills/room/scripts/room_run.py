@@ -301,6 +301,18 @@ def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
         raise room.RoomError(
             "harness %s is not ready: %s; sign in with `%s` and rerun"
             % (opts.harness, why, session_driver.login_hint(opts.harness)))
+    import room_run_repo
+    locks = room_run_repo.lock_pr_run(repo, agent, number)
+    try:
+        return _run_pr(opts, parser, gh, runner, sleep, clock, root, agent,
+                       repo, number, context, model_base)
+    finally:
+        for lock in locks:
+            lock.close()
+
+
+def _run_pr(opts, parser, gh, runner, sleep, clock, root, agent, repo,
+            number, context, model_base):
     url = room._gh_json(
         gh, ["pr", "view", str(number), "--json", "url", "--repo", repo],
         what="gh pr view %s" % number)
