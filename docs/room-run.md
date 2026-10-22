@@ -98,8 +98,8 @@ while it waits. It runs one turn at a time, on each pull request with a task
 for the agent. It skips pull requests its own account authored, and takes only
 the `reviewer` and `ci` roles. It keeps each cursor and session in `--state PATH`,
 by default `~/.shipd/room-run/<owner>/<name>/<agent>.json`. A restart resumes
-every conversation, and a second run on that file refuses to start. Ctrl-C
-stops the run with `reason` `interrupted`.
+every conversation. One agent runs once per repository: a second run of it, or
+a single-PR run of it, refuses to start, whatever its `--state`.
 
 ## Set the limits
 

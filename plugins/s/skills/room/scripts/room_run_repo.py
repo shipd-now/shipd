@@ -94,17 +94,50 @@ def save_state(path, state):
         raise
 
 
-def lock_state(path):
-    """Hold an exclusive non-blocking lock on ``<path>.lock``; returns the
-    open handle. A second runner raises ``RoomError``."""
+def agent_lock_path(repo, agent):
+    """The lock every runner of ``agent`` in ``repo`` takes, whatever its
+    ``--state``. GitHub names are case-insensitive, so the repository is
+    lowercased."""
+    return default_state_path(repo.lower(), agent) + ".lock"
+
+
+def pr_lock_path(repo, agent, number):
+    """The lock a PR-mode runner of ``agent`` takes on PR ``number``."""
+    return os.path.join(os.path.dirname(agent_lock_path(repo, agent)),
+                        "%s.pr-%d.lock" % (agent.replace("/", "_"), number))
+
+
+def _refusal(repo, agent, path):
+    return ("another room run already serves agent %s on %s (lock %s); "
+            "stop it first" % (agent, repo, path))
+
+
+def hold_lock(path, refusal, shared=False):
+    """Hold a non-blocking ``flock`` on ``path``, shared or exclusive;
+    returns the open handle. A held lock raises ``RoomError(refusal)``."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    handle = open(path + ".lock", "a")
+    handle = open(path, "a")
     try:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(handle, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+                    | fcntl.LOCK_NB)
     except BlockingIOError:
         handle.close()
-        raise room.RoomError("another room run holds %s" % path)
+        raise room.RoomError(refusal)
     return handle
+
+
+def lock_pr_run(repo, agent, number):
+    """Hold the shared agent lock and the exclusive PR lock of a PR-mode
+    run; returns both handles. A repo-mode runner of the same agent, or a
+    PR runner of it on the same PR, makes this raise ``RoomError``."""
+    path = agent_lock_path(repo, agent)
+    shared = hold_lock(path, _refusal(repo, agent, path), shared=True)
+    try:
+        pr_path = pr_lock_path(repo, agent, number)
+        return [shared, hold_lock(pr_path, _refusal(repo, agent, pr_path))]
+    except BaseException:
+        shared.close()
+        raise
 
 
 def _list_open(gh, repo):
@@ -194,12 +227,19 @@ def cmd_run_repo(opts, parser, gh, runner, sleep, clock, preflight=None):
             opts.repo, os.environ))))
 
     path = opts.state or default_state_path(opts.repo, agent)
-    lock = lock_state(path)
+    agent_lock = agent_lock_path(opts.repo, agent)
+    locks = [hold_lock(agent_lock, _refusal(opts.repo, agent, agent_lock))]
     try:
+        state_lock = path + ".lock"
+        if not (os.path.exists(state_lock)
+                and os.path.samefile(state_lock, agent_lock)):
+            locks.append(hold_lock(state_lock,
+                                   "another room run holds %s" % path))
         return _run_loop(opts, parser, gh, runner, sleep, clock, preflight,
                          login, root, agent, path)
     finally:
-        lock.close()
+        for lock in locks:
+            lock.close()
 
 
 def _run_loop(opts, parser, gh, runner, sleep, clock, preflight, login,

@@ -142,7 +142,8 @@ class RepoTestBase(RoomTestBase):
         self.state = os.path.join(self.state_dir, "s.json")
 
     def run_repo(self, gh, *extra, limit=1, hooks=None, runner=None,
-                 preflight=None, clock=None, sleep=None, argv=None):
+                 preflight=None, clock=None, sleep=None, argv=None,
+                 env=None):
         self.sleep = sleep or StopAfter(limit, hooks)
         self.runner = runner or FakeRunner()
         self.preflight = preflight or FakePreflight()
@@ -152,7 +153,7 @@ class RepoTestBase(RoomTestBase):
             argv = ["run", "--repo", "o/r", "--role", "reviewer",
                     "--agent", "rev-b", "--state", self.state]
         return _run(list(argv) + list(extra) + ["--root", self.root], gh,
-                    seams=seams)
+                    env=env, seams=seams)
 
     def summary(self, out):
         lines = out.splitlines()
@@ -524,6 +525,53 @@ class RepoStopTest(RepoTestBase):
             gh, limit=4, clock=FakeClock(step=1e6))
         self.assertEqual(code, 130, err)
         self.assertEqual(self.summary(out)["reason"], "interrupted")
+
+
+class RepoAgentLockTest(RepoTestBase):
+    """room-run-agent-lock"""
+
+    def setUp(self):
+        super().setUp()
+        self.home = tempfile.mkdtemp(prefix="room-lock-home-")
+        self.addCleanup(shutil.rmtree, self.home, True)
+        lock_dir = os.path.join(self.home, ".shipd", "room-run", "o", "r")
+        os.makedirs(lock_dir)
+        self.agent_lock = os.path.join(lock_dir, "rev-b.json.lock")
+
+    def assert_refused(self, mode):
+        gh = FakeRepoGh()
+        gh.add_pr(7, [waiting(10, to="rev-b")])
+        with open(self.agent_lock, "a") as handle:
+            fcntl.flock(handle, mode | fcntl.LOCK_NB)
+            code, out, err = self.run_repo(gh, env={"HOME": self.home})
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertEqual(err.count("Error:"), 1, err)
+        for part in ("rev-b", "o/r", self.agent_lock):
+            self.assertIn(part, err)
+        self.assertEqual(gh.fakes[7].posts(), [])
+        self.assertEqual(self.runner.calls, [])
+        self.assertFalse(os.path.exists(self.state + ".lock"))
+
+    def test_a_custom_state_file_does_not_escape_the_agent_lock(self):
+        self.assert_refused(fcntl.LOCK_EX)
+
+    def test_a_pr_run_of_the_agent_refuses_repo_mode(self):
+        self.assert_refused(fcntl.LOCK_SH)
+
+    def test_a_state_file_beside_the_agent_lock_does_not_refuse_itself(self):
+        gh = FakeRepoGh()
+        state = os.path.join(os.path.dirname(self.agent_lock), "rev-b.json")
+        code, out, err = self.run_repo(
+            gh, env={"HOME": self.home},
+            argv=["run", "--repo", "O/R", "--role", "reviewer", "--agent",
+                  "rev-b", "--state", state])
+        self.assertEqual(code, 130, err)
+        self.assertNotIn("Error:", err)
+
+    def test_the_agent_lock_ignores_the_repository_case(self):
+        self.assertEqual(room_run_repo.agent_lock_path("O/R", "rev-b"),
+                         room_run_repo.agent_lock_path("o/r", "rev-b"))
 
 
 if __name__ == "__main__":

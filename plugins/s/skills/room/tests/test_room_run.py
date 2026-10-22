@@ -5,8 +5,10 @@ Every GitHub call goes through ``FakeGh`` and every turn through a
 ``FakeRunner``: no ``gh`` process, no network, and no real harness session.
 """
 
+import fcntl
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -839,6 +841,58 @@ class RunMissingModuleTest(RunTestBase):
             sys.modules.pop("room_run", None)
             if saved_mod is not None:
                 sys.modules["room_run"] = saved_mod
+
+
+class RunAgentLockTest(RunTestBase):
+    """room-run-agent-lock"""
+
+    def setUp(self):
+        super().setUp()
+        self.home = tempfile.mkdtemp(prefix="room-lock-home-")
+        self.addCleanup(shutil.rmtree, self.home, True)
+        self.lock_dir = os.path.join(self.home, ".shipd", "room-run", "o",
+                                     "r")
+        os.makedirs(self.lock_dir)
+
+    def held(self, name, mode=fcntl.LOCK_EX):
+        handle = open(os.path.join(self.lock_dir, name), "a")
+        self.addCleanup(handle.close)
+        fcntl.flock(handle, mode | fcntl.LOCK_NB)
+        return handle.name
+
+    def run_pr(self, gh, runner):
+        return self.run_verb(gh, "7", "--role", "reviewer", "--agent",
+                             "rev-b", runner=runner,
+                             env={"HOME": self.home})
+
+    def assert_refused(self, path):
+        gh = FakeGh(comments=[waiting(to="rev-b")])
+        runner = FakeRunner(hook=lambda n: setattr(gh, "state", "MERGED"))
+        code, out, err = self.run_pr(gh, runner)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertEqual(err.count("Error:"), 1, err)
+        for part in ("rev-b", "o/r", path):
+            self.assertIn(part, err)
+        self.assertEqual(gh.posts(), [])
+        self.assertEqual(runner.calls, [])
+
+    def test_a_repo_runner_of_the_agent_refuses_a_pr_run(self):
+        path = self.held("rev-b.json.lock")
+        self.assert_refused(path)
+
+    def test_a_pr_run_on_the_same_pr_is_refused(self):
+        path = self.held("rev-b.pr-7.lock")
+        self.assert_refused(path)
+
+    def test_pr_runs_on_different_prs_coexist(self):
+        self.held("rev-b.pr-8.lock")
+        self.held("rev-b.json.lock", fcntl.LOCK_SH)
+        gh = FakeGh(comments=[waiting(to="rev-b")])
+        runner = FakeRunner(hook=lambda n: setattr(gh, "state", "MERGED"))
+        code, out, err = self.run_pr(gh, runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(runner.calls), 1)
 
 
 if __name__ == "__main__":
