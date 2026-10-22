@@ -129,7 +129,7 @@ The `reason` value says why the run stopped:
 - `turn-cap` — the run took `--max-turns` turns.
 - `budget` — `--budget` seconds passed, or a reviewer or `ci` wait ended with no task.
 - `turn-failed` — a turn failed. The `failure` key says why.
-- `watch-failed` — the wait raised a room error. The `failure` key says why.
+- `watch-failed`, `claim-failed` — the wait or the claim raised a room error. The `failure` key says why.
 - `preflight-failed` — repo mode: a turn failed, then the harness check failed.
 - `interrupted` — repo mode: you pressed Ctrl-C.
 
@@ -140,8 +140,8 @@ failed turn parks only its pull request.
 ## Know what a turn may do
 
 Every turn runs with `bypassPermissions`, as autopilot's turns do. Restrict
-each agent through its GitHub account. A reviewer token without write access
-cannot push, whatever the turn tries.
+each agent through its GitHub account. A reviewer needs push permission for
+its review claims; see [Review claims](room-review-claims.md).
 
 ## See also
 

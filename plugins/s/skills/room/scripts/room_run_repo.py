@@ -32,6 +32,7 @@ if HERE not in sys.path:
 
 import cli_common  # noqa: E402
 import room  # noqa: E402
+import room_claim  # noqa: E402
 import room_run  # noqa: E402
 import session_driver  # noqa: E402
 
@@ -230,6 +231,7 @@ def cmd_run_repo(opts, parser, gh, runner, sleep, clock, preflight=None):
     agent_lock = agent_lock_path(opts.repo, agent)
     locks = [hold_lock(agent_lock, _refusal(opts.repo, agent, agent_lock))]
     try:
+        room_claim.require_push(gh, opts.repo, login)
         state_lock = path + ".lock"
         if not (os.path.exists(state_lock)
                 and os.path.samefile(state_lock, agent_lock)):
@@ -248,6 +250,7 @@ def _run_loop(opts, parser, gh, runner, sleep, clock, preflight, login,
     prs = state["prs"]
     skills = tuple(opts.skill) or room_run.DEFAULT_SKILLS
     seen, parked, warned, joined = {}, set(), set(), set()
+    head_warned = set()
     per_pr = {}
     visited = {}
     total = 0
@@ -289,6 +292,11 @@ def _run_loop(opts, parser, gh, runner, sleep, clock, preflight, login,
             stale = [k for k in prs if k not in open_keys]
             for key in stale:
                 del prs[key]
+                try:
+                    room_claim.delete_pr_claims(gh, opts.repo, int(key))
+                except (room.RoomError, ValueError) as exc:
+                    sys.stderr.write("warning: could not delete the claims "
+                                     "of #%s: %s\n" % (key, exc))
             if stale:
                 save()
             for pr in listing:
@@ -335,17 +343,46 @@ def _run_loop(opts, parser, gh, runner, sleep, clock, preflight, login,
                     if backoff:
                         break
                     continue
-                total += 1
-                turn = per_pr.get(number, 0)
-                per_pr[number] = turn + 1
-                sys.stderr.write("room run: turn %d on #%d, task(s) %s\n" % (
-                    total, number, ", ".join(
-                        "#%s" % t.get("task") for t in tasks)))
                 prompt = "/s:room %s role %s, skills %s" % (
                     pr.get("url") or "%s#%d" % (opts.repo, number),
                     opts.role, ", ".join(skills))
-                ok, why, new_id = runner(prompt, root,
-                                         entry.get("session_id"), turn)
+
+                def turn_once(number=number, entry=entry, tasks=tasks,
+                              prompt=prompt):
+                    nonlocal total
+                    total += 1
+                    turn = per_pr.get(number, 0)
+                    per_pr[number] = turn + 1
+                    sys.stderr.write(
+                        "room run: turn %d on #%d, task(s) %s\n" % (
+                            total, number, ", ".join(
+                                "#%s" % t.get("task") for t in tasks)))
+                    return runner(prompt, root, entry.get("session_id"),
+                                  turn)
+
+                try:
+                    outcome, result = room_claim.turn_for_tasks(
+                        gh, opts.repo, number, agent,
+                        lambda: room_run._head(gh, number, opts.repo,
+                                               head_warned),
+                        tasks, turn_once)
+                except room.RoomError as exc:
+                    backoff = _warn_error(exc, backoff, opts.interval,
+                                          "claiming #%d" % number)
+                    if backoff:
+                        break
+                    continue
+                if outcome == "held":
+                    continue
+                if outcome == "done":
+                    entry = prs.setdefault(str(number), {})
+                    entry["cursor"] = room._cursor_text(
+                        room_run._line_cursor(tasks[-1],
+                                              _stored_cursor(entry)))
+                    save()
+                    note(number)
+                    continue
+                ok, why, new_id = result
                 entry = prs.setdefault(str(number), {})
                 if new_id:
                     entry["session_id"] = new_id

@@ -13,6 +13,7 @@ default ``endpoints.merge_base``, rather than shelling out to a real ``git``
 that has never heard of these fake SHAs.
 """
 
+import io
 import json
 import os
 import re
@@ -28,8 +29,12 @@ sys.path.insert(0, SCRIPTS)
 ROOM_SCRIPTS = os.path.normpath(
     os.path.join(HERE, "..", "..", "room", "scripts"))
 sys.path.insert(0, ROOM_SCRIPTS)
+sys.path.insert(0, os.path.normpath(
+    os.path.join(HERE, "..", "..", "room", "tests")))
 
 import review_gate  # noqa: E402
+import room_claim  # noqa: E402
+from test_room_claim import FakeClaimStore  # noqa: E402
 import room_schema  # noqa: E402
 import semdiff  # noqa: E402
 
@@ -2251,8 +2256,9 @@ class RoomImportTest(unittest.TestCase):
             isinstance(node, ast.Import)
             and any(a.name == "room_schema" for a in node.names)
             for node in tree.body), "room_schema not imported at module scope")
+        # ``room_claim`` is imported lazily, only for a room claim fence.
         outside = sorted(
-            name for name in top - {"room_schema"}
+            name for name in top - {"room_schema", "room_claim"}
             if name not in sys.stdlib_module_names)
         self.assertEqual(outside, [])
         self.assertIs(review_gate.room_schema, room_schema)
@@ -2661,6 +2667,195 @@ class RoomReviewerPostTest(unittest.TestCase):
                               "--room-to", "author-a"], gh=gh)
         self.assertEqual(ctx.exception.code, 2)
         self.assertEqual(gh.calls, [])
+
+
+class ClaimGh:
+    """The poster's ``gh`` seam over a ``FakeGh`` plus a ``FakeClaimStore``:
+    claim, ref and status calls go to the store, every other call to the
+    gate's own fake. ``after_summary`` runs once after the first summary
+    comment write."""
+
+    def __init__(self, gate, store, after_summary=None):
+        self.gate = gate
+        self.store = store
+        self.after_summary = after_summary
+
+    def __call__(self, args, input=None):
+        args = list(args)
+        if (args[:1] == ["api"] and self.store.handles(args)
+                and "/statuses/" not in " ".join(args[1:])
+                or "/statuses/" in " ".join(args)
+                and "room-review/" in (input or "")):
+            return self.store(args, input)
+        result = self.gate(args, input)
+        if (self.after_summary is not None and "POST" in args
+                and any("/issues/" in a for a in args)):
+            hook, self.after_summary = self.after_summary, None
+            hook()
+        return result
+
+
+def claim_done_ref(store):
+    return next(r for r in store.refs if r.endswith("/done")) \
+        if any(r.endswith("/done") for r in store.refs) else "no-done-ref"
+
+
+class PosterClaimFenceTest(unittest.TestCase):
+    """gate-poster-room-claim-fence"""
+
+    FILES = [{"filename": "a.py", "patch": PATCH_A}]
+    AGENT = "rev-b"
+
+    def setUp(self):
+        self.store = FakeClaimStore("o/r")
+        self.gate = WorkflowReadGh(files=self.FILES)
+        self.head = self.gate.head_sha
+        self.gh = ClaimGh(self.gate, self.store)
+        patcher = mock.patch.dict(os.environ, {}, clear=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop(room_claim.CLAIM_ENV, None)
+
+    def _claim(self):
+        kind, claim = room_claim.acquire(
+            self.store, "o/r", 7, self.AGENT, self.head, "holder-1")
+        self.assertEqual(kind, "won")
+        os.environ[room_claim.CLAIM_ENV] = claim.to_env()
+        return claim
+
+    def _post(self, **kwargs):
+        lines = []
+        result = review_gate.post("7", _review(verdict="pass"), self.gh,
+                                  out=lines.append, room_agent=self.AGENT,
+                                  **kwargs)
+        return result, lines
+
+    def _assert_nothing_posted(self):
+        self.assertIsNone(self.gate.summary_body())
+        self.assertEqual(self.gate.review_posts, [])
+        self.assertIsNone(self.gate.posted_status)
+        self.assertEqual(self.store.statuses, [])
+
+    def test_a_newer_generation_stops_the_post(self):
+        self._claim()
+        self.store.seed(7, self.AGENT, self.head, 2, "rival", "claimed")
+        with self.assertRaises(review_gate.ReviewGateError) as ctx:
+            self._post()
+        self.assertTrue(str(ctx.exception).startswith("room claim lost"))
+        self.assertIn("nothing posted", str(ctx.exception))
+        self._assert_nothing_posted()
+
+    def test_an_old_heartbeat_stops_the_post(self):
+        self._claim()
+        self.store.now += 301
+        with self.assertRaises(review_gate.ReviewGateError) as ctx:
+            self._post()
+        self.assertTrue(str(ctx.exception).startswith("room claim lost"))
+        self._assert_nothing_posted()
+
+    def test_a_fresh_claim_posts_and_is_marked_done(self):
+        claim = self._claim()
+        self.store.now += 20
+        result, _lines = self._post()
+        self.assertEqual(result["review_event"], "APPROVE")
+        self.assertEqual(len(self.gate.review_posts), 1)
+        self.assertEqual(self.store.tip_info(claim.prefix + "/done")["state"],
+                         "done")
+        self.assertEqual(self.store.statuses[-1][1]["context"],
+                         "room-review/rev-b")
+        self.assertEqual(self.store.statuses[-1][1]["state"], "success")
+        self.assertEqual(self.store.statuses[-1][0], self.head)
+
+    def test_the_claim_is_checked_before_the_summary_and_the_review(self):
+        self._claim()
+        before = len([a for a, _i in self.store.calls if "PATCH" in a])
+        self._post()
+        patches = len([a for a, _i in self.store.calls if "PATCH" in a])
+        self.assertEqual(patches - before, 2)    # fence, fence
+        self.assertIn(claim_done_ref(self.store), self.store.refs)
+
+    def test_claim_required_without_a_claim_writes_nothing(self):
+        os.environ["SHIPD_ROOM_CLAIM_REQUIRED"] = "1"
+        self.addCleanup(os.environ.pop, "SHIPD_ROOM_CLAIM_REQUIRED", None)
+        with self.assertRaises(review_gate.ReviewGateError) as ctx:
+            self._post()
+        self.assertTrue(str(ctx.exception).startswith("room claim lost"))
+        self.assertIn("holds no claim", str(ctx.exception))
+        self._assert_nothing_posted()
+        self.assertEqual(self.store.calls, [])
+
+    def test_a_moved_head_stops_the_post(self):
+        self._claim()
+        self.gate.head_sha = "d" * 40
+        with self.assertRaises(review_gate.ReviewGateError) as ctx:
+            self._post()
+        self.assertTrue(str(ctx.exception).startswith("room claim lost"))
+        self.assertIn("nothing posted", str(ctx.exception))
+        self._assert_nothing_posted()
+
+    def test_a_comment_only_post_still_finishes_the_claim(self):
+        claim = self._claim()
+        with mock.patch.object(review_gate, "_acting_login",
+                               return_value="author-x"), \
+                mock.patch.object(review_gate, "_pr_author",
+                                  return_value="author-x"):
+            result, _lines = self._post()
+        self.assertEqual(self.gate.review_posts, [])
+        self.assertIn(claim.prefix + "/done", self.store.refs)
+        self.assertEqual(self.store.statuses[-1][1]["state"], "success")
+
+    def test_the_second_failure_says_the_summary_was_posted(self):
+        self._claim()
+        gh = ClaimGh(self.gate, self.store, after_summary=lambda: (
+            self.store.seed(7, self.AGENT, self.head, 2, "rival",
+                            "claimed")))
+        with self.assertRaises(review_gate.ReviewGateError) as ctx:
+            review_gate.post("7", _review(verdict="pass"), gh,
+                             room_agent=self.AGENT)
+        self.assertIn("summary posted, review not submitted",
+                      str(ctx.exception))
+
+    def test_a_claim_lost_before_the_review_posts_no_review(self):
+        self._claim()
+        gh = ClaimGh(self.gate, self.store, after_summary=lambda: (
+            self.store.seed(7, self.AGENT, self.head, 2, "rival",
+                            "claimed")))
+        with self.assertRaises(review_gate.ReviewGateError) as ctx:
+            review_gate.post("7", _review(verdict="pass"), gh,
+                             room_agent=self.AGENT)
+        self.assertTrue(str(ctx.exception).startswith("room claim lost"))
+        self.assertEqual(self.gate.review_posts, [])
+        self.assertEqual(self.store.statuses, [])
+
+    def test_without_the_variable_no_claim_call_is_made(self):
+        result, _lines = self._post()
+        self.assertEqual(result["review_event"], "APPROVE")
+        self.assertEqual(self.store.calls, [])
+        self.assertEqual(len(self.gate.review_posts), 1)
+
+    def test_the_variable_without_a_room_agent_is_ignored(self):
+        self._claim()
+        calls = len(self.store.calls)
+        review_gate.post("7", _review(verdict="pass"), self.gh)
+        self.assertEqual(len(self.store.calls), calls)
+
+    def test_the_cli_prints_one_room_claim_lost_line(self):
+        self._claim()
+        self.store.now += 301
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "r.json")
+        with open(path, "w") as handle:
+            json.dump(_review(), handle)
+        err = io.StringIO()
+        with mock.patch("sys.stderr", err):
+            code = review_gate.main(
+                ["post", "7", "--from", path, "--room-agent", self.AGENT],
+                gh=self.gh)
+        self.assertEqual(code, 1)
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith("room claim lost"), lines)
 
 
 class EarlierReviewsTest(unittest.TestCase):

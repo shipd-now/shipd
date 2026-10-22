@@ -21,10 +21,12 @@ from contextlib import redirect_stderr, redirect_stdout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
+sys.path.insert(0, HERE)
 sys.path.insert(0, SCRIPTS)
 
 import room  # noqa: E402
 import room_schema  # noqa: E402
+from test_room_claim import FakeClaimStore  # noqa: E402
 
 MODULE_PATH = os.path.join(SCRIPTS, "room.py")
 MANIFEST = os.path.normpath(
@@ -46,7 +48,7 @@ class FakeGh:
     def __init__(self, number=7, repo="o/r", comments=None,
                  review_comments=None, pages=1, fail=None, state="OPEN",
                  delete_fail=False, login="bot", user_fail=False,
-                 threads=None, pr_author="pr-author", head=None,
+                 threads=None, pr_author="pr-author", head="9" * 40,
                  reviews=None):
         self.head = head
         self.reviews = [dict(r) for r in (reviews or [])]
@@ -63,6 +65,7 @@ class FakeGh:
         self.pages = pages
         self.fail = list(fail) if fail is not None else None
         self.calls = []                 # list of (args, input)
+        self.claims = FakeClaimStore(repo)
         ids = [c["id"] for c in self.comments + self.review_comments]
         self._next_id = max(ids + [999]) + 1
 
@@ -166,6 +169,8 @@ class FakeGh:
 
     def __call__(self, args, input=None):
         args = list(args)
+        if self.claims.handles(args):
+            return self.claims(args, input)
         self.calls.append((args, input))
         if self.fail is not None and args[:len(self.fail)] == self.fail:
             return 1, "", "boom"

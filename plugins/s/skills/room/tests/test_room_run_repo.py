@@ -22,11 +22,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.normpath(os.path.join(HERE, "..", "scripts")))
 
+import room_claim  # noqa: E402
 import room_run_repo  # noqa: E402
 from test_room import (  # noqa: E402
     FakeClock, FakeGh, FakeSleep, RoomTestBase, _run, msg_comment)
+from test_room_claim import FakeClaimStore  # noqa: E402
 from test_room_run import (  # noqa: E402
-    FakePreflight, FakeRunner, RunTestBase, waiting)
+    FakePreflight, FakeRunner, RunTestBase, own_task_reply, review_request, waiting)
 
 LOGIN = "rev-b-login"
 
@@ -43,13 +45,16 @@ class FakeRepoGh:
         self.listing = []
         self.calls = []
         self.failures = []
+        self.claims = FakeClaimStore(repo)
         self._stamp = 0
 
     def add_pr(self, number, comments=(), author="someone", state="OPEN",
                in_list=True):
         self.fakes[number] = FakeGh(
             number=number, repo=self.repo, comments=list(comments),
-            login=self.login, pr_author=author, state=state)
+            login=self.login, pr_author=author, state=state,
+            head="%040x" % number)
+        self.fakes[number].claims = self.claims
         if in_list:
             self.listing.append({
                 "number": number,
@@ -82,6 +87,8 @@ class FakeRepoGh:
 
     def __call__(self, args, input=None):
         args = list(args)
+        if self.claims.handles(args):
+            return self.claims(args, input)
         self.calls.append((args, input))
         for failure in self.failures:
             prefix, stderr, times = failure
@@ -234,6 +241,137 @@ class RepoModeTest(RepoTestBase):
         gh.add_pr(7, [waiting(10, to="rev-b")])
         self.run_repo(gh)
         self.assertEqual(self.runner.agents, ["rev-b"])
+
+
+class RepoClaimTest(RepoTestBase):
+    """room-review-claim, room-review-claim-permission,
+    room-review-claim-cleanup in repo mode"""
+
+    def head(self, number):
+        return "%040x" % number
+
+    def ref_prefix(self, number):
+        return room_claim.claim_prefix(number, "rev-b", self.head(number))
+
+    def test_a_won_claim_runs_the_turn_and_holds_a_pending_status(self):
+        gh = FakeRepoGh()
+        gh.add_pr(7, [review_request(10)])
+        code, out, err = self.run_repo(gh)
+        self.assertEqual(len(self.runner.calls), 1, err)
+        self.assertEqual(gh.claims.status_states()[0],
+                         ("room-review/rev-b", "pending"))
+        self.assertEqual(gh.claims.tip_info(self.ref_prefix(7) + "/1")
+                         ["state"], "released")
+
+    def test_a_held_claim_skips_the_turn_and_leaves_the_cursor(self):
+        gh = FakeRepoGh()
+        gh.add_pr(7, [review_request(10)])
+        gh.claims.seed(7, "rev-b", self.head(7), 1, "other:1:abcd", "beat",
+                       age=30)
+        code, out, err = self.run_repo(gh, limit=2)
+        self.assertEqual(code, 130, err)
+        self.assertEqual(self.runner.calls, [])
+        self.assertIn("is claimed by other:1:abcd; skipping", err)
+        self.assertNotIn("cursor", self.saved()["prs"].get("7", {}))
+        self.assertEqual(len(gh.claims.under(self.ref_prefix(7))), 1)
+
+    def test_a_held_pr_is_revisited_once_the_claim_goes_stale(self):
+        gh = FakeRepoGh()
+        gh.add_pr(7, [review_request(10)])
+        gh.claims.seed(7, "rev-b", self.head(7), 1, "other", "beat", age=30)
+
+        def stale():
+            gh.claims.now += 700
+
+        code, out, err = self.run_repo(gh, limit=3, hooks={1: stale})
+        self.assertEqual(len(self.runner.calls), 1, err)
+        self.assertEqual(len(gh.claims.under(self.ref_prefix(7))), 2)
+
+    def test_a_done_claim_advances_the_cursor_without_a_turn(self):
+        gh = FakeRepoGh()
+        gh.add_pr(7, [review_request(10)])
+        gh.claims.seed(7, "rev-b", self.head(7), 1, "other", "done")
+        code, out, err = self.run_repo(gh, limit=2)
+        self.assertEqual(self.runner.calls, [])
+        self.assertIn("was already reviewed by other", err)
+        self.assertIn("cursor", self.saved()["prs"]["7"])
+        self.assertEqual(self.summary(out)["turns"], 0)
+        self.assertEqual(len(gh.claims.under(self.ref_prefix(7))), 1)
+
+    def test_a_turn_on_the_agents_own_task_runs_without_a_claim(self):
+        gh = FakeRepoGh()
+        gh.add_pr(7, own_task_reply())
+        gh.claims.seed(7, "rev-b", self.head(7), 1, "other", "done")
+        code, out, err = self.run_repo(gh, limit=2)
+        self.assertEqual(len(self.runner.calls), 1, err)
+        self.assertEqual(self.runner.required, ["1"])
+        self.assertEqual(gh.claims.writes(), [])
+        self.assertEqual(gh.claims.statuses, [])
+        self.assertNotIn("was already reviewed", err)
+
+    def test_a_non_review_task_from_the_author_runs_unclaimed(self):
+        gh = FakeRepoGh()
+        gh.add_pr(7, [waiting(10, to="rev-b", opener="author-a",
+                              skill="question")])
+        gh.claims.seed(7, "rev-b", self.head(7), 1, "other", "done")
+        self.run_repo(gh, limit=2)
+        self.assertEqual(self.runner.required, ["1"])
+        self.assertEqual(gh.claims.writes(), [])
+
+    def test_a_mixed_batch_on_a_done_head_runs_unclaimed(self):
+        gh = FakeRepoGh()
+        gh.add_pr(7, [review_request(10),
+                      waiting(11, to="rev-b", opener="author-a",
+                              skill="question")])
+        gh.claims.seed(7, "rev-b", self.head(7), 1, "other", "done")
+        self.run_repo(gh, limit=2)
+        self.assertEqual(self.runner.required, ["1"])
+        self.assertEqual(self.runner.claims, [None])
+        self.assertEqual(gh.claims.writes(), [])
+
+    def test_an_all_request_batch_on_a_done_head_is_skipped(self):
+        gh = FakeRepoGh()
+        gh.add_pr(7, [review_request(10), review_request(11)])
+        gh.claims.seed(7, "rev-b", self.head(7), 1, "other", "done")
+        code, out, err = self.run_repo(gh, limit=2)
+        self.assertEqual(self.runner.calls, [])
+        self.assertIn("cursor", self.saved()["prs"]["7"])
+
+    def test_no_push_permission_refuses_with_one_error_line(self):
+        gh = FakeRepoGh()
+        gh.add_pr(7, [review_request(10)])
+        gh.claims.push = False
+        code, out, err = self.run_repo(gh)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        errors = [l for l in err.splitlines() if l.startswith("Error:")]
+        self.assertEqual(len(errors), 1, err)
+        self.assertIn("@" + LOGIN, errors[0])
+        self.assertIn("o/r", errors[0])
+        self.assertIn("push permission", errors[0])
+        self.assertEqual(self.runner.calls, [])
+        self.assertEqual(gh.fakes[7].posts(), [])
+        self.assertEqual(gh.claims.writes(), [])
+
+    def test_a_pr_leaving_the_listing_loses_its_claim_refs(self):
+        gh = FakeRepoGh()
+        self.write_state({"7": {"cursor": "0:0"}})
+        gh.claims.seed(7, "rev-b", self.head(7), 1, "x", "done")
+        gh.claims.seed(7, "rev-b", self.head(7), 2, "x", "released")
+        gh.claims.seed(9, "rev-b", self.head(9), 1, "x", "done")
+        code, out, err = self.run_repo(gh)
+        self.assertEqual(gh.claims.under("shipd/claims/pr-7/"), [])
+        self.assertEqual(len(gh.claims.under("shipd/claims/pr-9/")), 1)
+
+    def test_a_failed_claim_delete_warns_and_the_run_goes_on(self):
+        gh = FakeRepoGh()
+        self.write_state({"7": {"cursor": "0:0"}})
+        gh.claims.seed(7, "rev-b", self.head(7), 1, "x", "done")
+        gh.claims.fail.append([["DELETE"], "HTTP 403"])
+        code, out, err = self.run_repo(gh)
+        self.assertEqual(code, 130, err)
+        self.assertIn("warning:", err)
+        self.assertEqual(err.count("Error:"), 0, err)
 
 
 class ScriptEntryTest(RepoTestBase):

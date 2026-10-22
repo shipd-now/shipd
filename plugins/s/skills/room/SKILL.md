@@ -153,6 +153,10 @@ exists on the pull request's base commit, the CI gate owns `semantic-review`
 and the post sets no status. Where that file is absent (the read returns 404),
 the post sets `semantic-review` itself. On any other read failure it sets none.
 
+If the post fails with a `room claim lost` line, another runner owns this
+review: the turn ends. Relay that line and post nothing else, no freeform
+review.
+
 Never submit a separate freeform `gh pr review`: the review `/s:review` posts
 is the only one. A re-review after a push runs the same command; the one
 summary comment is edited in place, and a new full review lands on the new
