@@ -3,18 +3,16 @@
 # Review claims
 
 A review claim makes one reviewer runner post the review of one pull request
-head. Reviewer runners of one agent can run on several machines. Without a
-claim, two of them can review the same head and post two reviews.
+head. Runners of one agent can run on several machines. Without a claim, two
+of them can post two reviews of the same head.
 
 ## How a runner claims a head
 
-Before a `reviewer` or `ci` turn, the runner creates a git ref on GitHub:
-`refs/shipd/claims/pr-<N>/<agent>/<sha>/<gen>`. GitHub creates a ref only
-once, so exactly one runner wins each generation. The winner runs the turn.
-The other runners skip it and look again at their next poll.
-
-The claim refs are not branches or tags. They show nowhere in the GitHub
-interface, and a push to them starts no workflow.
+Before a `reviewer` or `ci` review turn, the runner creates a git ref on
+GitHub: `refs/shipd/claims/pr-<N>/<agent>/<sha>/<gen>`. GitHub creates a ref
+only once, so exactly one runner wins each generation. The winner runs the
+turn. The others skip it and look again at their next poll. The refs are not
+branches or tags, show nowhere in the GitHub interface, and start no workflow.
 
 ## The heartbeat
 
@@ -30,12 +28,14 @@ The taker creates the next generation, again atomically. It never rewrites the
 old one, because GitHub enforces no fast-forward on custom refs.
 
 The `done` ref, `refs/shipd/claims/pr-<N>/<agent>/<sha>/done`, marks a
-reviewed head. The poster creates it once, and no heartbeat moves it. Other
-runners skip that head and move their cursor past the task. A turn that ends
-without one releases its claim.
+reviewed head. The poster creates it once, and no heartbeat moves it. A turn
+that ends without one releases its claim.
 
-A runner claims only a turn that carries a review request, a task another
-agent opened. A turn that replies on its own tasks runs unclaimed.
+A runner claims only a turn with a review request: a task of skill
+`review-finding` that another agent opened. Any other turn runs unclaimed with
+`SHIPD_ROOM_CLAIM_REQUIRED=1`, and its poster refuses to post a review. On a
+done head, a batch of only review requests gets skipped and the cursor
+advances; a mixed batch runs unclaimed.
 
 ## The poster fence
 
@@ -51,10 +51,11 @@ review. The check passes only when all hold:
 
 If the first check fails, the poster writes nothing and prints one line
 starting `room claim lost` and ending `nothing posted`. If the second fails,
-the summary exists but the poster submits no review, and the line ends
-`summary posted, review not submitted`. Both exit non-zero. After the second
-check passes, the poster creates the `done` ref and sets the merge status to
-`success`, whether or not it submitted a review.
+the summary exists, the poster submits no review, and the line ends `summary
+posted, review not submitted`. With `SHIPD_ROOM_CLAIM_REQUIRED=1` and no claim,
+it writes nothing and prints `room claim lost: this turn holds no claim`. All
+exit non-zero. After the second check passes, the poster creates the `done`
+ref and sets the merge status to `success`, with or without a review.
 
 A runner that freezes over 5 minutes after the second check can still post late.
 The merge status below covers that gap.
@@ -79,7 +80,7 @@ With the status required, a head no runner claims blocks the merge.
 
 Creating a ref needs push permission. A `reviewer` or `ci` runner whose
 account lacks it refuses to start with one `Error:` line, before it joins any
-room. An `author` runner needs no claim and no permission.
+room. An `author` runner needs neither.
 
 ## Cleanup
 
@@ -90,9 +91,8 @@ leaves one small commit object, unreachable once the refs are gone.
 ## Limits
 
 - Runners older than plugin version `0.6.345` do not claim. The guarantee
-  holds once every runner of the agent runs this version or a later one.
-- The CI gate workflow makes no claim. Its poster runs without
-  `SHIPD_ROOM_CLAIM` and behaves as before.
+  holds once every runner runs this version or later.
+- The CI gate workflow makes no claim; its poster behaves as before.
 
 ## See also
 

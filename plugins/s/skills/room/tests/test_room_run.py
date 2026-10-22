@@ -37,9 +37,13 @@ class FakeRunner:
         self.hook = hook
         self.calls = []
         self.agents = []
+        self.required = []      # SHIPD_ROOM_CLAIM_REQUIRED per call
+        self.claims = []        # SHIPD_ROOM_CLAIM per call
 
     def __call__(self, prompt, cwd, resume_id, turn_index):
         self.calls.append((prompt, cwd, resume_id, turn_index))
+        self.required.append(os.environ.get("SHIPD_ROOM_CLAIM_REQUIRED"))
+        self.claims.append(os.environ.get("SHIPD_ROOM_CLAIM"))
         self.agents.append(os.environ.get("SHIPD_ROOM_AGENT"))
         if self.hook is not None:
             self.hook(len(self.calls))
@@ -61,10 +65,16 @@ class FakePreflight:
         return self.result
 
 
-def waiting(comment_id=10, to="author-a", opener="other"):
+def waiting(comment_id=10, to="author-a", opener="other", skill=None):
     """A task addressed to ``to`` and waiting for its turn."""
+    extra = {"skill": skill} if skill else {}
     return msg_comment(comment_id, opener, text="please look",
-                       state="input-required", round=1, to=to)
+                       state="input-required", round=1, to=to, **extra)
+
+
+def review_request(comment_id=10, to="rev-b", opener="other"):
+    """A review request: a ``review-finding`` task another agent opened."""
+    return waiting(comment_id, to, opener, skill="review-finding")
 
 
 def own_task_reply(comment_id=10, agent="rev-b", other="other"):
@@ -197,7 +207,7 @@ class RunClaimTest(RunTestBase):
         return room_claim.claim_prefix(7, "rev-b", self.HEAD)
 
     def test_a_won_claim_runs_the_turn_and_releases_it(self):
-        gh = self.gh(comments=[waiting(to="rev-b")])
+        gh = self.gh(comments=[review_request()])
         runner = FakeRunner()
         code, out, err = self.run_verb(
             gh, *self.ARGV, "--max-turns", "1", runner=runner)
@@ -210,7 +220,7 @@ class RunClaimTest(RunTestBase):
                          "released")
 
     def test_a_held_claim_runs_no_turn_and_watches_from_the_same_cursor(self):
-        gh = self.gh(comments=[waiting(to="rev-b")])
+        gh = self.gh(comments=[review_request()])
         gh.claims.seed(7, "rev-b", self.HEAD, 1, "other:1:abcd", "beat",
                        age=10)
         runner = FakeRunner()
@@ -227,7 +237,7 @@ class RunClaimTest(RunTestBase):
         self.assertEqual(summary["cursor"], "0:0")
 
     def test_a_done_claim_advances_the_cursor_without_a_turn(self):
-        gh = self.gh(comments=[waiting(to="rev-b")])
+        gh = self.gh(comments=[review_request()])
         gh.claims.seed(7, "rev-b", self.HEAD, 1, "other", "done")
         runner = FakeRunner()
         code, out, err = self.run_verb(
@@ -246,11 +256,48 @@ class RunClaimTest(RunTestBase):
             gh, *self.ARGV, "--max-turns", "1", runner=runner)
         self.assertEqual(code, 0, err)
         self.assertEqual(len(runner.calls), 1)
+        self.assertEqual(runner.required, ["1"])
+        self.assertEqual(runner.claims, [None])
         self.assertEqual(gh.claims.writes(), [])
         self.assertEqual(gh.claims.statuses, [])
+        self.assertNotIn("SHIPD_ROOM_CLAIM_REQUIRED", os.environ)
+
+    def test_a_non_review_task_from_the_author_runs_unclaimed(self):
+        gh = self.gh(comments=[waiting(to="rev-b", opener="author-a",
+                                       skill="question")])
+        gh.claims.seed(7, "rev-b", self.HEAD, 1, "other", "done")
+        runner = FakeRunner()
+        code, out, err = self.run_verb(
+            gh, *self.ARGV, "--max-turns", "1", runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(runner.required, ["1"])
+        self.assertEqual(gh.claims.writes(), [])
+
+    def test_a_mixed_batch_on_a_done_head_runs_unclaimed(self):
+        gh = self.gh(comments=[
+            review_request(10),
+            waiting(11, to="rev-b", opener="author-a", skill="question")])
+        gh.claims.seed(7, "rev-b", self.HEAD, 1, "other", "done")
+        runner = FakeRunner()
+        code, out, err = self.run_verb(
+            gh, *self.ARGV, "--max-turns", "1", runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(runner.required, ["1"])
+        self.assertEqual(runner.claims, [None])
+        self.assertEqual(gh.claims.writes(), [])
+
+    def test_an_all_request_batch_on_a_done_head_is_skipped(self):
+        gh = self.gh(comments=[review_request(10), review_request(11)])
+        gh.claims.seed(7, "rev-b", self.HEAD, 1, "other", "done")
+        runner = FakeRunner()
+        code, out, err = self.run_verb(
+            gh, *self.ARGV, "--budget", "100", "--interval", "5",
+            runner=runner, clock=FakeClock(step=10))
+        self.assertEqual(runner.calls, [])
+        self.assertNotEqual(self.summary(out)["cursor"], "0:0")
 
     def test_no_push_permission_refuses_a_reviewer_before_joining(self):
-        gh = self.gh(comments=[waiting(to="rev-b")])
+        gh = self.gh(comments=[review_request()])
         gh.claims.push = False
         runner = FakeRunner()
         code, out, err = self.run_verb(gh, *self.ARGV, runner=runner)

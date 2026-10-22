@@ -1997,8 +1997,16 @@ line starting `room claim lost` that says what was already posted, and SHALL
 exit non-zero. Once the summary is posted for the claimed head and the second
 check has passed, `post` SHALL create the claim's `done` ref and set
 `room-review/<agent>` to `success`, whether or not a review object was
-submitted. Without `SHIPD_ROOM_CLAIM`, `post` SHALL behave as before this
-requirement.
+submitted. When `post` runs with `--room-agent`, `SHIPD_ROOM_CLAIM_REQUIRED=1`
+and no `SHIPD_ROOM_CLAIM`, it SHALL make no GitHub write, SHALL print one
+line starting `room claim lost`, and SHALL exit non-zero. Without either
+variable, `post` SHALL behave as before this requirement.
+
+#### Scenario: A turn without a claim cannot post
+- **WHEN** `post --room-agent rev-b` runs with `SHIPD_ROOM_CLAIM_REQUIRED=1`
+  and no `SHIPD_ROOM_CLAIM`
+- **THEN** it writes nothing, prints a `room claim lost` line, and exits
+  non-zero
 
 #### Scenario: A moved head stops the post
 - **WHEN** the claim names head `abc` and the pull request's head is now

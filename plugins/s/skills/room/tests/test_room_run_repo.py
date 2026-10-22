@@ -28,7 +28,7 @@ from test_room import (  # noqa: E402
     FakeClock, FakeGh, FakeSleep, RoomTestBase, _run, msg_comment)
 from test_room_claim import FakeClaimStore  # noqa: E402
 from test_room_run import (  # noqa: E402
-    FakePreflight, FakeRunner, RunTestBase, own_task_reply, waiting)
+    FakePreflight, FakeRunner, RunTestBase, own_task_reply, review_request, waiting)
 
 LOGIN = "rev-b-login"
 
@@ -255,7 +255,7 @@ class RepoClaimTest(RepoTestBase):
 
     def test_a_won_claim_runs_the_turn_and_holds_a_pending_status(self):
         gh = FakeRepoGh()
-        gh.add_pr(7, [waiting(10, to="rev-b")])
+        gh.add_pr(7, [review_request(10)])
         code, out, err = self.run_repo(gh)
         self.assertEqual(len(self.runner.calls), 1, err)
         self.assertEqual(gh.claims.status_states()[0],
@@ -265,7 +265,7 @@ class RepoClaimTest(RepoTestBase):
 
     def test_a_held_claim_skips_the_turn_and_leaves_the_cursor(self):
         gh = FakeRepoGh()
-        gh.add_pr(7, [waiting(10, to="rev-b")])
+        gh.add_pr(7, [review_request(10)])
         gh.claims.seed(7, "rev-b", self.head(7), 1, "other:1:abcd", "beat",
                        age=30)
         code, out, err = self.run_repo(gh, limit=2)
@@ -277,7 +277,7 @@ class RepoClaimTest(RepoTestBase):
 
     def test_a_held_pr_is_revisited_once_the_claim_goes_stale(self):
         gh = FakeRepoGh()
-        gh.add_pr(7, [waiting(10, to="rev-b")])
+        gh.add_pr(7, [review_request(10)])
         gh.claims.seed(7, "rev-b", self.head(7), 1, "other", "beat", age=30)
 
         def stale():
@@ -289,7 +289,7 @@ class RepoClaimTest(RepoTestBase):
 
     def test_a_done_claim_advances_the_cursor_without_a_turn(self):
         gh = FakeRepoGh()
-        gh.add_pr(7, [waiting(10, to="rev-b")])
+        gh.add_pr(7, [review_request(10)])
         gh.claims.seed(7, "rev-b", self.head(7), 1, "other", "done")
         code, out, err = self.run_repo(gh, limit=2)
         self.assertEqual(self.runner.calls, [])
@@ -304,13 +304,42 @@ class RepoClaimTest(RepoTestBase):
         gh.claims.seed(7, "rev-b", self.head(7), 1, "other", "done")
         code, out, err = self.run_repo(gh, limit=2)
         self.assertEqual(len(self.runner.calls), 1, err)
+        self.assertEqual(self.runner.required, ["1"])
         self.assertEqual(gh.claims.writes(), [])
         self.assertEqual(gh.claims.statuses, [])
         self.assertNotIn("was already reviewed", err)
 
+    def test_a_non_review_task_from_the_author_runs_unclaimed(self):
+        gh = FakeRepoGh()
+        gh.add_pr(7, [waiting(10, to="rev-b", opener="author-a",
+                              skill="question")])
+        gh.claims.seed(7, "rev-b", self.head(7), 1, "other", "done")
+        self.run_repo(gh, limit=2)
+        self.assertEqual(self.runner.required, ["1"])
+        self.assertEqual(gh.claims.writes(), [])
+
+    def test_a_mixed_batch_on_a_done_head_runs_unclaimed(self):
+        gh = FakeRepoGh()
+        gh.add_pr(7, [review_request(10),
+                      waiting(11, to="rev-b", opener="author-a",
+                              skill="question")])
+        gh.claims.seed(7, "rev-b", self.head(7), 1, "other", "done")
+        self.run_repo(gh, limit=2)
+        self.assertEqual(self.runner.required, ["1"])
+        self.assertEqual(self.runner.claims, [None])
+        self.assertEqual(gh.claims.writes(), [])
+
+    def test_an_all_request_batch_on_a_done_head_is_skipped(self):
+        gh = FakeRepoGh()
+        gh.add_pr(7, [review_request(10), review_request(11)])
+        gh.claims.seed(7, "rev-b", self.head(7), 1, "other", "done")
+        code, out, err = self.run_repo(gh, limit=2)
+        self.assertEqual(self.runner.calls, [])
+        self.assertIn("cursor", self.saved()["prs"]["7"])
+
     def test_no_push_permission_refuses_with_one_error_line(self):
         gh = FakeRepoGh()
-        gh.add_pr(7, [waiting(10, to="rev-b")])
+        gh.add_pr(7, [review_request(10)])
         gh.claims.push = False
         code, out, err = self.run_repo(gh)
         self.assertEqual(code, 1, err)

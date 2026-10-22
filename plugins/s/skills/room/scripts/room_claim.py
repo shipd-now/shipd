@@ -32,6 +32,8 @@ if HERE not in sys.path:
 import room  # noqa: E402
 
 CLAIM_ENV = "SHIPD_ROOM_CLAIM"
+CLAIM_REQUIRED_ENV = "SHIPD_ROOM_CLAIM_REQUIRED"
+REVIEW_SKILL = "review-finding"
 BEAT_SECONDS = 60
 LEASE_SECONDS = 600
 FENCE_SECONDS = 300
@@ -419,6 +421,40 @@ def set_status(gh, repo, sha, agent, state, description):
             "description": description}))
     if rc != 0:
         raise _fail("setting the room-review status", err, rc)
+
+
+def is_review_request(line, agent):
+    """Whether a surfaced task ``line`` asks ``agent`` for a review: skill
+    ``review-finding``, opened by another agent."""
+    return line.get("skill") == REVIEW_SKILL and \
+        line.get("opener") != agent
+
+
+def _unclaimed_turn(run):
+    """Run ``run()`` with no claim and ``CLAIM_REQUIRED_ENV`` set for the
+    turn only, so the session's poster refuses to post a review."""
+    os.environ.pop(CLAIM_ENV, None)
+    os.environ[CLAIM_REQUIRED_ENV] = "1"
+    try:
+        return run()
+    finally:
+        os.environ.pop(CLAIM_REQUIRED_ENV, None)
+
+
+def turn_for_tasks(gh, repo, number, agent, head, tasks, run):
+    """Run a ``reviewer`` or ``ci`` turn over the surfaced task ``tasks``:
+    claimed when the batch holds a review request, unclaimed otherwise.
+    Returns ``("ran", result)``, ``("held", None)`` or ``("done", None)``;
+    ``done`` only when every task is a review request on a done head.
+    ``head`` may be a callable, read only when a claim is needed."""
+    requests = [t for t in tasks if is_review_request(t, agent)]
+    if not requests:
+        return "ran", _unclaimed_turn(run)
+    outcome, result = claimed_turn(
+        gh, repo, number, agent, head() if callable(head) else head, run)
+    if outcome == "done" and len(requests) < len(tasks):
+        return "ran", _unclaimed_turn(run)
+    return outcome, result
 
 
 def claimed_turn(gh, repo, number, agent, head, run):

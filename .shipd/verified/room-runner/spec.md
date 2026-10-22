@@ -436,12 +436,14 @@ runs of one agent on different PRs SHALL NOT refuse each other.
 ### Requirement: One review per head through an atomic claim
 id: room-review-claim
 
-Before a `reviewer` or `ci` turn that carries a task another agent opened
-(a review request), in repo mode and PR mode alike, `room run` SHALL claim
-the pull request's head by creating
+Before a `reviewer` or `ci` turn that carries a review request (a task
+with skill `review-finding` that another agent opened), in repo mode and PR
+mode alike, `room run` SHALL claim the pull request's head by creating
 `refs/shipd/claims/pr-<N>/<agent>/<sha>/<gen>` through the GitHub API, and
-SHALL run the turn only when its create succeeded. A turn whose tasks were
-all opened by the running agent itself SHALL run without a claim. A run SHALL
+SHALL run the turn with the claim only when its create succeeded. Every
+other `reviewer` or `ci` turn SHALL run without a claim, with
+`SHIPD_ROOM_CLAIM_REQUIRED=1` in the session's environment, so its poster
+refuses to post a review. A run SHALL
 create generation `1` when no claim exists, and the next generation only when
 the newest claim is marked `released` or its last claim commit is more than
 600 seconds old, measured as GitHub's `Date` header minus the commit's
@@ -450,8 +452,9 @@ a new claim commit every 60 seconds. A run SHALL treat only a create answered
 with `Reference already exists` as a lost race. A run that finds a live claim
 held by another holder SHALL skip the turn without advancing its cursor. A
 claimed head is done when the ref `refs/shipd/claims/pr-<N>/<agent>/<sha>/done`
-exists; a run that finds it SHALL skip the turn and advance its cursor, and no
-heartbeat SHALL ever move it. After the turn, a claim whose head is not done
+exists, and no heartbeat SHALL ever move it. A run that finds it SHALL skip a
+turn whose tasks are all review requests and advance its cursor, and SHALL
+run any other turn without a claim. After the turn, a claim whose head is not done
 SHALL be marked `released`. The `CLAIM_ENV` variable SHALL carry the won
 claim to the session for the turn only.
 
@@ -464,7 +467,14 @@ claim to the session for the turn only.
 #### Scenario: Replies on the reviewer's own tasks run unclaimed
 - **WHEN** the only surfaced task was opened by the running reviewer and the
   head is already done
-- **THEN** the turn runs without a claim call
+- **THEN** the turn runs without a claim call, with
+  `SHIPD_ROOM_CLAIM_REQUIRED=1` set
+
+#### Scenario: An author's question on a done head still runs
+- **WHEN** the head is done and the surfaced tasks are a review request plus
+  a task the author opened with another skill
+- **THEN** the turn runs without a claim, with `SHIPD_ROOM_CLAIM_REQUIRED=1`
+  set
 
 #### Scenario: Two runners race for one head
 - **WHEN** two runners of `rev-b` try to claim head `abc` of PR 7 and the

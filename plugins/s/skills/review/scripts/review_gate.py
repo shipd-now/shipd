@@ -65,6 +65,8 @@ import room_schema  # noqa: E402
 PROG = "review_gate"
 # The environment variable a room runner passes the won review claim in.
 CLAIM_ENV = "SHIPD_ROOM_CLAIM"
+# Set to ``1`` for a turn that holds no claim: the poster then refuses to post.
+CLAIM_REQUIRED_ENV = "SHIPD_ROOM_CLAIM_REQUIRED"
 CONTEXT = "semantic-review"
 # The review event follows the `semantic-review` status the poster sets:
 # `APPROVE` on success, `REQUEST_CHANGES` on failure. This reverses the
@@ -1024,6 +1026,10 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
             claim = room_claim.Claim.from_env(os.environ[CLAIM_ENV])
         except room_claim.room.RoomError as exc:
             raise RoomClaimLost("room claim lost: %s; nothing posted" % exc)
+    if room_agent and claim is None and \
+            os.environ.get(CLAIM_REQUIRED_ENV) == "1":
+        raise RoomClaimLost(
+            "room claim lost: this turn holds no claim; nothing posted")
     number, base_sha, sha, pr_url = _resolve_pr(gh, pr)
     pr_merge_base = _pr_merge_base(git, base_sha, sha)
     payload_merge_base = (review.get("endpoints") or {}).get("merge_base")

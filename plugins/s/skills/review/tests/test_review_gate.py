@@ -2774,6 +2774,16 @@ class PosterClaimFenceTest(unittest.TestCase):
         self.assertEqual(patches - before, 2)    # fence, fence
         self.assertIn(claim_done_ref(self.store), self.store.refs)
 
+    def test_claim_required_without_a_claim_writes_nothing(self):
+        os.environ["SHIPD_ROOM_CLAIM_REQUIRED"] = "1"
+        self.addCleanup(os.environ.pop, "SHIPD_ROOM_CLAIM_REQUIRED", None)
+        with self.assertRaises(review_gate.ReviewGateError) as ctx:
+            self._post()
+        self.assertTrue(str(ctx.exception).startswith("room claim lost"))
+        self.assertIn("holds no claim", str(ctx.exception))
+        self._assert_nothing_posted()
+        self.assertEqual(self.store.calls, [])
+
     def test_a_moved_head_stops_the_post(self):
         self._claim()
         self.gate.head_sha = "d" * 40

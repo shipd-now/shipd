@@ -428,7 +428,7 @@ def _run_pr(opts, parser, gh, runner, sleep, clock, root, agent, repo,
                 reason = "budget"
                 break
             turn_prompt = prompt
-        if claimed and any(t.get("opener") != agent for t in tasks):
+        if claimed and tasks:
             def run_turn():
                 nonlocal turns
                 turns += 1
@@ -437,9 +437,10 @@ def _run_pr(opts, parser, gh, runner, sleep, clock, root, agent, repo,
                 return runner(turn_prompt, root, session_id, turns - 1)
 
             try:
-                outcome, result = room_claim.claimed_turn(
+                outcome, result = room_claim.turn_for_tasks(
                     gh, repo, number, agent,
-                    _head(gh, number, repo, warned), run_turn)
+                    lambda: _head(gh, number, repo, warned), tasks,
+                    run_turn)
             except room.RoomError as exc:
                 reason, failure = "claim-failed", str(exc)
                 break
