@@ -979,16 +979,25 @@ def _review_body_summary(text):
     return "\n".join(lines) + "\n"
 
 
-def _room_claim_fence(gh, claim):
+def _room_claim_fence(gh, claim, head=None, posted=False):
     """Check the room review ``claim`` (a no-op without one); a lost claim
-    stops the post before its next GitHub write."""
+    stops the post before its next GitHub write. ``head`` is the pull
+    request's current head the claim must name; ``posted`` words the failure
+    for the check that runs after the summary is already posted."""
     if claim is None:
         return
     import room_claim
     try:
+        if head is not None and claim.sha != head:
+            raise room_claim.room.RoomError(
+                "the pull request head moved from %s to %s"
+                % (claim.sha[:7], head[:7]))
         room_claim.fence(gh, claim)
     except room_claim.room.RoomError as exc:
-        raise RoomClaimLost("room claim lost: %s; nothing posted" % exc)
+        raise RoomClaimLost(
+            "room claim lost: %s; %s" % (exc, "summary posted, review not "
+                                         "submitted" if posted
+                                         else "nothing posted"))
 
 
 def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
@@ -1055,7 +1064,7 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
     # Computed once, before the first upsert, so this run's own fold and
     # fast-pass re-upserts never add an entry.
     earlier = earlier_reviews(_find_summary(gh, repo, number))
-    _room_claim_fence(gh, claim)
+    _room_claim_fence(gh, claim, head=sha)
     comment_url = _upsert_summary(
         gh, repo, number,
         render_summary(review, unanchored, disposition, model, files,
@@ -1072,6 +1081,7 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
         out("review comment-only: %s is the pull request author and GitHub "
             "rejects self-approval" % login)
     submitted = None
+    fenced = False
     # A decision always submits (a required approval needs a review object);
     # a neutral COMMENT submits only when something anchors.
     if event != NEUTRAL_EVENT or anchored:
@@ -1084,7 +1094,8 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
             _review_body_summary(render_summary(
                 review, unanchored, disposition, model, files))
             if room_agent else None)
-        _room_claim_fence(gh, claim)
+        _room_claim_fence(gh, claim, posted=True)
+        fenced = True
         if _post_review(gh, repo, number, sha, anchored, event, login,
                         commentable, room=review_room, summary=body_summary):
             submitted = event
@@ -1117,10 +1128,12 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
                     out("review decision %s was not recorded; the fallback "
                         "comment review was also rejected" % event)
 
-    if claim is not None and submitted:
+    if claim is not None:
+        if not fenced:
+            _room_claim_fence(gh, claim, posted=True)
         import room_claim
         try:
-            room_claim.beat(gh, claim, "done")
+            room_claim.mark_done(gh, claim)
             room_claim.set_status(gh, repo, sha, room_agent, "success",
                                   "review posted")
         except room_claim.room.RoomError as exc:

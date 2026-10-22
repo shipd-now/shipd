@@ -2695,6 +2695,11 @@ class ClaimGh:
         return result
 
 
+def claim_done_ref(store):
+    return next(r for r in store.refs if r.endswith("/done")) \
+        if any(r.endswith("/done") for r in store.refs) else "no-done-ref"
+
+
 class PosterClaimFenceTest(unittest.TestCase):
     """gate-poster-room-claim-fence"""
 
@@ -2754,8 +2759,8 @@ class PosterClaimFenceTest(unittest.TestCase):
         result, _lines = self._post()
         self.assertEqual(result["review_event"], "APPROVE")
         self.assertEqual(len(self.gate.review_posts), 1)
-        ref = claim.prefix + "/1"
-        self.assertEqual(self.store.tip_info(ref)["state"], "done")
+        self.assertEqual(self.store.tip_info(claim.prefix + "/done")["state"],
+                         "done")
         self.assertEqual(self.store.statuses[-1][1]["context"],
                          "room-review/rev-b")
         self.assertEqual(self.store.statuses[-1][1]["state"], "success")
@@ -2766,7 +2771,39 @@ class PosterClaimFenceTest(unittest.TestCase):
         before = len([a for a, _i in self.store.calls if "PATCH" in a])
         self._post()
         patches = len([a for a, _i in self.store.calls if "PATCH" in a])
-        self.assertEqual(patches - before, 3)    # fence, fence, done
+        self.assertEqual(patches - before, 2)    # fence, fence
+        self.assertIn(claim_done_ref(self.store), self.store.refs)
+
+    def test_a_moved_head_stops_the_post(self):
+        self._claim()
+        self.gate.head_sha = "d" * 40
+        with self.assertRaises(review_gate.ReviewGateError) as ctx:
+            self._post()
+        self.assertTrue(str(ctx.exception).startswith("room claim lost"))
+        self.assertIn("nothing posted", str(ctx.exception))
+        self._assert_nothing_posted()
+
+    def test_a_comment_only_post_still_finishes_the_claim(self):
+        claim = self._claim()
+        with mock.patch.object(review_gate, "_acting_login",
+                               return_value="author-x"), \
+                mock.patch.object(review_gate, "_pr_author",
+                                  return_value="author-x"):
+            result, _lines = self._post()
+        self.assertEqual(self.gate.review_posts, [])
+        self.assertIn(claim.prefix + "/done", self.store.refs)
+        self.assertEqual(self.store.statuses[-1][1]["state"], "success")
+
+    def test_the_second_failure_says_the_summary_was_posted(self):
+        self._claim()
+        gh = ClaimGh(self.gate, self.store, after_summary=lambda: (
+            self.store.seed(7, self.AGENT, self.head, 2, "rival",
+                            "claimed")))
+        with self.assertRaises(review_gate.ReviewGateError) as ctx:
+            review_gate.post("7", _review(verdict="pass"), gh,
+                             room_agent=self.AGENT)
+        self.assertIn("summary posted, review not submitted",
+                      str(ctx.exception))
 
     def test_a_claim_lost_before_the_review_posts_no_review(self):
         self._claim()

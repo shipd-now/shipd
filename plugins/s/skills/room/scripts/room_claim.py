@@ -154,8 +154,8 @@ def server_now(gh, repo):
     raise room.RoomError("GitHub's response carried no readable Date header")
 
 
-def _generations(gh, repo, prefix):
-    """``[(gen, ref, tip_sha)]`` under ``prefix`` ascending by generation."""
+def _list_refs(gh, repo, prefix):
+    """``[(ref, tip_sha)]`` of every ref under ``prefix``."""
     data = _json(gh, ["api", "repos/%s/git/matching-refs/%s/" % (repo, prefix)],
                  "listing claim refs")
     found = []
@@ -163,10 +163,34 @@ def _generations(gh, repo, prefix):
         ref = item.get("ref") if isinstance(item, dict) else None
         obj = item.get("object") if isinstance(item, dict) else None
         sha = obj.get("sha") if isinstance(obj, dict) else None
-        tail = ref.rsplit("/", 1)[-1] if isinstance(ref, str) else ""
-        if tail.isdigit() and isinstance(sha, str):
-            found.append((int(tail), ref, sha))
-    return sorted(found)
+        if isinstance(ref, str) and isinstance(sha, str):
+            found.append((ref, sha))
+    return found
+
+
+def _gens_of(refs):
+    """``[(gen, ref, tip_sha)]`` ascending; the non-numeric ``done`` ref is
+    not a generation."""
+    return sorted((int(ref.rsplit("/", 1)[-1]), ref, sha)
+                  for ref, sha in refs if ref.rsplit("/", 1)[-1].isdigit())
+
+
+def _done_of(refs, prefix):
+    """The tip sha of the ``done`` ref among ``refs``, or ``None``."""
+    want = "refs/%s/done" % prefix
+    return next((sha for ref, sha in refs if ref == want), None)
+
+
+def _generations(gh, repo, prefix):
+    """``[(gen, ref, tip_sha)]`` under ``prefix`` ascending by generation."""
+    return _gens_of(_list_refs(gh, repo, prefix))
+
+
+def is_done(gh, repo, prefix):
+    """Whether the ``done`` ref exists; ``prefix`` is a ref prefix or a
+    ``Claim``."""
+    prefix = getattr(prefix, "prefix", prefix)
+    return _done_of(_list_refs(gh, repo, prefix), prefix) is not None
 
 
 def _read_commit(gh, repo, sha):
@@ -196,22 +220,28 @@ def _create_commit(gh, repo, message, tree, parents):
 
 def _is_exists(rc, out, err):
     text = ((err or "") + (out or "")).lower()
-    return rc != 0 and ("422" in text or "already exists" in text)
+    return rc != 0 and "reference already exists" in text
 
 
 def _verdict(gh, repo, number, agent, sha, holder):
     """The ``acquire`` outcome from the newest generation under the claim
     prefix: ``(kind, info, newest_gen)`` where kind is ``none``, ``done``,
     ``open`` (released or stale) or ``held``."""
-    gens = _generations(gh, repo, claim_prefix(number, agent, sha))
+    prefix = claim_prefix(number, agent, sha)
+    refs = _list_refs(gh, repo, prefix)
+    gens = _gens_of(refs)
+    done_tip = _done_of(refs, prefix)
+    if done_tip is not None:
+        info, _tree, _when = _read_commit(gh, repo, done_tip)
+        return "done", {"holder": info.get("holder", "unknown"),
+                        "gen": gens[-1][0] if gens else 0}, \
+            gens[-1][0] if gens else 0
     if not gens:
         return "none", {}, 0
     gen, _ref, tip = gens[-1]
     info, _tree, when = _read_commit(gh, repo, tip)
     who = {"holder": info.get("holder", "unknown"), "gen": gen}
     state = info.get("state")
-    if state == "done":
-        return "done", who, gen
     if state == "released":
         return "open", who, gen
     if server_now(gh, repo) - when > LEASE_SECONDS:
@@ -267,6 +297,21 @@ def beat(gh, claim, state="beat"):
     claim.tip, claim.last_beat = commit, when
 
 
+def mark_done(gh, claim):
+    """Create the claim's ``done`` ref once; one that already exists counts
+    as success."""
+    commit, _when = _create_commit(
+        gh, claim.repo,
+        _commit_message(claim.holder, "done", claim.agent, claim.sha),
+        claim.tree, [claim.tip] if claim.tip else [])
+    rc, out, err = gh(["api", "-X", "POST", "repos/%s/git/refs" % claim.repo,
+                       "--input", "-"],
+                      input=json.dumps({"ref": "refs/%s/done" % claim.prefix,
+                                        "sha": commit}))
+    if rc != 0 and not _is_exists(rc, out, err):
+        raise _fail("creating the done ref", err, rc)
+
+
 def tip_state(gh, claim):
     """``(info, committed_at)`` of the claim ref's current tip commit."""
     for gen, _ref, tip in _generations(gh, claim.repo, claim.prefix):
@@ -277,10 +322,13 @@ def tip_state(gh, claim):
 
 
 def fence(gh, claim):
-    """Raise ``RoomError`` unless ``claim`` is still the newest generation,
-    held by its holder, with a heartbeat under ``FENCE_SECONDS`` old; then
+    """Raise ``RoomError`` if the head is done, else unless ``claim`` is still
+    the newest generation, held by its holder, with a heartbeat under ``FENCE_SECONDS`` old; then
     beat."""
-    gens = _generations(gh, claim.repo, claim.prefix)
+    refs = _list_refs(gh, claim.repo, claim.prefix)
+    if _done_of(refs, claim.prefix) is not None:
+        raise room.RoomError("the review is already done")
+    gens = _gens_of(refs)
     if any(gen > claim.gen for gen, _r, _t in gens):
         raise room.RoomError("a newer claim generation exists")
     tip = next((t for gen, _r, t in gens if gen == claim.gen), None)
@@ -316,8 +364,7 @@ class Heartbeat:
     def _loop(self):
         while not self._stop.wait(self.interval):
             try:
-                info, _when = tip_state(self.gh, self.claim)
-                if info.get("state") not in LIVE_STATES:
+                if is_done(self.gh, self.claim.repo, self.claim):
                     return
                 beat(self.gh, self.claim)
             except room.RoomError as exc:
@@ -409,8 +456,7 @@ def claimed_turn(gh, repo, number, agent, head, run):
 def _release(gh, claim):
     """Mark an unfinished claim ``released``; never raises."""
     try:
-        info, _when = tip_state(gh, claim)
-        if info.get("state") != "done":
+        if not is_done(gh, claim.repo, claim):
             beat(gh, claim, "released")
             set_status(gh, claim.repo, claim.sha, claim.agent, "pending",
                        "released; waiting for a runner")

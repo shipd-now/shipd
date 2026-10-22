@@ -28,7 +28,7 @@ from test_room import (  # noqa: E402
     FakeClock, FakeGh, FakeSleep, RoomTestBase, _run, msg_comment)
 from test_room_claim import FakeClaimStore  # noqa: E402
 from test_room_run import (  # noqa: E402
-    FakePreflight, FakeRunner, RunTestBase, waiting)
+    FakePreflight, FakeRunner, RunTestBase, own_task_reply, waiting)
 
 LOGIN = "rev-b-login"
 
@@ -297,6 +297,16 @@ class RepoClaimTest(RepoTestBase):
         self.assertIn("cursor", self.saved()["prs"]["7"])
         self.assertEqual(self.summary(out)["turns"], 0)
         self.assertEqual(len(gh.claims.under(self.ref_prefix(7))), 1)
+
+    def test_a_turn_on_the_agents_own_task_runs_without_a_claim(self):
+        gh = FakeRepoGh()
+        gh.add_pr(7, own_task_reply())
+        gh.claims.seed(7, "rev-b", self.head(7), 1, "other", "done")
+        code, out, err = self.run_repo(gh, limit=2)
+        self.assertEqual(len(self.runner.calls), 1, err)
+        self.assertEqual(gh.claims.writes(), [])
+        self.assertEqual(gh.claims.statuses, [])
+        self.assertNotIn("was already reviewed", err)
 
     def test_no_push_permission_refuses_with_one_error_line(self):
         gh = FakeRepoGh()

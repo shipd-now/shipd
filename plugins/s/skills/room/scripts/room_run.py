@@ -428,7 +428,7 @@ def _run_pr(opts, parser, gh, runner, sleep, clock, root, agent, repo,
                 reason = "budget"
                 break
             turn_prompt = prompt
-        if claimed and tasks:
+        if claimed and any(t.get("opener") != agent for t in tasks):
             def run_turn():
                 nonlocal turns
                 turns += 1

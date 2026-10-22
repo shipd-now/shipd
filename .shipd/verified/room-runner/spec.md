@@ -436,20 +436,35 @@ runs of one agent on different PRs SHALL NOT refuse each other.
 ### Requirement: One review per head through an atomic claim
 id: room-review-claim
 
-Before a `reviewer` or `ci` turn, in repo mode and PR mode alike, `room run`
-SHALL claim the pull request's head by creating
+Before a `reviewer` or `ci` turn that carries a task another agent opened
+(a review request), in repo mode and PR mode alike, `room run` SHALL claim
+the pull request's head by creating
 `refs/shipd/claims/pr-<N>/<agent>/<sha>/<gen>` through the GitHub API, and
-SHALL run the turn only when its create succeeded. A run SHALL create
-generation `1` when no claim exists, and the next generation only when the
-newest claim is marked `released` or its last claim commit is more than 600
-seconds old, measured as GitHub's `Date` header minus the commit's
+SHALL run the turn only when its create succeeded. A turn whose tasks were
+all opened by the running agent itself SHALL run without a claim. A run SHALL
+create generation `1` when no claim exists, and the next generation only when
+the newest claim is marked `released` or its last claim commit is more than
+600 seconds old, measured as GitHub's `Date` header minus the commit's
 `committer.date`. While its turn runs, the winner SHALL move its claim ref to
-a new claim commit every 60 seconds. A run that finds a live claim held by
-another holder SHALL skip the turn without advancing its cursor. A run that
-finds the newest claim marked `done` SHALL skip the turn and advance its
-cursor. After the turn, a claim the poster did not mark `done` SHALL be
-marked `released`. The `CLAIM_ENV` variable SHALL carry the won claim to the
-session for the turn only.
+a new claim commit every 60 seconds. A run SHALL treat only a create answered
+with `Reference already exists` as a lost race. A run that finds a live claim
+held by another holder SHALL skip the turn without advancing its cursor. A
+claimed head is done when the ref `refs/shipd/claims/pr-<N>/<agent>/<sha>/done`
+exists; a run that finds it SHALL skip the turn and advance its cursor, and no
+heartbeat SHALL ever move it. After the turn, a claim whose head is not done
+SHALL be marked `released`. The `CLAIM_ENV` variable SHALL carry the won
+claim to the session for the turn only.
+
+#### Scenario: A heartbeat cannot undo a finished review
+- **WHEN** the poster has created the `done` ref and a heartbeat then moves
+  the generation ref
+- **THEN** a second runner still sees the head as done, and the turn's end
+  does not release the claim or reset `room-review/<agent>` to `pending`
+
+#### Scenario: Replies on the reviewer's own tasks run unclaimed
+- **WHEN** the only surfaced task was opened by the running reviewer and the
+  head is already done
+- **THEN** the turn runs without a claim call
 
 #### Scenario: Two runners race for one head
 - **WHEN** two runners of `rev-b` try to claim head `abc` of PR 7 and the
@@ -469,12 +484,12 @@ session for the turn only.
   cursor where it was
 
 #### Scenario: A done claim counts as reviewed
-- **WHEN** the newest claim for head `abc` is marked `done`
+- **WHEN** the `done` ref for head `abc` exists
 - **THEN** the run calls no turn runner and advances its cursor past the
   task
 
 #### Scenario: A turn that posts nothing releases the claim
-- **WHEN** the turn runner returns and the claim tip is not marked `done`
+- **WHEN** the turn runner returns and no `done` ref exists for the head
 - **THEN** the run writes a `released` claim commit, so another runner can
   claim the head at once
 

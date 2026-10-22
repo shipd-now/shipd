@@ -26,37 +26,44 @@ measures every age as GitHub's time minus that stamp, never its own clock.
 
 A runner takes over a claim in two cases. The holder released the claim after
 a turn that posted nothing, or the last heartbeat is more than 10 minutes old.
-The taker creates the next generation, again atomically. It never rewrites
-the old generation, because GitHub does not enforce fast-forward updates on
-custom refs.
+The taker creates the next generation, again atomically. It never rewrites the
+old one, because GitHub enforces no fast-forward on custom refs.
 
-A claim marked `done` means the head already has its review. Every other
-runner skips that head and moves its cursor past the task.
+The `done` ref, `refs/shipd/claims/pr-<N>/<agent>/<sha>/done`, marks a
+reviewed head. The poster creates it once, and no heartbeat moves it. Other
+runners skip that head and move their cursor past the task. A turn that ends
+without one releases its claim.
+
+A runner claims only a turn that carries a review request, a task another
+agent opened. A turn that replies on its own tasks runs unclaimed.
 
 ## The poster fence
 
 The runner passes the won claim to the reviewing session in the
 `SHIPD_ROOM_CLAIM` variable. The poster, `review_gate.py post`, checks the
 claim twice: before its first GitHub write, and again before it submits the
-review. The check passes only when all three hold:
+review. The check passes only when all hold:
 
-- No newer generation exists for the head.
+- The claim names the current head, and no newer generation or `done` ref
+  exists for it.
 - The claim ref names this runner as its holder.
 - The last heartbeat is under 5 minutes old.
 
-If a check fails, the poster posts nothing, prints one line that starts with
-`room claim lost`, and exits non-zero. After it submits the review, the poster
-marks the claim `done`.
+If the first check fails, the poster writes nothing and prints one line
+starting `room claim lost` and ending `nothing posted`. If the second fails,
+the summary exists but the poster submits no review, and the line ends
+`summary posted, review not submitted`. Both exit non-zero. After the second
+check passes, the poster creates the `done` ref and sets the merge status to
+`success`, whether or not it submitted a review.
 
-A runner that freezes for over 5 minutes between the second check and GitHub
-receiving the review can still post late. The merge status below covers that
-gap.
+A runner that freezes over 5 minutes after the second check can still post late.
+The merge status below covers that gap.
 
 ## The merge status
 
 A won claim sets the commit status `room-review/<agent>` to `pending` on the
-head. The poster sets it to `success` after the review. A released claim
-leaves it `pending`.
+head. The poster sets it to `success` when it finishes. A release leaves it
+`pending`.
 
 A repository makes merges wait for the review by listing the context in
 `merge.required_checks` in `.shipd-config.json`, then running
@@ -66,21 +73,19 @@ A repository makes merges wait for the review by listing the context in
 {"merge": {"required_checks": ["ci", "room-review/reviewer-b"]}}
 ```
 
-With the status required, a head that no runner claims blocks the merge.
-The merge fails closed by design.
+With the status required, a head no runner claims blocks the merge.
 
 ## Permission
 
 Creating a ref needs push permission. A `reviewer` or `ci` runner whose
-account lacks it refuses to start, with one `Error:` line, before it joins
-any room. An `author` runner needs no claim and no permission.
+account lacks it refuses to start with one `Error:` line, before it joins any
+room. An `author` runner needs no claim and no permission.
 
 ## Cleanup
 
-When a pull request closes, the runner deletes every claim ref of that pull
-request. A failed delete prints a `warning:` line and the run goes on. Each
-heartbeat leaves one small commit object in the repository, which becomes
-unreachable once the refs are gone.
+When a pull request closes, the runner deletes every claim ref of it. A
+failed delete prints a `warning:` line and the run goes on. Each heartbeat
+leaves one small commit object, unreachable once the refs are gone.
 
 ## Limits
 

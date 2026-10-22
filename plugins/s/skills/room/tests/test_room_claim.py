@@ -71,11 +71,13 @@ class FakeClaimStore:
         return sha
 
     def seed(self, number, agent, sha, gen, holder, state, age=0):
-        """Create claim generation ``gen`` whose tip is ``age`` seconds old."""
+        """Create claim generation ``gen`` whose tip is ``age`` seconds old;
+        state ``done`` creates the ``done`` ref instead of a generation."""
         prefix = room_claim.claim_prefix(number, agent, sha)
         message = room_claim._commit_message(holder, state, agent, sha)
         tip = self._commit(message, "tree-" + sha, self.now - age)
-        self.refs["%s/%d" % (prefix, gen)] = tip
+        name = "done" if state == "done" else str(gen)
+        self.refs["%s/%s" % (prefix, name)] = tip
         return tip
 
     def under(self, prefix):
@@ -248,6 +250,7 @@ class AcquireTest(ClaimBase):
         def racing(args, input=None):
             if "repos/o/r/git/refs" in args and "POST" in args and \
                     not self.gh.refs:
+                self.gh.seed(7, "rev-b", HEAD, 1, "rival", "claimed")
                 self.gh.seed(7, "rev-b", HEAD, 1, "rival", "done")
             return real(args, input)
 
@@ -346,6 +349,49 @@ class FenceTest(ClaimBase):
         room_claim.fence(self.gh, claim)
 
 
+class DoneRefTest(ClaimBase):
+    def test_mark_done_creates_the_done_ref_once(self):
+        _kind, claim = self.acquire()
+        room_claim.mark_done(self.gh, claim)
+        room_claim.mark_done(self.gh, claim)      # 422 already exists
+        self.assertEqual(self.gh.under(prefix()),
+                         [prefix() + "/1", prefix() + "/done"])
+        self.assertEqual(self.gh.tip_info(prefix() + "/done")["state"],
+                         "done")
+
+    def test_the_done_ref_is_not_a_generation(self):
+        _kind, claim = self.acquire()
+        room_claim.mark_done(self.gh, claim)
+        gens = room_claim._generations(self.gh, "o/r", prefix())
+        self.assertEqual([g for g, _r, _t in gens], [1])
+
+    def test_fence_raises_once_done(self):
+        _kind, claim = self.acquire()
+        room_claim.mark_done(self.gh, claim)
+        with self.assertRaises(room.RoomError) as ctx:
+            room_claim.fence(self.gh, claim)
+        self.assertIn("done", str(ctx.exception))
+
+    def test_another_422_is_not_an_existing_ref(self):
+        _kind, claim = self.acquire()
+        self.gh.fail.append([["git/refs"],
+                             "gh: Validation Failed (HTTP 422)"])
+        with self.assertRaises(room.RoomError):
+            room_claim.mark_done(self.gh, claim)
+
+    def test_a_non_exists_422_on_acquire_raises(self):
+        self.gh.fail.append([["git/refs"],
+                             "gh: Validation Failed (HTTP 422)"])
+        with self.assertRaises(room.RoomError):
+            self.acquire()
+
+    def test_is_exists_matches_only_reference_already_exists(self):
+        self.assertTrue(room_claim._is_exists(
+            1, "", "gh: REFERENCE ALREADY EXISTS (HTTP 422)"))
+        self.assertFalse(room_claim._is_exists(1, "", "HTTP 422"))
+        self.assertFalse(room_claim._is_exists(0, "", "already exists"))
+
+
 class HeartbeatTest(ClaimBase):
     def test_the_thread_beats_until_stopped(self):
         _kind, claim = self.acquire()
@@ -374,11 +420,25 @@ class HeartbeatTest(ClaimBase):
 
     def test_a_done_claim_is_not_beaten_over(self):
         _kind, claim = self.acquire()
-        room_claim.beat(self.gh, claim, "done")
+        room_claim.mark_done(self.gh, claim)
+        before = self.gh.refs[prefix() + "/1"]
         beater = room_claim.Heartbeat(self.gh, claim, interval=0.01).start()
         time.sleep(0.1)
         beater.stop()
-        self.assertEqual(self.gh.tip_info(prefix() + "/1")["state"], "done")
+        self.assertEqual(self.gh.refs[prefix() + "/1"], before)
+
+    def test_a_beat_after_done_does_not_undo_done(self):
+        _kind, claim = self.acquire()
+        room_claim.mark_done(self.gh, claim)
+        room_claim.beat(self.gh, claim)      # a heartbeat already in flight
+        self.assertTrue(room_claim.is_done(self.gh, "o/r", claim))
+        kind, _info = self.acquire(holder="h2")
+        self.assertEqual(kind, "done")
+        self.gh.statuses.clear()
+        before = len(self.gh.writes())
+        room_claim._release(self.gh, claim)
+        self.assertEqual(len(self.gh.writes()), before)
+        self.assertEqual(self.gh.statuses, [])
 
 
 def io_stderr():
@@ -420,12 +480,14 @@ class ClaimedTurnTest(ClaimBase):
 
     def test_a_done_claim_stays_done_after_the_turn(self):
         def run():
-            _kind, claim = None, room_claim.Claim.from_env(
+            claim = room_claim.Claim.from_env(
                 os.environ[room_claim.CLAIM_ENV])
-            room_claim.beat(self.gh, claim, "done")
+            room_claim.mark_done(self.gh, claim)
 
         self.turn(run)
-        self.assertEqual(self.gh.tip_info(prefix() + "/1")["state"], "done")
+        self.assertTrue(room_claim.is_done(self.gh, "o/r", prefix()))
+        self.assertEqual(self.gh.tip_info(prefix() + "/1")["state"],
+                         "claimed")
         self.assertEqual(len(self.gh.statuses), 1)
 
     def test_a_raising_turn_still_releases(self):
@@ -477,10 +539,10 @@ class PermissionAndCleanupTest(ClaimBase):
         self.assertFalse(room_claim.can_claim(self.gh, "o/r"))
 
     def test_delete_pr_claims_removes_every_ref_of_that_pr_only(self):
+        self.gh.seed(7, "rev-b", HEAD, 1, "x", "beat")
         self.gh.seed(7, "rev-b", HEAD, 1, "x", "done")
-        self.gh.seed(7, "rev-b", HEAD, 2, "x", "done")
-        self.gh.seed(7, "rev-c", "b" * 40, 1, "x", "done")
-        self.gh.seed(70, "rev-b", HEAD, 1, "x", "done")
+        self.gh.seed(7, "rev-c", "b" * 40, 1, "x", "beat")
+        self.gh.seed(70, "rev-b", HEAD, 1, "x", "beat")
         count = room_claim.delete_pr_claims(self.gh, "o/r", 7)
         self.assertEqual(count, 3)
         self.assertEqual(list(self.gh.refs),

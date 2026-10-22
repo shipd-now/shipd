@@ -361,10 +361,14 @@ def _run_loop(opts, parser, gh, runner, sleep, clock, preflight, login,
                                   turn)
 
                 try:
-                    outcome, result = room_claim.claimed_turn(
-                        gh, opts.repo, number, agent,
-                        room_run._head(gh, number, opts.repo, head_warned),
-                        turn_once)
+                    if any(t.get("opener") != agent for t in tasks):
+                        outcome, result = room_claim.claimed_turn(
+                            gh, opts.repo, number, agent,
+                            room_run._head(gh, number, opts.repo,
+                                           head_warned), turn_once)
+                    else:
+                        # Replies on the agent's own tasks need no claim.
+                        outcome, result = "ran", turn_once()
                 except room.RoomError as exc:
                     backoff = _warn_error(exc, backoff, opts.interval,
                                           "claiming #%d" % number)

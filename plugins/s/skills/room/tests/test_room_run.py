@@ -67,6 +67,15 @@ def waiting(comment_id=10, to="author-a", opener="other"):
                        state="input-required", round=1, to=to)
 
 
+def own_task_reply(comment_id=10, agent="rev-b", other="other"):
+    """A task ``agent`` opened, answered by ``other`` and waiting on ``agent``."""
+    return [msg_comment(comment_id, agent, text="finding",
+                        state="input-required", round=1, to=other),
+            msg_comment(comment_id + 1, other, task_id=comment_id,
+                        text="fixed", state="input-required", round=2,
+                        to=agent)]
+
+
 class RunTestBase(RoomTestBase):
     def run_verb(self, gh, *argv, runner=None, clock=None, sleep=None,
                  env=None, preflight=None):
@@ -228,6 +237,17 @@ class RunClaimTest(RunTestBase):
         summary = self.summary(out)
         self.assertEqual(summary["turns"], 0)
         self.assertNotEqual(summary["cursor"], "0:0")
+
+    def test_a_turn_on_the_agents_own_task_runs_without_a_claim(self):
+        gh = self.gh(comments=own_task_reply())
+        gh.claims.seed(7, "rev-b", self.HEAD, 1, "other", "done")
+        runner = FakeRunner()
+        code, out, err = self.run_verb(
+            gh, *self.ARGV, "--max-turns", "1", runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(runner.calls), 1)
+        self.assertEqual(gh.claims.writes(), [])
+        self.assertEqual(gh.claims.statuses, [])
 
     def test_no_push_permission_refuses_a_reviewer_before_joining(self):
         gh = self.gh(comments=[waiting(to="rev-b")])
