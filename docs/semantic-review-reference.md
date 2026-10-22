@@ -86,6 +86,13 @@ through the pull request's room. A post without them behaves as before.
 | `--room-agent <name>` | Finding tasks speak as `<name>`, and the review heading names it. The review body is the heading and the full summary: brand line, verdict, findings table, additional findings, and the `Reviewed` footer. The body carries no hidden marker and no Earlier-reviews block. The shared summary comment is still edited in place, and its card still names `semantic-review`. |
 | `--room-to <name>` | Each finding task is addressed to `<name>`. The flag needs `--room-agent`; without it the poster exits `2`. |
 
+With `--room-agent` and the `SHIPD_ROOM_CLAIM` variable set, the poster checks
+its room review claim before its first write and again before it submits the
+review. If it loses the claim, it posts nothing, prints a `room claim lost`
+line, and exits `1`. After the review, it marks the claim done and sets the
+`room-review/<agent>` status to `success`. See
+[Review claims](room-review-claims.md).
+
 ## The `lint` configuration key
 
 `lint` is an optional top-level key in `.shipd-config.json`. It configures the

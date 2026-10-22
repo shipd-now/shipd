@@ -27,12 +27,14 @@ if HERE not in sys.path:
 
 import cli_common  # noqa: E402
 import room  # noqa: E402
+import room_claim  # noqa: E402
 import session_driver  # noqa: E402
 import spec_common  # noqa: E402
 
 PLUGIN_DIR = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+CLAIM_ROLES = ("reviewer", "ci")
 DEFAULT_SKILLS = ("review-finding", "question", "status")
-FAILURE_REASONS = ("turn-failed", "watch-failed")
+FAILURE_REASONS = ("turn-failed", "watch-failed", "claim-failed")
 FIX_REQUIRED_MARKER = "<!-- shipd-verdict: fix-required -->"
 SHIP_IT_MARKER = "<!-- shipd-verdict: ship-it -->"
 IDLE_WATCH_LINE = "watch: no actionable task"
@@ -304,6 +306,8 @@ def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
     import room_run_repo
     locks = room_run_repo.lock_pr_run(repo, agent, number)
     try:
+        if opts.role in CLAIM_ROLES:
+            room_claim.require_push(gh, repo, login)
         return _run_pr(opts, parser, gh, runner, sleep, clock, root, agent,
                        repo, number, context, model_base)
     finally:
@@ -358,6 +362,7 @@ def _run_pr(opts, parser, gh, runner, sleep, clock, root, agent, repo,
     closed = None
     failure = None
     ci = author and bool(opts.ci_reviewer)
+    claimed = opts.role in CLAIM_ROLES
     handled = set()
     check_ci = ci
     while reason is None:
@@ -422,11 +427,36 @@ def _run_pr(opts, parser, gh, runner, sleep, clock, root, agent, repo,
                     continue
                 reason = "budget"
                 break
-            turns += 1
-            sys.stderr.write("room run: turn %d on task(s) %s\n" % (
-                turns, ", ".join("#%s" % t.get("task") for t in tasks)))
             turn_prompt = prompt
-        ok, why, new_id = runner(turn_prompt, root, session_id, turns - 1)
+        if claimed and tasks:
+            def run_turn():
+                nonlocal turns
+                turns += 1
+                sys.stderr.write("room run: turn %d on task(s) %s\n" % (
+                    turns, ", ".join("#%s" % t.get("task") for t in tasks)))
+                return runner(turn_prompt, root, session_id, turns - 1)
+
+            try:
+                outcome, result = room_claim.claimed_turn(
+                    gh, repo, number, agent,
+                    _head(gh, number, repo, warned), run_turn)
+            except room.RoomError as exc:
+                reason, failure = "claim-failed", str(exc)
+                break
+            if outcome == "held":
+                sleep(opts.interval)
+                continue
+            if outcome == "done":
+                cursor = _line_cursor(tasks[-1], cursor)
+                continue
+            ok, why, new_id = result
+        else:
+            if tasks:
+                turns += 1
+                sys.stderr.write("room run: turn %d on task(s) %s\n" % (
+                    turns, ", ".join("#%s" % t.get("task") for t in tasks)))
+            ok, why, new_id = runner(turn_prompt, root, session_id,
+                                     turns - 1)
         if new_id:
             session_id = new_id
         if tasks:
@@ -439,6 +469,12 @@ def _run_pr(opts, parser, gh, runner, sleep, clock, root, agent, repo,
         elif turns >= opts.max_turns:
             reason = "turn-cap"
 
+    if reason == "closed" and claimed:
+        try:
+            room_claim.delete_pr_claims(gh, repo, number)
+        except room.RoomError as exc:
+            sys.stderr.write("warning: could not delete the claims of #%d: "
+                             "%s\n" % (number, exc))
     sys.stdout.write(json.dumps(_summary(
         turns, session_id, reason, context, cursor, closed, failure)) + "\n")
     sys.stdout.flush()

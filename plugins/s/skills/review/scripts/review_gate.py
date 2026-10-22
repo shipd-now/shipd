@@ -63,6 +63,8 @@ sys.path.insert(0, ROOM_SCRIPTS)
 import room_schema  # noqa: E402
 
 PROG = "review_gate"
+# The environment variable a room runner passes the won review claim in.
+CLAIM_ENV = "SHIPD_ROOM_CLAIM"
 CONTEXT = "semantic-review"
 # The review event follows the `semantic-review` status the poster sets:
 # `APPROVE` on success, `REQUEST_CHANGES` on failure. This reverses the
@@ -153,6 +155,10 @@ class ReviewGateError(Exception):
 
 def _noop(*_args, **_kwargs):
     pass
+
+
+class RoomClaimLost(ReviewGateError):
+    """The poster's room review claim is gone; ``main`` prints the line bare."""
 
 
 def _fail(msg):
@@ -973,6 +979,18 @@ def _review_body_summary(text):
     return "\n".join(lines) + "\n"
 
 
+def _room_claim_fence(gh, claim):
+    """Check the room review ``claim`` (a no-op without one); a lost claim
+    stops the post before its next GitHub write."""
+    if claim is None:
+        return
+    import room_claim
+    try:
+        room_claim.fence(gh, claim)
+    except room_claim.room.RoomError as exc:
+        raise RoomClaimLost("room claim lost: %s; nothing posted" % exc)
+
+
 def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
          status="set", room_agent=None, room_to=None):
     """Publish ``review`` (a parsed /s:review --json object) to pull request
@@ -990,6 +1008,13 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
     that agent and puts the full summary in the review body; ``room_to``
     addresses each finding task to an agent. Returns a small result dict."""
     git = git or _default_git
+    claim = None
+    if room_agent and os.environ.get(CLAIM_ENV):
+        import room_claim
+        try:
+            claim = room_claim.Claim.from_env(os.environ[CLAIM_ENV])
+        except room_claim.room.RoomError as exc:
+            raise RoomClaimLost("room claim lost: %s; nothing posted" % exc)
     number, base_sha, sha, pr_url = _resolve_pr(gh, pr)
     pr_merge_base = _pr_merge_base(git, base_sha, sha)
     payload_merge_base = (review.get("endpoints") or {}).get("merge_base")
@@ -1030,6 +1055,7 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
     # Computed once, before the first upsert, so this run's own fold and
     # fast-pass re-upserts never add an entry.
     earlier = earlier_reviews(_find_summary(gh, repo, number))
+    _room_claim_fence(gh, claim)
     comment_url = _upsert_summary(
         gh, repo, number,
         render_summary(review, unanchored, disposition, model, files,
@@ -1058,6 +1084,7 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
             _review_body_summary(render_summary(
                 review, unanchored, disposition, model, files))
             if room_agent else None)
+        _room_claim_fence(gh, claim)
         if _post_review(gh, repo, number, sha, anchored, event, login,
                         commentable, room=review_room, summary=body_summary):
             submitted = event
@@ -1089,6 +1116,15 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
                 else:
                     out("review decision %s was not recorded; the fallback "
                         "comment review was also rejected" % event)
+
+    if claim is not None and submitted:
+        import room_claim
+        try:
+            room_claim.beat(gh, claim, "done")
+            room_claim.set_status(gh, repo, sha, room_agent, "success",
+                                  "review posted")
+        except room_claim.room.RoomError as exc:
+            out("warning: could not mark the room claim done: %s" % exc)
 
     # Fast-pass auto-merge logic
     fast_pass_armed = False
@@ -1648,6 +1684,9 @@ def main(argv=None, gh=None):
         parser.error("--room-to needs --room-agent")
     try:
         return args.func(args, gh)
+    except RoomClaimLost as exc:
+        sys.stderr.write("%s\n" % exc)
+        return 1
     except ReviewGateError as exc:
         sys.stderr.write("%s: %s\n" % (PROG, exc))
         return 1

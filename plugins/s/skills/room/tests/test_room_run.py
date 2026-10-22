@@ -18,6 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.normpath(os.path.join(HERE, "..", "scripts")))
 
+import room_claim  # noqa: E402
 import room_run  # noqa: E402
 from test_room import (  # noqa: E402
     FakeClock, FakeGh, FakeSleep, RoomTestBase, _run, card_comment,
@@ -168,6 +169,122 @@ class RunStartTest(RunTestBase):
         code, out, err = self.run_verb(gh, "7", "--agent", "a")
         self.assertEqual(code, 2)
         self.assertEqual(gh.calls, [])
+
+
+class RunClaimTest(RunTestBase):
+    """room-review-claim, room-review-claim-permission,
+    room-review-claim-cleanup in PR mode"""
+
+    HEAD = "d" * 40
+    ARGV = ("7", "--role", "reviewer", "--agent", "rev-b")
+
+    def gh(self, **kwargs):
+        kwargs.setdefault("login", "rev")
+        kwargs.setdefault("pr_author", "mikkel")
+        kwargs.setdefault("head", self.HEAD)
+        return FakeGh(**kwargs)
+
+    def prefix(self):
+        return room_claim.claim_prefix(7, "rev-b", self.HEAD)
+
+    def test_a_won_claim_runs_the_turn_and_releases_it(self):
+        gh = self.gh(comments=[waiting(to="rev-b")])
+        runner = FakeRunner()
+        code, out, err = self.run_verb(
+            gh, *self.ARGV, "--max-turns", "1", runner=runner)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(runner.calls), 1)
+        self.assertEqual(self.summary(out)["turns"], 1)
+        self.assertEqual(gh.claims.status_states()[0],
+                         ("room-review/rev-b", "pending"))
+        self.assertEqual(gh.claims.tip_info(self.prefix() + "/1")["state"],
+                         "released")
+
+    def test_a_held_claim_runs_no_turn_and_watches_from_the_same_cursor(self):
+        gh = self.gh(comments=[waiting(to="rev-b")])
+        gh.claims.seed(7, "rev-b", self.HEAD, 1, "other:1:abcd", "beat",
+                       age=10)
+        runner = FakeRunner()
+        sleep = FakeSleep()
+        code, out, err = self.run_verb(
+            gh, *self.ARGV, "--budget", "100", "--interval", "5",
+            runner=runner, clock=FakeClock(step=10), sleep=sleep)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(runner.calls, [])
+        self.assertIn("is claimed by other:1:abcd; skipping", err)
+        self.assertIn(5, sleep.calls)
+        summary = self.summary(out)
+        self.assertEqual(summary["turns"], 0)
+        self.assertEqual(summary["cursor"], "0:0")
+
+    def test_a_done_claim_advances_the_cursor_without_a_turn(self):
+        gh = self.gh(comments=[waiting(to="rev-b")])
+        gh.claims.seed(7, "rev-b", self.HEAD, 1, "other", "done")
+        runner = FakeRunner()
+        code, out, err = self.run_verb(
+            gh, *self.ARGV, "--budget", "100", "--interval", "5",
+            runner=runner, clock=FakeClock(step=10))
+        self.assertEqual(runner.calls, [])
+        summary = self.summary(out)
+        self.assertEqual(summary["turns"], 0)
+        self.assertNotEqual(summary["cursor"], "0:0")
+
+    def test_no_push_permission_refuses_a_reviewer_before_joining(self):
+        gh = self.gh(comments=[waiting(to="rev-b")])
+        gh.claims.push = False
+        runner = FakeRunner()
+        code, out, err = self.run_verb(gh, *self.ARGV, runner=runner)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        errors = [l for l in err.splitlines() if l.startswith("Error:")]
+        self.assertEqual(len(errors), 1, err)
+        self.assertIn("@rev", errors[0])
+        self.assertIn("o/r", errors[0])
+        self.assertEqual(gh.posts(), [])
+        self.assertEqual(runner.calls, [])
+
+    def test_no_push_permission_refuses_a_ci_run_too(self):
+        gh = self.gh()
+        gh.claims.push = False
+        code, out, err = self.run_verb(
+            gh, "7", "--role", "ci", "--agent", "ci-a")
+        self.assertEqual(code, 1, err)
+        self.assertEqual(gh.posts(), [])
+
+    def test_an_author_run_is_not_refused_for_permission(self):
+        gh = self.gh(state="MERGED", login="mikkel")
+        gh.claims.push = False
+        code, out, err = self.run_verb(
+            gh, "7", "--role", "author", "--agent", "author-a")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("push permission", err)
+
+    def test_an_author_turn_makes_no_claim_call(self):
+        gh = self.gh(comments=[waiting(to="author-a")], login="mikkel")
+        code, out, err = self.run_verb(
+            gh, "7", "--role", "author", "--agent", "author-a",
+            "--max-turns", "1")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(gh.claims.writes(), [])
+
+    def test_a_closed_room_deletes_the_claim_refs_of_the_pr(self):
+        gh = self.gh(state="MERGED")
+        gh.claims.seed(7, "rev-b", self.HEAD, 1, "x", "done")
+        gh.claims.seed(7, "rev-b", self.HEAD, 2, "x", "released")
+        gh.claims.seed(9, "rev-b", "e" * 40, 1, "x", "done")
+        code, out, err = self.run_verb(gh, *self.ARGV)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.summary(out)["reason"], "closed")
+        self.assertEqual(gh.claims.under("shipd/claims/pr-7/"), [])
+        self.assertEqual(len(gh.claims.under("shipd/claims/pr-9/")), 1)
+
+    def test_a_failed_claim_delete_warns_and_the_run_still_ends(self):
+        gh = self.gh(state="MERGED")
+        gh.claims.seed(7, "rev-b", self.HEAD, 1, "x", "done")
+        gh.claims.fail.append([["DELETE"], "HTTP 403"])
+        code, out, err = self.run_verb(gh, *self.ARGV)
+        self.assertEqual(code, 0, err)
+        self.assertIn("warning:", err)
 
 
 class RunLoopTest(RunTestBase):
@@ -888,7 +1005,7 @@ class RunAgentLockTest(RunTestBase):
     def test_pr_runs_on_different_prs_coexist(self):
         self.held("rev-b.pr-8.lock")
         self.held("rev-b.json.lock", fcntl.LOCK_SH)
-        gh = FakeGh(comments=[waiting(to="rev-b")])
+        gh = FakeGh(comments=[waiting(to="rev-b")], head="f" * 40)
         runner = FakeRunner(hook=lambda n: setattr(gh, "state", "MERGED"))
         code, out, err = self.run_pr(gh, runner)
         self.assertEqual(code, 0, err)

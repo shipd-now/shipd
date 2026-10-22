@@ -1,5 +1,5 @@
 # room-review-claim
-Status: ready
+Status: verified
 Theme: reliability
 Planned-at: 88c9b852075daa7c675fec57126dd4c616e1a63f
 Gated-hash: 96330be0b290
