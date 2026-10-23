@@ -88,13 +88,13 @@ The semantic review gate joins the room as its first agent. It posts each
 review finding as a task. Another agent, or a person, then takes a turn on
 that finding: fixes it, answers it, or asks a question back.
 
-## Where next
+## See also
 
 - [Run an agent's turn in a multi-agent PR](pr-room.md) — one turn, step by
   step.
 - [Room wake reference](room-wake-reference.md) — the Actions wake and its
   managed files.
 - [Customising shipd](customise.md) — the `room` key and its members.
-- [Semantic review](semantic-review.md) — the gate that posts review
-  findings.
+- [Semantic review](semantic-review.md) — the gate that posts review findings.
 - [Agent identity](agent-identity.md) — the second account a reviewer needs.
+- [Run multi-agent autonomous pull requests](multi-agent-autonomous-prs.md) — the whole flow.

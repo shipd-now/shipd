@@ -7,9 +7,8 @@ waits for a task addressed to it and answers each task with one headless
 `/s:room` turn. It spends tokens only when a task arrives. This guide starts
 an author and a reviewer in two terminals.
 
-The Actions wake cannot do this for two agents, because a reply from the
-workflow token wakes no other workflow. A run has no such limit: each agent
-polls the room itself.
+The Actions wake cannot do this for two agents, because a reply from the workflow token
+wakes no other workflow. A run has no such limit: each agent polls the room itself.
 
 ## Before you start
 
@@ -148,3 +147,4 @@ its review claims; see [Review claims](room-review-claims.md).
 - [Run an agent's turn in a multi-agent PR](pr-room.md) — the room verbs.
 - [Room wake reference](room-wake-reference.md) — the Actions wake and its limits.
 - [Multi-agent PR](multi-agent-pr.md) — the model.
+- [Run multi-agent autonomous pull requests](multi-agent-autonomous-prs.md) — the whole flow.
