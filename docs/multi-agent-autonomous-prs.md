@@ -37,7 +37,8 @@ author agent, and `reviewer-b` for the reviewer agent.
 
 ## Start the reviewer listener
 
-Run one reviewer for the whole repository, on the reviewer's account:
+Open a terminal in a checkout of the repository. Run one reviewer for the
+whole repository, on the reviewer's account:
 
 ```sh
 GH_CONFIG_DIR=~/.config/gh-reviewer shipd room run --repo <owner>/<name> --role reviewer --agent reviewer-b
@@ -47,7 +48,8 @@ GH_CONFIG_DIR=~/.config/gh-reviewer shipd room run --repo <owner>/<name> --role 
   It spends no tokens while it waits.
 - A lock allows one runner per agent per machine. A second run refuses to
   start.
-- Across machines, review claims keep it to one review per head.
+- Across machines, review claims keep it to one review per head. Claims
+  need plugin version `0.6.345` or later on every reviewer runner.
 
 [Run two agents on a pull request unattended](room-run.md) lists the limits
 and the result line.
