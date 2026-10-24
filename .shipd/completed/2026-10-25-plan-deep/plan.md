@@ -1,5 +1,5 @@
 # plan-deep
-Status: ready
+Status: verified
 Planned-at: 337a5b0d692ae787a5d1bbdda3c752239e6d2788
 Gated-hash: 5fbb74b9af48
 
