@@ -41,7 +41,7 @@ venn-beta
   s:doctor, s:duck, s:plan, s:fix, s:review, s:drive, s:gate, s:status,
   s:document, s:worktree-hooks, s:pr
 - **Epics, driven** — orchestration across many changes: s:epic, s:prd,
-  s:initiative, s:workspace, s:explain, s:epic-grill, s:room
+  s:initiative, s:workspace, s:explain, s:epic-grill, s:plan-deep, s:room
 - **Decisions that stick** — memory that outlives a change: s:remember,
   s:memory, s:forget
 - **Unattended** — s:build, s:autopilot, s:drift
@@ -71,6 +71,7 @@ venn-beta
 | `/s:memory` | List the preferences captured in the personal memory store. | `/s:memory` |
 | `/s:onboard [next\|back]` | Run the guided nine-step shipd tour. | `/s:onboard next` |
 | `/s:plan` | Converge context into an execution-ready spec, then stop. | `/s:plan Add a --json flag to the export command` |
+| `/s:plan-deep <change> \| <epic> [members]` | Walk a spec's riskiest pieces step by step, edit in place, and re-gate. | `/s:plan-deep export-cli parser-flags` |
 | `/s:pr [--ticket <id>] [--draft] [--base <ref>]` | Write a pull request's title and body, then create or update it. | `/s:pr --ticket ABC-12` |
 | `/s:prd [slug]` | Interview for a workspace PRD — the outcomes an idea should deliver — before an epic decomposes it. | `/s:prd Add self-serve billing` |
 | `/s:remember` | Capture a durable user preference into the personal memory store. | `/s:remember I prefer terse commit messages` |

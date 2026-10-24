@@ -94,6 +94,16 @@ class EpicGrillContractTest(unittest.TestCase):
         body = _read("harness", "bodies", "epic-grill.md")
         self.assertIn("on a green preflight", body.splitlines()[0])
 
+    def test_ending_prints_the_risk_report_and_plan_deep_offer(self):
+        skill = " ".join(_read("skills", "epic-grill", "SKILL.md").split())
+        body = " ".join(_read("harness", "bodies", "epic-grill.md").split())
+        for text in (skill, body):
+            self.assertIn("skills/plan-deep/references/rubric.md", text)
+            self.assertIn(
+                "There are complex specs worth a deep plan, kick it off "
+                "with:", text)
+            self.assertIn("/s:plan-deep <epic> <member>", text)
+
 
 if __name__ == "__main__":
     unittest.main()

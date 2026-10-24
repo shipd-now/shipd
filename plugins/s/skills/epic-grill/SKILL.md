@@ -243,6 +243,19 @@ the change exists and what it settles, then its final status and worktree
 root. List any epic-wide answers flagged for `/s:epic <epic> amend`, any pairs
 sharing a master requirement, and any member that did not reach `ready`.
 
+**Risk report.** After the per-member summaries and before the preflight, load
+`${CLAUDE_PLUGIN_ROOT}/skills/plan-deep/references/rubric.md` and score each
+selected member against its plan as written. Print one table row per member:
+
+```
+| Member | Code | Integration | Unknowns | Risk | Novelty | Overall | Why |
+```
+
+Write the scores into no file. When at least one member's Overall is `medium`
+or `high`, print `/s:plan-deep <epic> <member> ...` directly under the table,
+naming exactly those members in table order. When every member is `low`,
+print no `/s:plan-deep` line. Never run it.
+
 **Run the launch preflight.** Once, from the repository root, after the last
 gate and even when a member did not reach `ready`, run:
 
@@ -268,6 +281,13 @@ Otherwise list every `fail` line under the `## Summary` sentence (relay the
 stderr text instead when the verb printed no rubric line), say the run is not
 launched, print the preflight command to re-run after the remedies, and print
 no `/s:autopilot` line.
+
+**Close on the deep-plan offer.** When any member scored `medium` or `high`,
+end the whole output, after the `/s:autopilot` line or the fail list, with the
+sentence `There are complex specs worth a deep plan, kick it off with:`, a
+blank line, then `/s:plan-deep <epic> <member> ...` alone on its own line,
+naming the same members as the table. Print this on a red preflight too. When
+every member is `low`, print neither. Never run it.
 
 Never build, run `/s:build`, push, or open a PR from this skill. If the grill
 is interrupted before the final round, every planned member stays at `draft`;
