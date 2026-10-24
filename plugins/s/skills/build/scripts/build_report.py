@@ -207,19 +207,19 @@ def discover_session(project_dir, session=None):
     if session:
         return _discover_by_session(project_dir, session, own)
     if os.path.isdir(own):
-        sid, path = find_active_session(own, session)
+        sid, path = find_active_session(own)
         return sid, path, own
     root = resolve_project_root(project_dir)
     if root != os.path.abspath(project_dir):
         main = os.path.join(config_dir(), "projects", project_slug(root))
         if os.path.isdir(main):
-            sid, path = find_active_session(main, session)
+            sid, path = find_active_session(main)
             return sid, path, main
     ancestor = os.path.dirname(root)
     while True:
         tdir = os.path.join(config_dir(), "projects", project_slug(ancestor))
         if os.path.isdir(tdir):
-            sid, path = _ancestor_session(tdir, root, session)
+            sid, path = _ancestor_session(tdir, root)
             if sid:
                 return sid, path, tdir
         parent = os.path.dirname(ancestor)
@@ -258,16 +258,11 @@ def _discover_by_session(project_dir, session, own):
     return None, None, own
 
 
-def _ancestor_session(tdir, root, session=None):
+def _ancestor_session(tdir, root):
     """Select ``root``'s session from the ancestor slug dir ``tdir``, as
-    ``(session_id, path)`` or ``(None, None)``: the explicit ``session``'s
-    transcript when it is on disk there, else the newest ``*.jsonl`` whose
-    trailing working directory lies within ``root``."""
-    if session is not None:
-        path = os.path.join(tdir, "%s.jsonl" % session)
-        if os.path.isfile(path):
-            return session, path
-        return None, None
+    ``(session_id, path)`` or ``(None, None)``: the newest ``*.jsonl`` whose
+    trailing working directory lies within ``root``. A known session id never
+    reaches here; :func:`_discover_by_session` looks it up."""
     try:
         names = [
             name
