@@ -77,22 +77,22 @@ slug (`/s:epic-grill <slug>`).
    field when rewriting an entry to `USER`. Then run `spec_gate.py <member> --root <worktree>` on every
    selected member. On exit 2, resolve what the repository answers, ask the
    user about the rest, and re-gate. Never set a status by any other path.
-7. **Preflight and hand off.** After the last gate run
-   `python3 "$S/autopilot.py" <slug> --preflight` once from the repository
-   root and relay every `warn` and `fail` line and the `preflight:` line. Print
-   a why-first summary per member, any epic-wide answers and shared-requirement
+7. **Risk report, preflight, and hand off.** After the last gate, print a
+   why-first summary per member, any epic-wide answers and shared-requirement
    pairs, then the risk report: load `skills/plan-deep/references/rubric.md`,
    score each selected member against its plan as written, and print a
    `| Member | Code | Integration | Unknowns | Risk | Novelty | Overall | Why |`
    row per member (write the scores into no file). When any member's Overall is
    `medium` or `high`, print `/s:plan-deep <epic> <member> ...` under the table
-   naming exactly those members; when all are `low`, print neither. Then a
-   `## Summary` heading with one sentence stating the preflight
+   naming exactly those members; when all are `low`, print neither. Then run
+   `python3 "$S/autopilot.py" <slug> --preflight` once from the repository
+   root and relay every `warn` and `fail` line and the `preflight:` line. Then
+   a `## Summary` heading with one sentence stating the preflight
    verdict, and hand off only when the preflight exits 0 by printing
    `/s:autopilot <slug>` alone on its own line; otherwise list every `fail`
    line (or the error text when no rubric line printed), name the preflight
-   command to re-run, and print no hand-off. With any `medium` or `high` member, end the whole output,
-   after the hand-off or the fail list, with `There are complex specs worth a
-   deep plan, kick it off with:`, a blank line, and the same
-   `/s:plan-deep <epic> <member> ...` command alone on its own line. Never run
-   it, and never build.
+   command to re-run, and print no hand-off. With any `medium` or `high`
+   member, end the whole output, after the hand-off or the fail list, with
+   `There are complex specs worth a deep plan, kick it off with:`, a blank
+   line, and the same `/s:plan-deep <epic> <member> ...` command alone on its
+   own line. Never run it, and never build.
