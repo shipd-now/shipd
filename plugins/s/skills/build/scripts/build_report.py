@@ -16,6 +16,12 @@ falls back to the slugs of the project root's ancestor directories, nearest
 first, taking the newest session there whose trailing records carry a working
 directory inside the project.
 
+When a session id is known (``--session``, else ``$CLAUDE_CODE_SESSION_ID``),
+it is looked up in every candidate directory (own slug, main checkout slug,
+ancestor slugs) and then in every directory under ``projects/``, so a live
+session is found wherever it was launched. ``--transcript`` reads sub-agent
+transcripts from beside the given transcript.
+
 Usage:
   build_report.py --since <ISO> [--project-dir <path>] [--session <id>]
                   [--transcript <path>] [--json] [--summary-only]
@@ -198,20 +204,22 @@ def discover_session(project_dir, session=None):
     with no session, so discovery degrades exactly as it did before.
     """
     own = os.path.join(config_dir(), "projects", project_slug(project_dir))
+    if session:
+        return _discover_by_session(project_dir, session, own)
     if os.path.isdir(own):
-        sid, path = find_active_session(own, session)
+        sid, path = find_active_session(own)
         return sid, path, own
     root = resolve_project_root(project_dir)
     if root != os.path.abspath(project_dir):
         main = os.path.join(config_dir(), "projects", project_slug(root))
         if os.path.isdir(main):
-            sid, path = find_active_session(main, session)
+            sid, path = find_active_session(main)
             return sid, path, main
     ancestor = os.path.dirname(root)
     while True:
         tdir = os.path.join(config_dir(), "projects", project_slug(ancestor))
         if os.path.isdir(tdir):
-            sid, path = _ancestor_session(tdir, root, session)
+            sid, path = _ancestor_session(tdir, root)
             if sid:
                 return sid, path, tdir
         parent = os.path.dirname(ancestor)
@@ -221,16 +229,40 @@ def discover_session(project_dir, session=None):
     return None, None, own
 
 
-def _ancestor_session(tdir, root, session=None):
+def _discover_by_session(project_dir, session, own):
+    """Find ``<session>.jsonl`` as ``(session_id, path, tdir)``: first in the
+    own slug, the main checkout's slug and the ancestor slugs (nearest first),
+    then in every directory under ``projects/``. ``(None, None, own)`` when
+    none holds it."""
+    projects = os.path.join(config_dir(), "projects")
+    root = resolve_project_root(project_dir)
+    candidates = [own]
+    if root != os.path.abspath(project_dir):
+        candidates.append(os.path.join(projects, project_slug(root)))
+    ancestor = os.path.dirname(root)
+    while True:
+        candidates.append(os.path.join(projects, project_slug(ancestor)))
+        parent = os.path.dirname(ancestor)
+        if parent == ancestor:
+            break
+        ancestor = parent
+    try:
+        everything = sorted(os.listdir(projects))
+    except OSError:
+        everything = []
+    candidates += [os.path.join(projects, name) for name in everything]
+    target = "%s.jsonl" % session
+    for tdir in candidates:
+        if os.path.isfile(os.path.join(tdir, target)):
+            return session, os.path.join(tdir, target), tdir
+    return None, None, own
+
+
+def _ancestor_session(tdir, root):
     """Select ``root``'s session from the ancestor slug dir ``tdir``, as
-    ``(session_id, path)`` or ``(None, None)``: the explicit ``session``'s
-    transcript when it is on disk there, else the newest ``*.jsonl`` whose
-    trailing working directory lies within ``root``."""
-    if session is not None:
-        path = os.path.join(tdir, "%s.jsonl" % session)
-        if os.path.isfile(path):
-            return session, path
-        return None, None
+    ``(session_id, path)`` or ``(None, None)``: the newest ``*.jsonl`` whose
+    trailing working directory lies within ``root``. A known session id never
+    reaches here; :func:`_discover_by_session` looks it up."""
     try:
         names = [
             name
@@ -1092,12 +1124,13 @@ def main():
             main_path = args.transcript
             session_id = args.session or os.path.basename(main_path).removesuffix(".jsonl")
             paths = [main_path] if os.path.isfile(main_path) else []
-            tdir = transcript_dir(args.project_dir)
+            tdir = os.path.dirname(os.path.abspath(main_path))
             if session_id:
                 paths += subagent_transcripts(tdir, session_id)
         else:
             session_id, main_path, tdir = discover_session(
-                args.project_dir, args.session
+                args.project_dir,
+                args.session or os.environ.get("CLAUDE_CODE_SESSION_ID") or None,
             )
             paths = []
             if main_path and os.path.isfile(main_path):

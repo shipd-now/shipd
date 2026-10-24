@@ -64,9 +64,18 @@ ancestor transcript directory that yields a match. Within an ancestor's
 transcript directory, the tool SHALL select the most recently modified session
 transcript whose trailing records carry a working directory at or under the
 resolved project root, and SHALL NOT select a transcript whose trailing
-working directory lies outside that root. Where a session id is supplied
-explicitly, the tool SHALL instead select that session's transcript from the
-first candidate directory that holds it, without a working-directory check.
+working directory lies outside that root.
+
+When no session id is passed with `--session`, the tool SHALL use the
+`CLAUDE_CODE_SESSION_ID` environment variable as the session id when it is set
+and not empty. Where a session id is known, the tool SHALL select that
+session's transcript from the first candidate directory that holds it — the
+working directory's own slug, the main checkout's slug, then the ancestor
+slugs, nearest first — without a working-directory check, and SHALL NOT stop
+at a candidate directory that exists but does not hold it. When no candidate
+directory holds it, the tool SHALL look for it in every directory under the
+transcript root. With `--transcript`, the tool SHALL read sub-agent
+transcripts from the directory holding the given transcript.
 
 #### Scenario: Transcript directory derived from the project path
 - **WHEN** the tool runs inside the project with no explicit path override
@@ -83,6 +92,7 @@ first candidate directory that holds it, without a working-directory check.
 
 #### Scenario: A session launched inside the worktree is unaffected
 - **WHEN** the tool runs in a directory whose own transcript directory exists
+  and no session id is known
 - **THEN** that directory is used and no worktree resolution is attempted
 
 #### Scenario: Session launched from an ancestor directory is found
@@ -101,6 +111,28 @@ first candidate directory that holds it, without a working-directory check.
 - **THEN** the foreign transcript is not selected, and an older transcript
   whose trailing working directory lies within the resolved project root is
   selected instead
+
+#### Scenario: The session id finds the live session past a stale own directory
+- **GIVEN** the project's own slug directory holds only older sessions, and
+  the live session's transcript and its `subagents/` sit under an ancestor
+  directory's slug
+- **WHEN** the tool runs with `CLAUDE_CODE_SESSION_ID` set to the live
+  session's id and no `--session`
+- **THEN** it selects the live session's transcript and its sub-agent
+  transcripts, and reports their token usage
+
+#### Scenario: An explicit session id outside every candidate directory is found
+- **GIVEN** a session transcript under a slug directory unrelated to the
+  project path
+- **WHEN** the tool runs with `--session` naming that session
+- **THEN** it finds the transcript by scanning the transcript root and reports
+  its token usage
+
+#### Scenario: Sub-agents sit beside an explicit transcript
+- **WHEN** the tool runs with `--transcript` naming a session transcript in a
+  directory unrelated to the project path
+- **THEN** it reads that session's `subagents/agent-*.jsonl` from beside the
+  given transcript
 
 #### Scenario: Missing transcripts do not break the build
 - **WHEN** the transcript files cannot be found or read
