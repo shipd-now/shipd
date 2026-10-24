@@ -1,7 +1,7 @@
 # Risk rubric
 
-The one risk rubric `/s:plan-deep` and `/s:epic-grill` share. Both load it from
-`skills/plan-deep/references/rubric.md`; neither restates the scale. It scores a
+The one risk rubric `/s:epic`, `/s:epic-grill`, and `/s:plan-deep` share. All three load
+it from `skills/epic/references/risk-rubric.md`; none restates the scale. It scores a
 spec `low`, `medium`, or `high` and flags the pieces that deserve a closer
 look. The score is a judgement against the plan as written, shown on screen and
 never saved into a file.
@@ -22,6 +22,9 @@ rather than copied from the stub.
 | Unknowns | Every question answered | A few assumptions still unverified | A load-bearing question open or resting on an external fact |
 | Risk | A failure is cheap and visible | A failure costs rework | A failure loses data, breaks callers, or is hard to undo |
 | Novelty | Keogh 1-2 | Keogh 3 | Keogh 4-5 |
+
+`/s:epic` uses only this Axes table, for its four stub rating cells; the rest
+scores a written plan.
 
 ### Novelty (Keogh scale)
 

@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
 ROOT = os.path.normpath(os.path.join(PLUGIN, "..", ".."))
 SKILLS_DIR = os.path.join(PLUGIN, "skills")
-RUBRIC = os.path.join(SKILLS_DIR, "plan-deep", "references", "rubric.md")
+RUBRIC = os.path.join(SKILLS_DIR, "epic", "references", "risk-rubric.md")
 
 
 def _read(*parts):
@@ -25,7 +25,7 @@ def _norm(text):
 
 
 REQUIRED = (
-    "skills/plan-deep/references/rubric.md", "spec_gate.py", "locate",
+    "skills/epic/references/risk-rubric.md", "spec_gate.py", "locate",
     "cat change", "cat epic", "/s:research", "cat research",
     "**Answered by:** USER", "/s:epic <epic> amend", "--preflight",
     "/s:build", "/s:autopilot <epic>",
@@ -75,6 +75,16 @@ class PlanDeepSkillContractTest(unittest.TestCase):
         rubric = _read(RUBRIC)
         for token in ("Novelty", "Relied on by", "rabbit hole"):
             self.assertIn(token, rubric)
+
+    def test_old_rubric_path_is_gone(self):
+        self.assertFalse(os.path.exists(
+            os.path.join(SKILLS_DIR, "plan-deep", "references", "rubric.md")))
+
+    def test_epic_cites_the_rubric(self):
+        path = "skills/epic/references/risk-rubric.md"
+        self.assertIn(path, _read(SKILLS_DIR, "epic", "SKILL.md"))
+        self.assertIn(
+            path, _norm(_read(PLUGIN, "harness", "bodies", "epic.md")))
 
     def test_only_the_rubric_owns_the_novelty_scale(self):
         owners = []

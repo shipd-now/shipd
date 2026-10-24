@@ -79,7 +79,7 @@ slug (`/s:epic-grill <slug>`).
    user about the rest, and re-gate. Never set a status by any other path.
 7. **Risk report, preflight, and hand off.** After the last gate, print a
    why-first summary per member, any epic-wide answers and shared-requirement
-   pairs, then the risk report: load `skills/plan-deep/references/rubric.md`,
+   pairs, then the risk report: load `skills/epic/references/risk-rubric.md`,
    score each selected member against its plan as written, and print a
    `| Member | Code | Integration | Unknowns | Risk | Novelty | Overall | Why |`
    row per member (write the scores into no file). When any member's Overall is

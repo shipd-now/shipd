@@ -1,5 +1,5 @@
 # risk-rubric-home
-Status: ready
+Status: verified
 Planned-at: e2b3ec50a7c07b06618f7c4940ab5f6aaf9ceab2
 Gated-hash: 05c437752465
 

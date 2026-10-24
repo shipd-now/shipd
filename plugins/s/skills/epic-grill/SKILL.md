@@ -244,7 +244,7 @@ root. List any epic-wide answers flagged for `/s:epic <epic> amend`, any pairs
 sharing a master requirement, and any member that did not reach `ready`.
 
 **Risk report.** After the per-member summaries and before the preflight, load
-`${CLAUDE_PLUGIN_ROOT}/skills/plan-deep/references/rubric.md` and score each
+`${CLAUDE_PLUGIN_ROOT}/skills/epic/references/risk-rubric.md` and score each
 selected member against its plan as written. Print one table row per member:
 
 ```

@@ -27,7 +27,7 @@ Paths (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 - Status CLI: `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py`
 - Linter: `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_lint.py`
 - Gate: `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_gate.py`
-- Rubric: `${CLAUDE_PLUGIN_ROOT}/skills/plan-deep/references/rubric.md`
+- Rubric: `${CLAUDE_PLUGIN_ROOT}/skills/epic/references/risk-rubric.md`
 
 Run every command **from the repository root**. Invoke as
 `/s:plan-deep <change>` for one change, or `/s:plan-deep <epic> [<member> ...]`

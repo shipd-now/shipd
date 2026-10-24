@@ -98,7 +98,7 @@ class EpicGrillContractTest(unittest.TestCase):
         skill = " ".join(_read("skills", "epic-grill", "SKILL.md").split())
         body = " ".join(_read("harness", "bodies", "epic-grill.md").split())
         for text in (skill, body):
-            self.assertIn("skills/plan-deep/references/rubric.md", text)
+            self.assertIn("skills/epic/references/risk-rubric.md", text)
             self.assertIn(
                 "There are complex specs worth a deep plan, kick it off "
                 "with:", text)
