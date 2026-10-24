@@ -88,8 +88,9 @@ matching the directory, `## Introduction` first (why first, closing with a
 | Change | Description | Code | Integration | Unknowns | Risk | After |
 ```
 
-One row per member: a unique kebab-case slug, then your honest `low`,
-`medium`, or `high` rating in each of the four complexity columns, then the
+One row per member: a unique kebab-case slug, then a `low`,
+`medium`, or `high` rating in each of the four complexity columns, rated by the
+Axes table in `skills/epic/references/risk-rubric.md`, then the
 `After` column's cell: the sibling slugs (comma-separated) this member must be planned
 after as the Design's seams dictate, empty when it depends on none.
 <!-- if:file-references -->

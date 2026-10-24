@@ -19,7 +19,7 @@ Run every command from the repository root. The invocation is
    `active`, `complete`, or `verified`, report the status and edit nothing.
 3. **Pick members.** With named members, walk them in the order given. With an
    epic and no members, score every eligible member with the rubric at
-   `skills/plan-deep/references/rubric.md`, print the risk table, and walk
+   `skills/epic/references/risk-rubric.md`, print the risk table, and walk
    the `medium` and `high` members in table order. That file owns the scale;
    never restate it.
 4. **Restate.** Per change, restate its decisions, delta requirements, and

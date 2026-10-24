@@ -424,7 +424,9 @@ Rules the linter enforces (so get them right up front):
   same table that the member must be planned after, as the Design's seams
   dictate; it never names the row itself. At least one data row. Each `Change` cell is a kebab-case slug, unique within the
   table. Each of the four rating cells (Code, Integration, Unknowns, Risk) is one
-  of `low`, `medium`, `high` — your honest per-change complexity estimate.
+  of `low`, `medium`, `high`, rated by the Axes table in
+  `${CLAUDE_PLUGIN_ROOT}/skills/epic/references/risk-rubric.md` (load it before
+  writing the table).
 
 Slugs are repo-unique by convention: a member slug should not collide with an
 unrelated existing or archived change of the same name.

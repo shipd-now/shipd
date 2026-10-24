@@ -207,7 +207,7 @@ build.
 id: epic-grill-risk-report
 
 After the last gate and before the launch preflight, the skill SHALL load
-`skills/plan-deep/references/rubric.md` and print one risk table row per
+`skills/epic/references/risk-rubric.md` and print one risk table row per
 selected member with the columns Member, Code, Integration, Unknowns, Risk,
 Novelty, Overall, and Why. The skill SHALL NOT write the scores into any
 file. When at least one member's Overall is `medium` or `high`, the skill
@@ -240,3 +240,7 @@ line, and that same command alone on its own line. When every member is
 #### Scenario: Scores are never persisted
 - **WHEN** the risk table prints
 - **THEN** no member's `plan.md`, delta spec, or `tasks.md` changes
+
+#### Scenario: The grill reads the rubric from its epic home
+- **WHEN** the grill's skill and harness body are read
+- **THEN** both cite `skills/epic/references/risk-rubric.md`
