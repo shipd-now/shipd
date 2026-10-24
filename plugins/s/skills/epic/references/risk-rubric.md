@@ -1,10 +1,11 @@
 # Risk rubric
 
-The one risk rubric `/s:epic`, `/s:epic-grill`, and `/s:plan-deep` share. All three load
-it from `skills/epic/references/risk-rubric.md`; none restates the scale. It scores a
-spec `low`, `medium`, or `high` and flags the pieces that deserve a closer
-look. The score is a judgement against the plan as written, shown on screen and
-never saved into a file.
+The one risk rubric `/s:epic`, `/s:epic-grill`, and `/s:plan-deep` share.
+All three load it from `skills/epic/references/risk-rubric.md`; none restates
+the scale. It scores a spec `low`, `medium`, or `high` and flags the pieces
+that deserve a closer look. A plan's score is a judgement against the plan as
+written, shown on screen and never saved into a file. Only `/s:epic`'s four
+stub ratings are written down, in the epic table.
 
 Source: research `epic-complexity-map` (read it with `spec_status.py cat
 research epic-complexity-map`).
