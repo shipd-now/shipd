@@ -779,6 +779,79 @@ class BuildConfigTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.home, ".automikk")))
 
 
+class SessionIdDiscoveryCLITest(unittest.TestCase):
+    """The session id (``$CLAUDE_CODE_SESSION_ID`` or ``--session``) finds the
+    live session's transcript and sub-agents past a stale own slug directory,
+    and ``--transcript`` reads sub-agents from beside the transcript."""
+
+    SINCE = "2026-01-01T00:00:00Z"
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.config = os.path.join(self.tmp, "config")
+        self.ancestor = os.path.join(self.tmp, "parent")
+        self.proj = os.path.join(self.ancestor, "repo")
+        os.makedirs(self.proj)
+
+    def _slug_dir(self, path):
+        return os.path.join(self.config, "projects", br.project_slug(path))
+
+    def _record(self, msg_id, output):
+        return json.dumps({
+            "type": "assistant", "timestamp": "2026-01-01T00:00:10Z",
+            "message": {"id": msg_id, "model": "model-a",
+                        "usage": {"output_tokens": output}},
+        }) + "\n"
+
+    def _write(self, path, output):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self._record(os.path.basename(path), output))
+        return path
+
+    def _run(self, *args, session_env=None):
+        env = dict(os.environ)
+        env["CLAUDE_CONFIG_DIR"] = self.config
+        env.pop("CLAUDE_CODE_SESSION_ID", None)
+        if session_env:
+            env["CLAUDE_CODE_SESSION_ID"] = session_env
+        return subprocess.run(
+            [sys.executable, os.path.join(SCRIPTS, "build_report.py"),
+             "--since", self.SINCE, "--json", *args],
+            capture_output=True, text=True, env=env)
+
+    def test_env_session_id_beats_a_stale_own_directory(self):
+        self._write(os.path.join(self._slug_dir(self.proj), "old.jsonl"), 1)
+        live_dir = self._slug_dir(self.ancestor)
+        self._write(os.path.join(live_dir, "live.jsonl"), 100)
+        self._write(
+            os.path.join(live_dir, "live", "subagents", "agent-1.jsonl"), 20)
+        proc = self._run("--project-dir", self.proj, session_env="live")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        data = json.loads(proc.stdout)
+        self.assertEqual(data["session"], "live")
+        self.assertEqual(data["totals"]["output"], 120)
+
+    def test_explicit_session_found_under_unrelated_slug(self):
+        self._write(os.path.join(self._slug_dir(self.proj), "old.jsonl"), 1)
+        self._write(os.path.join(self.config, "projects", "-elsewhere",
+                                 "far.jsonl"), 55)
+        proc = self._run("--project-dir", self.proj, "--session", "far")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        data = json.loads(proc.stdout)
+        self.assertEqual(data["session"], "far")
+        self.assertEqual(data["totals"]["output"], 55)
+
+    def test_transcript_reads_subagents_beside_it(self):
+        path = self._write(os.path.join(self.tmp, "loose", "sess.jsonl"), 10)
+        self._write(os.path.join(self.tmp, "loose", "sess", "subagents",
+                                 "agent-1.jsonl"), 5)
+        proc = self._run("--project-dir", self.proj, "--transcript", path)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["totals"]["output"], 15)
+
+
 class LogEntryCLITest(unittest.TestCase):
     """Driving build_report.py's ``--log`` mode through the CLI (subprocess),
     following BuildConfigTest's convention of isolating ``$HOME`` so the
