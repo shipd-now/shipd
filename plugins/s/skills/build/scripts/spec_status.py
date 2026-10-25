@@ -230,6 +230,7 @@ import datetime
 import glob
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -1488,7 +1489,10 @@ def _drift_cited(change_dir):
     ``specs/*/spec.md``, through ``sc.cited_paths`` (line suffixes stripped)
     and ``sc.cited_symbols``. A leading ``./`` is stripped from each path
     before ``artefacts/`` references and ``sc.VERSION_BUMP_EXEMPT_PATHS`` are
-    dropped, so the exemption holds however the path is spelled."""
+    dropped, so the exemption holds however the path is spelled. A path that
+    is absolute, or whose normalized form is ``..`` or starts with ``../``,
+    lies outside the hosting root and is dropped silently: ``git log`` would
+    exit fatally on it."""
     sources = [os.path.join(change_dir, "plan.md"),
                os.path.join(change_dir, "tasks.md")]
     sources += sorted(glob.glob(os.path.join(change_dir, "specs", "*",
@@ -1504,6 +1508,9 @@ def _drift_cited(change_dir):
         p = p[2:] if p.startswith("./") else p  # `./x/y` and `x/y` are one path
         if (p in paths or p.startswith("artefacts/")
                 or p in sc.VERSION_BUMP_EXEMPT_PATHS):
+            continue
+        norm = posixpath.normpath(p)
+        if os.path.isabs(p) or norm == ".." or norm.startswith("../"):
             continue
         paths.append(p)
     return paths, sc.cited_symbols(text)
