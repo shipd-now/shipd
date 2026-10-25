@@ -53,6 +53,13 @@ class FeatureVocabularyTest(unittest.TestCase):
              "background-tasks"))
 
 
+class PluginProvidedTest(unittest.TestCase):
+    def test_claude_code_is_provided_by_the_shipd_plugin(self):
+        self.assertEqual(hr.PLUGIN_PROVIDED, {"claude-code": "s@shipd"})
+        for harness_id in hr.PLUGIN_PROVIDED:
+            self.assertIn(harness_id, hr.ids())
+
+
 class EntryShapeTest(unittest.TestCase):
     def test_ids_are_unique_kebab_case(self):
         ids = [entry["id"] for entry in hr.HARNESSES]

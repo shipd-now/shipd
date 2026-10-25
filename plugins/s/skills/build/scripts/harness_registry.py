@@ -41,6 +41,11 @@ LEGACY_USER_PATTERNS = {
     "agy": ("~/.gemini/antigravity-cli/skills/shipd-{command}.md",),
 }
 
+# A harness whose user surface a Claude Code plugin already provides, mapped
+# to that plugin's id. While the plugin is installed the generator writes no
+# user-global files for the harness and retires the ones it wrote earlier.
+PLUGIN_PROVIDED = {"claude-code": "s@shipd"}
+
 # One entry per supported harness. Keys, all required:
 #
 #   id           kebab-case, unique, the name every verb and path uses
