@@ -1,12 +1,8 @@
 ---
 name: remember
 description: >-
-  Capture the user's durable memories into the personal memory store:
-  extract memory candidates from the invocation argument or the session, reconcile
-  each against existing `memory-*` pages, confirm the proposed set in a typed
-  round, and install through one staged `spec_emit.py wiki --personal` call. Use
-  when asked to "remember that I prefer …", "capture a preference", "save this
-  to memory", "note that …", or "/s:remember". Trigger phrases:
+  Capture the user's durable preferences into the personal memory store as
+  `memory-*` pages, through one confirmed, staged write. Trigger phrases:
   "remember I prefer", "capture a preference", "save to memory", "note that",
   "/s:remember".
 ---

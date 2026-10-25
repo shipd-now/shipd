@@ -1,15 +1,9 @@
 ---
 name: research
 description: >-
-  Turn a question into a cited research report: decompose it into bounded
-  sub-questions, search each with the session's built-in WebSearch, select the
-  strongest sources, extract anchored findings with WebFetch, and compose a
-  report with a summary, themed findings, gaps & caveats, and a numbered
-  `## Sources` list with `[n]` citation markers — then install it through the
-  spec engine so an epic can link it. Use when asked to "research" a topic,
-  produce a "deep research" or "research report", or gather external prior art
-  before planning. Trigger phrases: "research", "deep research",
-  "research report", "/s:research".
+  Turn a question into a cited research report, installed through the engine so
+  an epic can link it. Trigger phrases: "research", "deep research", "research
+  report", "/s:research".
 ---
 
 # /s:research — Question → searched, cited research report

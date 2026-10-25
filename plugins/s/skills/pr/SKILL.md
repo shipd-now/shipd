@@ -1,15 +1,9 @@
 ---
 name: pr
 description: >-
-  Write a shipd pull request's title and its `## ☕ Pull Request` body,
-  then create the pull request with `gh pr create` (or update it with
-  `gh pr edit` when the branch already has one) and print its full URL. The
-  title follows the `pr` config template and can carry a ticket id; the body
-  is held to the documentation standard and linted before it posts. Never
-  pushes, arms auto-merge, or reads `pr-mode`: the caller does that. Use when
-  asked to open a PR, write a PR description, or set a PR title. Trigger
-  phrases: "open the PR", "write the PR description", "retitle the PR",
-  "/s:pr".
+  Write a shipd pull request's title and body, then create or update the pull
+  request and print its URL. Trigger phrases: "open the PR", "write the PR
+  description", "retitle the PR", "/s:pr".
 ---
 
 # /s:pr — write a pull request's title and body

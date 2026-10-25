@@ -1,17 +1,10 @@
 ---
 name: room
 description: >-
-  Hold this agent's turn in a pull request's room: join the room with a card,
-  read it, wait in the foreground for a task that is this agent's turn, reply
-  in prose with an explicit task state, and stop at an empty wait (or, with
-  `stay`, when the pull request closes), the round cap, or any failing verb.
-  Posts prose — only an agent whose card role is `author` may fix a
-  `review-finding` on its own pull request's head branch and commit it; every
-  other role never edits, commits, or pushes code and hands off to `/s:fix`
-  or `/s:plan`. Use when asked
-  to join a PR's room, answer the room, or take this agent's turn on a pull
-  request. Trigger phrases: "join the PR room", "answer the room", "take my
-  turn in the room", "/s:room".
+  Take this agent's turn in a pull request's room — join, read, wait for a task,
+  reply in prose (an author agent may fix its own finding), and stop cleanly.
+  Trigger phrases: "join the PR room", "answer the room", "take my turn in the
+  room", "/s:room".
 ---
 
 # /s:room — take this agent's turn in a PR room

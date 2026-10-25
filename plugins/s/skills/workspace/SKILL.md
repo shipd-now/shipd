@@ -1,19 +1,10 @@
 ---
 name: workspace
 description: >-
-  Set up and inspect the shipd workspace through its CLI: create the
-  workspace marker with a guided target-root choice (init), report the
-  workspace roster of projects and initiatives (show), bootstrap a job
-  workspace from its repository URL (clone), materialize its members by
-  executing the engine's plan with real git (sync), map members to the
-  checkouts they already have on this machine (map), or build a nested team
-  workspace beneath a discoverable base (team). Use when asked to "set up
-  a workspace", "create a workspace", "initialize a workspace", "clone a
-  workspace", "sync the workspace", "materialize members", "map a member",
-  "set up a team workspace", or to see what a workspace contains. Trigger
-  phrases: "workspace", "set up a workspace", "workspace init", "clone a
-  workspace", "sync the workspace", "materialize members", "map the
-  workspace", "team workspace", "/s:workspace".
+  Set up and inspect the shipd workspace — init, show, clone, or sync — through
+  the engine's workspace verbs. Trigger phrases: "workspace", "set up a
+  workspace", "workspace init", "clone a workspace", "sync the workspace",
+  "materialize members", "map the workspace", "team workspace", "/s:workspace".
 ---
 
 # /s:workspace — Guided workspace setup & roster

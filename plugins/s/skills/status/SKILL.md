@@ -1,13 +1,8 @@
 ---
 name: status
 description: >-
-  Report or change a spec's lifecycle status through the guarded status CLI:
-  print the bare status, validate the change's structure, run a guarded
-  transition that asks before forcing past a guard, or report the effective
-  autonomous pipeline (and expand a named preset). Use when asked to check,
-  validate, or set a change's status, to promote/complete/verify a change, or
-  to see which pipeline this repo resolves. Trigger phrases: "status",
-  "validate change", "set status", "pipeline", "/s:status".
+  Report a change's lifecycle status, or run a guarded transition. Trigger
+  phrases: "status", "validate change", "set status", "pipeline", "/s:status".
 ---
 
 # /s:status — Guarded status reporting & transitions

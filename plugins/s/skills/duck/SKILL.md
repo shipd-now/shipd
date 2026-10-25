@@ -1,15 +1,9 @@
 ---
 name: duck
 description: >-
-  Talk an idea, a process, or a concept through with an adversarial rubber-duck
-  critic before any of it is planned or built: read the repo and the
-  engine-mediated spec surfaces to ground the critique, push back rather than
-  agree, surface the strongest alternative, and name the shipd skill that should
-  pick the idea up once it converges. Strictly read-only — it changes no file,
-  emits no artifact, and invokes no other skill. Use when asked to rubber-duck
-  something, talk an idea through, validate a concept or a process, or get a
-  second opinion before planning. Trigger phrases: "rubber duck", "talk through
-  this idea", "validate this concept", "be my duck", "/s:duck".
+  Talk an idea through with the adversarial Rubber Duck agent — read-only
+  critique, nothing changed. Trigger phrases: "rubber duck", "talk through this
+  idea", "validate this concept", "be my duck", "/s:duck".
 ---
 
 # /s:duck — Rubber Duck agent

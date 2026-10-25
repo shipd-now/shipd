@@ -1,15 +1,9 @@
 ---
 name: onboard
 description: >-
-  Run the guided shipd tour: a fixed nine-step walkthrough the user drives
-  with `/s:onboard next` and `/s:onboard back`. Steps 1–7 explain
-  Spec-Driven Development and the artifacts over a pre-baked example in a
-  throwaway sandbox, step 8 builds it for real on the engine, and step 9 hands
-  over the exact command to plan a first enhancement. Progress persists to disk
-  so the tour resumes across sessions. Use when a user wants to learn shipd
-  from scratch or asks how the workflow fits together. Trigger phrases:
-  "onboarding", "onboard", "tour", "how does shipd work", "teach me
-  shipd", "/s:onboard", "/s:onboard next", "/s:onboard back".
+  Run the guided nine-step shipd tour the user drives one step at a time.
+  Trigger phrases: "onboarding", "onboard", "tour", "how does shipd work",
+  "teach me shipd", "/s:onboard", "/s:onboard next", "/s:onboard back".
 ---
 
 # /s:onboard — Guided shipd walkthrough

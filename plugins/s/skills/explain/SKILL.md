@@ -1,14 +1,9 @@
 ---
 name: explain
 description: >-
-  Read a shipd epic through the engine and explain it: run the mediated
-  `cat epic` and `epic-show` verbs, then print a short explanation covering
-  what the epic is for, the decisions holding it up, how its member changes
-  compose, and where delivery stands — with a diagram only where one carries
-  structure prose cannot. Strictly read-only — it writes no file, emits no
-  artifact, and runs no mutating engine verb. Use when asked to explain,
-  summarize, or make sense of an epic. Trigger phrases: "explain this epic",
-  "summarize the epic", "what is this epic about", "/s:explain".
+  Read a shipd epic through the engine and explain it in under 100 lines — with
+  a diagram only where one carries structure. Trigger phrases: "explain this
+  epic", "summarize the epic", "what is this epic about", "/s:explain".
 ---
 
 # /s:explain — explain an epic

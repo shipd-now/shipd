@@ -1,15 +1,8 @@
 ---
 name: worktree-hooks
 description: >-
-  Author and register the setup scripts a new worktree runs: turn a described
-  setup need into an executable script under `<content-dir>/hooks/`, register
-  its repo-relative path through the binary's `worktree hooks add` verb, and
-  verify the registration by reading `worktree hooks list` back. Also browses
-  the registered hooks (flagging any whose script file is missing) and removes
-  one on confirmation. Use when asked to "run something after creating a
-  worktree", "set up new worktrees automatically", "copy my .env into every
-  worktree", "seed the database in new worktrees", or to list/remove the
-  configured post-worktree scripts. Trigger phrases: "worktree hook",
+  Author and register the setup scripts a fresh worktree runs, through the
+  engine's worktree hooks verbs. Trigger phrases: "worktree hook",
   "post-worktree script", "set up new worktrees", "run this in every worktree",
   "/s:worktree-hooks".
 ---

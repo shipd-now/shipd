@@ -1,13 +1,9 @@
 ---
 name: drift
 description: >-
-  Judge whether an epic's gated plans still hold against main: run
-  `spec_status.py drift`, read only the flagged members' plans and the diffs
-  behind each finding, and return one verdict per flagged member — `holds`,
-  `revise`, or `conflict`. Strictly read-only — it writes no file, runs no
-  mutating engine verb, and re-plans nothing. Use when asked whether a plan
-  has drifted from main. Trigger phrases: "drift", "check drift", "has the
-  plan drifted", "/s:drift".
+  Judge whether an epic's gated plans still hold against main — holds, revise,
+  or conflict per drifted member. Trigger phrases: "drift", "check drift", "has
+  the plan drifted", "/s:drift".
 ---
 
 # /s:drift — judge whether gated plans still hold against main

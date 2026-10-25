@@ -1,16 +1,9 @@
 ---
 name: fix
 description: >-
-  Debug a reported problem against the spec library: distill the description
-  into search terms, retrieve the related spec artifacts with the engine's
-  `related` verb and read them through the mediated `cat` verbs, reproduce the
-  problem, then either fix the code that drifted from the documented behavior
-  (with a regression test) or — when the documented behavior itself is wrong —
-  stop and hand off to `/s:plan`. Ends with diagnosis, fix, and verification
-  evidence; never commits, branches, pushes, or opens a PR, and never edits a
-  spec artifact. Use when asked to fix a bug, debug a failure, or find and fix
-  something that is behaving wrongly. Trigger phrases: "fix this bug", "debug
-  this", "find and fix", "/s:fix".
+  Debug a reported problem against the spec library, fix the code, and stop at
+  the report. Trigger phrases: "fix this bug", "debug this", "find and fix",
+  "/s:fix".
 ---
 
 # /s:fix — spec-grounded debugging

@@ -1,13 +1,8 @@
 ---
 name: build
 description: >-
-  Orchestrate a feature end-to-end with spec-driven development: plan and design
-  the shipd artifacts on the session's model, then delegate implementation to
-  execution sub-agents on a model one step down, answer their questions,
-  verify, and merge + archive with the plugin's own spec engine. Use
-  when asked to build/implement/ship a feature, add a capability, or "orchestrate"
-  work — anything non-trivial that benefits from a spec-first plan plus delegated
-  execution. Trigger phrases: "build", "implement", "add a feature", "/s:build".
+  Execute a planned change task by task, verify it, and ship it as a pull
+  request. Trigger phrases: "build", "implement", "add a feature", "/s:build".
 ---
 
 # /s:build — Spec-Driven Orchestrator + Execution Team

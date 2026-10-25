@@ -1,14 +1,9 @@
 ---
 name: teach
 description: >-
-  Teach the oracle: distill the repo's spec artifacts and answered queue
-  entries into the workspace wiki. Scan the engine-mediated spec surfaces, interview the user
-  only on the gaps and contradictions the scan surfaces, drain answered queue
-  entries into pages, and ingest through the store's staged, lint-gated emit
-  verb. Use when asked to "teach the oracle", "distill knowledge into the
-  wiki", "fill the wiki", "drain the queue", or "/s:teach". Trigger phrases:
-  "teach the oracle", "distill knowledge into the wiki", "drain the queue",
-  "/s:teach".
+  Distill this repo's spec artifacts and answered queue entries into the
+  workspace wiki through one staged, lint-gated write. Trigger phrases: "teach
+  the oracle", "distill knowledge into the wiki", "drain the queue", "/s:teach".
 ---
 
 # /s:teach — spec artifacts → workspace wiki pages

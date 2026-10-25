@@ -1,13 +1,10 @@
 ---
 name: epic-grill
 description: >-
-  Plan every unplanned member of an approved epic in one pass: order the
-  members by dependency, plan each through /s:plan with its human questions
-  deferred, check the plans against each other, ask the whole question agenda
-  in one final round, amend the plans to the answers, gate every member, and
-  hand off to /s:autopilot on a green preflight. Never builds. Use when asked to "grill an epic",
-  "plan the whole epic", or "/s:epic-grill". Trigger phrases: "grill an epic",
-  "plan the whole epic", "/s:epic-grill".
+  Plan every unplanned member of an approved epic in one pass, ask every open
+  decision in one final round, then reconcile and gate the plans together and
+  hand off to /s:autopilot on a green preflight. Trigger phrases: "grill an
+  epic", "plan the whole epic", "/s:epic-grill".
 ---
 
 # /s:epic-grill — Plan a whole epic, ask once
