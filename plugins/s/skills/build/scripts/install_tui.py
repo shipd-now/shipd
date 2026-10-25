@@ -297,7 +297,12 @@ def install_selection(ids, out):
             return reason
     width = max((len(entry["id"]) for entry in entries), default=0)
     for entry in entries:
-        if entry in generated:
+        plugin_id = (hg.plugin_provided(entry, hg.USER_MODE)
+                     if entry in generated else None)
+        if plugin_id is not None:
+            out.write("  provided   %-*s  by the %s plugin — no command "
+                      "files needed\n" % (width, entry["id"], plugin_id))
+        elif entry in generated:
             paths = hg.command_paths(entry, hg.USER_MODE)
             where = hg.display(os.path.dirname(paths[0]), hg.USER_MODE)
             detail = "%d command%s in %s" % (

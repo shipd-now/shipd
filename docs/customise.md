@@ -114,6 +114,11 @@ rest. `shipd harness` lists the registry and inspects one entry; `shipd
 install` and `shipd harness add <name>` generate a harness's command
 surface into a repository.
 
+With the `s@shipd` plugin installed at user scope and enabled, `shipd
+install` and `shipd harness add claude-code --user` write no Claude Code
+command or agent files. The plugin already provides `/s:*`, so both verbs
+retire the copies shipd wrote earlier.
+
 A harness that declares the `subagents` feature also receives its agent
 files beside its commands. The files are `shipd-sub-agent`, `shipd-oracle`,
 and `shipd-validator`, in the location that harness reads them from.

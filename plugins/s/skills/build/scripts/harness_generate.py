@@ -23,6 +23,7 @@ can address a directory the registry does not name.
 Stdlib-only Python 3, per the engine's constitution.
 """
 
+import json
 import os
 import re
 import sys
@@ -677,12 +678,74 @@ def _remove_owned_legacy(entries, mode, base_dir, lines):
     return removed
 
 
+def _read_json(path):
+    """The parsed JSON at ``path``, or ``None`` when it is missing,
+    unreadable, or not JSON."""
+    try:
+        with open(os.path.expanduser(path), encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
+
+
+def plugin_installed(plugin_id):
+    """Whether Claude Code has ``plugin_id`` installed at user scope and
+    enabled. Reads two files and spawns nothing; any missing, unreadable, or
+    oddly shaped file means ``False``, so the files keep being written."""
+    installed = _read_json("~/.claude/plugins/installed_plugins.json")
+    settings = _read_json("~/.claude/settings.json")
+    if not isinstance(installed, dict) or not isinstance(settings, dict):
+        return False
+    plugins = installed.get("plugins")
+    records = plugins.get(plugin_id) if isinstance(plugins, dict) else None
+    if not isinstance(records, list) or not any(
+            isinstance(record, dict) and record.get("scope") == "user"
+            for record in records):
+        return False
+    enabled = settings.get("enabledPlugins")
+    return isinstance(enabled, dict) and enabled.get(plugin_id) is True
+
+
+def plugin_provided(entry, mode):
+    """The id of the plugin that provides ``entry``'s user surface, or
+    ``None`` when the mode, the harness, or the installation says otherwise."""
+    plugin_id = harness_registry.PLUGIN_PROVIDED.get(entry["id"])
+    if (mode == USER_MODE and plugin_id is not None
+            and plugin_installed(plugin_id)):
+        return plugin_id
+    return None
+
+
+def _retire_provided(provided, mode, root, base_dir, lines):
+    """Report each plugin-provided entry as skipped and delete its owned
+    command and agent files, pruning the directories that empties."""
+    directories = set()
+    for entry, plugin_id in provided:
+        lines.append("skipped %s (provided by the %s plugin)"
+                     % (entry["id"], plugin_id))
+        for path in surface_paths(entry, mode, root, base_dir):
+            if not owned(path):
+                continue
+            os.remove(path)
+            lines.append("retired %s" % display(path, mode, root))
+            directories.add(os.path.dirname(path))
+    boundaries = _boundaries(mode, root)
+    for directory in directories:
+        _prune(directory, boundaries)
+
+
 def add(entries, mode, root=None, force=False, base_dir=None):
     """Write every selected harness's files. Returns ``(lines, error)``:
     ``error`` is a single reason string when a target this install does not
     own stands in the way — and then nothing at all was written, so a refusal
     never leaves a half-installed surface behind."""
-    payloads, skipped = planned(entries, mode, root, base_dir)
+    provided = [(entry, plugin_provided(entry, mode)) for entry in entries]
+    provided = [(entry, plugin_id) for entry, plugin_id in provided
+                if plugin_id is not None]
+    handed = {entry["id"] for entry, _plugin_id in provided}
+    payloads, skipped = planned(
+        [entry for entry in entries if entry["id"] not in handed],
+        mode, root, base_dir)
     lines = ["skipped %s (no %s surface)" % (harness_id, mode)
              for harness_id in skipped]
     if not force:
@@ -704,10 +767,11 @@ def add(entries, mode, root=None, force=False, base_dir=None):
         _atomic_write(path, data)
         lines.append("wrote %s" % display(path, mode, root))
     _remove_owned_legacy(entries, mode, base_dir, lines)
+    _retire_provided(provided, mode, root, base_dir, lines)
     if current:
         lines.append("%d file%s already current"
                      % (current, "" if current == 1 else "s"))
-    if not payloads:
+    if not payloads and not provided:
         lines.append("nothing to write: no %s surface among the selected "
                      "harnesses" % mode)
     # Last, so the step the user must still take by hand is the last thing
@@ -847,8 +911,21 @@ def status(entries, mode, root=None, base_dir=None):
                 "present": 0,
             }
             continue
-        state, detail, expected, present = _entry_state(
-            entry, mode, root, base_dir)
+        plugin_id = plugin_provided(entry, mode)
+        if plugin_id is not None:
+            count = sum(1 for path in paths if owned(path))
+            if count:
+                state = "stale"
+                detail = ("%d duplicate files the %s plugin provides — "
+                          "`shipd harness add %s --user` retires them"
+                          % (count, plugin_id, entry["id"]))
+            else:
+                state = "skipped"
+                detail = "provided by the %s plugin" % plugin_id
+            expected, present = 0, count
+        else:
+            state, detail, expected, present = _entry_state(
+                entry, mode, root, base_dir)
         first = paths[0]
         report[entry["id"]] = {
             "state": state,

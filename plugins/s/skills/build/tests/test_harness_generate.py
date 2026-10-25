@@ -838,6 +838,78 @@ class RemoveTest(ActionTestCase):
         self.assertEqual(self.tree(self.root), {})
 
 
+def install_plugin(home, scope="user", enabled=True, installed_text=None):
+    """Write the Claude Code plugin files under an isolated ``home`` so the
+    ``s@shipd`` plugin reads as installed (or, by argument, not)."""
+    base = os.path.join(home, ".claude")
+    os.makedirs(os.path.join(base, "plugins"), exist_ok=True)
+    if installed_text is None:
+        installed_text = json.dumps(
+            {"version": 2, "plugins": {"s@shipd": [{"scope": scope}]}})
+    with open(os.path.join(base, "plugins", "installed_plugins.json"), "w",
+              encoding="utf-8") as handle:
+        handle.write(installed_text)
+    with open(os.path.join(base, "settings.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump({"enabledPlugins": {"s@shipd": enabled}}, handle)
+
+
+class PluginProvidedTest(ActionTestCase):
+    def commands_dir(self):
+        return os.path.join(self.home, ".claude", "commands", "shipd")
+
+    def agents_dir(self):
+        return os.path.join(self.home, ".claude", "agents")
+
+    def test_add_skips_claude_code_when_the_plugin_is_installed(self):
+        install_plugin(self.home)
+        result = self.cli("add", "claude-code", "--user")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("provided by the s@shipd plugin", result.stdout)
+        self.assertFalse(os.path.exists(self.commands_dir()))
+        self.assertFalse(os.path.exists(self.agents_dir()))
+
+    def test_add_retires_owned_duplicates_and_keeps_foreign_files(self):
+        self.assertEqual(self.cli("add", "claude-code", "--user").returncode,
+                         0)
+        self.assertTrue(os.listdir(self.agents_dir()))
+        plan = os.path.join(self.commands_dir(), "plan.md")
+        with open(plan, "w", encoding="utf-8") as handle:
+            handle.write("mine\n")
+        install_plugin(self.home)
+        result = self.cli("add", "claude-code", "--user")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("retired", result.stdout)
+        self.assertEqual(os.listdir(self.commands_dir()), ["plan.md"])
+        self.assertFalse(os.path.exists(self.agents_dir()))
+        with open(plan, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "mine\n")
+
+    def test_a_project_scope_or_disabled_install_does_not_count(self):
+        cases = {
+            "project scope": dict(scope="project"),
+            "disabled": dict(enabled=False),
+            "not json": dict(installed_text="not json"),
+        }
+        for name, kwargs in cases.items():
+            with self.subTest(name):
+                shutil.rmtree(os.path.join(self.home, ".claude"),
+                              ignore_errors=True)
+                install_plugin(self.home, **kwargs)
+                result = self.cli("add", "claude-code", "--user")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(os.path.exists(
+                    os.path.join(self.commands_dir(), "plan.md")))
+
+    def test_repo_mode_still_writes_with_the_plugin_installed(self):
+        install_plugin(self.home)
+        result = self.cli("add", "claude-code", "--root", self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        written = os.listdir(
+            os.path.join(self.root, ".claude", "commands", "shipd"))
+        self.assertEqual(len(written), len(hb.commands()))
+
+
 class StatusTest(ActionTestCase):
     def state_of(self, harness_id, *args):
         result = self.cli("status", "--root", self.root, "--json", *args)
@@ -881,6 +953,24 @@ class StatusTest(ActionTestCase):
         with open(reference, "a", encoding="utf-8") as handle:
             handle.write("\nedited by hand\n")
         self.assertEqual(self.state_of("cursor"), "stale")
+
+    def test_status_reports_a_plugin_provided_surface(self):
+        self.assertEqual(self.cli("add", "claude-code", "--user").returncode,
+                         0)
+        install_plugin(self.home)
+        args = ("status", "claude-code", "--user", "--json")
+        result = self.cli(*args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record = json.loads(result.stdout)["claude-code"]
+        self.assertEqual(record["state"], "stale")
+        self.assertIn("s@shipd", record["detail"])
+        self.assertIn("shipd harness add claude-code --user",
+                      record["detail"])
+        self.assertEqual(self.cli("add", "claude-code", "--user").returncode,
+                         0)
+        record = json.loads(self.cli(*args).stdout)["claude-code"]
+        self.assertEqual(record["state"], "skipped")
+        self.assertIn("s@shipd", record["detail"])
 
     def test_status_writes_nothing(self):
         self.assertEqual(self.cli("add", "cursor", "--root",
