@@ -42,6 +42,10 @@ shipd harness status claude-code --json   # installed, stale, foreign, or absent
 shipd harness remove claude-code --user   # delete them and prune the directory
 ```
 
+When you install and enable the `s@shipd` plugin at user scope, `shipd
+harness add claude-code --user` skips the user-global agent files. It also
+retires the ones shipd wrote earlier.
+
 `status` counts the agent files with the command files. A harness is
 `installed` only when both are byte-current, and `stale` names the first
 missing or differing file. `shipd harness show <name>` prints the entry's

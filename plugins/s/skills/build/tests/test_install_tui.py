@@ -284,6 +284,42 @@ class InstallSelectionTest(HomeTestCase):
             self.assertNotIn(".github", path)
         self.assertIn("shipd harness add", out.getvalue())
 
+    def install_plugin(self):
+        os.makedirs(os.path.join(self.home, ".claude", "plugins"))
+        with open(os.path.join(self.home, ".claude", "plugins",
+                               "installed_plugins.json"), "w") as handle:
+            json.dump({"version": 2,
+                       "plugins": {"s@shipd": [{"scope": "user"}]}}, handle)
+        with open(os.path.join(self.home, ".claude", "settings.json"),
+                  "w") as handle:
+            json.dump({"enabledPlugins": {"s@shipd": True}}, handle)
+
+    def test_claude_code_with_the_plugin_installed_is_reported_as_provided(
+            self):
+        claude = hr.get("claude-code")
+        owned_path = hg.user_path(claude, hb.commands()[0])
+        os.makedirs(os.path.dirname(owned_path))
+        with open(owned_path, "w", encoding="utf-8") as handle:
+            handle.write(hg.MARKER + "\n")
+        self.install_plugin()
+        out = io.StringIO()
+        self.assertIsNone(it.install_selection(("claude-code",), out))
+        line = [x for x in out.getvalue().splitlines()
+                if "claude-code" in x]
+        self.assertEqual(len(line), 1, out.getvalue())
+        self.assertIn("provided", line[0])
+        self.assertIn("s@shipd", line[0])
+        self.assertFalse(os.path.exists(os.path.dirname(owned_path)))
+        self.assertFalse(os.path.exists(
+            os.path.join(self.home, ".claude", "agents")))
+
+    def test_claude_code_without_the_plugin_is_still_installed(self):
+        out = io.StringIO()
+        self.assertIsNone(it.install_selection(("claude-code",), out))
+        path = hg.user_path(hr.get("claude-code"), hb.commands()[0])
+        self.assertTrue(os.path.exists(path), path)
+        self.assertIn("installed", out.getvalue())
+
 
 # ---------------------------------------------------------------------------
 # Degradation: no usable terminal, and no raw mode
