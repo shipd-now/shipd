@@ -1,18 +1,10 @@
 ---
 name: gate
 description: >-
-  Set up the shipd semantic review gate in a repository end to end: preflight
-  the prerequisites, install the four managed files with `shipd copilot add`,
-  commit and push them, then — on consent — require the `semantic-review`
-  check, enable auto-merge, hand off the reviewer token, and verify with
-  `shipd doctor`. With the `update` argument, run the refresh-only flow
-  instead: re-read the managed files' states, refresh what is stale or
-  absent — and the room wake set where it is already installed — and ship
-  the refresh — no settings, no token. Use when asked to
-  set up the review gate, block PRs on the semantic review, turn on the
-  merge gate, or refresh an already-installed gate to the running plugin
-  version. Trigger phrases: "set up the gate", "install the review gate",
-  "block PRs on review", "/s:gate", "/s:gate update", "update the gate".
+  Set up the shipd semantic review gate in a repository, taking consent before
+  anything changes on GitHub. Trigger phrases: "set up the gate", "install the
+  review gate", "block PRs on review", "/s:gate", "/s:gate update", "update the
+  gate".
 ---
 
 # /s:gate — install the review gate, with consent

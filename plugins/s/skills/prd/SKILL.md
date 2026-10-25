@@ -1,16 +1,9 @@
 ---
 name: prd
 description: >-
-  Interrogate a product idea into a lint-clean workspace PRD: resolve the
-  workspace, investigate the codebase and the workspace's knowledge surfaces
-  with the engine's `search` retrieval before asking anything, then grill the
-  user round by round — one template section at a time against the active tier
-  (`basic`, `standard`, `comprehensive`; `standard` by default) — and install
-  the result through the engine's staged `prd` emit. The discover phase's front
-  door: it ends at the installed PRD and points at `/s:epic`, never decomposing
-  it itself. Use when asked to "create a PRD", "write a PRD for ...", capture
-  "product requirements", or run the "discover phase". Trigger phrases: "PRD",
-  "product requirements", "discover phase", "/s:prd".
+  Interrogate a product idea into a lint-clean workspace PRD, installed through
+  the engine's staged emit. Trigger phrases: "PRD", "product requirements",
+  "discover phase", "/s:prd".
 ---
 
 # /s:prd — Interrogation → a lint-clean workspace PRD

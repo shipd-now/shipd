@@ -1,15 +1,9 @@
 ---
 name: document
 description: >-
-  Author or revise documentation against the shipd documentation standard:
-  load the one canonical rules file, classify each target doc as concept,
-  how-to, or reference, write or rewrite it to the standard, then run the
-  stdlib-only lint until it exits clean and self-review the rules a machine
-  cannot check. Edits documentation only — it never commits, never pushes,
-  and never opens a pull request. Use when asked to document something, write
-  or rewrite a doc, tighten prose under `docs/`, or bring a doc up to the
-  house standard. Trigger phrases: "document this", "write the docs",
-  "rewrite this doc", "/s:document".
+  Author or revise documentation against the shipd documentation standard, then
+  lint it clean — docs only, nothing shipped. Trigger phrases: "document this",
+  "write the docs", "rewrite this doc", "/s:document".
 ---
 
 # /s:document — write to the shipd documentation standard

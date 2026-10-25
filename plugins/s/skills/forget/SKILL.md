@@ -1,14 +1,9 @@
 ---
 name: forget
 description: >-
-  Remove a captured preference from the personal memory store: take a free-text
-  description of the memory to forget, locate the matching `memory-*` page,
-  confirm the removal with a single dialog, and delete it through
-  `wiki-remove --personal` — the remove counterpart to `/s:remember`. Use
-  when asked to "forget that I prefer …", "remove a memory", "delete what you
-  remember about …", "drop that preference", or "/s:forget". Trigger phrases:
-  "forget that", "remove a memory", "delete a memory", "forget my preference",
-  "/s:forget".
+  Remove one captured preference from the personal memory store, confirmed first
+  — the remove counterpart to `/s:remember`. Trigger phrases: "forget that",
+  "remove a memory", "delete a memory", "forget my preference", "/s:forget".
 ---
 
 # /s:forget — remove a memory from the personal store

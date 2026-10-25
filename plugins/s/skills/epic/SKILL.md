@@ -1,19 +1,9 @@
 ---
 name: epic
 description: >-
-  Decompose a feature into an epic: investigate the codebase first, ask the user
-  only what can't be inferred (one batched round), record the epic's Decisions
-  and Design, and emit the stub table of member changes with complexity ratings
-  — then stop. Member changes are planned later, one at a time, via /s:plan.
-  Invoked as `/s:epic <slug> amend`, runs the amendment flow on a live epic
-  instead: Decisions and shelf edits only, each stating the current fact, gated
-  by the linter and `epic-amend-check`, then shipped as a PR from a fresh
-  `epic-amend-<slug>` worktree — or, where the epic resolves into an external
-  store, as one scoped local commit in the store's repository. Use when asked to
-  "create an epic", "decompose a feature", "group changes", "amend an epic", or
-  plan a multi-change initiative before spec'ing the individual changes.
-  Trigger phrases: "epic", "create an epic", "decompose", "amend the epic",
-  "/s:epic".
+  Decompose a feature into an epic — shared decisions, design, and a stub table
+  of member changes — then stop. Trigger phrases: "epic", "create an epic",
+  "decompose", "amend the epic", "/s:epic".
 ---
 
 # /s:epic — Convergent epic authoring → stub-table emission

@@ -1,13 +1,9 @@
 ---
 name: doctor
 description: >-
-  Diagnose and repair a shipd environment: run the read-only `shipd doctor`
-  preflight, parse its `ok|warn|fail <check> — <detail>` lines, propose one
-  remedy per remediable finding, run only the remedies the user consents to,
-  then re-run the preflight and report the before/after. Use when asked to
-  "fix my setup", "check my environment", diagnose why shipd is not working,
-  or run a preflight before starting work. Trigger phrases: "doctor",
-  "fix my setup", "check my environment", "preflight", "/s:doctor".
+  Diagnose the shipd environment with the read-only preflight, then run only the
+  remedies the user consents to. Trigger phrases: "doctor", "fix my setup",
+  "check my environment", "preflight", "/s:doctor".
 ---
 
 # /s:doctor — diagnose, then repair with consent

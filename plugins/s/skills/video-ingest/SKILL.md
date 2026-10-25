@@ -1,14 +1,8 @@
 ---
 name: video-ingest
 description: >-
-  Turn a screen recording into an intent brief: confirm the toolchain with
-  `video_ingest.py doctor`, obtain a bundle by ingesting a supplied video or
-  reusing a supplied slug, read the bundle's transcript and indexed frames,
-  extract candidate intents anchored on transcript words, ground each on its
-  nearest frame, resolve conflicting statements by recency, and compose a
-  cited brief installed through the spec engine. Use when asked to ingest a
-  video, turn a recording into a brief, or process a screen recording's
-  feedback. Trigger phrases: "video ingest", "ingest this recording", "turn
+  Turn a screen recording into a grounded, cited intent brief installed through
+  the engine. Trigger phrases: "video ingest", "ingest this recording", "turn
   this video into a brief", "/s:video-ingest".
 ---
 

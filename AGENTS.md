@@ -20,6 +20,9 @@ Consequences:
   is keyed by version, so without a bump `claude plugin update` is a no-op and
   sessions keep running the stale skills. Plans for such changes include the
   bump as a task.
+- **A skill's `description` is its harness body one-liner plus its
+  `Trigger phrases:` clause**, at most 300 folded characters, enforced by
+  `plugins/s/skills/build/tests/test_skill_descriptions.py`.
 - **After editing anything under `plugins/s/`, refresh the snapshot** or you
   will keep running stale skills:
   ```

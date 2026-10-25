@@ -1,12 +1,8 @@
 ---
 name: initiative
 description: >-
-  Drive workspace initiatives through their CLIs: create a lint-clean brief from
-  a workspace-first interview (new), report every initiative's status and
-  requirement progress (list), walk a brief's outcomes and sync its status
-  (review), or tag an epic with exactly one initiative via a PR (set). Use when
-  asked to "start an initiative", "create/review a brief", "track outcomes", or
-  "attach an initiative to an epic". Trigger phrases: "initiative", "brief",
+  Drive workspace initiatives — author, list, review a brief, or attach one to
+  an epic — through the engine's verbs. Trigger phrases: "initiative", "brief",
   "attach an initiative", "/s:initiative".
 ---
 

@@ -1,13 +1,8 @@
 ---
 name: autopilot
 description: >-
-  Drive an approved epic's unplanned members to shipped PRs unattended: plan →
-  gate → build → auto-merging PR per member over the configured pipeline, in
-  `After`, then risk-ascending order, one worktree/branch each. Runs the launch
-  preflight, confirms the run controls as the last question, runs the autopilot,
-  and relays its report with resume pointers for any parked members. Use when asked to "autopilot an
-  epic", "deliver an epic", "ship the epic's members", or "/s:autopilot".
-  Trigger phrases: "autopilot", "deliver", "ship the epic", "/s:autopilot".
+  Drive an approved epic's members to shipped pull requests unattended. Trigger
+  phrases: "autopilot", "deliver", "ship the epic", "/s:autopilot".
 ---
 
 # /s:autopilot — Autonomous epic delivery

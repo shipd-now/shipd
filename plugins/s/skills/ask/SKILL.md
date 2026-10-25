@@ -1,13 +1,9 @@
 ---
 name: ask
 description: >-
-  Query the oracle before interrupting a human: shape a request into
-  one compact decision, consult the workspace wiki and the repo's spec surfaces
-  through the `s:oracle` agent, and relay its verdict — a cited recommendation,
-  or a question queued for a person to answer later. Use when asked to "ask the
-  oracle", consult the oracle, or get the user's standing opinion on a decision
-  before escalating to the user. Trigger phrases: "ask the oracle",
-  "consult the oracle", "/s:ask".
+  Consult the oracle before interrupting a person — one compact question
+  answered from durable knowledge, or queued for a human. Trigger phrases: "ask
+  the oracle", "consult the oracle", "/s:ask".
 ---
 
 # /s:ask — Question → the oracle's verdict

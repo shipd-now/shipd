@@ -2,17 +2,9 @@
 name: drive
 description: >-
   Drive a real browser with Playwright to operate an app and verify a change
-  against it: resolve the target
-  and its credentials, run the `drive.py doctor` preflight, obtain or reuse a
-  cached login, start the one-browser session daemon, probe the live DOM
-  before authoring any selector, drive the requested instructions while
-  waiting for a named completion signal, and end on a PASS/FAIL verdict
-  backed by console and network evidence. Its `record` and `post` verbs
-  capture and brand browser footage, driven by `/s:demo` rather than
-  invoked here. Use when asked to drive the app,
-  verify a change in a real browser, or click through a flow. Trigger
-  phrases: "drive the app", "verify this in the browser", "click through
-  this flow", "/s:drive".
+  against it, ending on a PASS/FAIL verdict. Records browser footage for
+  /s:demo. Trigger phrases: "drive the app", "verify this in the browser",
+  "click through this flow", "/s:drive".
 ---
 
 # /s:drive — drive a real browser and verify

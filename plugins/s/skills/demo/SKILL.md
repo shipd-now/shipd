@@ -1,14 +1,9 @@
 ---
 name: demo
 description: >-
-  Produce a branded demo video of a change, routing to the right capture
-  backend for the subject: a browser app through the drive CLI's `record`
-  verb, a command-line tool through its `tape` verb, both converging on the
-  same `post` branding stage. Preflights the medium's own toolchain before
-  capturing and stops on a missing tool rather than attempting a doomed
-  recording. Use when asked to record a demo, make a demo video, or produce
-  a branded recording of either a web app or a CLI. Trigger phrases: "record
-  a demo", "make a demo video", "/s:demo".
+  Produce a branded demo video, routing a browser subject to `record` and a
+  terminal subject to `tape`, both converging on `post`. Trigger phrases:
+  "record a demo", "make a demo video", "/s:demo".
 ---
 
 # /s:demo — produce a branded demo, browser or terminal

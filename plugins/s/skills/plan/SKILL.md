@@ -1,13 +1,8 @@
 ---
 name: plan
 description: >-
-  Converge context into an execution-ready spec: investigate the codebase first,
-  ask the user only what can't be inferred (batched on the fast path; grouped
-  question rounds when the depth gate fires), then emit the lean shipd artifacts
-  (plan.md, delta specs, tasks.md) and stop. Use when
-  asked to "plan", "spec
-  this", "plan before building", or work out an approach before writing code.
-  Trigger phrases: "plan", "spec this", "plan before building", "/s:plan".
+  Converge context into an execution-ready spec, then stop. Trigger phrases:
+  "plan", "spec this", "plan before building", "/s:plan".
 ---
 
 # /s:plan — Convergent planning → silent spec emission

@@ -1,13 +1,10 @@
 ---
 name: memory
 description: >-
-  List the durable preferences captured in the personal memory store:
-  resolve the personal store, read its index, and print the stored `memory-*`
-  pages — the read-only browse counterpart to `/s:remember`. Use when
-  asked to "show my memories", "list what you remember", "what preferences
-  are stored", "browse the memory store", or "/s:memory". Trigger phrases:
-  "show my memories", "list my memories", "what do you remember", "browse
-  memory", "/s:memory".
+  List the durable preferences captured in the personal memory store — the
+  read-only browse counterpart to `/s:remember`. Trigger phrases: "show my
+  memories", "list my memories", "what do you remember", "browse memory",
+  "/s:memory".
 ---
 
 # /s:memory — browse the personal memory store

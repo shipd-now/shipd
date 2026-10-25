@@ -1,17 +1,9 @@
 ---
 name: review
 description: >-
-  Run an AST-aware semantic review of local changes, in the style of popular
-  code-review tools, against a base ref before they are pushed: map changed
-  files into cohorts, reason over a syntax-aware structural diff (never raw
-  file dumps), chase changed signatures to their call sites, and report
-  findings by cohort with a high/medium/low severity rubric and a
-  ship-it/fix-required verdict. When a
-  planned shipd change is in scope, verify the diff against its delta scenarios.
-  Read-only; a `--json` mode feeds the future PR gate. Use when asked to
-  "review my changes", run a "semantic review", review a diff/branch/PR before
-  pushing, or "/s:review". Trigger phrases: "review my changes", "semantic
-  review", "review this diff", "/s:review".
+  Run a semantic review of local changes against a base ref before they are
+  pushed. Trigger phrases: "review my changes", "semantic review", "review this
+  diff", "/s:review".
 ---
 
 # /s:review — Semantic review engine

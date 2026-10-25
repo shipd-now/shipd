@@ -1,13 +1,9 @@
 ---
 name: plan-deep
 description: >-
-  Walk one spec's riskiest pieces with the user, one step at a time: score the
-  spec with the shared risk rubric, restate each flagged piece and why it was
-  flagged, take keep, change, research, or cut, edit the spec in place, and
-  re-gate it. Takes one change, or an epic with optional members. Plans only,
-  never builds. Use when asked to "plan deep", "deep plan a spec", or walk a
-  risky spec after /s:epic-grill. Trigger phrases: "plan deep", "deep plan",
-  "walk the spec", "/s:plan-deep".
+  Walk one spec's riskiest pieces step by step, edit in place, and re-gate —
+  epic-aware. Trigger phrases: "plan deep", "deep plan", "walk the spec",
+  "/s:plan-deep".
 ---
 
 # /s:plan-deep — Walk a risky spec, piece by piece
