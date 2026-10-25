@@ -11,6 +11,7 @@ import glob
 import os
 import re
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -30,10 +31,16 @@ SHAPE_RE = re.compile(
 
 
 def folded_description(path):
-    """The frontmatter ``description: >-`` block, folded as YAML folds it."""
+    """The frontmatter ``description: >-`` block, folded as YAML folds it.
+
+    Returns None when the frontmatter has no ``description: >-`` block, so the
+    shape test can name the skill instead of erroring.
+    """
     with open(path, encoding="utf-8") as handle:
         text = handle.read()
     lines = text.split("---")[1].split("\n")
+    if "description: >-" not in lines:
+        return None
     start = lines.index("description: >-")
     parts = []
     for line in lines[start + 1:]:
@@ -54,13 +61,16 @@ def over_budget(descriptions):
     return [
         "%s (%d characters)" % (name, len(text))
         for name, text in sorted(descriptions.items())
-        if len(text) > DESCRIPTION_BUDGET
+        if text is not None and len(text) > DESCRIPTION_BUDGET
     ]
 
 
 def shape_failures(descriptions, one_liner):
     failures = []
     for name, text in sorted(descriptions.items()):
+        if text is None:
+            failures.append("%s: description is not a folded >- block" % name)
+            continue
         match = SHAPE_RE.match(text)
         if match is None:
             failures.append("%s: not '<one-liner> Trigger phrases: ...'" % name)
@@ -95,6 +105,33 @@ class SkillDescriptionTest(unittest.TestCase):
         self.assertEqual(1, len(failing))
         self.assertIn("fixture", failing[0])
         self.assertIn("301", failing[0])
+
+    def test_a_drifted_one_liner_is_reported(self):
+        failing = shape_failures(
+            {"fixture": 'Old line. Trigger phrases: "/s:fixture".'},
+            lambda name: "New line.",
+        )
+        self.assertEqual(["fixture: lead is not the body one-liner"], failing)
+
+    def test_a_missing_slash_phrase_is_reported(self):
+        failing = shape_failures(
+            {"fixture": 'Line. Trigger phrases: "fixture".'},
+            lambda name: "Line.",
+        )
+        self.assertEqual(['fixture: missing "/s:fixture" phrase'], failing)
+
+    def test_a_missing_folded_block_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "SKILL.md")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("---\nname: fixture\ndescription: plain\n---\n")
+            text = folded_description(path)
+        self.assertIsNone(text)
+        self.assertEqual([], over_budget({"fixture": text}))
+        self.assertEqual(
+            ["fixture: description is not a folded >- block"],
+            shape_failures({"fixture": text}, lambda name: "Line."),
+        )
 
 
 if __name__ == "__main__":
