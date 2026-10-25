@@ -7026,6 +7026,45 @@ class DriftTest(SpecStatusTestBase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn("file-drift", r.stdout)
 
+    def test_path_outside_root_is_skipped(self):
+        stamp = self._head()
+        self.make_stamped_change(
+            "feat", stamp,
+            ["src/engine.py", "../../docs/context-measurement-method/doc.md",
+             "../scripts", "src/../../outside/x.py"])
+        self._write("src/engine.py", "def kept():\n    return 2\n")
+        self._commit_all("edit engine", "src")
+        r = self.cli("drift", "feat")
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertNotIn("Error:", r.stderr)
+        self.assertIn("file-drift src/engine.py", r.stdout)
+        self.assertNotIn("../", r.stdout)
+
+    def test_only_outside_root_paths_is_clean(self):
+        self.make_stamped_change(
+            "feat", self._head(), ["../scripts", "../../docs/a/doc.md"])
+        r = self.cli("drift", "feat")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("drift: clean (no findings).", r.stdout)
+
+    def test_absolute_path_outside_repo_is_skipped(self):
+        outside = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside, True)
+        self.make_stamped_change(
+            "feat", self._head(),
+            [os.path.join(outside, "outside", "doc.md"), "src/engine.py"])
+        r = self.cli("drift", "feat")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("Error:", r.stderr)
+
+    def test_drift_cited_drops_paths_escaping_the_root(self):
+        self.make_stamped_change(
+            "feat", self._head(),
+            ["../a/b", "/abs/c/d", "x/../../y", "x/../y/z", "src/engine.py"])
+        change_dir = os.path.join(self.root, ".shipd", "planned", "feat")
+        paths, _ = ss._drift_cited(change_dir)
+        self.assertEqual(paths, ["x/../y/z", "src/engine.py"])
+
     def test_stale_base_rides_along(self):
         self.make_master(
             "auth",

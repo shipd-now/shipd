@@ -1835,7 +1835,9 @@ carries none, the last commit that touched its `plan.md`; it SHALL resolve
 the base ref (default `main`) once, anchoring every git call on the root
 hosting the change. It SHALL extract cited paths (path-shaped backticked
 tokens, a trailing `:<line>[-<line>]` citation stripped, `artefacts/`
-references and the version-bump exempt paths dropped) and cited symbols
+references, the version-bump exempt paths, and any path that is absolute
+or whose normalized form escapes the hosting root through `..` dropped) and
+cited symbols
 (backticked identifiers, dotted names, and `--flags` that are not
 path-shaped) from `plan.md`, `tasks.md`, and every delta spec, and report
 three finding kinds: `file-drift <path> <n> (<sha>, ...)` for each cited
@@ -1905,6 +1907,14 @@ timestamps, and SHALL NOT run a model or touch the network.
 - **WHEN** `drift <change>` runs
 - **THEN** stderr carries an `Error:` line naming the missing stamp and
   `spec_gate.py <change>`, and the exit code is 1
+
+#### Scenario: A path outside the repository never fails the run
+- **GIVEN** a stamped plan citing `src/engine.py`, `../scripts`,
+  `../../docs/x/doc.md`, and an absolute path outside the repository, and a
+  later commit editing `src/engine.py`
+- **WHEN** `drift <change>` runs
+- **THEN** a `file-drift src/engine.py 1 (<sha>)` line prints, no line names
+  any of the outside paths, no `Error:` line prints, and the exit code is 4
 
 #### Scenario: JSON is one object
 - **WHEN** `drift <change> --json` runs on a drifted change
