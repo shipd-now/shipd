@@ -1,5 +1,5 @@
 # context-budget
-Status: ready
+Status: complete
 Theme: developer-experience
 
 ## Introduction
@@ -44,3 +44,18 @@ Together they shrink shipd's share of the listing until every skill keeps its de
 | --- | --- | --- | --- | --- | --- | --- |
 | dedupe-claude-commands | Stop generating duplicate ~/.claude/commands/shipd files for Claude Code when the plugin is installed, and retire stale ones | low | medium | low | medium | |
 | skill-description-budget | Trim every skill description to a per-skill budget, keeping trigger phrases, with a test enforcing the budget | medium | medium | low | medium | |
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 177 | 78.0k |
+| SubagentHandback | 7 | 7.4k |
+| Agent | 10 | 5.0k |
+| Monitor | 6 | 1.5k |
+| Skill | 5 | 1.4k |
+| (no tool) | 0 | 1.4k |
+| ToolSearch | 3 | 577 |
+| SendMessage | 1 | 274 |
+| ListAgents | 1 | 110 |
+| **Total** | 210 | 95.7k |
