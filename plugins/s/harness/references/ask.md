@@ -17,6 +17,26 @@ Infer all three; do not interview. A request too thin to shape into a
 decision is refused, not guessed at — ask the user to restate it as a
 decision and stop there.
 
+## The inline lookup
+
+Consultation is one read-only engine call, no helper agent:
+
+```
+python3 "$S/spec_status.py" --root <repo-root> oracle-lookup <term> <term>
+```
+
+- Choose two to six distinctive terms from the decision and its options; a
+  paragraph matches on at least two distinct terms.
+- It searches personal memory, the workspace chain (pages, then answered queue
+  blocks), the base store, then spec surfaces, and prints cited snippets: the
+  citation is what goes on the `Cited:` line, copied verbatim, and the snippet
+  is what goes on the `Evidence:` line.
+- A snippet tagged `[advisory]` backs an `Authority: advisory` answer.
+- The "pending queue" section lists open questions for the duplicate check
+  only. Cite an equivalent pending question instead of queueing a copy.
+- When it ends `no evidence found`, retry once with alternative terms, then
+  take the `INSUFFICIENT` branch. A failed lookup is `INSUFFICIENT` too.
+
 ## Verdict grammar
 
 A verdict's first non-blank line is exactly `ANSWER` or `INSUFFICIENT`.

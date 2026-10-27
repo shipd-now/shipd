@@ -368,9 +368,7 @@ fresh-attempt budget (`autopilot.attempts`, default three), each session
 using the gate entry's declared model, timeout, and max-resumes. The
 session's prompt SHALL direct running `/s:plan <member>` — which locates the
 rejected change and enters enrichment mode — resolving repository-answerable
-findings by editing the artifacts, consulting the oracle (agent
-`s:oracle`, one compact question carrying the decision, options, and
-recommendation per gap) for decisions the repository cannot answer instead
+findings by editing the artifacts, consulting the oracle inline (one `spec_status.py oracle-lookup` run per gap's compact question carrying the decision, options, and recommendation, judged per the oracle consultation contract) for decisions the repository cannot answer instead
 of any human, and exiting through the re-gate; each session SHALL be graded
 on the member change sitting at `ready` lint-clean. After a successful
 enrichment session the autopilot SHALL re-run the gate engine and let its
@@ -408,8 +406,7 @@ id: oracle-aware-driven-sessions
 
 The canned resume reply the autopilot sends to every driven session SHALL
 direct the session to shape any undecided point into a compact question
-(decision, options, recommendation), consult the oracle by spawning
-agent `s:oracle`, adopt an `ANSWER` verdict, and fall back to its own
+(decision, options, recommendation), consult the oracle by running `spec_status.py oracle-lookup`, named by its absolute path, and judging its output per the oracle consultation contract, adopt an `ANSWER` verdict, and fall back to its own
 recommendation on `INSUFFICIENT` or an unavailable oracle — never waiting
 for a human. The build stage prompt SHALL direct the coordinator to route
 sub-agent `QUESTION:` escalations that the spec artifacts and code cannot
@@ -417,12 +414,12 @@ answer through the same oracle before answering on its own authority.
 
 #### Scenario: Canned reply names the oracle rung
 - **WHEN** the autopilot's canned resume reply is inspected
-- **THEN** it directs compact-question consultation of agent `s:oracle`,
+- **THEN** it directs compact-question consultation through `oracle-lookup`,
   adopting `ANSWER` and self-recommending on `INSUFFICIENT`
 
 #### Scenario: Build prompt routes QUESTION escalations
 - **WHEN** the build stage prompt is rendered
-- **THEN** it directs consulting agent `s:oracle` for sub-agent `QUESTION:`
+- **THEN** it directs consulting `oracle-lookup` for sub-agent `QUESTION:`
   escalations the artifacts and code cannot answer
 
 ### Requirement: Targeted single-member drive
@@ -1183,8 +1180,7 @@ verdict SHALL drive a `replan` session through the enrichment machinery —
 the build entry's attempts, timeout, max-resumes, and model, graded on the
 member change at `ready` lint-clean — whose prompt names the ref, the
 verdict's reason and `revise` text, the drift findings, the rule to keep
-every `**Answered by:** USER` answer and epic Decision, the oracle agent
-`s:oracle` for un-inferrable decisions, that no human is present, and the
+every `**Answered by:** USER` answer and epic Decision, the `oracle-lookup` verb for un-inferrable decisions, that no human is present, and the
 closing `spec_gate.py <member> --root <worktree> --base <ref>` re-gate;
 after a successful session the driver SHALL re-run the gate engine with
 `--base <ref>`, so the stamp anchors on the synced ref: a pass proceeds
@@ -1219,8 +1215,7 @@ check.
 - **GIVEN** a judge verdict `revise` and a gate that passes after the
   re-plan session
 - **WHEN** the step runs
-- **THEN** one `replan` session ran with a prompt naming the reason,
-  `s:oracle`, `USER`, and `spec_gate.py --base origin/main`, the gate ran
+- **THEN** one `replan` session ran with a prompt naming the reason, `oracle-lookup`, `USER`, and `spec_gate.py --base origin/main`, the gate ran
   once more with `--base origin/main`, and the build session follows
 
 #### Scenario: A rejected re-gate records the member rejected
@@ -1496,7 +1491,7 @@ id: in-session-unattended-prompts
 The in-session drive's plan-stage instruction and its re-plan instruction
 SHALL each end with a paragraph stating that no human is available during
 the run, that a decision the repository cannot settle is put to the oracle
-(spawn agent `s:oracle` with one compact question), that on `INSUFFICIENT`
+(run `spec_status.py oracle-lookup` for one compact question and judge it per the oracle consultation contract), that on `INSUFFICIENT`
 the recommended default is adopted and recorded in the plan's ledger, and
 that no question round and no AskUserQuestion is opened. The re-plan
 instruction SHALL additionally name the `/s:drift` verdict's `revise:`

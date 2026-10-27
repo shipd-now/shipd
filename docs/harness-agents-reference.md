@@ -30,7 +30,6 @@ system prompt.
 | Id | Role |
 | --- | --- |
 | `shipd-sub-agent` | The execution worker a `/s:build` delegates its tasks to. |
-| `shipd-oracle` | The non-interactive answerer `/s:ask` and `/s:plan` consult. |
 | `shipd-validator` | The adversarial validator a build spawns to refute each scenario. |
 
 ## The verbs

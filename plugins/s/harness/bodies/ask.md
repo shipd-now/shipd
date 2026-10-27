@@ -18,20 +18,17 @@ Every wiki verb below runs as `python3 "$S/spec_status.py" --root <repo-root>
    overturn). Infer all three from the request and the repo; run no clarifying
    round. A request too thin to shape into a decision is refused, not guessed
    at — ask the user to restate it as a decision and stop there.
-2. **Consult durable knowledge**, in this order:
-<!-- if:subagents -->
-   Delegate the search to a `shipd-oracle` helper agent, handing it the
-   compact question, the repo's absolute root, and `$S/spec_status.py`; it
-   returns a verdict and asks nothing back. Run the search yourself when no
-   helper is available.
-<!-- end -->
-   - `wiki-show` — the store's root and health. It fails naming a missing
-     workspace or store: there is no durable knowledge, so go to step 4.
-   - `cat wiki index`, then `cat wiki <slug>` for every page bearing on the
-     decision.
-   - widen with read-only `grep` under the store root, then to the repo's own
-     surfaces — `shipd epic <slug>`, `cat verified <capability>`, `cat change
-     <slug>`. Read only; never edit a store file.
+2. **Consult durable knowledge inline.** Run one lookup over the personal
+   store, the workspace wiki and its answered queue, and this repo's spec
+   surfaces, picking two to six distinctive terms from the decision and its
+   options:
+   ```sh
+   python3 "$S/spec_status.py" --root <repo-root> oracle-lookup <term> <term>
+   ```
+   Retry once with alternative terms when it reports no evidence, then judge
+   the verdict from that output alone. A failed lookup, or no evidence, means
+   there is no durable knowledge: go to step 4. Read only; never edit a store
+   file. The "pending queue" section is a duplicate check, never evidence.
 3. **Answer only from a cited position.** A source qualifies when it states a
    position on *this* decision — a neighbouring decision does not count. Relay
    it with a `Cited:` line naming the wiki page (`[[slug]]`), answered queue

@@ -20,7 +20,13 @@ CONTRACT = os.path.normpath(
 VALIDATOR_CONTRACT = os.path.normpath(
     os.path.join(HERE, "..", "..", "..", "agents", "validator.md"))
 ORACLE_CONTRACT = os.path.normpath(
-    os.path.join(HERE, "..", "..", "..", "agents", "oracle.md"))
+    os.path.join(HERE, "..", "..", "ask", "references", "oracle-contract.md"))
+ORACLE_AGENT_FILES = (
+    os.path.normpath(os.path.join(HERE, "..", "..", "..", "agents",
+                                  "oracle.md")),
+    os.path.normpath(os.path.join(HERE, "..", "..", "..", "harness", "agents",
+                                  "oracle.md")),
+)
 BUILD_SKILL = os.path.normpath(os.path.join(HERE, "..", "SKILL.md"))
 
 
@@ -169,64 +175,28 @@ class ValidatorDesignReferenceContractTest(unittest.TestCase):
         self.assertIn("design-fidelity", section)
 
 
-class OracleChainRungContractTest(unittest.TestCase):
-    """The oracle's search ladder carries a workspace-chain rung between the
-    personal and base rungs (shipd-ask oracle-agent-contract,
-    oracle-cited-answers): it reads `wiki-show`'s `chain:` line, searches each
-    listed store nearest first with the same engine reads and read-only grep,
-    skips a chain member holding no store, and the base rung still follows it.
-    Also pins the `Cited: [[slug]] (inherited <ws-root>)` citation marker."""
+class OracleInlineContractTest(unittest.TestCase):
+    """The oracle is an inline consultation (shipd-ask
+    oracle-consultation-contract): the contract reference exists within 120
+    lines, carries the judging rules, and no oracle agent file ships."""
 
     def setUp(self):
+        self.assertTrue(os.path.isfile(ORACLE_CONTRACT),
+                        "oracle-contract.md is missing")
         with open(ORACLE_CONTRACT, encoding="utf-8") as fh:
             self.text = fh.read()
-        self.lower = self.text.lower()
 
-    def ladder_section(self):
-        """The '## The search ladder' section body: from its heading up to
-        the next top-level `## ` heading (or end of file)."""
-        m = re.search(
-            r"^## The search ladder\b.*$", self.text, re.MULTILINE)
-        self.assertIsNotNone(
-            m, "contract is missing a '## The search ladder' section heading")
-        start = m.start()
-        nxt = re.search(r"^## ", self.text[m.end():], re.MULTILINE)
-        end = m.end() + nxt.start() if nxt else len(self.text)
-        return self.text[start:end]
+    def test_is_at_most_120_lines(self):
+        self.assertLessEqual(len(self.text.splitlines()), 120)
 
-    def test_ladder_reads_the_chain_line(self):
-        section = self.ladder_section().lower()
-        self.assertIn("chain:", section)
+    def test_names_the_judging_rules(self):
+        for needle in ("oracle-lookup", "INSUFFICIENT", "Cited:",
+                       "Evidence:", "Authority: advisory"):
+            self.assertIn(needle, self.text)
 
-    def test_ladder_searches_chain_stores_nearest_first(self):
-        section = self.ladder_section().lower()
-        self.assertIn("nearest first", section)
-
-    def test_ladder_skips_a_chain_member_with_no_store(self):
-        section = self.ladder_section().lower()
-        self.assertIn("no store", section)
-
-    def test_base_rung_still_follows_the_chain_rung(self):
-        section = self.ladder_section().lower()
-        chain_pos = section.find("chain:")
-        base_pos = section.find("base wiki")
-        self.assertGreater(chain_pos, -1)
-        self.assertGreater(base_pos, -1)
-        self.assertLess(chain_pos, base_pos)
-
-    def test_documents_the_inherited_citation_marker(self):
-        self.assertIn("Cited: [[slug]] (inherited <ws-root>)", self.text)
-
-    def test_ladder_requires_copying_the_separators_provenance_annotation(self):
-        """The inherited marker must be copied verbatim from what the engine
-        already printed on the page's separator line — not derived by the
-        agent comparing paths itself. The ladder section must instruct
-        copying the `(inherited <ws-root>)` annotation verbatim onto the
-        citation."""
-        section = self.ladder_section().lower()
-        self.assertIn("verbatim", section)
-        self.assertIn("separator line", section)
-        self.assertIn("(inherited <ws-root>)", section)
+    def test_no_oracle_agent_file_ships(self):
+        for path in ORACLE_AGENT_FILES:
+            self.assertFalse(os.path.exists(path), path)
 
 
 class ForegroundClaimDisciplineContractTest(unittest.TestCase):

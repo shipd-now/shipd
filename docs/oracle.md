@@ -6,14 +6,18 @@ Some decisions do not live in the codebase. Which retention window? Which
 naming convention? Which of two defensible layouts does this team use?
 Settling one used to mean interrupting a human.
 
-The **oracle** is the rung in between. It is a non-interactive sub-agent
-(`s:oracle`). It takes one compact decision — the decision, its options, and
-your recommended default. It searches the durable knowledge the workspace
-already holds. It returns one of exactly two verdicts: a cited recommendation,
-or an admission that nobody has decided this yet.
+The **oracle** is the rung in between. It is an inline consultation, not an
+agent. The caller shapes one compact decision — the decision, its options, and
+your recommended default. It runs one engine call, `spec_status.py
+oracle-lookup`, which searches the durable knowledge the workspace already
+holds and prints cited snippets. The caller then judges that output under the
+oracle contract (`plugins/s/skills/ask/references/oracle-contract.md`). It
+reaches one of exactly two verdicts: a cited recommendation, or an admission
+that nobody has decided this yet.
 
-The oracle never asks you anything and never blocks its caller. Every spawn
-ends in a verdict.
+A consultation costs under 5K tokens, because no agent spawns and no
+context is rebuilt. The oracle never asks you anything and never blocks its
+caller. Every consultation ends in a verdict.
 
 ## The ladder
 
@@ -24,7 +28,7 @@ rung below comes up empty.
 ```mermaid
 flowchart TD
     read["1. READ<br/>the codebase, the specs, the change's own artifacts<br/>anything discoverable by reading is never asked"]
-    oracle["2. ORACLE<br/>personal memory → workspace chain (nearest first)<br/>→ answered queue → base wiki<br/>→ the repo's spec surfaces"]
+    oracle["2. ORACLE<br/>one oracle-lookup call, judged inline<br/>personal memory → workspace chain (nearest first)<br/>→ answered queue → base wiki<br/>→ the repo's spec surfaces"]
     human["3. HUMAN<br/>/s:ask asks you in a dialog<br/>/s:plan asks in its round<br/>autopilot parks instead"]
     caller["relayed to the caller<br/>— nobody is interrupted<br/>an advisory answer comes back as a recommendation"]
     classify{"classify the answer<br/>capture durability rubric"}
@@ -39,7 +43,7 @@ flowchart TD
     classify -- "durable position" --> include
     classify -- "one-off or self-evidencing" --> exclude
     classify -- "workflow or preference" --> gated
-    include -. "the next spawn reads it and answers from rung 2<br/>— you are asked once" .-> oracle
+    include -. "the next lookup reads it and answers from rung 2<br/>— you are asked once" .-> oracle
     gated -. "only on your express yes, as advisory<br/>anything else discards the block" .-> oracle
 ```
 
@@ -52,7 +56,7 @@ captured queue entries into proper wiki pages.
 
 ## The two verdicts
 
-The oracle's reply always opens with a first line of exactly `ANSWER` or
+The verdict always opens with a first line of exactly `ANSWER` or
 `INSUFFICIENT`. Callers branch on that line mechanically.
 
 ### `ANSWER` — somebody already decided this
@@ -118,7 +122,7 @@ Recommendation: prune after one release
 Queued: q-answered-queue-retention
 ```
 
-The oracle files the compact question in the workspace wiki's queue as
+The caller files the compact question in the workspace wiki's queue as
 `q-answered-queue-retention`, carrying `Answer: pending`. The caller takes it
 from there. `/s:ask` puts it to you in a dialog. `/s:plan` folds it into its
 question round. An unattended autopilot run parks on the recommendation rather
@@ -130,16 +134,17 @@ session only, and nothing durable lands.
 
 ## The bar: definitive evidence, or nothing
 
-**`INSUFFICIENT` is the oracle's default verdict.** The oracle is a retrieval
-rung, not a consultant, and it speaks only for what its sources actually say:
+**`INSUFFICIENT` is the default verdict.** The oracle is a retrieval rung,
+not a consultant, and it speaks only for what its sources actually say:
 
-- **It never answers from model knowledge.** Its own view of your decision,
-  however sensible, is not evidence.
+- **It never answers from model knowledge.** The caller's own view of your
+  decision, however sensible, is not evidence.
 - **Topical relevance is not enough.** A page about caching does not answer
   "which TTL". `ANSWER` needs a source that states a position on the *specific*
   decision asked.
-- **Callers enforce the bar too.** `/s:ask` and `/s:plan` demote an `ANSWER`
-  that arrives without a `Cited:` or an `Evidence:` line, and ask you instead.
+- **The quote must be real.** The `Evidence:` line has to appear verbatim in
+  the lookup output. `/s:ask` and `/s:plan` demote an `ANSWER` that arrives
+  without a `Cited:` or an `Evidence:` line, and ask you instead.
 
 The verbatim `Evidence:` quote is what lets you check that bar at a glance. A
 demotion costs one question. A confident guess costs a wrong decision.
@@ -153,8 +158,8 @@ answer with a durable position thickens the store.
 /s:ask should the queue prune answered entries, and after how long?
 ```
 
-The skill shapes your request into a compact question, spawns the oracle, and
-relays the verdict. It opens no interview round.
+The skill shapes your request into a compact question, runs `oracle-lookup`,
+judges the output itself, and relays the verdict. It opens no interview round.
 
 On an advisory `ANSWER` it puts the decision to you, with the oracle's position
 recommended first and cited, rather than treating it as settled. On
@@ -217,7 +222,7 @@ said.
 Corrections go through **`/s:teach`**, the sole distiller of queue entries into
 wiki pages. Run it to drain answered entries into pages, then edit the decision
 on the page. A page outranks a raw queue entry on the oracle's ladder, so
-future spawns cite the corrected page. During planning, the same path appears
+future lookups cite the corrected page. During planning, the same path appears
 per consultation as `/s:teach <change> Q<n>`.
 
 A typed answer always supersedes the oracle. You are the final authority, and

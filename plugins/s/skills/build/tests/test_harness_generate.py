@@ -380,7 +380,7 @@ class AgentRenderingTest(unittest.TestCase):
         self.assertTrue(text.endswith(body), text[-200:])
 
     def test_extra_fields_render_verbatim(self):
-        opencode = hg.render_agent(hr.get("opencode"), "oracle")
+        opencode = hg.render_agent(hr.get("opencode"), "sub-agent")
         self.assertIn("mode: subagent", opencode.split("---")[1])
         agy = hg.render_agent(hr.get("agy"), "validator")
         self.assertIn("subagent: true", agy.split("---")[1])
