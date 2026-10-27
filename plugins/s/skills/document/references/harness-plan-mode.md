@@ -30,8 +30,8 @@ The first of these ends the run:
 
 - Creating a worktree or a branch.
 - Writing or installing any file, including staged artifacts.
-- Spawning an agent that writes, such as `s:oracle`, which files queue
-  entries.
+- Spawning an agent that writes, or filing an oracle miss with
+  `wiki-queue-add`.
 - Running a mutating engine verb, a commit, a push, or a pull request.
 
 ## What never happens

@@ -1977,7 +1977,8 @@ class GateEnrichmentTest(AutopilotTestBase):
         prompt = enrich[0][1]
         self.assertIn("/s:plan", prompt)
         self.assertIn("m", prompt)  # the member slug
-        self.assertIn("s:oracle", prompt)
+        self.assertIn("oracle-lookup", prompt)
+        self.assertNotIn("s:oracle", prompt)
         # The gate ran twice: the initial rejection and the post-enrichment pass.
         self.assertEqual(len(s.gate_calls), 2)
         # The pipeline continued into build.
@@ -2155,9 +2156,10 @@ class PreBuildDriftTest(AutopilotTestBase):
         self.assertEqual(result.outcome, "shipped")
         self.assertEqual(self._stages(s), ["plan", "replan", "build"])
         prompt = next(p for st, _m, p in s.sessions if st == "replan")
-        for needle in ("r", "tasks 2.x", "s:oracle", "USER", "spec_gate.py",
+        for needle in ("r", "tasks 2.x", "oracle-lookup", "USER", "spec_gate.py",
                        "--base origin/main"):
             self.assertIn(needle, prompt)
+        self.assertNotIn("s:oracle", prompt)
         self.assertEqual(len(s.gate_calls), 2)
         self.assertEqual(s.gate_calls[1][2], "origin/main")
 
@@ -2320,7 +2322,8 @@ class OracleAwareSessionTest(unittest.TestCase):
 
     def test_goahead_reply_names_oracle_rung(self):
         reply = autopilot.GOAHEAD_REPLY
-        self.assertIn("s:oracle", reply)
+        self.assertIn("oracle-lookup", reply)
+        self.assertNotIn("s:oracle", reply)
         # The compact-question shape: decision, options, recommendation.
         low = reply.lower()
         self.assertIn("decision", low)
@@ -2331,7 +2334,8 @@ class OracleAwareSessionTest(unittest.TestCase):
 
     def test_build_prompt_routes_question_escalations_through_oracle(self):
         prompt = autopilot._stage_prompt("build", "m", {})
-        self.assertIn("s:oracle", prompt)
+        self.assertIn("oracle-lookup", prompt)
+        self.assertNotIn("s:oracle", prompt)
         self.assertIn("QUESTION:", prompt)
 
 

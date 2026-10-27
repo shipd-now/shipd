@@ -9,12 +9,11 @@ description: >-
 # /s:ask — Question → the oracle's verdict
 
 You are the **human entry to the oracle**. Your job is to turn the
-user's request into one **compact question**, hand it to the `s:oracle` agent,
-and relay the oracle's verdict — a cited recommendation, or a question queued for
-a person. You do **not** answer from your own model knowledge and you do **not**
-plan or build anything from the answer: the oracle consults durable knowledge
-(the workspace wiki and the asking repo's spec surfaces), and you relay what it
-returns.
+user's request into one **compact question**, consult the oracle inline, and
+relay the verdict — a cited recommendation, or a question queued for a person. You do **not**
+answer from your own model knowledge and you do **not** plan or build anything
+from the answer: the oracle is a lookup over durable knowledge (the workspace wiki and the asking repo's
+spec surfaces), and you judge only what that lookup prints.
 
 **The oracle is the middle rung of the epic's read → oracle → human ladder.**
 A caller at an un-inferrable decision consults the user's standing opinion before
@@ -55,23 +54,24 @@ question round. If the request is genuinely too thin to shape into a decision,
 say so and ask the user to restate it as a decision; otherwise shape it and go
 straight to the oracle.
 
-## Spawn the oracle
+## Consult the oracle inline
 
-Spawn the oracle through the **Agent tool** with `subagent_type: s:oracle`,
-passing in the spawn message:
+Spawn no agent. Read
+`${CLAUDE_PLUGIN_ROOT}/skills/ask/references/oracle-contract.md` once, then
+follow it: run
 
-- the **compact question** (decision, options, recommendation),
-- the **asking repo's absolute root**, and
-- the absolute path to the status CLI (the oracle's `STATUS_CLI`):
-  `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py`.
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py \
+  --root <asking-repo-root> oracle-lookup <2-6 distinctive terms>
+```
 
-The oracle is non-interactive: it searches the workspace wiki first, widens to
-the repo's spec surfaces, and returns a verdict whose first non-blank line is
-exactly `ANSWER` or `INSUFFICIENT`. It never asks anything back.
+(retrying once with alternative terms when nothing matched), and judge the
+verdict from that output alone. The verdict's first non-blank line is exactly
+`ANSWER` or `INSUFFICIENT`; the default is `INSUFFICIENT`.
 
 ## Relay the verdict
 
-Branch on the oracle's first line:
+Branch on your verdict's first line:
 
 - **`ANSWER`** — relay the oracle's recommendation **verbatim**, including its
   `Cited:` line(s) naming the wiki page(s) (`[[slug]]`), the answered queue
@@ -88,12 +88,12 @@ Branch on the oracle's first line:
   recommends, it never decides. (There is no queued block to capture against
   on this branch, so the capture step below does not apply; the answer stands
   for this session.)
-- **`INSUFFICIENT`** — the oracle could not answer from durable knowledge and
-  has queued the decision. It appends the compact question to the workspace
-  wiki queue through the engine (`spec_status.py wiki-queue-add`, scaffolding
-  the store with `wiki-init` first when none exists). Relay the compact
-  question block and the `Queued: q-<slug>` it filed, then **put the question
-  to the user** (below).
+- **`INSUFFICIENT`** — the lookup held no cited position on the decision. Queue
+  the compact question through the engine as the contract's queue path says
+  (`spec_status.py wiki-queue-add`, scaffolding the store with `wiki-init`
+  first when none exists, citing an equivalent pending question instead of
+  duplicating it). Relay the compact question block and the `Queued: q-<slug>`
+  it filed, then **put the question to the user** (below).
 
 **Demote a malformed `ANSWER`.** The oracle's bar is a cited source that states
 a position on the specific decision, quoted verbatim. So if the first line is
@@ -141,7 +141,7 @@ rather than leaving the question to sit in the queue.
      ```
 
      (Pass the bare `<slug>` — the verb prefixes `q-` itself.) The next oracle
-     spawn reads that answered block and can cite it, so the same question is
+     lookup reads that answered block and can cite it, so the same question is
      never asked twice. Tell the user the answer was captured, naming the
      `q-<slug>`.
    - **Exclude** — capture nothing and clear the block, so the queue stays a

@@ -296,6 +296,9 @@ class AgentSourceTest(unittest.TestCase):
     def body_after_frontmatter(self, text):
         return text.split("---\n", 2)[2].strip()
 
+    def test_agent_roles_exclude_the_retired_oracle(self):
+        self.assertEqual(hr.AGENT_ROLES, ("sub-agent", "validator"))
+
     def test_one_source_file_per_role_with_a_description_marker(self):
         directory = os.path.join(PLUGIN_ROOT, "harness", "agents")
         names = sorted(n for n in os.listdir(directory) if n.endswith(".md"))

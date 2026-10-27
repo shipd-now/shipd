@@ -288,8 +288,8 @@ following the /s:drift verdict's `revise:` pointer and reason: the pointer
 names <revise-pointer>, and the reason is <reason>.
 
 No human is available during this run. Put a decision the repository cannot
-settle to the oracle (spawn agent `s:oracle` with one compact question); on
-INSUFFICIENT adopt your recommended default and record it in the plan's
+settle to the oracle (run `oracle-lookup` judged per the contract in
+`skills/ask/references/oracle-contract.md`); on INSUFFICIENT adopt your recommended default and record it in the plan's
 ledger. Never open a question round or an AskUserQuestion.
 
 Keep every `**Answered by:** USER` ledger entry and every epic Decision; never
@@ -372,8 +372,8 @@ Run /s:plan for the change `<member>` — a member of an approved epic.
 Investigate, spec it, and promote it to Status: ready.
 
 No human is available during this run. Put a decision the repository cannot
-settle to the oracle (spawn agent `s:oracle` with one compact question); on
-INSUFFICIENT adopt your recommended default and record it in the plan's
+settle to the oracle (run `oracle-lookup` judged per the contract in
+`skills/ask/references/oracle-contract.md`); on INSUFFICIENT adopt your recommended default and record it in the plan's
 ledger. Never open a question round or an AskUserQuestion.
 ```
 
@@ -383,8 +383,8 @@ Run /s:build for the change `<member>`: implement every task, then merge
 and archive it and open its auto-merging PR.
 
 If a sub-agent escalates a QUESTION: that the spec artifacts and code cannot
-answer, consult the oracle (spawn agent `s:oracle` with a compact
-question) before answering on your own authority; on INSUFFICIENT, answer
+answer, consult the oracle (run `oracle-lookup` judged per
+`skills/ask/references/oracle-contract.md`) before answering on your own authority; on INSUFFICIENT, answer
 with your own recommendation — never leave the sub-agent blocked.
 ```
 

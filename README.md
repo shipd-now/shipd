@@ -293,7 +293,7 @@ Everything the plugin ships is invoked as `/s:<name>`.
 
 | Invocation | What it does |
 | --- | --- |
-| `/s:ask` | Query the oracle before interrupting a human: shape a request into one compact decision, consult the workspace wiki and the repo's spec surfaces, and relay the verdict — a cited recommendation, or a question queued for a person to answer later. |
+| `/s:ask` | Query the oracle before interrupting a human: shape a request into one compact decision, consult the workspace wiki and the repo's spec surfaces inline with one `oracle-lookup` call, and relay the verdict — a cited recommendation, or a question queued for a person to answer later. |
 | `/s:teach` | Distill the repo's spec artifacts and answered queue entries into the workspace wiki: scan the spec surfaces, interview only on the gaps and contradictions the scan surfaces, and ingest through the store's staged, lint-gated emit verb. |
 | `/s:remember` | Capture durable preferences into the personal memory store: extract candidates from the invocation or the session, reconcile each against existing `memory-*` pages, confirm the set, and install it in one staged call. |
 | `/s:memory` | List the durable preferences captured in the personal memory store — the read-only browse counterpart to `/s:remember`. |
@@ -577,7 +577,7 @@ shipd/
     └── s/                        # the plugin (name: "s" → /s: prefix)
         ├── .claude-plugin/
         │   └── plugin.json       # plugin manifest (carries the version)
-        ├── agents/               # sub-agent definitions (s:sub-agent, s:validator, s:oracle)
+        ├── agents/               # sub-agent definitions (s:sub-agent, s:validator)
         ├── bin/
         │   └── shipd             # the CLI
         ├── integrations/

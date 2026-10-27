@@ -210,7 +210,7 @@ agent path helper SHALL resolve to `None` for a harness whose `agent` member is
   and the source's description, then the ownership marker, then the source body
 
 #### Scenario: Extra fields render verbatim
-- **WHEN** `opencode`'s `oracle` agent and `agy`'s `validator` agent are
+- **WHEN** `opencode`'s `sub-agent` agent and `agy`'s `validator` agent are
   rendered
 - **THEN** opencode's frontmatter carries `mode: subagent` and agy's carries
   `subagent: true`, each after the fields its entry declares

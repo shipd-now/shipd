@@ -319,11 +319,16 @@ class DelegationAgentTest(unittest.TestCase):
 
     def test_subagents_branches_name_the_generated_agents(self):
         for command, agent in (("build", "shipd-sub-agent"),
-                               ("autopilot", "shipd-sub-agent"),
-                               ("ask", "shipd-oracle")):
+                               ("autopilot", "shipd-sub-agent")):
             with self.subTest(command=command):
                 out = hb.render(command, hr.FEATURES, refs_dir=REFS)
                 self.assertIn(agent, out)
+
+    def test_ask_consults_inline_and_names_no_oracle_agent(self):
+        for features in (hr.FEATURES, ()):
+            out = hb.render("ask", features, refs_dir=REFS)
+            self.assertNotIn("shipd-oracle", out)
+            self.assertIn("oracle-lookup", out)
 
     def test_a_harness_without_subagents_names_no_agent(self):
         out = hb.render("build", (), refs_dir=REFS)

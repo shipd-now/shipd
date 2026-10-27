@@ -57,6 +57,13 @@ Verbs (see the spec-status + statusline capabilities for the contract):
                      count, printing a keyed block (kind/slug/score/path) per
                      match, top ten first plus a remainder line; the wiki and
                      any missing corpus directory are skipped silently
+  oracle-lookup <term> [<term>...]
+                     run the oracle's search ladder in one read-only call:
+                     personal store, workspace chain (or fallback) stores,
+                     present base store, then spec surfaces; print cited
+                     snippets (at most four per rung, about 6000 characters),
+                     the matching pending queue blocks as not-evidence, and a
+                     closing INSUFFICIENT line when nothing matched; exit 0
   check-base [change]
                      compare the change's delta specs against the current master
                      library (read-only), printing one finding line per
@@ -1292,6 +1299,336 @@ def cmd_search(root, terms, as_json=False):
               + _search_prd_artifacts(root)
               + _search_code_artifacts(root))
     return _render_ranked_matches(root, corpus, terms, as_json)
+
+
+# ---------------------------------------------------------------------------
+# Oracle lookup (spec-status oracle-lookup-verb)
+# ---------------------------------------------------------------------------
+
+# Per-rung snippet cap, total output cap, snippet length cap.
+ORACLE_RUNG_MAX = 4
+ORACLE_OUTPUT_MAX = 6000
+ORACLE_SNIPPET_MAX = 400
+ORACLE_PENDING_MAX = 4
+# Characters held back from the evidence budget for the closing lines.
+ORACLE_RESERVE = 260
+
+_ORACLE_ADVISORY_PAGE_RE = re.compile(
+    r"^\W*Authority:\s*advisory\b", re.IGNORECASE | re.MULTILINE)
+_ORACLE_ID_RE = re.compile(r"^id:\s*(\S+)\s*$")
+
+
+def _oracle_paragraphs(text):
+    """Split ``text`` into blank-line-separated paragraphs (lists of lines)."""
+    paragraphs, current = [], []
+    for line in text.splitlines():
+        if line.strip():
+            current.append(line)
+        elif current:
+            paragraphs.append(current)
+            current = []
+    if current:
+        paragraphs.append(current)
+    return paragraphs
+
+
+def _oracle_terms(terms):
+    """Lowercased, de-duplicated, non-empty terms in first-seen order."""
+    seen, out = set(), []
+    for term in terms:
+        low = term.strip().lower()
+        if low and low not in seen:
+            seen.add(low)
+            out.append(low)
+    return out
+
+
+def _oracle_score(text, terms):
+    """``(distinct terms hit, total hits)`` of ``text`` for ``terms``."""
+    low = text.lower()
+    counts = [low.count(term) for term in terms]
+    return sum(1 for c in counts if c), sum(counts)
+
+
+def _oracle_snippet(text, terms):
+    """``text`` with whitespace runs collapsed, clipped to at most
+    :data:`ORACLE_SNIPPET_MAX` characters around the first term hit."""
+    flat = " ".join(text.split())
+    if len(flat) <= ORACLE_SNIPPET_MAX:
+        return flat
+    low = flat.lower()
+    hits = [low.find(t) for t in terms if low.find(t) >= 0]
+    first = min(hits) if hits else 0
+    start = max(0, first - ORACLE_SNIPPET_MAX // 4)
+    start = min(start, len(flat) - ORACLE_SNIPPET_MAX)
+    return flat[start:start + ORACLE_SNIPPET_MAX]
+
+
+def _oracle_read(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _oracle_match(text, terms, need, snippet_text=None):
+    """A match record for ``text`` (``score``, ``snippet``) or ``None`` when
+    fewer than ``need`` distinct terms hit."""
+    distinct, total = _oracle_score(text, terms)
+    if distinct < need:
+        return None
+    return {"score": (distinct, total),
+            "snippet": _oracle_snippet(snippet_text or text, terms)}
+
+
+def _oracle_ranked(matches):
+    """Rank ``matches`` by distinct terms then total hits, stably."""
+    return sorted(matches, key=lambda m: (-m["score"][0], -m["score"][1]))
+
+
+def _oracle_store_matches(store, suffix, terms, need):
+    """The page matches then the answered-queue-block matches of one wiki
+    ``store``, each ranked, citations carrying ``suffix``."""
+    pages, blocks = [], []
+    pages_dir = os.path.join(store, "wiki")
+    if os.path.isdir(pages_dir):
+        for fname in sorted(os.listdir(pages_dir)):
+            path = os.path.join(pages_dir, fname)
+            if not fname.endswith(".md") or not os.path.isfile(path):
+                continue
+            text = _oracle_read(path)
+            if text is None:
+                continue
+            advisory = bool(_ORACLE_ADVISORY_PAGE_RE.search(text))
+            for para in _oracle_paragraphs(text):
+                m = _oracle_match("\n".join(para), terms, need)
+                if m:
+                    m["cite"] = "[[%s]]%s" % (fname[:-3], suffix)
+                    m["advisory"] = advisory
+                    pages.append(m)
+    queue_text = _oracle_read(os.path.join(store, "queue.md"))
+    if queue_text is not None:
+        for qid, fields in sc.parse_queue_blocks(queue_text):
+            answer = fields.get("Answer", "").strip()
+            if answer == "pending":
+                continue
+            full = " ".join(fields.get(k, "") for k in
+                            ("Question", "Options", "Recommendation",
+                             "Answer"))
+            shown = "Question: %s Answer: %s" % (
+                fields.get("Question", ""), answer)
+            m = _oracle_match(full, terms, need, shown)
+            if m:
+                m["cite"] = "queue %s%s" % (qid, suffix)
+                m["advisory"] = answer.startswith("advisory: ")
+                blocks.append(m)
+    return _oracle_ranked(pages) + _oracle_ranked(blocks)
+
+
+def _oracle_pending(store, terms, need):
+    """``(id, question)`` of every pending queue block in ``store`` that
+    matches ``terms``."""
+    text = _oracle_read(os.path.join(store, "queue.md"))
+    out = []
+    if text is None:
+        return out
+    for qid, fields in sc.parse_queue_blocks(text):
+        if fields.get("Answer", "").strip() != "pending":
+            continue
+        full = " ".join(fields.get(k, "") for k in
+                        ("Question", "Options", "Recommendation"))
+        if _oracle_score(full, terms)[0] >= need:
+            out.append((qid, " ".join(fields.get("Question", "").split())))
+    return out
+
+
+def _oracle_spec_roots(root):
+    """The roots whose spec surfaces are searched: the focus project's present
+    repos first, then the invocation root, deduped."""
+    roots = []
+    try:
+        data = _workspace_show_data(root)
+        focus = data.get("focus")
+        ws_root = data.get("registry") or data["workspace"]
+        for project in data["projects"]:
+            if project["slug"] != focus:
+                continue
+            for repo in project["repos"]:
+                if repo.get("present"):
+                    roots.append(sc.member_dest(ws_root, repo["path"]))
+    except (StatusError, sc.ConfigError, OSError):
+        roots = []
+    roots.append(os.path.abspath(root))
+    seen, out = set(), []
+    for r in roots:
+        real = os.path.realpath(r)
+        if real not in seen and os.path.isdir(r):
+            seen.add(real)
+            out.append(r)
+    return out
+
+
+def _oracle_spec_matches(spec_root, terms, need):
+    """Spec-surface matches of one repo root, ranked per surface kind."""
+    try:
+        base = sc.specs_dir(spec_root)
+    except sc.ConfigError:
+        return []
+    verified, epics, research = [], [], []
+    vdir = os.path.join(base, "verified")
+    for cap in _dir_names(vdir):
+        text = _oracle_read(os.path.join(vdir, cap, "spec.md"))
+        if text is None:
+            continue
+        req_id = None
+        for para in _oracle_paragraphs(text):
+            for line in para:
+                im = _ORACLE_ID_RE.match(line.strip())
+                if im:
+                    req_id = im.group(1)
+                    break
+            m = _oracle_match("\n".join(para), terms, need)
+            if m:
+                m["cite"] = ("verified/%s (%s)" % (cap, req_id) if req_id
+                             else "verified/%s" % cap)
+                m["advisory"] = False
+                verified.append(m)
+    edir = os.path.join(base, "epics")
+    for slug in _dir_names(edir):
+        text = _oracle_read(os.path.join(edir, slug, "epic.md"))
+        if text is None:
+            continue
+        in_section = False
+        section = []
+        for line in text.splitlines():
+            if line.startswith("## "):
+                in_section = line[3:].strip() in ("Decisions", "Design")
+            if in_section:
+                section.append(line)
+        for para in _oracle_paragraphs("\n".join(section)):
+            m = _oracle_match("\n".join(para), terms, need)
+            if m:
+                m["cite"] = "epic/%s" % slug
+                m["advisory"] = False
+                epics.append(m)
+    rdir = os.path.join(base, "research")
+    for slug in _dir_names(rdir):
+        text = _oracle_read(os.path.join(rdir, slug, "report.md"))
+        if text is None:
+            continue
+        for para in _oracle_paragraphs(text):
+            m = _oracle_match("\n".join(para), terms, need)
+            if m:
+                m["cite"] = "research/%s" % slug
+                m["advisory"] = False
+                research.append(m)
+    return _oracle_ranked(verified) + _oracle_ranked(epics) \
+        + _oracle_ranked(research)
+
+
+def cmd_oracle_lookup(root, terms):
+    """Run the oracle's whole search ladder in one read-only call (spec-status
+    oracle-lookup-verb): personal store, workspace chain (or fallback) stores,
+    present base store, then spec surfaces; print compact cited snippets (at
+    most four per rung, about 6000 characters in all), the pending queue
+    blocks that match as not-evidence, and a closing ``INSUFFICIENT`` line when
+    nothing matched. Always exits 0; writes nothing."""
+    terms = _oracle_terms(terms)
+    need = min(2, len(terms))
+
+    personal_store = None
+    personal = []
+    try:
+        pstore = sc.memory_store_dir(root)
+        if os.path.isdir(pstore):
+            personal_store = pstore
+            personal = _oracle_store_matches(pstore, " (personal)", terms, need)
+    except sc.ConfigError:
+        pass
+
+    stores, workspace, pending = [], [], []
+    try:
+        anchor, is_fallback = _resolve_wiki_anchor(root)
+    except StatusError:
+        anchor, is_fallback = None, False
+    base_state = "none"
+    base_path = None
+    base_matches = []
+    if anchor is not None:
+        roots = [anchor] if is_fallback else sc.workspace_chain(root)
+        if anchor not in roots:
+            roots.insert(0, anchor)
+        for ws in roots:
+            store = sc.wiki_dir(ws)
+            if not os.path.isdir(store):
+                continue
+            stores.append(store)
+            suffix = "" if ws == anchor else " (inherited %s)" % ws
+            workspace.extend(_oracle_store_matches(store, suffix, terms, need))
+            if ws == anchor:
+                pending = _oracle_pending(store, terms, need)
+        try:
+            base_path = sc.wiki_base_dir(anchor)
+        except sc.ConfigError:
+            base_path = None
+        if base_path is not None:
+            if os.path.isdir(base_path):
+                base_state = base_path
+                base_matches = _oracle_store_matches(
+                    base_path, " (base)", terms, need)
+            else:
+                base_state = "absent"
+
+    spec_roots = _oracle_spec_roots(root)
+    specs = []
+    for spec_root in spec_roots:
+        specs.extend(_oracle_spec_matches(spec_root, terms, need))
+
+    out = ["oracle-lookup: terms=%s | personal: %s | workspace: %s | "
+           "base: %s | specs: %s" % (
+               ", ".join(terms),
+               personal_store or "skipped",
+               ", ".join(stores) if stores else "skipped",
+               base_state,
+               ", ".join(spec_roots) if spec_roots else "none")]
+    used = len(out[0]) + 1
+    printed = 0
+    total = 0
+    full = False
+    budget = ORACLE_OUTPUT_MAX - ORACLE_RESERVE
+    for heading, matches in (("personal", personal), ("workspace", workspace),
+                             ("base", base_matches), ("specs", specs)):
+        out.append("== %s" % heading)
+        used += len(out[-1]) + 1
+        total += len(matches)
+        shown = 0
+        for m in matches[:ORACLE_RUNG_MAX]:
+            tag = " [advisory]" if m["advisory"] else ""
+            line = '%s%s — "%s"' % (m["cite"], tag, m["snippet"])
+            if full or used + len(line) + 1 > budget:
+                full = True
+                break
+            out.append(line)
+            used += len(line) + 1
+            shown += 1
+        printed += shown
+        if not shown:
+            out.append("(none)")
+            used += len("(none)") + 1
+
+    out.append("== pending queue (duplicate check — not evidence)")
+    if pending:
+        for qid, question in pending[:ORACLE_PENDING_MAX]:
+            out.append("%s — %s" % (qid, question[:160]))
+    else:
+        out.append("(none)")
+    if total == 0:
+        out.append("no evidence found — verdict INSUFFICIENT")
+    elif total > printed:
+        out.append("… %d more matches omitted" % (total - printed))
+    print("\n".join(out))
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -5036,6 +5373,12 @@ def main(argv=None):
     p_search.add_argument("terms", nargs="+", metavar="term")
     _add_json_flag(p_search)
 
+    p_oracle = sub.add_parser(
+        "oracle-lookup",
+        help="run the oracle's search ladder in one read-only call and print "
+             "cited snippets (personal, workspace, base, spec surfaces)")
+    p_oracle.add_argument("terms", nargs="+", metavar="term")
+
     p_check_base = sub.add_parser(
         "check-base",
         help="compare a change's deltas against the master library (read-only)")
@@ -5325,6 +5668,8 @@ def main(argv=None):
             return cmd_related(root, args.terms, as_json=args.json)
         if args.verb == "search":
             return cmd_search(root, args.terms, as_json=args.json)
+        if args.verb == "oracle-lookup":
+            return cmd_oracle_lookup(root, args.terms)
         if args.verb == "check-base":
             return cmd_check_base(root, args.change)
         if args.verb == "drift":

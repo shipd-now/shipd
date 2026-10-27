@@ -7,7 +7,7 @@ The engine SHALL provide a stdlib-only module
 `plugins/s/skills/build/scripts/harness_registry.py` declaring `FEATURES` —
 exactly the vocabulary `subagents`, `question-dialogs`, `file-references`,
 `background-tasks` — `AGENT_DIALECTS` — exactly the vocabulary `yaml` —
-`AGENT_ROLES` — exactly `sub-agent`, `oracle`, `validator` — and `HARNESSES`,
+`AGENT_ROLES` — exactly `sub-agent`, `validator` — and `HARNESSES`,
 fifteen harness entries (`claude-code`, `cursor`, `github-copilot`, `windsurf`,
 `aider`, `codex`, `cline`, `roocode`, `continue`, `antigravity`, `agy`,
 `devin`, `oh-my-pi`, `opencode`, `pi`) each carrying a unique kebab-case `id`,
@@ -139,7 +139,7 @@ id: registry-agent-source
 
 The plugin SHALL ship a neutral agent-definition source under
 `plugins/s/harness/agents/`, one file per `AGENT_ROLES` member
-(`sub-agent.md`, `oracle.md`, `validator.md`), each opening with a
+(`sub-agent.md`, `validator.md`), each opening with a
 `<!-- description: <one line> -->` marker followed by that role's
 system-prompt prose, and carrying no harness-specific frontmatter. Each file's
 prose SHALL be the plugin's existing agent prose for that role, re-homed
@@ -171,7 +171,7 @@ add a harness.
 - **WHEN** `docs/harness-agents-reference.md` is read
 - **THEN** it names `claude-code`, `opencode`, `agy`, and `oh-my-pi` with each
   one's agent repository and user-global location and frontmatter, and states
-  the `shipd-sub-agent`, `shipd-oracle`, and `shipd-validator` ids
+  the `shipd-sub-agent` and `shipd-validator` ids, and names no `shipd-oracle` agent
 
 #### Scenario: Customise points at the reference
 - **WHEN** `docs/customise.md`'s harness section is read

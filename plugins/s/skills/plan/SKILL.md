@@ -567,13 +567,14 @@ enrichment's true-gap round — consult the oracle on each remaining decision
 - **Shape each decision into a compact question.** One decision-ready unit per
   decision, carrying exactly the decision, its concrete options, and the
   recommended default the skill already forms — the same shape `/s:ask` uses.
-- **Spawn one `s:oracle` per decision, in parallel.** Issue the spawns
-  together (one per remaining decision) through the **Agent tool** with
-  `subagent_type: s:oracle`, passing in each spawn message the compact
-  question, the asking repo's absolute root, and the status CLI path
-  `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py`. The oracle is
-  non-interactive and returns a verdict whose first non-blank line is `ANSWER`
-  or `INSUFFICIENT`; it never asks anything back.
+- **Run one `oracle-lookup` per decision, inline.** Spawn no agent. Read
+  `${CLAUDE_PLUGIN_ROOT}/skills/ask/references/oracle-contract.md` once, then
+  for each remaining decision run
+  `python3 ${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py --root
+  <asking-repo-root> oracle-lookup <terms>` and judge the verdict from that
+  output per the contract, whose first non-blank line is `ANSWER` or
+  `INSUFFICIENT`. File each `INSUFFICIENT` with `wiki-queue-add` per the
+  contract's queue path. The consultation never asks anything back.
 - **Branch on each verdict's first non-blank line.**
   - **`ANSWER`** → the decision is resolved: fold the oracle's position in and
     **do not put it to the user**.
@@ -584,10 +585,11 @@ enrichment's true-gap round — consult the oracle on each remaining decision
     option** and its `Cited:` source named, so accepting it is the cheapest
     reply and overriding it costs one word. Never fold an advisory answer in
     silently.
-  - **`INSUFFICIENT`** → the decision enters the user round **unchanged**; the
-    oracle has already queued it, so nothing more is needed to escalate it.
-  - **Spawn failure or any other first line** (a malformed verdict) → treat the
-    decision as `INSUFFICIENT` and continue. **The rung never blocks planning.**
+  - **`INSUFFICIENT`** → the decision enters the user round **unchanged**, after
+    you file it with `wiki-queue-add` (or cite the equivalent pending question
+    the lookup listed).
+  - **A non-zero lookup exit or any other first line** (a malformed verdict) →
+    treat the decision as `INSUFFICIENT` and continue. **The rung never blocks planning.**
 - **Demote a malformed `ANSWER`.** The oracle answers only from a cited source
   that states a position on the specific decision, quoted verbatim. So an
   `ANSWER` whose body carries **no `Cited:` line or no `Evidence:` line** is
@@ -685,7 +687,7 @@ enrichment's true-gap round — consult the oracle on each remaining decision
   the queue only: **every** consultation still gets its ledger entry above,
   discarded and advisory ones included — the ledger records the consultation in
   `plan.md`, while the queue write is what makes an answer citable by the next
-  oracle spawn. Where the verdict reported **`Queued: none`** (no discoverable
+  oracle lookup. Where the verdict reported **`Queued: none`** (no discoverable
   workspace), skip the write and say so in visible text — nothing durable was
   captured. If a capture or discard write **exits non-zero**, report the
   failure and continue to emission: neither ever blocks planning.
@@ -693,7 +695,7 @@ enrichment's true-gap round — consult the oracle on each remaining decision
 **The investigation turn consults the rung in place, same-turn.** When the
 findings digest (step 2) names open task-shaping decisions under **OPEN
 QUESTIONS**, the oracle is consulted on each of them in that same turn —
-immediately, not deferred to a later turn — so the digest, the oracle spawns,
+immediately, not deferred to a later turn — so the digest, the oracle lookups,
 and the typed round for the `INSUFFICIENT` remainder form one message
 exchange. AskUserQuestion is still never issued in that turn; only the
 plain-text typed round is.

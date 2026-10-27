@@ -1,94 +1,5 @@
 # shipd-ask
 
-### Requirement: Oracle agent contract
-id: oracle-agent-contract
-
-The plugin SHALL provide an oracle agent definition at
-`plugins/s/agents/oracle.md` (frontmatter `name: oracle`, resolving as agent
-type `s:oracle`) that is non-interactive by contract: it never asks the user
-anything and never blocks its caller. When spawned with one compact question
-and the asking repo's root, the oracle SHALL search the personal memory store
-first — via the `--personal` wiki reads (`cat wiki index --personal`, `cat wiki
-<slug> --personal`, and read-only grep under the store directory reported by
-`wiki-show --personal`, all with `--root` at the asking repo) — skipping this
-rung when no personal store exists; then it SHALL search the workspace chain's
-wiki stores, nearest first, through the chain-aware engine reads (`cat wiki
-index`, `cat wiki <slug>`) and read-only grep under each store directory
-reported on `wiki-show`'s `chain:` line, skipping a chain member holding no
-store; and within this rung, after the pages, it SHALL read the queue (`cat
-wiki queue`, which aggregates the chain) and treat answered-but-undrained
-blocks — `## q-<slug>` entries whose `Answer:` line is not `pending` — as
-citable sources; where `wiki-show` reports a present base store on its `base:`
-line, the oracle SHALL then search the base wiki, through the same engine verbs
-and read-only grep invoked with `--root` at the reported base store path; and
-it SHALL then widen to the asking repo's spec surfaces (verified capability
-masters, epic Decisions/Design, research reports, project context — via
-`spec_status.py` reads). Where the resolved registry declares a `focus` project
-(reported by `workspace-show`), the oracle SHALL consult that project's
-surfaces (via `project-show`) first within the repo-surface rung. The oracle
-SHALL take the first durable position the ladder yields. The oracle's default
-verdict SHALL be `INSUFFICIENT`: it SHALL NOT answer from model knowledge,
-returning `ANSWER` only when a consulted source states a position on the
-specific decision asked — topical relevance alone SHALL NOT suffice. The
-oracle's reply SHALL begin with a first non-blank line of exactly `ANSWER` or
-`INSUFFICIENT`.
-
-#### Scenario: Definition carries the contract
-- **WHEN** `plugins/s/agents/oracle.md` is inspected
-- **THEN** it declares `name: oracle` frontmatter, the
-  personal-then-chain-then-base-then-repo search ladder with engine-mediated
-  reads including the answered-queue read after the chain's pages, the
-  focus-first repo-surface rung, the non-interactive rule, the
-  default-`INSUFFICIENT` grounding bar, and the two-verdict first-line
-  contract
-
-#### Scenario: Verdict is machine-branchable
-- **WHEN** the oracle is spawned with a compact question
-- **THEN** the first non-blank line of its reply is exactly `ANSWER` or
-  `INSUFFICIENT`
-
-#### Scenario: Personal store answers first
-- **GIVEN** a personal memory store holding a page that answers the decision
-- **WHEN** the oracle is spawned
-- **THEN** it returns `ANSWER` from the personal rung without searching the
-  chain, base wiki, or repo surfaces
-
-#### Scenario: Absent personal store is skipped
-- **WHEN** the oracle runs where `wiki-show --personal` reports no personal
-  store
-- **THEN** it skips the personal rung without error and searches the chain
-  next
-
-#### Scenario: An inherited store answers before the base rung
-- **GIVEN** nested workspaces where only the outer one holds a page settling
-  the decision
-- **WHEN** the oracle is spawned from a repo under the inner workspace
-- **THEN** it returns `ANSWER` from that page before searching the base wiki
-
-#### Scenario: Answered queue entry answers before teach drains it
-- **GIVEN** a chain store whose queue holds a `## q-<slug>` block with a
-  non-`pending` answer settling the decision and no page covering it
-- **WHEN** the oracle is spawned
-- **THEN** it returns `ANSWER` from that block, cited as `queue q-<slug>`
-
-#### Scenario: Topical sources without a position yield INSUFFICIENT
-- **WHEN** every consulted source merely touches the decision's topic without
-  stating a position on the decision itself
-- **THEN** the oracle returns `INSUFFICIENT` rather than answering from model
-  knowledge
-
-#### Scenario: Base rung answers when the chain is silent
-- **GIVEN** a workspace whose `wiki-show` reports a present base store
-- **WHEN** the personal store and every chain store lack the answer and a base
-  wiki page holds it
-- **THEN** the oracle returns `ANSWER` from the base rung before widening to
-  the repo's spec surfaces
-
-#### Scenario: Focus project weighted first
-- **GIVEN** a resolved registry declaring `focus` on a project
-- **WHEN** the oracle widens to the repo-surface rung
-- **THEN** it consults the focus project's surfaces before the others
-
 ### Requirement: Cited opinionated answers
 id: oracle-cited-answers
 
@@ -207,18 +118,19 @@ id: ask-skill
 
 The plugin SHALL provide `/s:ask` at `plugins/s/skills/ask/SKILL.md`: it
 SHALL announce the running plugin version, shape the user's request into a
-compact question without an interview round, spawn `s:oracle` via the Agent
-tool with the question and the repo root, and relay the verdict. If the
-verdict's first line is `ANSWER` but its body lacks a `Cited:` line or an
-`Evidence:` line, then the skill SHALL treat the verdict as `INSUFFICIENT`.
-Where an `ANSWER` carries an `Authority: advisory` line, the skill SHALL
-relay it as a recommendation rather than a settlement: it SHALL still put
-the decision to the user with the oracle's advisory position as the
-recommended first option, naming its citation. When the verdict is
-`INSUFFICIENT`, the skill SHALL put the compact question to the user through
-a single AskUserQuestion dialog with the recommendation listed first, distill
-the user's reply into a concise durable answer, and classify that answer
-against the capture rubric
+compact question without an interview round, consult the oracle inline per
+the oracle consultation contract — running `oracle-lookup` and judging its
+output itself, spawning no agent — and relay the verdict. If the verdict's
+first line is `ANSWER` but its body lacks a `Cited:` line or an `Evidence:`
+line, then the skill SHALL treat the verdict as `INSUFFICIENT`. Where an
+`ANSWER` carries an `Authority: advisory` line, the skill SHALL relay it as
+a recommendation rather than a settlement: it SHALL still put the decision
+to the user with the advisory position as the recommended first option,
+naming its citation. When the verdict is `INSUFFICIENT`, the skill SHALL
+queue the question per the insufficient-queue rules, then put the compact
+question to the user through a single AskUserQuestion dialog with the
+recommendation listed first, distill the user's reply into a concise durable
+answer, and classify that answer against the capture rubric
 (`plugins/s/skills/ask/references/capture-rubric.md`) before any queue
 write: an include-tier answer is written through
 `spec_status.py wiki-queue-answer` against the filed `q-<slug>`; an
@@ -231,29 +143,31 @@ SHALL relay the answer for the session only and state that nothing durable
 was captured. A failed capture or discard write SHALL be reported and SHALL
 never block the reply.
 
-#### Scenario: Skill relays the oracle verdict
+#### Scenario: Skill consults the oracle inline
 - **WHEN** `plugins/s/skills/ask/SKILL.md` is inspected
-- **THEN** it directs shaping a compact question, spawning agent type
-  `s:oracle`, relaying `ANSWER` citations, and demoting an `ANSWER` missing
-  `Cited:` or `Evidence:` to `INSUFFICIENT`
+- **THEN** it directs shaping a compact question, running `oracle-lookup`
+  per the contract reference, relaying `ANSWER` citations, and demoting an
+  `ANSWER` missing `Cited:` or `Evidence:` to `INSUFFICIENT`, and it names
+  no `s:oracle` agent
 
 #### Scenario: Advisory answer recommends instead of settling
 - **WHEN** the SKILL.md's handling of an `ANSWER` carrying
   `Authority: advisory` is inspected
-- **THEN** it directs putting the decision to the user with the oracle's
-  advisory position as the recommended first option, cited, rather than
-  relaying it as settled
+- **THEN** it directs putting the decision to the user with the advisory
+  position as the recommended first option, cited, rather than relaying it
+  as settled
 
-#### Scenario: Insufficient verdict defers to the user
+#### Scenario: Insufficient verdict queues, then defers to the user
 - **WHEN** the SKILL.md's `INSUFFICIENT` branch is inspected
-- **THEN** it directs a single AskUserQuestion dialog carrying the compact
-  question's options with the recommendation first
+- **THEN** it directs queueing through `wiki-queue-add` and then a single
+  AskUserQuestion dialog carrying the compact question's options with the
+  recommendation first
 
 #### Scenario: Include-tier answer is captured
 - **WHEN** the SKILL.md's capture step is inspected
 - **THEN** it directs classifying the distilled reply against the capture
   rubric and writing an include-tier answer via `wiki-queue-answer` against
-  the verdict's filed `q-<slug>`
+  the filed `q-<slug>`
 
 #### Scenario: Exclude-tier answer discards the block
 - **WHEN** the capture step classifies the reply exclude-tier
@@ -277,11 +191,11 @@ id: compact-question-contract
 Every question put to the oracle — and every question the oracle queues —
 SHALL be one decision-ready unit carrying the decision, concrete options, and
 the asker's recommendation, never a raw trace or an open-ended essay prompt.
-Both `plugins/s/agents/oracle.md` and `plugins/s/skills/ask/SKILL.md` SHALL
-state this contract.
+Both `plugins/s/skills/ask/references/oracle-contract.md` and
+`plugins/s/skills/ask/SKILL.md` SHALL state this contract.
 
 #### Scenario: Both surfaces carry the contract
-- **WHEN** the oracle agent definition and the ask SKILL.md are inspected
+- **WHEN** the oracle contract reference and the ask SKILL.md are inspected
 - **THEN** each states the decision/options/recommendation compact-question
   shape
 
@@ -376,22 +290,64 @@ personal memory store instead.
 id: oracle-fallback-store
 
 Where no workspace is discoverable from the asking repo and the repo's
-resolved content directory exists, the oracle's wiki rung SHALL operate on
-the repo-local fallback store reported by `wiki-show` — through the same
-engine reads (`cat wiki index`, `cat wiki <slug>`, `cat wiki queue`) and
-read-only grep under the reported store directory — and
-answered-but-undrained queue blocks found there SHALL be citable exactly as
-chain-store blocks are (`Cited: queue q-<slug>`).
+resolved content directory exists, the `oracle-lookup` verb's workspace rung
+SHALL search the repo-local fallback store that `wiki-show` reports, and
+answered-but-undrained queue blocks found there SHALL print as snippets
+citable exactly as chain-store blocks are (`queue q-<slug>`).
 
 #### Scenario: Fallback page answers the question
 - **GIVEN** a bare repo whose fallback store holds a page settling the
   decision
-- **WHEN** the oracle is spawned
-- **THEN** it returns `ANSWER` citing that page before widening to the
-  repo's spec surfaces
+- **WHEN** the oracle is consulted
+- **THEN** the lookup prints that page's snippet cited `[[slug]]` before any
+  spec-surface snippet, and the verdict is `ANSWER` citing it
 
 #### Scenario: Fallback answered queue block is citable
 - **GIVEN** a bare repo whose fallback store's queue holds a `## q-<slug>`
   block with a non-`pending` answer settling the decision
-- **WHEN** the oracle is spawned
-- **THEN** it returns `ANSWER` cited as `queue q-<slug>`
+- **WHEN** the oracle is consulted
+- **THEN** the lookup prints the block cited `queue q-<slug>`, and the
+  verdict is `ANSWER` citing it
+
+### Requirement: Inline oracle consultation contract
+id: oracle-consultation-contract
+
+The plugin SHALL provide the oracle consultation contract at
+`plugins/s/skills/ask/references/oracle-contract.md`, at most 120 lines long.
+Every oracle consultation — `/s:ask`, `/s:plan`, and the autopilot's driven
+sessions — SHALL follow it inline and SHALL spawn no agent. In this
+capability, "the oracle" names that consultation. The contract SHALL direct
+the consulting skill to run `spec_status.py --root <asking-root>
+oracle-lookup <term>...` once per compact question, choosing two to six
+distinctive terms from the decision and its options, and at most once more
+with alternative terms when the first run finds no evidence. The skill SHALL then
+judge the verdict from that output alone. It SHALL take the first rung's
+snippet that states a position on the specific decision. It SHALL return
+`ANSWER` only then, copying the snippet's citation verbatim onto a `Cited:`
+line and quoting the snippet verbatim on an `Evidence:` line. Its default
+verdict SHALL be `INSUFFICIENT`: it SHALL NOT answer from model knowledge,
+and topical relevance alone SHALL NOT suffice. The contract SHALL keep the
+verdict grammar callers branch on: a first non-blank line of exactly `ANSWER`
+or `INSUFFICIENT`; an `Authority: advisory` line when the position rests on
+an `[advisory]` snippet; and, on `INSUFFICIENT`, the compact question block
+and a `Queued:` line. Before queueing, the skill SHALL check the lookup's
+not-evidence pending list for an equivalent question and cite it instead of
+adding a duplicate. The plugin SHALL NOT ship an oracle agent:
+`plugins/s/agents/oracle.md` and `plugins/s/harness/agents/oracle.md` SHALL
+be absent.
+
+#### Scenario: Contract carries the judging rules
+- **WHEN** `plugins/s/skills/ask/references/oracle-contract.md` is inspected
+- **THEN** it names `oracle-lookup`, the default-`INSUFFICIENT` bar, the
+  verbatim `Cited:` and `Evidence:` rule, the `Authority: advisory`
+  carry-through, the duplicate check, and the two-verdict first-line
+  contract, within 120 lines
+
+#### Scenario: No oracle agent ships
+- **WHEN** `plugins/s/agents/` and `plugins/s/harness/agents/` are listed
+- **THEN** neither holds an `oracle.md`
+
+#### Scenario: A topical snippet yields INSUFFICIENT
+- **WHEN** every snippet the lookup prints touches the decision's topic
+  without stating a position on it
+- **THEN** the contract directs returning `INSUFFICIENT`

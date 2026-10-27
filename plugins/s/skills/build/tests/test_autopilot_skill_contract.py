@@ -69,7 +69,8 @@ class AutopilotSkillContractTest(unittest.TestCase):
 
     def test_skill_states_the_absence_of_a_human(self):
         self.assertIn(NO_HUMAN, self.skill)
-        self.assertIn("s:oracle", self.skill)
+        self.assertIn("oracle-lookup", self.skill)
+        self.assertNotIn("s:oracle", self.skill)
         self.assertGreaterEqual(self.skill.count(NO_HUMAN), 2)
 
     def test_skill_parks_with_the_reason_vocabulary(self):
