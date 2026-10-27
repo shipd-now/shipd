@@ -196,6 +196,59 @@ class OracleLookupTest(OracleLookupTestBase):
         res = self.lookup("alpha", "beta")
         self.assertIn('"alpha beta gamma line"', res.stdout)
 
+    def test_stronger_epic_paragraph_outranks_many_verified(self):
+        self.declare_workspace()
+        for i in range(5):
+            self.write(os.path.join(self.root, ".shipd", "verified",
+                                    "cap%d" % i, "spec.md"),
+                       "# cap%d\n\nzebra quokka weak%d.\n" % (i, i))
+        self.write(os.path.join(self.root, ".shipd", "epics", "e1", "epic.md"),
+                   "# e1\n\n## Decisions\n\nzebra quokka lemur strong.\n")
+        res = self.lookup("zebra", "quokka", "lemur")
+        self.assertIn("epic/e1", res.stdout)
+        self.assertIn("strong", res.stdout)
+
+    def _fill(self, pending=0):
+        self.declare_workspace()
+        personal = os.path.join(self.home, ".shipd-memory", "wiki")
+        base = os.path.join(self.home, "basewiki")
+        self.declare_workspace(extra={"wiki_base": base})
+        for i in range(8):
+            for st, tag in ((personal, "p"), (self.store(), "w"),
+                            (base, "b")):
+                self.page(st, "%s-%02d" % (tag, i),
+                          "alpha beta filler %s\n" % ("x" * 380))
+        if pending:
+            self.queue(self.store(), "".join(
+                QUEUE_BLOCK % ("pend%d" % i,
+                               "alpha beta " + ("long " * 40), "pending")
+                for i in range(pending)))
+        self.write(os.path.join(self.root, ".shipd", "verified", "w",
+                                "spec.md"),
+                   "# w\n\n### Requirement: R\nid: r\n\n"
+                   "alpha beta spec paragraph.\n")
+
+    def test_output_cap_holds_with_long_pending_list(self):
+        self._fill(pending=4)
+        res = self.lookup("alpha", "beta")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertLessEqual(len(res.stdout), 6000)
+
+    def test_budget_truncated_rung_shows_omitted_marker(self):
+        self._fill(pending=4)
+        out = self.lookup("alpha", "beta").stdout
+        specs = out.partition("== specs")[2].partition("== pending")[0]
+        self.assertIn("(omitted — output cap reached)", specs)
+        self.assertNotIn("(none)", specs)
+
+    def test_empty_term_matches_nothing(self):
+        self.declare_workspace()
+        self.page(self.store(), "p", "Some text here.\n")
+        res = self.lookup("")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(res.stdout.splitlines()[-1],
+                         "no evidence found — verdict INSUFFICIENT")
+
 
 if __name__ == "__main__":
     unittest.main()

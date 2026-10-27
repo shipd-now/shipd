@@ -1310,8 +1310,6 @@ ORACLE_RUNG_MAX = 4
 ORACLE_OUTPUT_MAX = 6000
 ORACLE_SNIPPET_MAX = 400
 ORACLE_PENDING_MAX = 4
-# Characters held back from the evidence budget for the closing lines.
-ORACLE_RESERVE = 260
 
 _ORACLE_ADVISORY_PAGE_RE = re.compile(
     r"^\W*Authority:\s*advisory\b", re.IGNORECASE | re.MULTILINE)
@@ -1523,8 +1521,7 @@ def _oracle_spec_matches(spec_root, terms, need):
                 m["cite"] = "research/%s" % slug
                 m["advisory"] = False
                 research.append(m)
-    return _oracle_ranked(verified) + _oracle_ranked(epics) \
-        + _oracle_ranked(research)
+    return _oracle_ranked(verified + epics + research)
 
 
 def cmd_oracle_lookup(root, terms):
@@ -1535,7 +1532,7 @@ def cmd_oracle_lookup(root, terms):
     blocks that match as not-evidence, and a closing ``INSUFFICIENT`` line when
     nothing matched. Always exits 0; writes nothing."""
     terms = _oracle_terms(terms)
-    need = min(2, len(terms))
+    need = max(1, min(2, len(terms)))
 
     personal_store = None
     personal = []
@@ -1596,7 +1593,15 @@ def cmd_oracle_lookup(root, terms):
     printed = 0
     total = 0
     full = False
-    budget = ORACLE_OUTPUT_MAX - ORACLE_RESERVE
+    pending_lines = ["== pending queue (duplicate check — not evidence)"]
+    if pending:
+        pending_lines.extend("%s — %s" % (qid, question[:160])
+                             for qid, question in pending[:ORACLE_PENDING_MAX])
+    else:
+        pending_lines.append("(none)")
+    # 80 covers the closing line.
+    budget = (ORACLE_OUTPUT_MAX
+              - sum(len(ln) + 1 for ln in pending_lines) - 80)
     for heading, matches in (("personal", personal), ("workspace", workspace),
                              ("base", base_matches), ("specs", specs)):
         out.append("== %s" % heading)
@@ -1614,15 +1619,11 @@ def cmd_oracle_lookup(root, terms):
             shown += 1
         printed += shown
         if not shown:
-            out.append("(none)")
-            used += len("(none)") + 1
+            mark = "(omitted — output cap reached)" if matches else "(none)"
+            out.append(mark)
+            used += len(mark) + 1
 
-    out.append("== pending queue (duplicate check — not evidence)")
-    if pending:
-        for qid, question in pending[:ORACLE_PENDING_MAX]:
-            out.append("%s — %s" % (qid, question[:160]))
-    else:
-        out.append("(none)")
+    out.extend(pending_lines)
     if total == 0:
         out.append("no evidence found — verdict INSUFFICIENT")
     elif total > printed:
