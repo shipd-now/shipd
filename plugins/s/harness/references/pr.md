@@ -9,8 +9,7 @@ The fuller rules behind the pull request writer.
 | Line 1 | `## ☕ Pull Request` |
 | Why paragraph | what a person sees today, then what this change fixes; plain words |
 | What changed | a short list, one bullet per user-visible effect |
-| Footer | a `<sub>☕ Posted by Shipd</sub>` paragraph, directly before the last line |
-| Last line | `🤖 Generated with [Claude Code](https://claude.com/claude-code)` |
+| Footer | a `<sub>☕ Posted by Shipd</sub>` paragraph, as the body's last line |
 
 The body is staged with `<!-- doc-type: concept -->` as line 1 so that
 `docs_lint.py` accepts it. Lint until it exits 0, then strip the marker line

@@ -43,7 +43,7 @@ it is absent, ask which of the three they want and wait.
 ## Harness plan mode
 
 **Harness plan mode never replaces this skill's output.** When the session
-is in Claude Code plan mode, run only this skill's read-only steps. Stop
+is in the harness's plan mode, run only this skill's read-only steps. Stop
 before the first write and ask the user to exit plan mode and re-invoke.
 Never write the harness plan file, call `ExitPlanMode`, or mix in plan
 mode's outputs. Details:
@@ -213,7 +213,7 @@ defines, and follow its rule on dialogs and typed rounds.
 
 ## Question rejection recovery
 
-**Question rejection recovery.** A known Claude Code bug can deliver an
+**Question rejection recovery.** A known harness bug can deliver an
 AskUserQuestion interaction as a tool rejection ("The user doesn't want
 to proceed with this tool use") even when the user tried to answer.
 Never treat a rejected or interrupted AskUserQuestion as a decline, a

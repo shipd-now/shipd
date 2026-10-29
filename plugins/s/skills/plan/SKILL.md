@@ -109,7 +109,7 @@ Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 ## Harness plan mode
 
 **Harness plan mode never replaces this skill's output.** When the session
-is in Claude Code plan mode, run only this skill's read-only steps. Stop
+is in the harness's plan mode, run only this skill's read-only steps. Stop
 before the first write and ask the user to exit plan mode and re-invoke.
 Never write the harness plan file, call `ExitPlanMode`, or mix in plan
 mode's outputs. Details:
@@ -458,7 +458,7 @@ conditions still end a turn and wait for the user:
   names and stops without emitting, unless the invocation carries
   `--cross-project`.
 
-- **Harness plan mode** — the session is in Claude Code plan mode ("Harness
+- **Harness plan mode** — the session is in the harness's plan mode ("Harness
   plan mode" above). Skip the worktree, investigate read-only, and print the
   findings digest. Then stop before the oracle rung, any question round, and
   emission, and ask the user to exit plan mode and re-run `/s:plan`.
@@ -753,7 +753,7 @@ defines, and follow its rule on dialogs and typed rounds.
 
 ## Question rejection recovery
 
-**Question rejection recovery.** A known Claude Code bug can deliver an
+**Question rejection recovery.** A known harness bug can deliver an
 AskUserQuestion interaction as a tool rejection ("The user doesn't want
 to proceed with this tool use") even when the user tried to answer.
 Never treat a rejected or interrupted AskUserQuestion as a decline, a
