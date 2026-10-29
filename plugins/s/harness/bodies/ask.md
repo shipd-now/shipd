@@ -59,9 +59,7 @@ Every wiki verb below runs as `python3 "$S/spec_status.py" --root <repo-root>
 <!-- if:question-dialogs -->
    Ask it as a single self-contained AskUserQuestion dialog carrying the
    decision and enough context to stand on its own, with the recommendation
-   listed first so accepting the lean is the cheapest reply. Never treat a
-   rejected or interrupted dialog as a decline — re-offer the same options as
-   a numbered list and wait for a typed reply.
+   listed first so accepting the lean is the cheapest reply.
 <!-- else -->
    Ask it as a plain-text numbered list of the options, the recommendation
    first, and read the answer from the user's typed reply.

@@ -41,8 +41,7 @@ ask what to forget and wait for a description before doing anything.
 <!-- if:question-dialogs -->
    Ask it as a single AskUserQuestion dialog in a prose-free turn: the matched
    slug and summary ride inside the dialog's own fields, not in surrounding
-   chat. Never treat a rejected or interrupted dialog as a decline — re-offer
-   the same two options as a numbered list and wait for a typed reply.
+   chat.
 <!-- else -->
    Ask it as a plain-text numbered list of the two options, naming the matched
    slug and its summary, and read the answer from the user's typed reply.

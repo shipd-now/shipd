@@ -92,11 +92,6 @@ For each change:
    defines, and follow its rule on typed rounds.
 3. **A closing step** summarizes every unflagged piece in one round: accept
    them all, or name one to walk.
-4. **Question rejection recovery.** A known harness bug can deliver an
-   AskUserQuestion as a tool rejection even when the user tried to answer.
-   Never treat a rejected or interrupted dialog as a decline or an answer. If
-   the user's next message answers it, fold it in; otherwise re-offer the
-   same choices as a plain-text numbered list and wait for a typed reply.
 
 ## Edits
 

@@ -164,16 +164,12 @@ id: doctor-skill-registration
 
 The skill SHALL live at `plugins/s/skills/doctor/SKILL.md` with `name` and
 `description` frontmatter whose description carries the `/s:doctor` trigger,
-SHALL carry the question-rejection recovery rule, and SHALL be listed in the
-repository `README.md` skills table and in `AGENTS.md`'s skill enumeration.
+and SHALL be listed in the repository `README.md` skills table and in
+`AGENTS.md`'s skill enumeration.
 
 #### Scenario: Skill is discoverable and documented
 - **WHEN** the plugin's skills and the README table are compared
 - **THEN** `doctor` appears in both, with `/s:doctor` as its invocation
-
-#### Scenario: Recovery rule is carried
-- **WHEN** `plugins/s/skills/doctor/SKILL.md` is inspected
-- **THEN** it contains the question-rejection recovery rule
 
 ### Requirement: Wiki check line is report-only
 id: doctor-wiki-line

@@ -64,9 +64,8 @@ id: gate-skill-registration
 
 The skill SHALL live at `plugins/s/skills/gate/SKILL.md` with `name` and
 `description` frontmatter whose description carries the `/s:gate`
-trigger, SHALL carry the question-rejection recovery rule, and SHALL be
-listed in the repository `README.md` skills table and in `AGENTS.md`'s
-skill enumeration. A body template SHALL exist at
+trigger, and SHALL be listed in the repository `README.md` skills table and
+in `AGENTS.md`'s skill enumeration. A body template SHALL exist at
 `plugins/s/harness/bodies/gate.md` opening with a
 `<!-- description: … -->` marker, so the bodies/skills id-set equality the
 harness-command-bodies capability enforces holds.
@@ -79,10 +78,6 @@ harness-command-bodies capability enforces holds.
 - **WHEN** the bodies directory listing is compared to the skills directory
   listing
 - **THEN** `gate` appears in both sets
-
-#### Scenario: Recovery rule is carried
-- **WHEN** `plugins/s/skills/gate/SKILL.md` is inspected
-- **THEN** it contains the question-rejection recovery rule
 
 ### Requirement: Gate update flow
 id: gate-update-flow
