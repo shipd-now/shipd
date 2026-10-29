@@ -322,7 +322,7 @@ report, the summary comment, and `--json` — never "issue" or "concern".
 
 ## Question rejection recovery
 
-A known Claude Code bug can deliver an AskUserQuestion interaction as a tool
+A known harness bug can deliver an AskUserQuestion interaction as a tool
 rejection ("The user doesn't want to proceed with this tool use") even when the
 user tried to answer. Never treat a rejected or interrupted AskUserQuestion as
 a decline, a stop, or an answer. When the user's next message arrives: if it

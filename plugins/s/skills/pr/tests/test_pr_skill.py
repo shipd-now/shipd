@@ -65,8 +65,7 @@ class SkillWritesTest(unittest.TestCase):
             "## ☕ Pull Request\n\n"
             "This change quiets the brand on pull requests.\n\n"
             "- Titles show only the mark.\n\n"
-            "<sub>☕ Posted by Shipd</sub>\n\n"
-            "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+            "<sub>☕ Posted by Shipd</sub>\n"
         )
         lint = os.path.join(PLUGIN_ROOT, "skills", "document", "scripts",
                             "docs_lint.py")
@@ -117,6 +116,13 @@ class CallersTest(unittest.TestCase):
                     os.path.join("docs", "cheatsheet.md")):
             self.assertIn("/s:pr", _read(os.path.join(REPO_ROOT, rel)),
                           "%s does not name /s:pr" % rel)
+
+    def test_no_generated_by_line(self):
+        for path in (SKILL_PATH,
+                     os.path.join(PLUGIN_ROOT, "harness", "bodies", "pr.md"),
+                     os.path.join(PLUGIN_ROOT, "harness", "references",
+                                  "pr.md")):
+            self.assertNotIn("Generated with", _read(path), path)
 
     def test_body_renders(self):
         for flags in ((), ("background-tasks",)):

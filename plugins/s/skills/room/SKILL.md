@@ -36,7 +36,7 @@ the steps write it as `shipd room <verb>` for short.
 ## Harness plan mode
 
 **Harness plan mode never replaces this skill's output.** When the session
-is in Claude Code plan mode, run only this skill's read-only steps. Stop
+is in the harness's plan mode, run only this skill's read-only steps. Stop
 before the first write and ask the user to exit plan mode and re-invoke.
 Never write the harness plan file, call `ExitPlanMode`, or mix in plan
 mode's outputs. Details:
@@ -68,7 +68,7 @@ stands, name the three sources above, and stop.
    NDJSON line per surfaced task (fields: `task`, `skill`, `text`, `url`,
    `cursor`, and the rest of the task) and exits 0. The nine-minute timeout
    bounds every wait; never drop it. Give the tool call that runs `watch` its
-   own timeout above 540 seconds (on Claude Code, a Bash `timeout` of
+   own timeout above 540 seconds (for example, a shell-tool `timeout` of
    `600000` ms), so the harness never moves the wait to the background.
 4. **Work each surfaced task**, one line at a time, and only the tasks `watch`
    printed — never act on a task `watch` did not surface, even one `list`

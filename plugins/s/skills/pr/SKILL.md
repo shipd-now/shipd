@@ -26,7 +26,7 @@ plugin snapshot the session is running.
 ## Harness plan mode
 
 **Harness plan mode never replaces this skill's output.** When the session
-is in Claude Code plan mode, run only this skill's read-only steps. Stop
+is in the harness's plan mode, run only this skill's read-only steps. Stop
 before the first write and ask the user to exit plan mode and re-invoke.
 Never write the harness plan file, call `ExitPlanMode`, or mix in plan
 mode's outputs. Details:
@@ -46,9 +46,7 @@ mode's outputs. Details:
    - A why-first paragraph: what a person sees today, and what this change
      fixes. Plain words, no file paths in this paragraph.
    - A short list of what changed, one bullet per user-visible effect.
-   - A `<sub>☕ Posted by Shipd</sub>` paragraph, directly before the last
-     line.
-   - The last line is `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+   - A `<sub>☕ Posted by Shipd</sub>` paragraph, as the body's last line.
 4. **Lint it.** Save the body to a scratch file with `<!-- doc-type: concept -->`
    as line 1, above the heading. Run
    `python3 "${CLAUDE_PLUGIN_ROOT}/skills/document/scripts/docs_lint.py" <file>`

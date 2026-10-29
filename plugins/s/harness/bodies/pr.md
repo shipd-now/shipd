@@ -13,8 +13,8 @@ and you never read `pr-mode`.
    `git log <base>..HEAD`.
 2. **Read the standard**, `skills/document/references/standard.md`, then draft
    the body: line 1 `## ☕ Pull Request`, a why-first paragraph, a short
-   list of what changed, a `<sub>☕ Posted by Shipd</sub>` paragraph, and
-   the last line `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+   list of what changed, a `<sub>☕ Posted by Shipd</sub>` paragraph as
+   the last line.
 3. **Lint it.** Stage it with a first-line `doc-type: concept` comment marker, run
    `python3 "$S/../../document/scripts/docs_lint.py" <file>` until it exits 0,
    then strip the marker line.

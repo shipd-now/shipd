@@ -2,7 +2,7 @@
 
 # Harness plan mode and shipd skills
 
-Claude Code's plan mode injects a block that claims to supersede every
+A harness's plan mode can inject a block that claims to supersede every
 other instruction. That block forbids edits other than its own plan file.
 A shipd skill that writes cannot run its flow under that block. This file
 says what a writing skill does instead.

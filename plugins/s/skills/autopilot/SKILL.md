@@ -22,7 +22,7 @@ after it is the autopilot's job.
 ## Harness plan mode
 
 **Harness plan mode never replaces this skill's output.** When the session
-is in Claude Code plan mode, run only this skill's read-only steps. Stop
+is in the harness's plan mode, run only this skill's read-only steps. Stop
 before the first write and ask the user to exit plan mode and re-invoke.
 Never write the harness plan file, call `ExitPlanMode`, or mix in plan
 mode's outputs. Details:
@@ -33,10 +33,10 @@ mode's outputs. Details:
 The skill drives the epic one of two ways:
 
 - **In-session drive (default).** The skill itself loops over the epic's
-  members inside this Claude Code session, spawning one general-purpose
+  members inside this session, spawning one general-purpose
   sub-agent per pipeline stage. Use this mode unless the invocation asks for a
   detached run.
-- **Detached run (opt-in).** The existing headless `claude -p` driver
+- **Detached run (opt-in).** The existing headless driver
   (`autopilot.py`), run in the foreground. Use this mode only when the
   invocation asks for it — e.g. `/s:autopilot <epic> detached`, or the user
   asking in words for a detached or unattended run.
@@ -491,7 +491,7 @@ contract below for what happens on a rejection.
 
 Members are driven in **waves** (see Running a wave above): the members of one
 wave run their current entry concurrently, and the waves themselves run in the
-order the `--waves` mode returned. No headless `claude -p` process is started
+order the `--waves` mode returned. No headless driver process is started
 anywhere in this mode: every built-in stage the
 entry forms leave to its built-in behavior runs as an Agent-tool sub-agent
 inside this session, and the `gate` and command entries run directly from this
@@ -697,7 +697,7 @@ defines, and follow its rule on dialogs and typed rounds.
 
 ## Question rejection recovery
 
-A known Claude Code bug can deliver an AskUserQuestion interaction as a tool
+A known harness bug can deliver an AskUserQuestion interaction as a tool
 rejection ("The user doesn't want to proceed with this tool use") even when the
 user tried to answer. Never treat a rejected or interrupted AskUserQuestion as a
 decline or a stop. When the user's next message arrives: if it answers the

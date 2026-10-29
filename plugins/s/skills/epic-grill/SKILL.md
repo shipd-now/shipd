@@ -36,7 +36,7 @@ one plan wave holds (default 3).
 ## Harness plan mode
 
 **Harness plan mode never replaces this skill's output.** When the session
-is in Claude Code plan mode, run only this skill's read-only steps. Stop
+is in the harness's plan mode, run only this skill's read-only steps. Stop
 before the first write and ask the user to exit plan mode and re-invoke.
 Never write the harness plan file, call `ExitPlanMode`, or mix in plan
 mode's outputs. Details:
@@ -183,7 +183,7 @@ decision into one question naming every member and `Q<n>` it covers.
 - **Brief every question.** Open each question with the brief that
   `${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
   defines, and follow its rule on dialogs and typed rounds.
-- **Question rejection recovery.** A known Claude Code bug can deliver an
+- **Question rejection recovery.** A known harness bug can deliver an
   AskUserQuestion as a tool rejection even when the user tried to answer.
   Never treat a rejected or interrupted dialog as a decline or an answer. If
   the user's next message answers it, fold it in; otherwise re-offer the same
