@@ -30,8 +30,7 @@ Run every command from the repository root. The invocation is
    numbered round: keep, change, research, or cut or mark out of bounds. Novelty
    5 always offers cut or out of bounds. Open each round with the brief from
    `skills/document/references/question-brief.md`. A final step summarizes every
-   unflagged piece in one round. If a dialog is rejected, never treat it as an
-   answer; re-offer the choices as a typed list.
+   unflagged piece in one round.
 6. **Research.** When a piece rests on an external unknown, offer
    `/s:research <question>`; invoke it by reference only while the user is
    present. Read the report with `cat research <slug>` and cite its slug in

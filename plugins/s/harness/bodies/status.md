@@ -47,8 +47,7 @@ re-implement a check the engine already owns.
 <!-- if:question-dialogs -->
    Ask it as a single AskUserQuestion dialog: the turn carries nothing but the
    refusal reason and the two options, which is exactly the shape a dialog is
-   for. Never treat a rejected or interrupted dialog as a decline — re-offer
-   the same two options as a numbered list and wait for a typed reply.
+   for.
 <!-- else -->
    Ask it as a plain-text numbered list of the two options and read the
    answer from the user's typed reply.

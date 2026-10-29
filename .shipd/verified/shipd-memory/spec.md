@@ -65,7 +65,6 @@ and summary, and — only on an affirmative selection — remove it with
 `wiki-remove <slug> --personal`. If the description matches no page, then the
 skill SHALL report that and remove nothing; if it matches more than one, then
 the skill SHALL present the candidates for the user to pick before confirming.
-The skill SHALL carry the question rejection recovery rule.
 
 #### Scenario: Confirmed removal deletes the page
 - **WHEN** the user runs `/s:forget` with a description matching exactly one
@@ -140,8 +139,7 @@ or syncs settings.
 #### Scenario: Flow uses no AskUserQuestion
 - **WHEN** the git-backing flow prompts for init, remote, or push
 - **THEN** each prompt is a typed plain-text round and the skill issues no
-  AskUserQuestion, keeping `/s:remember` off the question-rejection-recovery
-  roster
+  AskUserQuestion
 
 ### Requirement: Remember capture skill
 id: remember-skill
@@ -157,8 +155,7 @@ set with the user in a typed plain-text round before any write, and installs the
 touched subset through a single staged `spec_emit.py wiki --personal` call
 (touched `memory-<subject>.md` pages, the full `index.md`, and a dated `log.md`
 entry). The skill SHALL never edit store files in place, and SHALL issue no
-AskUserQuestion (its confirmation is a typed round), so it does not join the
-question-rejection-recovery roster.
+AskUserQuestion (its confirmation is a typed round).
 
 #### Scenario: Skill definition carries the capture contract
 - **WHEN** `plugins/s/skills/remember/SKILL.md` is inspected

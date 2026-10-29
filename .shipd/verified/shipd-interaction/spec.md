@@ -1,37 +1,5 @@
 # shipd-interaction
 
-### Requirement: Question rejection recovery
-id: question-rejection-recovery
-
-If an AskUserQuestion call returns a rejection or interruption instead of a
-selected answer, then the skill session SHALL treat it as a harness misfire
-rather than a user decision: it SHALL NOT record a decline or a stop, and on
-the user's next message it SHALL either fold in a typed answer or re-offer
-the same choices as a plain-text numbered list and wait. An explicit stop —
-a selected Stop option or a typed stop — SHALL still be honored immediately.
-Every interactive shipd skill's SKILL.md (plan, build, epic, initiative,
-status, onboard, research, forget, doctor) SHALL carry this recovery rule.
-
-#### Scenario: Rejected question is re-offered, not obeyed
-- **WHEN** an AskUserQuestion at a decision point comes back as a tool
-  rejection and the user's next message does not answer it
-- **THEN** the skill re-offers the same choices as a plain-text numbered
-  list and waits, instead of treating the flow as declined or stopped
-
-#### Scenario: Typed answer after a misfire is folded in
-- **WHEN** an AskUserQuestion comes back rejected and the user's next
-  message states one of the offered choices in plain text
-- **THEN** the skill accepts that answer and continues as if the dialog had
-  returned it
-
-#### Scenario: Explicit stop still stops
-- **WHEN** the user selects a Stop option or types that they want to stop
-- **THEN** the skill honors it immediately
-
-#### Scenario: All interactive skills carry the rule
-- **WHEN** the nine interactive SKILL.md files are inspected
-- **THEN** each contains the question rejection recovery rule
-
 ### Requirement: Dialog and prose separation
 id: dialog-prose-separation
 
@@ -146,4 +114,22 @@ for the case-sensitive word `Claude` and SHALL fail with the offending
 
 #### Scenario: The shipped skills pass the guard
 - **WHEN** the harness-neutral prose test runs on the repository
+- **THEN** it passes
+
+### Requirement: No question rejection workaround
+id: no-question-rejection-workaround
+
+The markdown under `plugins/s/skills/` and `plugins/s/harness/` SHALL NOT
+instruct a session to treat a rejected or interrupted question dialog as a
+harness misfire. A stdlib test in the engine suite SHALL scan those files for
+the case-insensitive phrases `rejection recovery`, `rejection-recovery`, and
+`rejected or interrupted`, and SHALL fail naming each `path:line` it finds.
+
+#### Scenario: A reintroduced rule fails the guard
+- **GIVEN** a SKILL.md carrying a "Question rejection recovery" section
+- **WHEN** the guard test runs
+- **THEN** it fails and names that file and line
+
+#### Scenario: The shipped skills pass the guard
+- **WHEN** the guard test runs on the repository
 - **THEN** it passes

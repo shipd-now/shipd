@@ -175,9 +175,9 @@ each candidate with:
 
 Use a **plain-text typed round** — ask the user to confirm, prune, or amend the
 set, and wait for a typed reply. **Do not use AskUserQuestion**; this skill's
-confirmation is a typed round, so it does not join the question-rejection-recovery
-roster. Write nothing until the user gives a typed go-ahead. If the user prunes
-or amends, revise the set and reflect the change back before installing.
+confirmation is a typed round. Write nothing until the user gives a typed
+go-ahead. If the user prunes or amends, revise the set and reflect the change
+back before installing.
 
 ## 5. Install — the one staged write path
 
@@ -296,7 +296,6 @@ so the remote stays in sync over time. As on the first run, the push is offered,
 not automatic, and a failed push is non-fatal (reported, local commit stands).
 
 **Every git / `gh` / push step in this flow is a typed round — no
-AskUserQuestion** — which keeps `/s:remember` off the
-question-rejection-recovery roster. And **the engine never pushes, pulls, or
-fetches**: its role is only the local `wiki_autocommit` commit on the emit write;
-remote creation and every push are skill-driven and always confirmed here.
+AskUserQuestion**. And **the engine never pushes, pulls, or fetches**: its role
+is only the local `wiki_autocommit` commit on the emit write; remote creation
+and every push are skill-driven and always confirmed here.

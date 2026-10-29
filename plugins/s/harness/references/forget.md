@@ -30,10 +30,6 @@ Removal is destructive, so exactly one confirmation always precedes it, and
 the affirmative choice is never the default. Two options only — remove or
 keep — with the matched slug and summary visible in the question itself.
 
-An interaction that comes back rejected or interrupted is **not** a
-decline: re-offer the same two choices as a plain-text numbered list and
-wait for a typed reply. Only an explicit keep ends the run as a decline.
-
 ## What the engine guarantees
 
 ```

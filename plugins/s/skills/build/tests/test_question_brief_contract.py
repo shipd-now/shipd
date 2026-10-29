@@ -45,7 +45,7 @@ class QuestionBriefContractTest(unittest.TestCase):
             self.assertIn(heading, text)
 
     def test_roster_is_large_enough(self):
-        self.assertGreaterEqual(len(_roster()), 21)
+        self.assertGreaterEqual(len(_roster()), 14)
 
     def test_every_asking_skill_and_body_points_to_the_reference(self):
         for skill, (path, body) in _roster().items():

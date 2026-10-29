@@ -183,11 +183,6 @@ decision into one question naming every member and `Q<n>` it covers.
 - **Brief every question.** Open each question with the brief that
   `${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
   defines, and follow its rule on dialogs and typed rounds.
-- **Question rejection recovery.** A known harness bug can deliver an
-  AskUserQuestion as a tool rejection even when the user tried to answer.
-  Never treat a rejected or interrupted dialog as a decline or an answer. If
-  the user's next message answers it, fold it in; otherwise re-offer the same
-  choices as a plain-text numbered list and wait for a typed reply.
 
 **Capture the answers.** For each answered entry carrying a `**Queued:**`
 slug, distill the answer into one durable sentence or two and classify it

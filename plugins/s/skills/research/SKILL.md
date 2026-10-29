@@ -98,17 +98,6 @@ or region). When that is the case, ask **one** batched round:
 `${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
 defines, and follow its rule on dialogs and typed rounds.
 
-## Question rejection recovery
-
-**Question rejection recovery.** A known harness bug can deliver an
-AskUserQuestion interaction as a tool rejection ("The user doesn't want to
-proceed with this tool use") even when the user tried to answer. Never treat a
-rejected or interrupted AskUserQuestion as a decline, a stop, or an answer.
-When the user's next message arrives: if it answers the pending question, fold
-it in and continue; otherwise re-offer the same choices as a plain-text
-numbered list and wait for a typed reply. Only an explicitly selected or typed
-stop/decline ends the flow.
-
 ## The staged pipeline
 
 Run the question through these stages in order. Keep the work bounded — this is
