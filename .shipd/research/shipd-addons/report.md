@@ -167,6 +167,6 @@ and shipd's generator stay out of scope until a second add-on needs them.
 5. Claude Code — Host and maintain a marketplace — https://code.claude.com/docs/en/plugins/host-marketplace.md
 6. Agent Skills — Overview — https://agentskills.io/
 7. shipd — `harness_registry.py` — https://github.com/shipd-now/shipd/blob/main/plugins/s/skills/build/scripts/harness_registry.py
-8. shipd — `harness_generate.py` and `harness_bodies.py` — https://github.com/shipd-now/shipd/blob/main/plugins/s/skills/build/scripts/harness_generate.py
-9. shipd — marketplace and plugin manifests, and repository tags — https://github.com/shipd-now/shipd/blob/main/.claude-plugin/marketplace.json
+8. shipd — `harness_generate.py` and `harness_bodies.py` — https://github.com/shipd-now/shipd/blob/main/plugins/s/skills/build/scripts/harness_generate.py and https://github.com/shipd-now/shipd/blob/main/plugins/s/skills/build/scripts/harness_bodies.py
+9. shipd — marketplace and plugin manifests, and repository tags — https://github.com/shipd-now/shipd/blob/main/.claude-plugin/marketplace.json, https://github.com/shipd-now/shipd/blob/main/plugins/s/.claude-plugin/plugin.json and https://github.com/shipd-now/shipd/tags
 10. shipd — `hooks/hooks.json` — https://github.com/shipd-now/shipd/blob/main/plugins/s/hooks/hooks.json
