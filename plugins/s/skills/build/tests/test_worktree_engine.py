@@ -458,6 +458,18 @@ class HooksVerbTest(WorktreeEngineTestBase):
         self.assertIn("cp .env.example .env", listed.stdout)
         self.assertIn(self.config_path(), listed.stdout)
 
+    def test_add_refuses_while_another_key_is_invalid(self):
+        # config-writer-migration: A migrated writer refuses while another
+        # key is invalid.
+        self.write_config({"pr-mode": "bogus"})
+        before = self.read(self.config_path())
+        added = self.hooks("add", "echo hi")
+        self.assertEqual(added.returncode, 1, self.combined(added))
+        self.assertRegex(added.stderr, r"error: .*pr-mode")
+        self.assertIn("hint: fix it with shipd config set pr-mode",
+                      added.stderr)
+        self.assertEqual(self.read(self.config_path()), before)
+
     def test_add_creates_the_config_file_when_absent(self):
         self.assertFalse(os.path.exists(self.config_path()))
         added = self.hooks("add", "npm install")

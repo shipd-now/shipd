@@ -62,6 +62,7 @@ if SCRIPTS_DIR not in sys.path:
 
 import brand  # noqa: E402
 import cli_common as cc  # noqa: E402
+import config_registry  # noqa: E402
 import spec_common as sc  # noqa: E402
 
 # The bash helper that owns the git mechanics and the guarded teardown.
@@ -444,9 +445,7 @@ def _write_root_config(root, data):
     """Write ``data`` back to ``<root>/.shipd-config.json`` in the existing
     file style: 2-space-indented JSON with a trailing newline."""
     path = _config_path(root)
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2)
-        fh.write("\n")
+    config_registry.write_layer(path, data, root)
     return path
 
 
@@ -684,6 +683,10 @@ def main(argv=None):
         if verb == "hooks":
             return cmd_hooks(argv[1:])
         return cmd_create(argv)
+    except config_registry.ConfigWriteError as exc:
+        for line in config_registry.refusal_lines(exc):
+            sys.stderr.write(line + "\n")
+        return 1
     except sc.ConfigError as exc:
         cc.err(str(exc))
         return 1

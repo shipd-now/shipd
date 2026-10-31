@@ -334,6 +334,48 @@ class DispatchTest(ShipdCliTestBase):
         self.assertEqual(r.stdout, direct.stdout)
         self.assertIn("wiki-show", r.stdout)
 
+    def test_config_set_delegates_to_config_set(self):
+        direct = self.script("spec_status.py", "config-set", "--help")
+        r = self.cli("config", "set", "--help")
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+        self.assertIn("config-set", r.stdout)
+
+    def test_config_unset_delegates_to_config_unset(self):
+        direct = self.script("spec_status.py", "config-unset", "--help")
+        r = self.cli("config", "unset", "--help")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+
+    def test_config_check_delegates_to_config_check(self):
+        direct = self.script("spec_status.py", "config-check", "--help")
+        r = self.cli("config", "check", "--help")
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, direct.stdout)
+        self.assertIn("config-check", r.stdout)
+
+    def test_bare_config_is_still_the_report(self):
+        r = self.cli("config")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("config (resolved from", r.stdout)
+
+    def test_config_modes_map_to_the_status_script(self):
+        self.assertEqual(shipd.CONFIG_MODES,
+                         {None: ("spec_status.py", ["config-show"]),
+                          "set": ("spec_status.py", ["config-set"]),
+                          "unset": ("spec_status.py", ["config-unset"]),
+                          "check": ("spec_status.py", ["config-check"])})
+
+    def test_the_banner_lists_the_config_modes(self):
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        rows = [line.strip() for line in r.stdout.splitlines()
+                if line.strip().startswith("config ")]
+        self.assertEqual(len(rows), 1, r.stdout)
+        self.assertIn("config [set|unset|check]", rows[0])
+
     def test_workspace_modes_map_to_the_status_script(self):
         """The workspace mode table: a mode-less default of the roster report,
         with ``init``, ``sync``, and ``team`` the three consumed mode words
@@ -1018,6 +1060,11 @@ class StatuslineVerbTest(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="shipd-statusline-test-")
         self.settings = os.path.join(self.tmp, "claude", "settings.json")
         self.config = os.path.join(self.tmp, "shipd-config.json")
+        # The layout writer validates the merged configuration, so the real
+        # home config must never leak into these tests.
+        patcher = unittest.mock.patch.dict(os.environ, {"HOME": self.tmp})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -1284,6 +1331,32 @@ class StatuslineVerbTest(unittest.TestCase):
         self.assertEqual(data["dir"], ".custom")
         self.assertEqual(data["statusline"]["lines"], [["context", "spec"]])
 
+    def test_layout_saves_through_the_writer(self):
+        out, _err, code = self.layout("spec,context", "directory")
+        self.assertEqual(code, 0)
+        self.assertIn("statusline layout saved in %s" % self.config, out)
+        self.assertIn("line 1: spec \u00b7 context", out)
+        self.assertIn("line 2: directory", out)
+        with open(self.config, encoding="utf-8") as fh:
+            self.assertEqual(
+                json.load(fh),
+                {"statusline": {"lines": [["spec", "context"],
+                                          ["directory"]]}})
+
+    def test_layout_refuses_while_another_key_is_invalid(self):
+        with open(self.config, "w", encoding="utf-8") as fh:
+            json.dump({"pr-mode": "bogus"}, fh)
+        with open(self.config, encoding="utf-8") as fh:
+            before = fh.read()
+        out, err, code = self.layout("spec")
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertRegex(err, r"error: .*pr-mode")
+        self.assertIn("hint: fix it with shipd config set pr-mode <value> "
+                      "or shipd config unset pr-mode", err)
+        with open(self.config, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), before)
+
     def test_bare_layout_prints_the_lines(self):
         self.layout("spec,context", "directory")
         out, _err, code = self.layout()
@@ -1467,6 +1540,38 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertIn("auto", detail)
         self.assertIn("draft", detail)
         self.assertIn(path, detail)
+
+    def test_unknown_key_warns_naming_it(self):
+        # doctor-config-registry-check: An unknown key warns.
+        root, _path = self.repo_with_config("typo", {"vioce": False})
+        os.makedirs(os.path.join(root, ".shipd", "planned"))
+        level, name, detail = self.config_check(root)
+        self.assertEqual((level, name), ("warn", "config"))
+        self.assertIn("vioce", detail)
+
+    def test_any_layer_bad_value_fails_with_a_more_suffix(self):
+        root, _path = self.repo_with_config(
+            "twobad", {"pr-mode": "always", "voice": "yes"})
+        level, name, detail = self.config_check(root)
+        self.assertEqual((level, name), ("fail", "config"))
+        self.assertIn("pr-mode", detail)
+        self.assertTrue(
+            detail.endswith("(+1 more \u2014 run shipd config check)"),
+            detail)
+
+    def test_bad_value_in_the_user_layer_fails(self):
+        root, _path = self.repo_with_config("userbad", {})
+        with open(os.path.join(self.home, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"worktree_sweep": "no"}, fh)
+        level, name, detail = self.config_check(root)
+        self.assertEqual((level, name), ("fail", "config"))
+        self.assertIn("worktree_sweep", detail)
+
+    def test_config_remedy_names_the_config_verbs(self):
+        text = shipd.REMEDY_SURFACES["config"]
+        self.assertIn("shipd config set", text)
+        self.assertIn("shipd config unset", text)
 
     def test_declared_draft_pr_mode_is_ok_with_the_usual_detail(self):
         root, _path = self.repo_with_config("draftmode", {"pr-mode": "draft"})
