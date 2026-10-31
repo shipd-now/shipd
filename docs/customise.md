@@ -35,11 +35,11 @@ shipd config check                 # validate every key in every layer
 
 `config set` writes to the layer that already declares the key, else to the
 key's default layer; `--layer repo|workspace|user` overrides that. An invalid
-change writes nothing and prints `error:` and `hint:` lines, and so does a
-write while another key in the merged configuration is invalid; fix that key
-with `config set` or `config unset` first. A key outside the recognized list
-that is already in a file only warns; setting one is refused with a
-did-you-mean hint.
+change writes nothing and prints `error:` and `hint:` lines. A write also
+writes nothing while another key in the merged configuration is invalid; fix
+that key with `config set` or `config unset` first. A key outside the
+recognized list that is already in a file only warns, and `config set`
+refuses a new one with a did-you-mean hint.
 
 ## The recognized keys
 
