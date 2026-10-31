@@ -76,6 +76,9 @@ WORKTREE_PY = os.path.join(SCRIPTS_DIR, "worktree.py")
 GATE_PY = os.path.join(SCRIPTS_DIR, "spec_gate.py")
 STATUS_PY = os.path.join(SCRIPTS_DIR, "spec_status.py")
 SHIPD_BIN = os.path.join(PLUGIN_DIR, "bin", "shipd")
+# Marks every detached session as having no human, so a skill inside it that
+# consults `shipd init status` never opens its setup wizard.
+UNATTENDED_ENV = {"SHIPD_UNATTENDED": "1"}
 # A ``shipd doctor`` report line, relayed by the launch preflight.
 DOCTOR_LINE_RE = re.compile(r"^(ok|warn|fail) (\S+) — (.*)$")
 PREFLIGHT_CHECKS = (
@@ -847,7 +850,7 @@ def _make_session_fn(binary, harness, model_base=None):
             return session_driver.run_turn(
                 prompt_, cwd_, resume_id=resume_id, timeout=timeout,
                 harness=harness, binary=binary, effort=effort,
-                plugin_dir=PLUGIN_DIR)
+                plugin_dir=PLUGIN_DIR, env=UNATTENDED_ENV)
 
         if stage in ("plan", "enrich", "replan"):
             grade = _plan_grade(cwd, member)
@@ -1103,11 +1106,11 @@ def _make_judge_fn(binary, harness, model_base=None):
     ``(ok, session_id, failure, text)`` where ``text`` is the turn's
     result — the reply carrying ``/s:drift --json``'s one object.
     ``on_session`` fires with the session id when the turn yields one."""
-    def judge_fn(member, cwd, prompt, timeout, model=None, on_session=None):
+    def judge_fn(member, cwd, prompt, timeout, effort=None, on_session=None):
         ok, failure, session_id, text = session_driver.run_turn_result(
             prompt, cwd, timeout=timeout, harness=harness, binary=binary,
             effort=effort, model_base=model_base,
-            plugin_dir=PLUGIN_DIR)
+            plugin_dir=PLUGIN_DIR, env=UNATTENDED_ENV)
         if session_id is not None and on_session is not None:
             on_session(session_id)
         return ok, session_id, failure, text

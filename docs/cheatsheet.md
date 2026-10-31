@@ -88,7 +88,7 @@ venn-beta
 
 | Command | What it does | Example |
 |---|---|---|
-| `init [--root DIR]` | Create the content directory layout and ignore and untrack the local state files; safe to re-run. | `shipd init` |
+| `init [status] [--root DIR]` | Create the content directory layout and ignore and untrack the local state files; safe to re-run. `status` writes nothing: it reports `first-run`, `layout-missing`, or `ready` and the action to take. | `shipd init` |
 | `list [kind] [--all]` | Spec artifacts across the root and its worktrees — kind: `changes` (default), `epics`, `verified`, `research`, `video`, or `docs`; `--all` (changes only) adds the applied ones. | `shipd list` |
 | `status [change]` | A change's status and progress. | `shipd status` |
 | `locate [change]` | Where an installed change lives. | `shipd locate` |

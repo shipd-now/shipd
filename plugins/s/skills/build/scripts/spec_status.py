@@ -626,6 +626,50 @@ def cmd_init(root):
     return 0
 
 
+def cmd_init_status(root, unattended=False, as_json=False):
+    """Report whether ``root`` is set up — ``first-run``, ``layout-missing``,
+    or ``ready`` — and the action a skill takes (spec-status
+    layout-status-verb). Read-only: nothing is created or changed.
+
+    ``ready`` when every :data:`LAYOUT_DIRS` name is a directory under the
+    resolved content directory; else ``first-run`` when the root holds no
+    ``.shipd-config.json`` file and the content directory does not exist; else
+    ``layout-missing``. Unattended when ``unattended`` is set or
+    ``SHIPD_UNATTENDED`` is exactly ``1``. The action is ``none`` for
+    ``ready``, ``scaffold`` for ``layout-missing``, and ``wizard`` for an
+    attended ``first-run`` (``scaffold`` when unattended). Exit ``0`` for
+    every verdict."""
+    content = sc.specs_dir(root)
+    if all(os.path.isdir(os.path.join(content, name))
+           for name in LAYOUT_DIRS):
+        verdict = "ready"
+    elif (not os.path.isfile(os.path.join(root, ".shipd-config.json"))
+          and not os.path.isdir(content)):
+        verdict = "first-run"
+    else:
+        verdict = "layout-missing"
+    unattended = bool(unattended) or os.environ.get("SHIPD_UNATTENDED") == "1"
+    if verdict == "ready":
+        action = "none"
+    elif verdict == "first-run" and not unattended:
+        action = "wizard"
+    else:
+        action = "scaffold"
+    absolute = os.path.abspath(content)
+    if as_json:
+        print(json.dumps({"verdict": verdict, "content_dir": absolute,
+                          "unattended": unattended, "action": action}))
+        return 0
+    rel = os.path.relpath(absolute, os.path.abspath(root))
+    shown = absolute if rel == os.pardir or rel.startswith(os.pardir + os.sep) \
+        else rel
+    print("verdict: %s" % verdict)
+    print("content-dir: %s" % shown)
+    print("unattended: %s" % ("true" if unattended else "false"))
+    print("action: %s" % action)
+    return 0
+
+
 def cmd_use(root, change):
     if not _is_change(root, change):
         raise StatusError("unknown change '%s' (no directory under %s)"
@@ -5321,6 +5365,17 @@ def main(argv=None):
         "--root", default=argparse.SUPPRESS,
         help="repo root to initialize (default: the shared --root)")
 
+    p_init_status = sub.add_parser(
+        "init-status",
+        help="report whether the root is set up (read-only verdict)")
+    p_init_status.add_argument(
+        "--root", default=argparse.SUPPRESS,
+        help="repo root to inspect (default: the shared --root)")
+    p_init_status.add_argument(
+        "--unattended", action="store_true",
+        help="treat the run as unattended, as SHIPD_UNATTENDED=1 does")
+    _add_json_flag(p_init_status)
+
     p_use = sub.add_parser("use", help="record the spec being worked on")
     p_use.add_argument("change")
 
@@ -5645,10 +5700,12 @@ def main(argv=None):
         # artifacts declare a different grammar major is refused before any
         # verb reads or writes one. `init` is exempt — it scaffolds a repo and
         # stamps the marker rather than reading artifacts.
-        if args.verb != "init":
+        if args.verb not in ("init", "init-status"):
             sc.check_schema_compat(root)
         if args.verb == "init":
             return cmd_init(root)
+        if args.verb == "init-status":
+            return cmd_init_status(root, args.unattended, args.json)
         if args.verb == "use":
             return cmd_use(root, args.change)
         if args.verb == "current":

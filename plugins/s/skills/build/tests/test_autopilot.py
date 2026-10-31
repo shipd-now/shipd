@@ -915,7 +915,7 @@ class HarnessSelectionTest(AutopilotTestBase):
 
         def fake_run_turn(prompt, cwd, resume_id=None, timeout=None,
                           harness=None, binary=None, effort=None,
-                          plugin_dir=None, extra_args=None):
+                          plugin_dir=None, extra_args=None, env=None):
             captured["harness"] = harness
             return True, None, "sess-1"
 
@@ -1682,7 +1682,8 @@ class ProductionSessionEffortTest(unittest.TestCase):
 
         def fake_run_turn(prompt, cwd, resume_id=None, timeout=None,
                           harness=None, binary=None, effort=None,
-                          model_base=None, plugin_dir=None, extra_args=None):
+                          model_base=None, plugin_dir=None, extra_args=None,
+                          env=None):
             captured["effort"] = effort
             captured["model_base"] = model_base
             return True, None, "sess-1"
@@ -1703,6 +1704,73 @@ class ProductionSessionEffortTest(unittest.TestCase):
     def test_no_effort_reaches_the_runner_as_none(self):
         self.assertIsNone(self._kwargs_for(None)["effort"])
 
+
+
+class UnattendedSessionEnvTest(unittest.TestCase):
+    """Both production seams run their sessions with SHIPD_UNATTENDED=1
+    through the session driver's ``env`` argument (epic-autopilot
+    unattended-session-env), without touching the process environment."""
+
+    EXPECTED = {"SHIPD_UNATTENDED": "1"}
+
+    def setUp(self):
+        self._saved = os.environ.pop("SHIPD_UNATTENDED", None)
+
+    def tearDown(self):
+        if self._saved is not None:
+            os.environ["SHIPD_UNATTENDED"] = self._saved
+
+    def _patched(self, name, fake, fn):
+        real = getattr(session_driver, name)
+        setattr(session_driver, name, fake)
+        try:
+            return fn()
+        finally:
+            setattr(session_driver, name, real)
+
+    def _session_env(self):
+        captured = {}
+
+        def fake_run_turn(prompt, cwd, **kwargs):
+            captured.update(kwargs)
+            return True, None, "sess-1"
+
+        def go():
+            autopilot._make_session_fn(None, "claude", None)(
+                "custom", "m", os.getcwd(), "do it", 10, 0)
+
+        self._patched("run_turn", fake_run_turn, go)
+        return captured.get("env")
+
+    def _judge_env(self):
+        captured = {}
+
+        def fake_run_turn_result(prompt, cwd, **kwargs):
+            captured.update(kwargs)
+            return True, None, "s1", ""
+
+        def go():
+            autopilot._make_judge_fn(None, "claude", None)(
+                "m", os.getcwd(), "judge it", 10, effort="low")
+
+        self._patched("run_turn_result", fake_run_turn_result, go)
+        self.judge_kwargs = dict(captured)
+        return captured.get("env")
+
+    def test_a_stage_session_carries_the_flag(self):
+        self.assertEqual(self._session_env(), self.EXPECTED)
+
+    def test_a_judge_turn_carries_the_flag(self):
+        self.assertEqual(self._judge_env(), self.EXPECTED)
+
+    def test_a_judge_turn_forwards_effort_by_keyword(self):
+        self._judge_env()
+        self.assertEqual(self.judge_kwargs.get("effort"), "low")
+
+    def test_the_autopilot_process_stays_clean(self):
+        self._session_env()
+        self._judge_env()
+        self.assertNotIn("SHIPD_UNATTENDED", os.environ)
 
 
 class _ReclaimCommands:

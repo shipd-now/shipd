@@ -148,6 +148,13 @@ WIKI_MODES = {
     "init": ("spec_status.py", ["wiki-init"]),
 }
 
+# ``init`` likewise: the scaffold by default, with ``status`` the one word
+# consumed to report the verdict (read-only).
+INIT_MODES = {
+    None: ("spec_status.py", ["init"]),
+    "status": ("spec_status.py", ["init-status"]),
+}
+
 USAGE = """\
 usage: shipd <verb> [args...]
 
@@ -155,7 +162,8 @@ Read/inspect verbs over the shipd spec engine. Trailing arguments are passed
 through to the engine verbatim.
 
 verbs:
-  init [--root DIR]          create the content directory layout (safe to re-run)
+  init [status] [--root DIR] create the content directory layout (safe to re-run);
+                             status reports first-run, layout-missing, or ready
   list [kind] [--root DIR] [--all]
                              spec artifacts across the root and its worktrees —
                              kind is changes (default), epics, verified,
@@ -3541,6 +3549,11 @@ def main(argv):
         if mode is not None:
             rest = rest[1:]
         script, leading = WORKSPACE_MODES[mode]
+    if verb == "init":
+        mode = rest[0] if rest and rest[0] in INIT_MODES else None
+        if mode is not None:
+            rest = rest[1:]
+        script, leading = INIT_MODES[mode]
     if verb == "wiki":
         mode = rest[0] if rest and rest[0] in WIKI_MODES else None
         if mode is not None:
