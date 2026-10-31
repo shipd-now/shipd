@@ -1,5 +1,5 @@
 # shipd-init
-Status: ready
+Status: active
 Theme: developer-experience
 
 ## Introduction
@@ -144,3 +144,17 @@ the wizard writes through `shipd config set`, and the shared reference keys on
 | config-control | Key registry, `shipd config set/unset/check` with error and hint output, existing writers migrated, doctor check | high | high | medium | medium | |
 | init-status | `shipd init status` verdict verb and the `SHIPD_UNATTENDED` flag set by autopilot | low | medium | low | low | |
 | init-skill | The `/s:init` wizard and section skill plus the shared "needs setup" reference wired into the layout-requiring skills | medium | high | medium | medium | config-control, init-status |
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 56 | 21.3k |
+| SubagentHandback | 7 | 6.3k |
+| Monitor | 13 | 2.8k |
+| Agent | 3 | 959 |
+| (no tool) | 0 | 906 |
+| ToolSearch | 3 | 311 |
+| Skill | 1 | 73 |
+| TaskStop | 1 | 60 |
+| **Total** | 84 | 32.7k |
