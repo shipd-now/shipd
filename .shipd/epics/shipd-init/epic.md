@@ -64,7 +64,14 @@ through the one writer; and `/s:init config` re-asks only the config section.
   logic — `resolve_pr_mode`, `workspaces_root_dir`, `resolve_models`,
   `pipeline_schema`, `validate_workspace`, the hook-list checks), a one-line
   hint, and a default layer. A write validates the **merged** config the
-  change would produce before touching disk.
+  change would produce before touching disk, and refuses while any
+  registered key in that result is invalid, including keys it does not
+  change. Setting or unsetting the invalid key itself succeeds. An
+  unregistered key only warns.
+- **`statusline` joins the registry.** `shipd statusline layout` already
+  writes this key, so registering it adds no new key. It enters
+  `RECOGNIZED_CONFIG_KEYS` with `shipd statusline layout` as its owning
+  verb, and that verb saves through the one writer.
 - **Reject with reasons and suggestions.** An invalid change writes nothing
   and exits non-zero, printing one `error: <what is wrong>` line per problem
   and, where it helps, a `hint: <how to do it>` line: a "did you mean" for an
