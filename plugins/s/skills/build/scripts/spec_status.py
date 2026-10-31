@@ -245,6 +245,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import build_report  # noqa: E402
 import cli_common as cc  # noqa: E402
+import config_registry  # noqa: E402
 import spec_common as sc  # noqa: E402
 import spec_merge  # noqa: E402
 from spec_lint import lint_change, lint_epic, lint_wiki  # noqa: E402
@@ -3381,6 +3382,76 @@ def cmd_config_show(root):
     return 0
 
 
+def _print_refusal(exc):
+    """Print a refused config write's findings to stderr, one ``error:``
+    line each followed by its ``hint:`` line where it has one."""
+    for line in config_registry.refusal_lines(exc):
+        print(line, file=sys.stderr)
+
+
+def _print_warnings(findings):
+    for finding in findings:
+        print("warning: %s" % finding.message, file=sys.stderr)
+
+
+def _parse_config_value(raw):
+    """A ``config-set`` value: JSON when it parses, else the plain string."""
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return raw
+
+
+def cmd_config_set(root, key, raw_value, layer=None):
+    """Set one config key through the registry's validating writer
+    (spec-status config-write-verbs). Prints ``set <key> = <json> in <path>``;
+    a refused write prints ``error:``/``hint:`` lines to stderr, writes
+    nothing, and exits 1."""
+    value = _parse_config_value(raw_value)
+    try:
+        path, warnings = config_registry.set_key(root, key, value, layer)
+    except config_registry.ConfigWriteError as exc:
+        _print_refusal(exc)
+        return 1
+    except sc.ConfigError as exc:
+        raise StatusError(str(exc))
+    print("set %s = %s in %s" % (key, json.dumps(value), path))
+    _print_warnings(warnings)
+    return 0
+
+
+def cmd_config_unset(root, key, layer=None):
+    """Remove one config key from its layer's file through the registry's
+    validating writer (spec-status config-write-verbs)."""
+    try:
+        path, removed, warnings = config_registry.unset_key(root, key, layer)
+    except config_registry.ConfigWriteError as exc:
+        _print_refusal(exc)
+        return 1
+    except sc.ConfigError as exc:
+        raise StatusError(str(exc))
+    if not removed:
+        print("%s is not set in %s" % (key, path))
+        return 0
+    print("unset %s in %s" % (key, path))
+    _print_warnings(warnings)
+    return 0
+
+
+def cmd_config_check(root):
+    """Validate every declared key of every layer ``root`` resolves
+    (spec-status config-check-verb); exit 1 when any value is invalid."""
+    errors, warnings = config_registry.check(root)
+    for finding in errors + warnings:
+        label = "%s: " % finding.path if finding.path else ""
+        print("%s: %s%s" % (finding.level, label, finding.message))
+        if finding.hint:
+            print("hint: %s" % finding.hint)
+    print("config check: %d error(s), %d warning(s)"
+          % (len(errors), len(warnings)))
+    return 1 if errors else 0
+
+
 # The declared per-stage option fields rendered after a pipeline entry's form
 # label, in this order (spec-status pipeline-show-verb). `autopilot` is an
 # object and renders as `autopilot.<key>=<value>` per declared sub-key.
@@ -4300,6 +4371,8 @@ def cmd_workspace_init(path, git=False, nested=False):
     surfaces as the engine's error naming ``workspaces_root``."""
     try:
         result = sc.init_workspace(path, git=git, nested=nested)
+    except config_registry.ConfigWriteError:
+        raise
     except sc.ConfigError as exc:
         raise StatusError(str(exc))
     if nested:
@@ -4678,9 +4751,12 @@ def cmd_workspace_project(root, action=None, project=None, path=None,
         if errors:
             raise StatusError(
                 "workspace registry is invalid:\n" + "\n".join(errors))
-        with open(cfg_path, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2)
-            fh.write("\n")
+        try:
+            config_registry.write_layer(cfg_path, data, ws_root)
+        except config_registry.ConfigWriteError:
+            raise
+        except sc.ConfigError as exc:
+            raise StatusError(str(exc))
 
     if action == "add":
         entry = projects.get(project)
@@ -5505,6 +5581,30 @@ def main(argv=None):
         "config-show",
         help="print the resolved layered configuration and its provenance")
 
+    p_config_set = sub.add_parser(
+        "config-set",
+        help="set a config key in its layer's file (validated; writes "
+             "nothing when the result would be invalid)")
+    p_config_set.add_argument("key")
+    p_config_set.add_argument(
+        "value", help="parsed as JSON when it parses, else a plain string")
+    p_config_set.add_argument(
+        "--layer", choices=config_registry.LAYERS, default=None,
+        help="the layer to write (default: the layer whose declaration "
+             "wins, else the key's default layer)")
+
+    p_config_unset = sub.add_parser(
+        "config-unset",
+        help="remove a config key from its layer's file")
+    p_config_unset.add_argument("key")
+    p_config_unset.add_argument(
+        "--layer", choices=config_registry.LAYERS, default=None,
+        help="the layer to edit (default: the layer whose declaration wins)")
+
+    sub.add_parser(
+        "config-check",
+        help="validate every declared key of every config layer")
+
     p_pipeline_show = sub.add_parser(
         "pipeline-show",
         help="print the effective autonomous pipeline and its provenance")
@@ -5699,8 +5799,13 @@ def main(argv=None):
         # `specs_dir()` (schema-versioning schema-compat-gate): a repo whose
         # artifacts declare a different grammar major is refused before any
         # verb reads or writes one. `init` is exempt — it scaffolds a repo and
-        # stamps the marker rather than reading artifacts.
-        if args.verb not in ("init", "init-status"):
+        # stamps the marker rather than reading artifacts. The config verbs
+        # are exempt too: they read and write no artifact, `config-check` must
+        # report a malformed config file as a finding rather than die
+        # resolving it here, and `config-set` / `config-unset` must be able to
+        # repair the invalid `dir` value this gate would otherwise die on.
+        if args.verb not in ("init", "init-status", "config-check",
+                             "config-set", "config-unset"):
             sc.check_schema_compat(root)
         if args.verb == "init":
             return cmd_init(root)
@@ -5751,6 +5856,12 @@ def main(argv=None):
             return cmd_epic_set_initiative(root, args.slug, args.initiative)
         if args.verb == "config-show":
             return cmd_config_show(root)
+        if args.verb == "config-set":
+            return cmd_config_set(root, args.key, args.value, args.layer)
+        if args.verb == "config-unset":
+            return cmd_config_unset(root, args.key, args.layer)
+        if args.verb == "config-check":
+            return cmd_config_check(root)
         if args.verb == "pipeline-show":
             return cmd_pipeline_show(root, expand=args.expand,
                                      as_json=args.json)
@@ -5838,6 +5949,10 @@ def main(argv=None):
         return 3
     except StatusError as exc:
         cc.err(str(exc))
+        return 1
+    except config_registry.ConfigWriteError as exc:
+        # A migrated writer's refusal: the writer's own error:/hint: lines.
+        _print_refusal(exc)
         return 1
     except sc.ConfigError as exc:
         cc.err(str(exc))

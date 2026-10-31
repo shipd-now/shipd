@@ -3326,6 +3326,224 @@ class ConfigShowTest(SpecStatusTestBase):
         self.assertIn("worktree-stale-days: 14", lines)
 
 
+class ConfigWriteVerbsTest(SpecStatusTestBase):
+    """`config-set`, `config-unset`, and `config-check` (spec-status
+    config-write-verbs, config-check-verb). A temp git repo and a temp
+    ``$HOME`` keep every layer under the test's control."""
+
+    def setUp(self):
+        super().setUp()
+        self.root = os.path.realpath(self.root)
+        subprocess.run(["git", "init", "-q", self.root], check=True)
+        self.home = os.path.realpath(
+            tempfile.mkdtemp(prefix="spec-status-cfghome-"))
+        self.repo_cfg = os.path.join(self.root, ".shipd-config.json")
+        self.user_cfg = os.path.join(self.home, ".shipd-config.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.home, ignore_errors=True)
+        super().tearDown()
+
+    def cli(self, *args):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        return subprocess.run(
+            ["python3", SCRIPT, "--root", self.root, *args],
+            capture_output=True, text=True, env=env)
+
+    def put(self, path, data):
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+
+    def load(self, path):
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def test_bogus_pr_mode_is_rejected(self):
+        r = self.cli("config-set", "pr-mode", "bogus")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertFalse(os.path.exists(self.repo_cfg))
+        self.assertIn("error: ", r.stderr)
+        self.assertIn("pr-mode", r.stderr)
+        self.assertIn("hint: accepted values: auto, draft", r.stderr)
+
+    def test_unknown_key_gets_a_did_you_mean(self):
+        r = self.cli("config-set", "pr_mode", "draft")
+        self.assertEqual(r.returncode, 1)
+        self.assertRegex(r.stderr, r"error: .*pr_mode")
+        self.assertRegex(r.stderr, r"hint: .*pr-mode")
+
+    def test_default_layer_applies_when_undeclared(self):
+        r = self.cli("config-set", "voice", "false")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            r.stdout, "set voice = false in %s\n" % self.user_cfg)
+        self.assertEqual(self.load(self.user_cfg), {"voice": False})
+        self.assertFalse(os.path.exists(self.repo_cfg))
+
+    def test_plain_string_value_and_repo_default(self):
+        r = self.cli("config-set", "pr-mode", "draft")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            r.stdout, 'set pr-mode = "draft" in %s\n' % self.repo_cfg)
+        self.assertEqual(self.load(self.repo_cfg), {"pr-mode": "draft"})
+
+    def test_winning_layer_receives_the_write(self):
+        self.put(self.user_cfg, {"pr-mode": "auto"})
+        r = self.cli("config-set", "pr-mode", "draft")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.load(self.user_cfg), {"pr-mode": "draft"})
+        self.assertFalse(os.path.exists(self.repo_cfg))
+
+    def test_layer_flag_overrides(self):
+        r = self.cli("config-set", "voice", "true", "--layer", "repo")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.load(self.repo_cfg), {"voice": True})
+
+    def test_workspace_layer_without_a_workspace(self):
+        r = self.cli("config-set", "clone_sources", "[]", "--layer",
+                     "workspace")
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(len(r.stderr.strip().splitlines()), 1)
+        self.assertTrue(r.stderr.startswith("Error:"))
+        self.assertIn("--root", r.stderr)
+
+    def test_owned_key_points_at_its_verb(self):
+        r = self.cli("config-set", "post-worktree-scripts", '["make"]')
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("hint: use shipd worktree hooks add", r.stderr)
+        self.assertFalse(os.path.exists(self.repo_cfg))
+
+    def test_statusline_points_at_its_verb(self):
+        r = self.cli("config-set", "statusline", '{"lines": [["spec"]]}')
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("hint: use shipd statusline layout", r.stderr)
+        self.assertFalse(os.path.exists(self.user_cfg))
+
+    def test_another_invalid_key_blocks_a_set(self):
+        self.put(self.user_cfg, {"pr-mode": "bogus"})
+        with open(self.user_cfg, encoding="utf-8") as fh:
+            before = fh.read()
+        r = self.cli("config-set", "voice", "false")
+        self.assertEqual(r.returncode, 1)
+        self.assertRegex(r.stderr, r"error: .*pr-mode")
+        self.assertIn("hint: fix it with shipd config set pr-mode <value> "
+                      "or shipd config unset pr-mode", r.stderr)
+        with open(self.user_cfg, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), before)
+        self.assertFalse(os.path.exists(self.repo_cfg))
+
+    def test_set_warns_about_an_unrelated_unknown_key(self):
+        self.put(self.repo_cfg, {"vioce": False})
+        r = self.cli("config-set", "voice", "true", "--layer", "repo")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("warning: ", r.stderr)
+        self.assertIn("vioce", r.stderr)
+
+    def test_unset_removes_the_declaring_layers_key(self):
+        self.put(self.repo_cfg, {"pr-mode": "draft", "voice": True})
+        r = self.cli("config-unset", "pr-mode")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "unset pr-mode in %s\n" % self.repo_cfg)
+        self.assertEqual(self.load(self.repo_cfg), {"voice": True})
+
+    def test_unset_of_an_undeclared_key(self):
+        r = self.cli("config-unset", "pr-mode")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            r.stdout, "pr-mode is not set in %s\n" % self.repo_cfg)
+        self.assertFalse(os.path.exists(self.repo_cfg))
+
+    def test_unset_fixes_an_invalid_key(self):
+        self.put(self.user_cfg, {"pr-mode": "bogus"})
+        r = self.cli("config-unset", "pr-mode")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.load(self.user_cfg), {})
+
+    def test_unset_of_an_owned_key_is_refused(self):
+        r = self.cli("config-unset", "statusline")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("hint: use shipd statusline layout", r.stderr)
+
+    def _assert_refused(self, r, target_cfg):
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertRegex(r.stderr, r"error: .*pr-mode")
+        self.assertIn("hint: fix it with shipd config set pr-mode <value> "
+                      "or shipd config unset pr-mode", r.stderr)
+        self.assertFalse(os.path.exists(target_cfg))
+
+    def test_workspace_init_refuses_while_another_key_is_invalid(self):
+        self.put(self.user_cfg, {"pr-mode": "bogus"})
+        target = os.path.join(self.root, "ws")
+        os.makedirs(target)
+        r = self.cli("workspace-init", target)
+        self._assert_refused(r, os.path.join(target, ".shipd-config.json"))
+
+    def test_workspace_project_refuses_while_another_key_is_invalid(self):
+        ws = os.path.join(self.root, "ws")
+        os.makedirs(ws)
+        cfg = os.path.join(ws, ".shipd-config.json")
+        self.put(cfg, {"workspace": {}})
+        self.put(self.user_cfg, {"pr-mode": "bogus"})
+        with open(cfg, encoding="utf-8") as fh:
+            before = fh.read()
+        r = subprocess.run(
+            ["python3", SCRIPT, "--root", ws, "workspace-project", "add",
+             "demo", "demo/repo"],
+            capture_output=True, text=True,
+            env=dict(os.environ, HOME=self.home))
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertRegex(r.stderr, r"error: .*pr-mode")
+        self.assertIn("hint: fix it with shipd config set pr-mode",
+                      r.stderr)
+        with open(cfg, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), before)
+
+    def test_set_and_unset_repair_an_invalid_dir(self):
+        # The schema-compat gate resolves `dir`, so it must not stand between
+        # the writer's `fix it with shipd config ...` hint and the fix.
+        self.put(self.repo_cfg, {"dir": "/abs", "voice": True})
+        r = self.cli("config-set", "dir", ".shipd")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.load(self.repo_cfg),
+                         {"dir": ".shipd", "voice": True})
+        self.put(self.repo_cfg, {"dir": "/abs", "voice": True})
+        r = self.cli("config-unset", "dir")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "unset dir in %s\n" % self.repo_cfg)
+        self.assertEqual(self.load(self.repo_cfg), {"voice": True})
+
+    def test_check_passes_a_clean_config(self):
+        r = self.cli("config-check")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "config check: 0 error(s), 0 warning(s)\n")
+
+    def test_check_warns_on_an_unknown_key_without_failing(self):
+        self.put(self.repo_cfg, {"vioce": False, "// note": 1})
+        r = self.cli("config-check")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("warning: %s: unknown key vioce" % self.repo_cfg,
+                      r.stdout)
+        self.assertIn("hint: did you mean voice?", r.stdout)
+        self.assertIn("config check: 0 error(s), 1 warning(s)", r.stdout)
+
+    def test_check_fails_on_a_bad_value_in_any_layer(self):
+        self.put(self.user_cfg, {"pr-mode": "bogus"})
+        r = self.cli("config-check")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("error: %s: " % self.user_cfg, r.stdout)
+        self.assertIn("hint: accepted values: auto, draft", r.stdout)
+        self.assertIn("config check: 1 error(s), 0 warning(s)", r.stdout)
+
+    def test_check_reports_a_malformed_file(self):
+        with open(self.repo_cfg, "w", encoding="utf-8") as fh:
+            fh.write("{nope")
+        r = self.cli("config-check")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("error: ", r.stdout)
+        self.assertIn(self.repo_cfg, r.stdout)
+
+
 class PipelineShowTest(SpecStatusTestBase):
     """`pipeline-show` prints the effective autonomous pipeline: one line per
     resolved entry plus the provenance of the key, `[default]` when no layer

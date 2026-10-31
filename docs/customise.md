@@ -25,6 +25,22 @@ shipd config              # resolved keys, values, and which layer supplied each
 root's config governs every member repo beneath it for a key that repo
 leaves undeclared.
 
+Change the file through the binary instead of editing it by hand:
+
+```bash
+shipd config set pr-mode draft     # a JSON value when it parses, else a string
+shipd config unset pr-mode         # remove the key from the file that declares it
+shipd config check                 # validate every key in every layer
+```
+
+`config set` writes to the layer that already declares the key, else to the
+key's default layer; `--layer repo|workspace|user` overrides that. An invalid
+change writes nothing and prints `error:` and `hint:` lines. A write also
+writes nothing while another key in the merged configuration is invalid; fix
+that key with `config set` or `config unset` first. A key outside the
+recognized list that is already in a file only warns, and `config set`
+refuses a new one with a did-you-mean hint.
+
 ## The recognized keys
 
 One row per key the engine recognizes.
@@ -48,6 +64,7 @@ repo's own `.shipd/` copy may be behind it.
 | `room` | The PR room verbs: `agent`, the name posted under when `--agent` and `SHIPD_ROOM_AGENT` are unset (no default), and `max_rounds`, the turn cap per task. Default 6. |
 | `merge` | The merge rules `shipd gate rules apply` writes to the `shipd merge rules` ruleset: `approvals` (0 to 10, default 2), `dismiss_stale` (default true), `last_push_approval` (default true), `required_checks` (default `["ci", "semantic-review"]`), `thread_resolution` (default true), and `strict` (default false). An unknown member is an error. |
 | `guardrails` | The guardrail hook's kill-switches. See [docs/guardrails.md](guardrails.md). |
+| `statusline` | The statusline layout: an object whose `lines` lists the segments (`spec`, `directory`, `context`) on each line. Save it with `shipd statusline layout`. |
 | `voice` | Gates the session-start voice digest hook. Default `true`. |
 | `workspace` | Marks the declaring directory as a workspace root; holds its `projects` and `focus` registry. |
 | `workspaces_root` | The mandated parent directory job workspaces are created and cloned under. |

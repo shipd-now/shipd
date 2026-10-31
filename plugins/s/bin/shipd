@@ -8,7 +8,7 @@ a versioned plugin cache snapshot alike. Delegation is process replacement
 (:func:`os.execv`), so the delegate's stdout, stderr, interactivity, and exit
 code are this binary's own — nothing is reimplemented or reformatted here.
 
-Only read/inspect verbs are exposed, with eleven deliberate exceptions, each
+Only read/inspect verbs are exposed, with twelve deliberate exceptions, each
 writing user-domain files and never a spec artifact, and each only under an
 explicit word: ``statusline install`` writes the statusline registration into
 the user's own Claude Code settings file, ``copilot add`` / ``copilot remove``
@@ -24,7 +24,10 @@ writes the workspace marker (and, under ``--git``, the marked member-repos
 workspace beneath a discoverable base — team directories, each team's own
 workspace marker and project registry, and member map entries, all local,
 ``workspace sync --write-gitignore`` rewrites that same
-marked block, ``wiki init`` scaffolds the wiki store, and ``doctor --fix``
+marked block, ``wiki init`` scaffolds the wiki store, ``config set`` /
+``config unset`` change one key of a layered ``.shipd-config.json`` file
+through the validating config writer (refusing, writing nothing, when the
+result would be invalid), and ``doctor --fix``
 autonomously provisions local tooling — the same `textual`/`difft`/statusline
 installs the interactive doctor skill otherwise guards behind consent, never
 a GitHub-side mutation — never a spec artifact, and never modifying anything
@@ -63,6 +66,7 @@ MANIFEST = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
 # them, so dispatch pays no import cost.
 sc = None
 ss = None
+cr = None
 
 # The registry the in-binary ``harness`` verb reads, imported on demand by
 # :func:`_load_registry` for the same reason and kept separate from the pair
@@ -141,6 +145,16 @@ WORKSPACE_MODES = {
     "team": ("spec_status.py", ["workspace-team"]),
 }
 
+# ``config`` likewise: the layered-configuration report by default, with
+# ``set``, ``unset``, and ``check`` the three words consumed to change a key,
+# remove one, or validate every layer.
+CONFIG_MODES = {
+    None: ("spec_status.py", ["config-show"]),
+    "set": ("spec_status.py", ["config-set"]),
+    "unset": ("spec_status.py", ["config-unset"]),
+    "check": ("spec_status.py", ["config-check"]),
+}
+
 # ``wiki`` likewise: the store report by default, with ``init`` the one word
 # consumed to scaffold it.
 WIKI_MODES = {
@@ -182,7 +196,8 @@ verbs:
                              (init: create one; sync: materialize its members;
                              team: interactively build a nested team workspace)
   wiki [init]                the wiki store (init: scaffold it)
-  config                     the layered configuration this root resolves
+  config [set|unset|check]   the layered configuration (set/unset: change a
+                             key; check: validate every layer)
   board [text] [args]        the delivery board (default: full-screen)
   render [output] [file]     markdown with its mermaid diagrams drawn as text
                              (default: full-screen)
@@ -255,13 +270,28 @@ def _load_engine():
     """Import ``spec_common`` and ``spec_status`` from the engine's scripts dir
     into the module globals ``sc``/``ss``. Deferred to the ``list`` path so a
     delegating verb never pays for it."""
-    global sc, ss
+    global sc, ss, cr
     if str(SCRIPTS) not in sys.path:
         sys.path.insert(0, str(SCRIPTS))
+    import config_registry
     import spec_common
     import spec_status
     sc = spec_common
     ss = spec_status
+    cr = config_registry
+
+
+def _load_config_registry():
+    """Import ``config_registry`` from the engine's scripts dir into the module
+    global ``cr``. Deferred to the ``statusline`` path, exactly as
+    :func:`_load_registry` is to ``harness``."""
+    global sc, cr
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    import config_registry
+    import spec_common
+    sc = spec_common
+    cr = config_registry
 
 
 def _load_registry():
@@ -523,19 +553,35 @@ def check_config(root):
     carrying the accessor's own error line, and a well-formed value naming a
     directory that does not exist warns naming the key and the missing path —
     report-only, mutating nothing. A valid-and-present or undeclared key
-    leaves the reporting below untouched."""
+    leaves the reporting below untouched.
+
+    Every declared key of every layer is then validated through the config
+    registry, the same check ``shipd config check`` runs (shipd-cli
+    doctor-config-registry-check): an invalid value fails this check carrying
+    the first error's message, followed by ``(+<n> more — run shipd config
+    check)`` when there are more, and a key outside the registry warns
+    carrying its message, after the ``workspaces_root`` missing-directory
+    warning."""
     _load_engine()
     try:
         content = sc.specs_dir(root)
-        sc.resolve_pr_mode(root)
+        errors, warnings = cr.check(root)
         workspaces_root = sc.workspaces_root_dir(root)
     except sc.ConfigError as exc:
         return ("fail", "config", "%s" % exc)
+    if errors:
+        detail = errors[0].message
+        if len(errors) > 1:
+            detail += (" (+%d more \u2014 run shipd config check)"
+                       % (len(errors) - 1))
+        return ("fail", "config", detail)
     if workspaces_root is not None and not os.path.isdir(workspaces_root):
         return ("warn", "config",
                 "config `workspaces_root` names %s, which is not an existing "
                 "directory — create it, or fix the key, before initializing a "
                 "job workspace there" % workspaces_root)
+    if warnings:
+        return ("warn", "config", warnings[0].message)
     if os.path.isdir(content):
         return ("ok", "config", "content directory %s" % content)
     return ("ok", "config",
@@ -1476,7 +1522,8 @@ REMEDY_SURFACES = {
                 "mutation; run the consent-gated /s:doctor to apply it",
     "python": "the interpreter shipd itself runs on — install a newer "
               "Python 3 by hand",
-    "config": "the layered configuration — fix the file by hand",
+    "config": "the layered configuration — fix it with shipd config set or "
+              "shipd config unset",
     "pipeline": "the declared autonomous pipeline — fix the declaration by "
                "hand",
     "gh": "shipping via `gh` — run `gh auth login` by hand",
@@ -1694,7 +1741,6 @@ def _default_settings():
 
 
 SHIPD_STATUSLINE_MARK = "integrations/statusline.sh"
-STATUSLINE_SEGMENTS = ("spec", "directory", "context")
 DEFAULT_STATUSLINE_LINES = [["spec", "context"]]
 
 
@@ -1723,27 +1769,6 @@ def _default_config():
     return Path.home() / ".shipd-config.json"
 
 
-def _validate_layout(lines):
-    """Return ``lines`` normalised, or raise ``ValueError`` naming the
-    problem: each line a non-empty list of known, non-repeating segments."""
-    if not isinstance(lines, list) or not lines:
-        raise ValueError("a layout needs at least one line")
-    seen = set()
-    out = []
-    for line in lines:
-        if not isinstance(line, list) or not line:
-            raise ValueError("a layout line needs at least one segment")
-        for seg in line:
-            if seg not in STATUSLINE_SEGMENTS:
-                raise ValueError("unknown segment %r (known: %s)"
-                                 % (seg, ", ".join(STATUSLINE_SEGMENTS)))
-            if seg in seen:
-                raise ValueError("segment %r appears more than once" % seg)
-            seen.add(seg)
-        out.append(list(line))
-    return out
-
-
 def _load_statusline_layout(path):
     """``(lines, error)``: the saved layout, the default when the file or key
     is absent, or ``(None, reason)`` when the file or its ``statusline`` key
@@ -1753,18 +1778,22 @@ def _load_statusline_layout(path):
         return None, error
     if "statusline" not in data:
         return [list(l) for l in DEFAULT_STATUSLINE_LINES], None
-    entry = data["statusline"]
     try:
-        if not isinstance(entry, dict):
-            raise ValueError("it is not an object")
-        return _validate_layout(entry.get("lines")), None
-    except ValueError as exc:
-        return None, "malformed `statusline` key in %s: %s" % (path, exc)
+        return cr.statusline_from_config(data["statusline"], path), None
+    except sc.ConfigError as exc:
+        return None, str(exc)
+
+
+# The `_save_statusline_layout` result for a refused write, whose findings are
+# already on stderr.
+SAVE_REFUSED = ""
 
 
 def _save_statusline_layout(path, lines):
-    """Write ``lines`` under the ``statusline`` key, keeping every other key.
-    Returns an error string, or ``None``."""
+    """Write ``lines`` under the ``statusline`` key, keeping every other key,
+    through the one validating config writer. Returns an error string, or
+    ``None``; a refused write has already printed its ``error:`` and ``hint:``
+    lines and returns :data:`SAVE_REFUSED`."""
     data, error = _read_settings(path)
     if error is not None:
         return error
@@ -1773,10 +1802,23 @@ def _save_statusline_layout(path, lines):
     entry["lines"] = lines
     data["statusline"] = entry
     try:
-        _write_settings(path, data)
+        cr.write_layer(path, data)
+    except cr.ConfigWriteError as exc:
+        for line in cr.refusal_lines(exc):
+            print(line, file=sys.stderr)
+        return SAVE_REFUSED
+    except sc.ConfigError as exc:
+        return str(exc)
     except OSError as exc:
         return "cannot write %s: %s" % (path, exc)
     return None
+
+
+def _report_save_error(error):
+    """Print a save error unless it is :data:`SAVE_REFUSED`, whose lines the
+    writer's refusal already printed."""
+    if error != SAVE_REFUSED:
+        _err(error)
 
 
 def statusline_command(plugin_root, lines=None):
@@ -1853,8 +1895,8 @@ def _registered_command(data):
 def _parse_layout_args(raw):
     """Layout lines from CLI words: each word one line, segments comma
     separated. Raises ``ValueError`` on any invalid layout."""
-    return _validate_layout([[p.strip() for p in word.split(",")]
-                             for word in raw])
+    return cr.validate_layout([[p.strip() for p in word.split(",")]
+                               for word in raw])
 
 
 def cmd_statusline(args):
@@ -1889,6 +1931,7 @@ def cmd_statusline(args):
         "--hide", action="append", default=[], metavar="SEG",
         help="install: remove a segment from the layout")
     opts = parser.parse_args(args)
+    _load_config_registry()
 
     path = opts.settings or str(_default_settings())
     config = opts.config or str(_default_config())
@@ -1910,7 +1953,7 @@ def cmd_statusline(args):
         if new != layout:
             error = _save_statusline_layout(config, new)
             if error is not None:
-                _err(error)
+                _report_save_error(error)
                 return 1
         layout = new
         print("statusline layout saved in %s" % config)
@@ -1919,28 +1962,28 @@ def cmd_statusline(args):
     elif opts.action == "install" and (opts.show or opts.hide):
         new = [list(l) for l in layout]
         for seg in opts.show:
-            if seg not in STATUSLINE_SEGMENTS:
+            if seg not in cr.STATUSLINE_SEGMENTS:
                 _err("unknown segment %r (known: %s)"
-                     % (seg, ", ".join(STATUSLINE_SEGMENTS)))
+                     % (seg, ", ".join(cr.STATUSLINE_SEGMENTS)))
                 return 2
             if not any(seg in l for l in new):
                 new[0].append(seg)
         for seg in opts.hide:
-            if seg not in STATUSLINE_SEGMENTS:
+            if seg not in cr.STATUSLINE_SEGMENTS:
                 _err("unknown segment %r (known: %s)"
-                     % (seg, ", ".join(STATUSLINE_SEGMENTS)))
+                     % (seg, ", ".join(cr.STATUSLINE_SEGMENTS)))
                 return 2
             new = [[x for x in l if x != seg] for l in new]
             new = [l for l in new if l]
         try:
-            new = _validate_layout(new)
+            new = cr.validate_layout(new)
         except ValueError as exc:
             _err(str(exc))
             return 2
         if new != layout:
             error = _save_statusline_layout(config, new)
             if error is not None:
-                _err(error)
+                _report_save_error(error)
                 return 1
         layout = new
 
@@ -3554,6 +3597,11 @@ def main(argv):
         if mode is not None:
             rest = rest[1:]
         script, leading = INIT_MODES[mode]
+    if verb == "config":
+        mode = rest[0] if rest and rest[0] in CONFIG_MODES else None
+        if mode is not None:
+            rest = rest[1:]
+        script, leading = CONFIG_MODES[mode]
     if verb == "wiki":
         mode = rest[0] if rest and rest[0] in WIKI_MODES else None
         if mode is not None:

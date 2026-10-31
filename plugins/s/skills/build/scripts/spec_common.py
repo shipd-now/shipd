@@ -420,6 +420,7 @@ RECOGNIZED_CONFIG_KEYS = (
     "pr",
     "pr-mode",
     "room",
+    "statusline",
     "store_autocommit",
     "store_root",
     "store_sync",
@@ -477,7 +478,7 @@ def _load_config_file(path):
     return data
 
 
-def load_layered_config(start):
+def load_layered_config(start, override=None):
     """Collect the ``.shipd-config.json`` layers governing ``start``, nearest-first
     (shipd-config config-file-discovery).
 
@@ -487,14 +488,22 @@ def load_layered_config(start):
     was not already in the walked chain. Returns a list of ``(path, dict)``
     pairs ordered nearest (most specific) first. A directory with no config file
     is skipped silently; a malformed file raises :class:`ConfigError` naming
-    it."""
+    it.
+
+    ``override=(path, data)`` substitutes ``data`` for the file at ``path``
+    — the layer of the directory (or home) whose config path equals ``path`` —
+    even when that file is absent, so a writer can validate a pending write as
+    the merged view it would produce. ``None`` reads every file as is."""
+    override_path = override[0] if override else None
     layers = []
     seen = set()
     cur = os.path.abspath(start)
     while True:
         seen.add(cur)
         path = os.path.join(cur, CONFIG_FILENAME)
-        if os.path.isfile(path):
+        if override_path is not None and path == override_path:
+            layers.append((path, override[1]))
+        elif os.path.isfile(path):
             layers.append((path, _load_config_file(path)))
         parent = os.path.dirname(cur)
         if parent == cur:
@@ -503,12 +512,14 @@ def load_layered_config(start):
     home = os.path.abspath(os.path.expanduser("~"))
     if home not in seen:
         home_path = os.path.join(home, CONFIG_FILENAME)
-        if os.path.isfile(home_path):
+        if override_path is not None and home_path == override_path:
+            layers.append((home_path, override[1]))
+        elif os.path.isfile(home_path):
             layers.append((home_path, _load_config_file(home_path)))
     return layers
 
 
-def resolve_config(start):
+def resolve_config(start, override=None):
     """Resolve the effective layered configuration for ``start`` (shipd-config
     layered-key-merge).
 
@@ -517,8 +528,8 @@ def resolve_config(start):
     top-level key wins it wholesale, values are never deep-merged across layers,
     and unknown keys are preserved. ``provenance`` maps each effective key to the
     path of the file that supplied it, or the string ``"default"`` for a
-    defaulted key."""
-    layers = load_layered_config(start)
+    defaulted key. ``override`` is passed to :func:`load_layered_config`."""
+    layers = load_layered_config(start, override=override)
     config = {
         "dir": DEFAULT_DIR,
         COMPLETED_RETENTION_KEY: DEFAULT_COMPLETED_RETENTION_DAYS,
@@ -1084,6 +1095,12 @@ def resolve_pipeline(root):
     The provenance of a preset-resolved pipeline is
     ``preset:<name> (<config-path>)``."""
     config, prov = resolve_config(root)
+    return pipeline_from_config(config, prov)
+
+
+def pipeline_from_config(config, prov):
+    """The validating core of :func:`resolve_pipeline`, over an already
+    resolved ``config`` and its provenance map."""
     raw = config.get(PIPELINE_KEY)
     if raw is None:
         return [{"stage": name} for name in PIPELINE_STAGES], "default"
@@ -1166,6 +1183,12 @@ def resolve_pr_mode(root):
     standalone config, never a pipeline entry, so resolving it never imports
     any third-party package."""
     config, prov = resolve_config(root)
+    return pr_mode_from_config(config, prov)
+
+
+def pr_mode_from_config(config, prov):
+    """The validating core of :func:`resolve_pr_mode`, over an already
+    resolved ``config`` and its provenance map."""
     if PR_MODE_KEY not in config:
         return PR_MODES[0]
     raw = config[PR_MODE_KEY]
@@ -1226,6 +1249,12 @@ def resolve_pr(root):
     and the config file that supplied it. Other members are ignored.
     Stdlib-only."""
     config, prov = resolve_config(root)
+    return pr_from_config(config, prov)
+
+
+def pr_from_config(config, prov):
+    """The validating core of :func:`resolve_pr`, over an already resolved
+    ``config`` and its provenance map."""
     if PR_KEY not in config:
         return DEFAULT_PR_TITLE, None
     raw = config[PR_KEY]
@@ -1290,6 +1319,12 @@ def resolve_room(root):
     config file that supplied it. Other members are ignored, so a later room
     feature can add its own. Stdlib-only."""
     config, prov = resolve_config(root)
+    return room_from_config(config, prov)
+
+
+def room_from_config(config, prov):
+    """The validating core of :func:`resolve_room`, over an already resolved
+    ``config`` and its provenance map."""
     if ROOM_KEY not in config:
         return None, DEFAULT_ROOM_MAX_ROUNDS
     raw = config[ROOM_KEY]
@@ -1348,6 +1383,12 @@ def resolve_merge(root):
     the config file that supplied it. Unknown members are rejected because a
     typo would silently weaken a security rule. Stdlib-only."""
     config, prov = resolve_config(root)
+    return merge_from_config(config, prov)
+
+
+def merge_from_config(config, prov):
+    """The validating core of :func:`resolve_merge`, over an already resolved
+    ``config`` and its provenance map."""
     result = dict(DEFAULT_MERGE)
     result["required_checks"] = list(DEFAULT_MERGE["required_checks"])
     if MERGE_KEY not in config:
@@ -2070,9 +2111,10 @@ def init_workspace(path, git=False, nested=False):
     cfg_path = os.path.join(target, CONFIG_FILENAME)
     data = _load_config_file(cfg_path) if os.path.isfile(cfg_path) else {}
     data["workspace"] = {}
-    with open(cfg_path, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2)
-        fh.write("\n")
+    # Imported lazily, as `pipeline_schema` is: the writer module imports this
+    # one at the top.
+    import config_registry
+    config_registry.write_layer(cfg_path, data, target)
     if git:
         if not inside_git_work_tree(target):
             subprocess.run(["git", "init", target],
@@ -2292,13 +2334,7 @@ def wiki_base_dir(ws_root):
     raw = config.get("wiki_base")
     if raw is None:
         return None
-    if not isinstance(raw, str) or not raw:
-        raise ConfigError(
-            "config `wiki_base` must be a non-empty string path, got %r" % (raw,))
-    expanded = os.path.expanduser(raw)
-    if not os.path.isabs(expanded):
-        raise ConfigError(
-            "config `wiki_base` must expand to an absolute path, got %r" % (raw,))
+    expanded = absolute_path_value("wiki_base", raw)
     resolved = os.path.realpath(expanded)
     chain = workspace_chain(ws_root)
     for member in chain:
@@ -2306,6 +2342,22 @@ def wiki_base_dir(ws_root):
             return None
     if not chain and os.path.realpath(wiki_dir(ws_root)) == resolved:
         return None
+    return expanded
+
+
+def absolute_path_value(key, raw):
+    """Validate a path-valued config ``raw`` under ``key`` and return it with
+    ``~`` expanded. A value that is not a non-empty string, or does not expand
+    to an absolute path, raises :class:`ConfigError` naming ``key``."""
+    if not isinstance(raw, str) or not raw:
+        raise ConfigError(
+            "config `%s` must be a non-empty string path, got %r"
+            % (key, raw))
+    expanded = os.path.expanduser(raw)
+    if not os.path.isabs(expanded):
+        raise ConfigError(
+            "config `%s` must expand to an absolute path, got %r"
+            % (key, raw))
     return expanded
 
 
@@ -2326,15 +2378,7 @@ def memory_store_dir(root):
     naming ``memory_dir`` so the consuming verb can exit non-zero."""
     config, _prov = resolve_config(root)
     raw = config.get("memory_dir", DEFAULT_MEMORY_DIR)
-    if not isinstance(raw, str) or not raw:
-        raise ConfigError(
-            "config `memory_dir` must be a non-empty string path, got %r"
-            % (raw,))
-    expanded = os.path.expanduser(raw)
-    if not os.path.isabs(expanded):
-        raise ConfigError(
-            "config `memory_dir` must expand to an absolute path, got %r"
-            % (raw,))
+    expanded = absolute_path_value("memory_dir", raw)
     return os.path.join(expanded, "wiki")
 
 
@@ -2353,16 +2397,7 @@ def _workspaces_root_from_config(config):
     raw = config.get(WORKSPACES_ROOT_KEY)
     if raw is None:
         return None
-    if not isinstance(raw, str) or not raw:
-        raise ConfigError(
-            "config `workspaces_root` must be a non-empty string path, got %r"
-            % (raw,))
-    expanded = os.path.expanduser(raw)
-    if not os.path.isabs(expanded):
-        raise ConfigError(
-            "config `workspaces_root` must expand to an absolute path, got %r"
-            % (raw,))
-    return os.path.normpath(expanded)
+    return os.path.normpath(absolute_path_value(WORKSPACES_ROOT_KEY, raw))
 
 
 def workspaces_root_dir(root):

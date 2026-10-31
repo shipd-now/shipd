@@ -5091,5 +5091,72 @@ class BrandSubjectTest(unittest.TestCase):
             self.assertEqual(sc.brand_subject(s), s)
 
 
+class AccessorCoreTest(unittest.TestCase):
+    """The ``<name>_from_config`` cores behind the ``resolve_*`` wrappers, the
+    shared ``absolute_path_value``, and the ``override`` seam of
+    ``resolve_config`` (config-key-registry, config-layer-writer)."""
+
+    CASES = (
+        ("pr-mode", "bogus", "resolve_pr_mode", "pr_mode_from_config"),
+        ("autonomous-pipeline", "nope", "resolve_pipeline",
+         "pipeline_from_config"),
+        ("pr", "bogus", "resolve_pr", "pr_from_config"),
+        ("room", "bogus", "resolve_room", "room_from_config"),
+        ("merge", "bogus", "resolve_merge", "merge_from_config"),
+    )
+
+    def test_core_raises_same_text_as_wrapper(self):
+        for key, value, wrapper, core in self.CASES:
+            with tempfile.TemporaryDirectory() as tmp, \
+                    tempfile.TemporaryDirectory() as home:
+                root = os.path.realpath(tmp)
+                with open(os.path.join(root, sc.CONFIG_FILENAME), "w",
+                          encoding="utf-8") as fh:
+                    json.dump({key: value}, fh)
+                with home_set_to(os.path.realpath(home)):
+                    with self.assertRaises(sc.ConfigError) as via_wrapper:
+                        getattr(sc, wrapper)(root)
+                    path = os.path.join(root, sc.CONFIG_FILENAME)
+                    with self.assertRaises(sc.ConfigError) as via_core:
+                        getattr(sc, core)({key: value}, {key: path})
+                self.assertEqual(str(via_core.exception),
+                                 str(via_wrapper.exception), key)
+
+    def test_absolute_path_value_messages(self):
+        with self.assertRaises(sc.ConfigError) as ctx:
+            sc.absolute_path_value("memory_dir", "rel")
+        self.assertEqual(
+            str(ctx.exception),
+            "config `memory_dir` must expand to an absolute path, got 'rel'")
+        with self.assertRaises(sc.ConfigError) as ctx:
+            sc.absolute_path_value("memory_dir", "")
+        self.assertEqual(
+            str(ctx.exception),
+            "config `memory_dir` must be a non-empty string path, got ''")
+
+    def test_absolute_path_value_expands(self):
+        with tempfile.TemporaryDirectory() as home:
+            with home_set_to(os.path.realpath(home)):
+                self.assertEqual(
+                    sc.absolute_path_value("memory_dir", "~/m"),
+                    os.path.join(os.path.realpath(home), "m"))
+
+    def test_override_replaces_or_adds_a_layer(self):
+        for present in (True, False):
+            with tempfile.TemporaryDirectory() as tmp, \
+                    tempfile.TemporaryDirectory() as home:
+                root = os.path.realpath(tmp)
+                path = os.path.join(root, sc.CONFIG_FILENAME)
+                if present:
+                    with open(path, "w", encoding="utf-8") as fh:
+                        json.dump({"voice": True, "model": "x"}, fh)
+                with home_set_to(os.path.realpath(home)):
+                    config, prov = sc.resolve_config(
+                        root, override=(path, {"voice": False}))
+                self.assertIs(config["voice"], False)
+                self.assertEqual(prov["voice"], path)
+                self.assertNotIn("model", config)
+
+
 if __name__ == "__main__":
     unittest.main()
