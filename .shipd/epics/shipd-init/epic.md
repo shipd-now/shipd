@@ -1,5 +1,5 @@
 # shipd-init
-Status: active
+Status: complete
 Theme: developer-experience
 
 ## Introduction
@@ -149,12 +149,14 @@ the wizard writes through `shipd config set`, and the shared reference keys on
 
 | Tool | Calls | Output tokens |
 | --- | --- | --- |
-| Bash | 56 | 21.3k |
-| SubagentHandback | 7 | 6.3k |
-| Monitor | 13 | 2.8k |
-| Agent | 3 | 959 |
-| (no tool) | 0 | 906 |
-| ToolSearch | 3 | 311 |
+| Bash | 223 | 127.3k |
+| SubagentHandback | 23 | 28.6k |
+| Monitor | 35 | 7.2k |
+| (no tool) | 0 | 2.6k |
+| Agent | 7 | 2.5k |
+| SendMessage | 3 | 1.4k |
+| ToolSearch | 7 | 894 |
+| TaskStop | 4 | 292 |
+| bash | 1 | 104 |
 | Skill | 1 | 73 |
-| TaskStop | 1 | 60 |
-| **Total** | 84 | 32.7k |
+| **Total** | 304 | 170.8k |
