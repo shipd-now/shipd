@@ -1697,6 +1697,24 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual((level, name), ("fail", "pipeline"))
         self.assertEqual(detail, "boom")
 
+    def test_pipeline_malformed_config_is_ok_carrying_the_error(self):
+        root = os.path.join(self.tmp, "malformed-config")
+        os.makedirs(root)
+        with open(os.path.join(root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("{not json")
+        level, name, detail = self.pipeline_check(root)
+        self.assertEqual((level, name), ("ok", "pipeline"))
+        self.assertIn("skipped", detail)
+        self.assertIn("not valid JSON", detail)
+
+    def test_pipeline_unknown_preset_still_fails(self):
+        root, _path = self.repo_with_config(
+            "unknown-preset", {"autonomous-pipeline": "nope"})
+        level, name, detail = self.pipeline_check(root)
+        self.assertEqual((level, name), ("fail", "pipeline"))
+        self.assertIn("nope", detail)
+
     # -- schema ------------------------------------------------------------
 
     def schema_check(self, root):

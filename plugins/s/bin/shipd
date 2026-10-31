@@ -594,9 +594,16 @@ def check_pipeline(root, resolve=None):
     unknown preset — is a hard stop for the delivery surfaces that run it, so
     it fails the preflight carrying the resolver's own error line. ``resolve``
     is the injection point; it defaults to the real resolver once the engine
-    is loaded."""
+    is loaded. An unloadable configuration is reported as the detail rather
+    than failing, because the ``config`` check owns it."""
     _load_engine()
-    resolve = resolve or sc.resolve_pipeline
+    if resolve is None:
+        try:
+            config, prov = sc.resolve_config(root)
+        except sc.ConfigError as exc:
+            return ("ok", "pipeline",
+                    "configuration unresolvable — skipped (%s)" % exc)
+        resolve = lambda _root: sc.pipeline_from_config(config, prov)
     try:
         entries, provenance = resolve(root)
     except sc.ConfigError as exc:
