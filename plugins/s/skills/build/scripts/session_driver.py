@@ -27,6 +27,7 @@ Standard library only — no third-party imports, no network beyond the
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 
@@ -249,19 +250,20 @@ def login_hint(harness):
 
 def run_turn(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
              harness=DEFAULT_HARNESS, binary=None, effort=None,
-             model_base=None, plugin_dir=None, extra_args=None):
+             model_base=None, plugin_dir=None, extra_args=None, env=None):
     """Run one headless turn; return ``(ok, failure, session_id)``.
 
     See :func:`run_turn_result`, which this wraps."""
     return run_turn_result(prompt, cwd, resume_id=resume_id, timeout=timeout,
                            harness=harness, binary=binary, effort=effort,
                            model_base=model_base, plugin_dir=plugin_dir,
-                           extra_args=extra_args)[:3]
+                           extra_args=extra_args, env=env)[:3]
 
 
 def run_turn_result(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
                     harness=DEFAULT_HARNESS, binary=None, effort=None,
-                    model_base=None, plugin_dir=None, extra_args=None):
+                    model_base=None, plugin_dir=None, extra_args=None,
+                    env=None):
     """Run one headless turn of a ``harness`` conversation inside ``cwd``.
 
     The runner ``harness`` names builds the argv, parses the transcript, and
@@ -273,6 +275,9 @@ def run_turn_result(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
     turn's transcript (``None`` when unavailable). ``failure`` names the fault
     when ``ok`` is False, else ``None``; ``result_text`` is the transcript's
     result text (``""`` on every failure path).
+
+    ``env`` is an optional mapping overlaid on the current process environment
+    for the session subprocess; ``None`` inherits the environment unchanged.
     """
     runner = runner_for(harness)
     argv = runner["argv"](binary or runner["binary"],
@@ -281,6 +286,7 @@ def run_turn_result(prompt, cwd, resume_id=None, timeout=TIMEOUT_DEFAULT,
     try:
         proc = subprocess.run(
             argv, cwd=cwd, timeout=timeout, text=True,
+            env=None if env is None else {**os.environ, **env},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except subprocess.TimeoutExpired:
         return False, "session timed out after %d s" % timeout, None, ""

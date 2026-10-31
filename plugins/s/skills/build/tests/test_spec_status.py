@@ -2920,6 +2920,96 @@ class TestInitVerb(SpecStatusTestBase):
         self.assertTrue(rules[1].endswith("autopilot/"), rules[1])
 
 
+class TestInitStatusVerb(SpecStatusTestBase):
+    """The ``init-status`` verb (spec-status layout-status-verb): a read-only
+    verdict — ``first-run``, ``layout-missing``, or ``ready`` — plus the action
+    a skill takes."""
+
+    def run_status(self, *args, env_extra=None, root=None):
+        env = dict(os.environ)
+        env["HOME"] = self._base_home
+        env.pop("SHIPD_UNATTENDED", None)
+        env.update(env_extra or {})
+        return subprocess.run(
+            ["python3", SCRIPT, "init-status", "--root", root or self.root,
+             *args],
+            capture_output=True, text=True, env=env)
+
+    def write_config(self, data, root=None):
+        with open(os.path.join(root or self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(data if isinstance(data, str) else json.dumps(data))
+
+    def test_bare_root_is_first_run_and_untouched(self):
+        r = self.run_status()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), [
+            "verdict: first-run", "content-dir: .shipd",
+            "unattended: false", "action: wizard"])
+        self.assertEqual(os.listdir(self.root), [])
+
+    def test_repo_config_without_folders_is_layout_missing(self):
+        self.write_config({"dir": "specs"})
+        r = self.run_status()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("verdict: layout-missing", r.stdout)
+        self.assertIn("content-dir: specs", r.stdout)
+        self.assertIn("action: scaffold", r.stdout)
+
+    def test_partial_layout_is_layout_missing(self):
+        os.makedirs(os.path.join(self.root, ".shipd", "verified"))
+        r = self.run_status()
+        self.assertIn("verdict: layout-missing", r.stdout)
+
+    def test_workspace_config_alone_is_first_run(self):
+        parent = tempfile.mkdtemp(prefix="spec-status-ws-")
+        self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
+        self.write_config({"workspace": {"members": []}}, root=parent)
+        root = os.path.join(parent, "repo")
+        os.makedirs(root)
+        r = self.run_status(root=root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("verdict: first-run", r.stdout)
+
+    def test_initialized_root_is_ready(self):
+        subprocess.run(["python3", SCRIPT, "init", "--root", self.root],
+                       capture_output=True, text=True, check=True)
+        r = self.run_status()
+        self.assertIn("verdict: ready", r.stdout)
+        self.assertIn("action: none", r.stdout)
+
+    def test_unattended_env_and_flag_scaffold(self):
+        for r in (self.run_status(env_extra={"SHIPD_UNATTENDED": "1"}),
+                  self.run_status("--unattended")):
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("verdict: first-run", r.stdout)
+            self.assertIn("unattended: true", r.stdout)
+            self.assertIn("action: scaffold", r.stdout)
+
+    def test_only_one_switches_unattended_on(self):
+        r = self.run_status(env_extra={"SHIPD_UNATTENDED": "0"})
+        self.assertIn("unattended: false", r.stdout)
+        self.assertIn("action: wizard", r.stdout)
+
+    def test_json_output(self):
+        r = self.run_status("--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data = json.loads(r.stdout)
+        self.assertEqual(data["verdict"], "first-run")
+        self.assertEqual(os.path.realpath(data["content_dir"]),
+                         os.path.realpath(os.path.join(self.root, ".shipd")))
+        self.assertTrue(os.path.isabs(data["content_dir"]))
+        self.assertIs(data["unattended"], False)
+        self.assertEqual(data["action"], "wizard")
+
+    def test_malformed_repo_config_is_an_error(self):
+        self.write_config("{not json")
+        r = self.run_status()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Error:", r.stderr + r.stdout)
+        self.assertIn(".shipd-config.json", r.stderr + r.stdout)
+
+
 class WorkspaceInitTest(SpecStatusTestBase):
     """The ``workspace-init <path>`` verb (spec-status workspace-init-verb).
 

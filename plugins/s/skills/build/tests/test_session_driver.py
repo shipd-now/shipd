@@ -156,6 +156,26 @@ class ResultTextTest(unittest.TestCase):
                 session_driver.run_turn("p", tmp, binary=fake),
                 (True, None, "s1"))
 
+    def test_env_overlay_reaches_the_session(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = os.path.join(tmp, "fake-claude")
+            with open(fake, "w") as fh:
+                fh.write("#!/bin/sh\nprintf '{\"session_id\":\"s1\","
+                         "\"result\":\"%s\"}' \"$SHIPD_UNATTENDED\"\n")
+            os.chmod(fake, 0o755)
+            saved = os.environ.pop("SHIPD_UNATTENDED", None)
+            try:
+                with_env = session_driver.run_turn_result(
+                    "p", tmp, binary=fake, env={"SHIPD_UNATTENDED": "1"})
+                without = session_driver.run_turn_result(
+                    "p", tmp, binary=fake)
+            finally:
+                if saved is not None:
+                    os.environ["SHIPD_UNATTENDED"] = saved
+            self.assertEqual(with_env[3], "1")
+            self.assertEqual(without[3], "")
+
     def test_missing_cwd_returns_empty_text(self):
         missing = os.path.join(
             tempfile.gettempdir(), "session-driver-nonexistent-dir-xyz")

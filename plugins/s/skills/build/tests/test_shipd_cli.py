@@ -351,6 +351,32 @@ class DispatchTest(ShipdCliTestBase):
                          {None: ("spec_status.py", ["wiki-show"]),
                           "init": ("spec_status.py", ["wiki-init"])})
 
+    def test_init_modes_map_to_the_status_script(self):
+        """The init mode table: the scaffold by default, with ``status`` the
+        one consumed word (shipd-cli cli-init-status-mode)."""
+        self.assertEqual(shipd.INIT_MODES,
+                         {None: ("spec_status.py", ["init"]),
+                          "status": ("spec_status.py", ["init-status"])})
+
+    def test_init_status_reports_first_run_and_writes_nothing(self):
+        bare = tempfile.mkdtemp(prefix="shipd-cli-bare-")
+        self.addCleanup(shutil.rmtree, bare, ignore_errors=True)
+        r = self.cli("init", "status", "--root", bare)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("verdict: first-run", r.stdout)
+        self.assertEqual(os.listdir(bare), [])
+
+    def test_plain_init_still_scaffolds(self):
+        bare = tempfile.mkdtemp(prefix="shipd-cli-bare-")
+        self.addCleanup(shutil.rmtree, bare, ignore_errors=True)
+        r = self.cli("init", "--root", bare)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("all shipd directories are ready", r.stdout)
+
+    def test_help_banner_names_the_init_status_mode(self):
+        r = self.cli("help")
+        self.assertIn("init [status] [--root DIR]", r.stdout)
+
     def test_wiki_is_a_curated_verb_mapped_to_the_status_script(self):
         """The `wiki` row delegates to ``spec_status.py wiki-show``
         (shipd-cli cli-dispatch)."""
