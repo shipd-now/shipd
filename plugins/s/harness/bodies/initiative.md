@@ -15,7 +15,7 @@ the workspace root, the declared project slugs, and every initiative with its
 status and scope — ground the goal, outcomes, and scope options in that. If no
 workspace resolves, report the error verbatim, write nothing, and point the
 user at `/s:workspace init`. Then dispatch the invocation to exactly one verb
-below, run from the repo root so `--root` can be omitted.
+below, run from the repo root so `--root` can be omitted. For `set` only, Run the needs-setup check in `${CLAUDE_PLUGIN_ROOT}/skills/init/references/needs-setup.md` first.
 
 ## `new <slug>` — interview, then install a lint-clean brief
 

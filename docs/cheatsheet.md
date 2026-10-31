@@ -38,7 +38,7 @@ venn-beta
 ```
 
 - **Spec, build, ship** — the pipeline, one change end to end: s:onboard,
-  s:doctor, s:duck, s:plan, s:fix, s:review, s:drive, s:gate, s:status,
+  s:doctor, s:init, s:duck, s:plan, s:fix, s:review, s:drive, s:gate, s:status,
   s:document, s:worktree-hooks, s:pr
 - **Epics, driven** — orchestration across many changes: s:epic, s:prd,
   s:initiative, s:workspace, s:explain, s:epic-grill, s:plan-deep, s:room
@@ -57,6 +57,7 @@ venn-beta
 | `/s:autopilot <epic> [detached]` | Drive an approved epic's unplanned members to shipped PRs unattended. | `/s:autopilot export-cli` |
 | `/s:build [change]` | Plan, delegate to execution sub-agents, verify, and ship a change end to end. | `/s:build export-json-flag` |
 | `/s:doctor` | Diagnose a shipd environment and run only the remedies you consent to. | `/s:doctor` |
+| `/s:init [section]` | Set up shipd in a project with a guided wizard, or run one section. | `/s:init config` |
 | `/s:document` | Author or revise a doc against the shipd documentation standard, then lint it clean. | `/s:document Rewrite docs/api-keys.md as a reference` |
 | `/s:drift <change> \| --epic <slug>` | Judge whether an epic's gated plans still hold against `main` — `holds`, `revise`, or `conflict` per drifted member. | `/s:drift --epic export-cli` |
 | `/s:drive` | Drive a real browser to operate an app, verify a change, and optionally record a branded demo. A `manual` auth recipe, or `login <target> --manual`, lets a person log in by hand. When a step fails, `handoff` gives the person the live browser and `resume` takes it back. `session start --headed` opens the window visible from the start. | `/s:drive Verify the checkout flow still works` |

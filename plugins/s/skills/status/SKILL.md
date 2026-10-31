@@ -15,7 +15,7 @@ and you never re-implement the checks the binary already owns.
 
 Requirements: this repo must have the resolved content-directory layout
 (default `.shipd/`). All checking logic lives in the CLI — you only orchestrate
-prompts.
+prompts. Run the needs-setup check in `${CLAUDE_PLUGIN_ROOT}/skills/init/references/needs-setup.md` before anything else.
 
 Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 - Status CLI: `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py`

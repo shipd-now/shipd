@@ -57,20 +57,10 @@ once context exists. So this is explore-with-a-destination — curious and
 grounded, but always driving toward the readiness bar, never wandering.
 
 Requirements: this repo must have the resolved content-directory layout (the
-spec engine and linter live under `plugins/s/skills/build/scripts/`). The
-content directory is configured, not hardcoded — resolve its name and confirm it
-exists with `spec_status.py config-show` (it prints the resolved `content-dir`,
-default `.shipd`). **When that layout is missing, stop before any questioning**:
-report that the repo has no resolved content-directory layout, then ask one
-AskUserQuestion — scaffold the minimal layout (`verified/`, `planned/`,
-`completed/`, and `research/` under the resolved content directory, default
-`.shipd/`) and continue (recommended), or stop here. Never proceed as though
-the layout existed.
-When the user accepts the scaffold, create it by running the engine verb —
-`python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" init`, the
-same function behind `shipd init` — never by making the directories by hand; it
-reports one `created`/`exists` line per directory and the summary
-`all shipd directories are ready`, and is safe to re-run.
+spec engine and linter live under `plugins/s/skills/build/scripts/`). Right after
+creating the change's worktree, before investigating, run the needs-setup check
+in `${CLAUDE_PLUGIN_ROOT}/skills/init/references/needs-setup.md`
+inside that worktree.
 
 Path notation: literal `.shipd/` paths in this skill denote the repo's resolved
 content directory (default `.shipd`) — resolve the actual name with
@@ -430,10 +420,8 @@ answered by reading is a failure of this skill.
 With the go-ahead question gone, the flow proceeds by default; only these
 conditions still end a turn and wait for the user:
 
-- **Missing content-directory layout** — the repo has no resolved
-  `verified/`/`planned/`/`completed/`/`research/` layout; ask scaffold-or-stop,
-  and on accept scaffold it with `spec_status.py init` (see "Requirements"
-  above).
+- **First-run setup** — the needs-setup check returns `action: wizard`; the
+  `/s:init` wizard runs, then the flow continues.
 - **An unresolvable pipeline** — `pipeline-show` exits non-zero at the start of
   the flow (a declaration that fails validation); the skill reports the
   engine's error text and stops before investigating.

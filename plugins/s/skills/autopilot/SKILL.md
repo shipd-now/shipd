@@ -17,7 +17,7 @@ decision. You only orchestrate the launch and relay the result.
 Requirements: this repo must have the resolved content-directory layout
 (default `.shipd/`) and the named epic must exist and be **approved**
 (`ready` or `active`). The epic approval is the last human gate; everything
-after it is the autopilot's job.
+after it is the autopilot's job. Run the needs-setup check in `${CLAUDE_PLUGIN_ROOT}/skills/init/references/needs-setup.md` before anything else.
 
 ## Harness plan mode
 

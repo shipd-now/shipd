@@ -10,7 +10,8 @@ against a lint-clean change, and only inside that change's own branch.
    create path, which also runs the repo's configured
    `post-worktree-scripts` — then
    work in `.worktrees/<change>` on branch `change/<change>`. Never author
-   artifacts or edit code in the main checkout. Read `.shipd/constitution.md`
+   artifacts or edit code in the main checkout. Run the needs-setup check in
+   `${CLAUDE_PLUGIN_ROOT}/skills/init/references/needs-setup.md` there. Read `.shipd/constitution.md`
    when it is present and treat every rule in it as binding on what follows.
 2. **Get a lint-clean change first.** When `.shipd/planned/<change>/` already
    holds artifacts and `shipd lint <change>` exits 0, adopt them as they are —

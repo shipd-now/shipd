@@ -75,8 +75,7 @@ and resume later. It touches nothing in your own repositories.
 
 ## 4. Plan your first change: `/s:plan`
 
-Open a session in the repository you want to work on and describe the
-change in prose:
+Open a session in the repository you want to work on and describe the change in prose:
 
 ```
 /s:plan Add a --json flag to the export command so scripts can consume its output
@@ -88,9 +87,10 @@ genuinely cannot infer. It names the change, creates a dedicated worktree
 artifacts there — then stops. No code yet:
 
 - `plan.md` — the idea and the binding implementation decisions
-- `specs/<capability>/spec.md` — the testable delta for each affected
-  capability
+- `specs/<capability>/spec.md` — the testable delta for each affected capability
 - `tasks.md` — the implementation checklist
+
+The first `/s:plan` in a new repository runs the `/s:init` wizard first; `/s:init <section>` changes one section later.
 
 Read them: this is the cheapest moment to correct course. See
 [`.shipd/README.md`](../.shipd/README.md) for the full requirement and delta

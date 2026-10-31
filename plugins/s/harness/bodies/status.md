@@ -6,7 +6,7 @@ re-implement a check the engine already owns.
 
 <!-- include:preamble -->
 
-1. **Resolve the invocation to exactly one command.** Where a change name is
+1. **Resolve the invocation to exactly one command.** Run the needs-setup check in `${CLAUDE_PLUGIN_ROOT}/skills/init/references/needs-setup.md` first. Where a change name is
    omitted, the engine falls back to the currently selected change, so never
    resolve that selection yourself:
    - **no argument, or a change name** → `shipd status [<change>]`, which

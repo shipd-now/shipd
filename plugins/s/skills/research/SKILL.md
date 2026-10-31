@@ -31,9 +31,9 @@ Requirements: this repo must have the resolved content-directory layout (the
 spec engine and linter live under `plugins/s/skills/build/scripts/`). The
 content directory is configured, not hardcoded — resolve its name and confirm it
 exists with `spec_status.py config-show` (it prints the resolved `content-dir`,
-default `.shipd`). **When that layout is missing, stop before searching**: report
-that the repo has no resolved content-directory layout and stop rather than
-inventing a path.
+default `.shipd`). Run the needs-setup check in
+`${CLAUDE_PLUGIN_ROOT}/skills/init/references/needs-setup.md`
+inside the research worktree before searching.
 
 **Where to run:** author the report inside its own worktree — create it first
 with `"${CLAUDE_PLUGIN_ROOT}/bin/shipd" worktree research-<slug>`
