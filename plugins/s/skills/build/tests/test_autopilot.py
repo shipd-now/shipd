@@ -1751,9 +1751,10 @@ class UnattendedSessionEnvTest(unittest.TestCase):
 
         def go():
             autopilot._make_judge_fn(None, "claude", None)(
-                "m", os.getcwd(), "judge it", 10, model="opus")
+                "m", os.getcwd(), "judge it", 10, effort="low")
 
         self._patched("run_turn_result", fake_run_turn_result, go)
+        self.judge_kwargs = dict(captured)
         return captured.get("env")
 
     def test_a_stage_session_carries_the_flag(self):
@@ -1761,6 +1762,10 @@ class UnattendedSessionEnvTest(unittest.TestCase):
 
     def test_a_judge_turn_carries_the_flag(self):
         self.assertEqual(self._judge_env(), self.EXPECTED)
+
+    def test_a_judge_turn_forwards_effort_by_keyword(self):
+        self._judge_env()
+        self.assertEqual(self.judge_kwargs.get("effort"), "low")
 
     def test_the_autopilot_process_stays_clean(self):
         self._session_env()

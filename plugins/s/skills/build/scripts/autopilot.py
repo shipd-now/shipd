@@ -1106,10 +1106,10 @@ def _make_judge_fn(binary, harness, model_base=None):
     ``(ok, session_id, failure, text)`` where ``text`` is the turn's
     result — the reply carrying ``/s:drift --json``'s one object.
     ``on_session`` fires with the session id when the turn yields one."""
-    def judge_fn(member, cwd, prompt, timeout, model=None, on_session=None):
+    def judge_fn(member, cwd, prompt, timeout, effort=None, on_session=None):
         ok, failure, session_id, text = session_driver.run_turn_result(
             prompt, cwd, timeout=timeout, harness=harness, binary=binary,
-            effort=model, model_base=model_base,
+            effort=effort, model_base=model_base,
             plugin_dir=PLUGIN_DIR, env=UNATTENDED_ENV)
         if session_id is not None and on_session is not None:
             on_session(session_id)
