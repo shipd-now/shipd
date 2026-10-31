@@ -52,8 +52,9 @@ sub-agents** running on the model down (one step below yours).
 Requirements: this repo uses the plugin's own homegrown spec engine under the
 resolved content directory (default `.shipd`) — no external CLI. The spec lives
 in that directory's `verified/` (master capability library) and in-flight
-changes in its `planned/`. If the layout does not exist yet, it is created the
-first time a change is merged; you never need to run an external init.
+changes in its `planned/`. Run the needs-setup check in
+`${CLAUDE_PLUGIN_ROOT}/skills/init/references/needs-setup.md`
+inside the change's worktree before anything else.
 
 Path notation: literal `.shipd/` paths in this skill denote the repo's resolved
 content directory (default `.shipd`) — resolve the actual name with

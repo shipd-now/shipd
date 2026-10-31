@@ -28,7 +28,7 @@ protected region the amendment changed; a finding stops the flow. Ship on
 
 Create it from the repo root (`shipd worktree epic-<slug>`) and work inside
 `.worktrees/epic-<slug>`, so the artifact is born on `change/epic-<slug>` and
-ships in one PR.
+ships in one PR. Run the needs-setup check in `${CLAUDE_PLUGIN_ROOT}/skills/init/references/needs-setup.md` first.
 
 ## 2. Investigate before you ask
 

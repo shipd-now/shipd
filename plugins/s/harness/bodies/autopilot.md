@@ -10,6 +10,8 @@ question on the user's behalf — the driver owns every stage decision.
 
 ## 1. Preflight — read-only, drives nothing
 
+Run the needs-setup check in `${CLAUDE_PLUGIN_ROOT}/skills/init/references/needs-setup.md` first.
+
 Run the launch rubric and relay every line it prints:
 
 ```sh

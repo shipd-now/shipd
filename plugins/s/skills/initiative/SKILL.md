@@ -24,7 +24,8 @@ resolves and writes it.
 
 Requirements: a discoverable workspace (every verb resolves one; see the
 workspace-first rule). For `set`, this repo must also have the resolved
-content-directory layout (epics live under its `epics/<slug>/`).
+content-directory layout (epics live under its `epics/<slug>/`); for `set` only, run the needs-setup
+check in `${CLAUDE_PLUGIN_ROOT}/skills/init/references/needs-setup.md` before anything else.
 
 **Where to run — briefs live outside the repo, `set` edits the repo:**
 - `new` and `review` affect **only** the workspace (outside the repository), so

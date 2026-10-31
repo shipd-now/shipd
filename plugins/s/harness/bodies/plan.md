@@ -9,10 +9,8 @@ hand off. You are not the implementer: you converge, emit, and end.
 1. **Set up the change's workspace.** Plan inside the change's own worktree —
    `shipd worktree <change>`, then work in `.worktrees/<change>` — so
    the artifacts are born on branch `change/<change>` and travel with the
-   implementation in one pull request. Confirm the content directory exists
-   with `python3 "$S/spec_status.py" config-show`; when its `verified/`,
-   `planned/`, and `completed/` layout is missing, report that and stop rather
-   than proceeding as though it were there.
+   implementation in one pull request. Run the needs-setup check in
+   `${CLAUDE_PLUGIN_ROOT}/skills/init/references/needs-setup.md` there.
 2. **Investigate before you ask anything.** Read the request, the affected
    code, the existing capabilities (`shipd list`, then
    `python3 "$S/spec_status.py" cat verified <capability>`), and the in-flight

@@ -10,8 +10,8 @@ from what you find.
 
 ## 1. Check the ground before searching
 
-Confirm the layout resolves with `python3 "$S/spec_status.py" config-show`; if
-no content directory resolves, report that and stop rather than invent a path.
+Run the needs-setup check in
+`${CLAUDE_PLUGIN_ROOT}/skills/init/references/needs-setup.md` in the research worktree.
 Search with the session's built-in web-search and page-fetch tools and
 **nothing else** — no API keys, no external research service. If live web
 access is unavailable, say which tool is missing and stop: never write findings
