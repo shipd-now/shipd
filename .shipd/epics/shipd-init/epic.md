@@ -8,9 +8,9 @@ A user who starts shipd in a new project has no guided way to set it up. The
 `shipd init` verb creates the content directory's folders and asks nothing, so
 choices such as where specs live, how PRs ship, or where personal memory sits
 are left to hand-edited JSON. Meanwhile each skill meets a missing layout in
-its own way: `/s:plan` and `/s:epic` ask scaffold-or-stop, `/s:research` stops
-cold, `/s:autopilot`, `/s:status`, and `/s:initiative` state the requirement
-and handle nothing, and `/s:build` wrongly claims the layout appears on first
+its own way: `/s:plan` asks scaffold-or-stop, `/s:research` stops cold,
+`/s:epic`, `/s:autopilot`, `/s:status`, and `/s:initiative` state the
+requirement and handle nothing, and `/s:build` wrongly claims the layout appears on first
 merge. Config writes are just as scattered: `workspace-init`,
 `workspace-project`, and `worktree hooks add` each hand-roll their own JSON
 read and write into one fixed file, and nothing validates a value before it
