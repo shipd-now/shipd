@@ -1125,7 +1125,11 @@ version (and whether it was read from the marker or assumed) when the
 majors match and the repo's minor is not ahead, `warn` when the repo's
 minor is ahead of the engine's, and `fail` naming both versions and the
 remedy on a major mismatch. The check SHALL report rather than raise, so a
-mismatched repo still completes its preflight.
+mismatched repo still completes its preflight. If the configuration fails to
+resolve a content directory, then the check SHALL report `ok` carrying the
+error as its detail and stating that the check was skipped, so the check never
+double-fails what the `config` check owns. A marker that resolves but cannot
+be read or parsed SHALL still report `fail` naming the marker file.
 
 #### Scenario: Healthy repo reports ok
 - **GIVEN** a repo whose marker equals the engine's version
@@ -1137,6 +1141,12 @@ mismatched repo still completes its preflight.
 - **WHEN** `shipd doctor` runs
 - **THEN** the output carries `fail schema` naming both versions and the
   preflight still completes its remaining checks
+
+#### Scenario: Unresolvable content directory is skipped, not double-failed
+- **GIVEN** a repo whose configuration declares `dir: "../specs"`
+- **WHEN** `shipd doctor` runs
+- **THEN** the `schema` line begins `ok`, its detail names `../specs` and says
+  the check was skipped, and only the `config` check fails for that value
 
 ### Requirement: Doctor wiki-store check
 id: doctor-wiki-check
@@ -1319,7 +1329,11 @@ name `shipd init` as the remedy. When both rules are present and neither path
 is tracked, the check SHALL report `ok` naming the rules. If the content
 directory resolves outside the repository, or the working directory is not a
 git checkout, then the check SHALL report `ok` with a note naming why it was
-skipped. The check SHALL be report-only: it SHALL mutate nothing, and under
+skipped. If the configuration fails to resolve a content directory, then the
+check SHALL report `ok` carrying the error as its detail and stating that the
+check was skipped, so the check never double-fails what the `config` check
+owns and the preflight still completes. The check SHALL be report-only: it
+SHALL mutate nothing, and under
 `--fix` it SHALL stay report-only, naming the surface its finding affects
 and `shipd init` as the manual remedy, so the automated remedy set is
 unchanged.
@@ -1355,6 +1369,12 @@ unchanged.
 #### Scenario: Stays report-only under fix
 - **WHEN** `shipd doctor --fix` runs with `local-state` warning
 - **THEN** no remedy runs for it, and the report-only line names `shipd init`
+
+#### Scenario: Unresolvable content directory is skipped, not raised
+- **GIVEN** a git checkout whose configuration declares `dir: "../specs"`
+- **WHEN** `shipd doctor` runs
+- **THEN** the `local-state` line begins `ok`, its detail names `../specs` and
+  says the check was skipped, and every later check still prints its line
 
 ### Requirement: Copilot room wake set
 id: copilot-room-wake
