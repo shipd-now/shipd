@@ -38,7 +38,8 @@ key's default layer; `--layer repo|workspace|user` overrides that. An invalid
 change writes nothing and prints `error:` and `hint:` lines, and so does a
 write while another key in the merged configuration is invalid; fix that key
 with `config set` or `config unset` first. A key outside the recognized list
-only warns.
+that is already in a file only warns; setting one is refused with a
+did-you-mean hint.
 
 ## The recognized keys
 

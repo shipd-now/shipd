@@ -3499,6 +3499,20 @@ class ConfigWriteVerbsTest(SpecStatusTestBase):
         with open(cfg, encoding="utf-8") as fh:
             self.assertEqual(fh.read(), before)
 
+    def test_set_and_unset_repair_an_invalid_dir(self):
+        # The schema-compat gate resolves `dir`, so it must not stand between
+        # the writer's `fix it with shipd config ...` hint and the fix.
+        self.put(self.repo_cfg, {"dir": "/abs", "voice": True})
+        r = self.cli("config-set", "dir", ".shipd")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.load(self.repo_cfg),
+                         {"dir": ".shipd", "voice": True})
+        self.put(self.repo_cfg, {"dir": "/abs", "voice": True})
+        r = self.cli("config-unset", "dir")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "unset dir in %s\n" % self.repo_cfg)
+        self.assertEqual(self.load(self.repo_cfg), {"voice": True})
+
     def test_check_passes_a_clean_config(self):
         r = self.cli("config-check")
         self.assertEqual(r.returncode, 0, r.stderr)

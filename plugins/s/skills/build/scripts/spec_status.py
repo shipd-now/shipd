@@ -5799,10 +5799,13 @@ def main(argv=None):
         # `specs_dir()` (schema-versioning schema-compat-gate): a repo whose
         # artifacts declare a different grammar major is refused before any
         # verb reads or writes one. `init` is exempt — it scaffolds a repo and
-        # stamps the marker rather than reading artifacts. `config-check` is
-        # exempt too: it must report a malformed config file as a finding
-        # rather than die resolving it here.
-        if args.verb not in ("init", "init-status", "config-check"):
+        # stamps the marker rather than reading artifacts. The config verbs
+        # are exempt too: they read and write no artifact, `config-check` must
+        # report a malformed config file as a finding rather than die
+        # resolving it here, and `config-set` / `config-unset` must be able to
+        # repair the invalid `dir` value this gate would otherwise die on.
+        if args.verb not in ("init", "init-status", "config-check",
+                             "config-set", "config-unset"):
             sc.check_schema_compat(root)
         if args.verb == "init":
             return cmd_init(root)
