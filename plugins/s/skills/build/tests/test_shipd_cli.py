@@ -1765,6 +1765,19 @@ class DoctorCheckTest(unittest.TestCase):
         self.assertEqual((level, name), ("fail", "schema"))
         self.assertIn(path, detail)
 
+    def test_schema_invalid_dir_is_ok_carrying_the_error(self):
+        # The `config` check owns config failures; this one must not
+        # double-fail them, though a resolved-but-garbled marker still fails.
+        root = os.path.join(self.tmp, "schema-bad-dir")
+        os.makedirs(root)
+        with open(os.path.join(root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            fh.write('{"dir": "../specs"}\n')
+        level, name, detail = self.schema_check(root)
+        self.assertEqual((level, name), ("ok", "schema"))
+        self.assertIn("skipped", detail)
+        self.assertIn("../specs", detail)
+
     def test_default_checks_report_schema_after_pipeline(self):
         names = self.probed_check_names(self.tmp)
         self.assertEqual(names.index("schema"), names.index("pipeline") + 1)
@@ -1876,6 +1889,17 @@ class DoctorCheckTest(unittest.TestCase):
         level, name, detail = self.local_state_check(root)
         self.assertEqual((level, name), ("ok", "local-state"))
         self.assertIn("skipped", detail)
+
+    def test_local_state_invalid_dir_is_ok_carrying_the_error(self):
+        # The `config` check owns config failures; this one must not raise.
+        root = self.local_state_root(ignore=self.RULES)
+        with open(os.path.join(root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            fh.write('{"dir": "../specs"}\n')
+        level, name, detail = self.local_state_check(root)
+        self.assertEqual((level, name), ("ok", "local-state"))
+        self.assertIn("skipped", detail)
+        self.assertIn("../specs", detail)
 
     def test_local_state_check_never_writes(self):
         root = self.local_state_root(tracked=(".shipd/state.json",))

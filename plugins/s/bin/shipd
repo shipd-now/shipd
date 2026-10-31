@@ -614,10 +614,17 @@ def check_schema(root):
     unreadable) marker is a check line and the preflight still completes:
     ``ok`` when the majors match and the repo's minor is not ahead, ``warn``
     when it is, ``fail`` naming both versions and the gate's own remedy on a
-    major difference."""
+    major difference. A configuration that resolves no content directory is
+    reported ``ok`` carrying the error rather than failing: the ``config``
+    check owns config failures, and this line must never double-fail them —
+    only a marker that resolves but cannot be read fails here."""
     _load_engine()
     try:
         marker = sc.schema_marker_path(root)
+    except sc.ConfigError as exc:
+        return ("ok", "schema",
+                "content directory unresolvable — skipped (%s)" % exc)
+    try:
         repo_version = sc.read_schema_marker(root)
     except sc.ConfigError as exc:
         return ("fail", "schema", "%s" % exc)
@@ -653,9 +660,15 @@ def check_local_state(root):
     wrong and `shipd init`; ``ok`` naming both rules when neither holds; ``ok``
     with a skip note where the question does not apply — an external content
     store has no in-repo path to ignore, and a directory that is no checkout
-    tracks nothing."""
+    tracks nothing. A malformed configuration is reported as the detail rather
+    than failing the preflight: the ``config`` check owns config failures, and
+    this line must never double-fail them."""
     _load_engine()
-    rules = sc.local_state_rules(root)
+    try:
+        rules = sc.local_state_rules(root)
+    except sc.ConfigError as exc:
+        return ("ok", "local-state",
+                "content directory unresolvable — skipped (%s)" % exc)
     if not rules:
         return ("ok", "local-state",
                 "content directory lives outside the repository — skipped")
