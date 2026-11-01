@@ -22,7 +22,7 @@ The App asks for three repository permissions and nothing else:
 - **Pull requests** — read and write, to open and update the pull request.
 - **Metadata** — read, which GitHub requires of every App.
 
-It holds no organization or account permissions, no webhook and no events.
+It holds no organization or account permissions, no webhook, no events and no user authorization.
 
 ## How a job gets a token
 
