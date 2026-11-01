@@ -3,7 +3,7 @@
 ### Requirement: shipd-axel App page
 id: shipd-axel-page
 
-The repository SHALL carry `docs/shipd-axel.md`, a `concept` doc that explains the `shipd-axel` GitHub App to a repo owner deciding whether to install it. The page SHALL state the App's permissions and scope, how its tokens are minted, the separate reviewer identity, which parts are live and which are planned, and how to install and remove it. The page SHALL carry exactly one Mermaid `flowchart TD` diagram with one subgraph per layer, and SHALL NOT link to the App's private source repository.
+The repository SHALL carry `docs/shipd-axel.md`, a `concept` doc that explains the `shipd-axel` GitHub App to a repo owner deciding whether to install it. The page SHALL state the App's permissions and scope, how its tokens are minted and delivered, the separate reviewer identity and how reviews run, and how to install and remove it, including the `shipd-now` collaborator that reviews need. The page SHALL carry exactly one Mermaid `flowchart TD` diagram with one subgraph per layer, and SHALL NOT link to the App's private source repository.
 
 #### Scenario: The page lints clean
 - **WHEN** `python3 -B plugins/s/skills/document/scripts/docs_lint.py docs/shipd-axel.md` runs
@@ -17,9 +17,9 @@ The repository SHALL carry `docs/shipd-axel.md`, a `concept` doc that explains t
 - **WHEN** a reader opens the page
 - **THEN** it names Contents read and write, Pull requests read and write, and Metadata read, says the App has no webhook and no user authorization, and says each token covers one repo and expires within an hour
 
-#### Scenario: Live and planned parts are distinguished
+#### Scenario: Reviews and their access are stated
 - **WHEN** a reader opens the page
-- **THEN** it names the App and token minting as live, names the factory job, orchestrator, egress policy, and PR-room reviewers as planned, and the diagram labels each planned step `(planned)`
+- **THEN** it says reviews run as `shipd-now`, one review job per new head commit, and that reviews need `shipd-now` added as a collaborator with push (write) access, and no text or diagram label marks a part `(planned)`
 
 #### Scenario: The diagram follows the layer rules
 - **WHEN** a reader reads the diagram source

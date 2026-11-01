@@ -5,7 +5,7 @@ Author with `/s:document`: lint with `python3 -B plugins/s/skills/document/scrip
 ## 1. Write the page
 
 - [x] 1.1 [req: shipd-axel-page] Create `docs/shipd-axel.md` with `<!-- doc-type: concept -->` on line 1 and the title `# The shipd-axel GitHub App`, covering every fact listed in `plan.md`.
-- [x] 1.2 [req: shipd-axel-page] Add the one `flowchart TD` swimlane diagram to `docs/shipd-axel.md` per `plan.md`, marking planned steps `(planned)`.
+- [x] 1.2 [req: shipd-axel-page] Add the one `flowchart TD` swimlane diagram to `docs/shipd-axel.md` per `plan.md`, with no `(planned)` labels.
 
 ## 2. Verify
 
