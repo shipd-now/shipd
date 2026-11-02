@@ -24,6 +24,7 @@ preamble, no fences, no commentary, and no emoji:
     "base_given": "main",
     "base": "main",
     "base_sha": "<40-char commit id>",
+    "head_given": "feature" | null,
     "head": "feature" | null,
     "head_sha": "<40-char commit id>" | null,
     "merge_base": "<40-char commit id>",
@@ -65,7 +66,8 @@ when a pull request's title and description were available to review.
 
 `endpoints` carries the engine's resolved endpoint metadata — `base_given`,
 `base_sha`, `head_sha`, and `merge_base` straight from `semdiff`'s meta, plus
-`base`/`head`/`mode`. `merge_base` is absent under `--linear`; `head`/
+`base`/`head`/`mode`. `head_given` is the head ref the invoker named before
+the skill froze it; every other field comes straight from `semdiff`'s meta. `merge_base` is absent under `--linear`; `head`/
 `head_sha` are `null` in working-tree mode. The poster rejects a payload
 carrying no `endpoints.merge_base` before writing anything to the pull
 request. `plugins/s/skills/review/references/json-output.md` specifies this

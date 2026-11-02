@@ -44,8 +44,13 @@ Each file below is read only when its condition fires — not by default.
 
 ## Determine what to review
 
-**Base freshness — before the first `semdiff` call, every mode.** Fetch the
-base's remote:
+**Base freshness — before the first `semdiff` call, every mode.** Where a
+head ref is given, first run `git rev-parse --verify <head>^{commit}` and pass
+the printed commit id as `<head>` to every `semdiff` call, keeping the name
+you were given for `head_given`: the fetch below can rewrite a ref such as
+`FETCH_HEAD`. Only the head is frozen; the base still resolves to its freshly
+fetched remote-tracking commit. The named-PR path already passes commit ids.
+Then fetch the base's remote:
 
 ```
 git fetch origin <base>
@@ -63,6 +68,10 @@ could-not-verify entry naming the unchecked base, rather than ending it; a
 two-ref `lint` run similarly notes that the linters read the checkout, not
 the reviewed head, since `lint` passes changed paths to linter binaries
 that read them from disk.
+
+When `semdiff` exits 1 with "adds nothing over base", print
+`Nothing to review` and the endpoints line, emit no `## Findings` verdict,
+and post nothing to a pull request.
 
 - **Local changes before pushing** (the default): `diff <base>` compares
   `<base>` against the working tree, defaulting to `main` (or `master`).
@@ -224,6 +233,8 @@ sites, not a defect at each.
    engine's `base_sha`, `head_sha`, and `merge_base` — before any findings,
    so a reader sees exactly which commits produced them. In working-tree mode
    the `merge_base` is the before side, not `base_sha`.
+   Where the head as given differs from `head_sha`, name it beside the commit
+   id, e.g. `head FETCH_HEAD → 8d2e59e`.
 3. **Findings header — directly below the endpoints line.** A line
    `## Findings: <marker> <VERDICT>` — `✅ Ship it` when no finding is high or
    medium; `❌ Fix required` otherwise. This is the **same** decision as the
