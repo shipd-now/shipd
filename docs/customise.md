@@ -66,6 +66,7 @@ repo's own `.shipd/` copy may be behind it.
 | `guardrails` | The guardrail hook's kill-switches. See [docs/guardrails.md](guardrails.md). |
 | `statusline` | The statusline layout: an object whose `lines` lists the segments (`spec`, `directory`, `context`) on each line. Save it with `shipd statusline layout`. |
 | `voice` | Gates the session-start voice digest hook. Default `true`. |
+| `sandbox` | What `sandbox-run.sh` applies for the validator: `fake_bin` (a repo-relative directory prepended to `PATH`) and `env` (variable names mapped to paths under the sandbox root). Undeclared means generic redirection only. |
 | `workspace` | Marks the declaring directory as a workspace root; holds its `projects` and `focus` registry. |
 | `workspaces_root` | The mandated parent directory job workspaces are created and cloned under. |
 | `post-worktree-scripts` | Shell command lines run in a freshly created worktree. Register through `shipd worktree hooks add`. |

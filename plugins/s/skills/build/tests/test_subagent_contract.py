@@ -342,5 +342,45 @@ class TaskGroupAuthoringGuidanceContractTest(unittest.TestCase):
         self.assertNotIn("a safe barrier).", section)
 
 
+HARNESS_DIR = os.path.normpath(
+    os.path.join(HERE, "..", "..", "..", "harness", "agents"))
+
+
+def _agent_body(path):
+    """The body of an agent definition: after the closing frontmatter ``---``
+    for ``agents/``, after the ``<!-- description: ... -->`` line for the
+    ``harness/agents/`` twin; leading blank lines stripped."""
+    with open(path, encoding="utf-8") as fh:
+        lines = fh.read().split("\n")
+    if lines[0] == "---":
+        body = lines[lines.index("---", 1) + 1:]
+    else:
+        idx = next(i for i, line in enumerate(lines)
+                   if line.startswith("<!-- description:"))
+        body = lines[idx + 1:]
+    return "\n".join(body).lstrip("\n")
+
+
+class SandboxContractTest(unittest.TestCase):
+    def test_validator_sandbox_section(self):
+        with open(VALIDATOR_CONTRACT, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("\n## Sandbox\n", text)
+        section = text.split("\n## Sandbox\n", 1)[1].split("\n## ", 1)[0]
+        for needle in ("<SANDBOX_RUN>", "one quoted string",
+                       "contract violation"):
+            self.assertIn(needle, section)
+
+    def test_sub_agent_names_wrapper(self):
+        with open(CONTRACT, encoding="utf-8") as fh:
+            self.assertIn("<SANDBOX_RUN>", fh.read())
+
+    def test_harness_twins_match_bodies(self):
+        for name in ("sub-agent.md", "validator.md"):
+            agent = _agent_body(os.path.join(os.path.dirname(CONTRACT), name))
+            twin = _agent_body(os.path.join(HARNESS_DIR, name))
+            self.assertEqual(agent, twin, name)
+
+
 if __name__ == "__main__":
     unittest.main()
