@@ -191,6 +191,7 @@ class DiffTestCase(unittest.TestCase):
         # base_given is the ref as invoked, not a commit id — the other three
         # are commit ids.
         self.assertEqual(out["base_given"], "main")
+        self.assertEqual(out["head_given"], "feature")
         for key in ("base_sha", "head_sha", "merge_base"):
             self.assertIn(key, out)
             self.assertEqual(len(out[key]), 40, f"{key}={out[key]!r}")
@@ -199,8 +200,34 @@ class DiffTestCase(unittest.TestCase):
         rc, out, err = run_semdiff(self.repo, "diff", "main")
         self.assertEqual(rc, 0, err)
         self.assertIsNone(out["head_sha"])
+        self.assertIsNone(out["head_given"])
         fork_point = git(self.repo, "merge-base", "main", "HEAD").stdout.strip()
         self.assertEqual(out["merge_base"], fork_point)
+
+    # -- a head that adds nothing over the base is refused ------------------
+
+    def test_empty_head_refused_by_diff_files_and_lint(self):
+        # The fixture's `main` is an ancestor of `feature`, so with the two
+        # swapped the head resolves to the merge base.
+        for cmd in ("diff", "files", "lint"):
+            rc, out, err = run_semdiff(self.repo, cmd, "feature", "main")
+            self.assertEqual(rc, 1, f"{cmd}: {err}")
+            self.assertIsNone(out, cmd)
+            for needle in ("main", "feature", "adds nothing over base"):
+                self.assertIn(needle, err, cmd)
+
+    def test_empty_head_refused_under_linear(self):
+        rc, out, err = run_semdiff(self.repo, "diff", "main", "main",
+                                   "--linear")
+        self.assertEqual(rc, 1, err)
+        self.assertIn("adds nothing over base", err)
+
+    def test_working_tree_mode_stays_empty_not_refused(self):
+        git(self.repo, "checkout", "--", ".")
+        git(self.repo, "clean", "-fdq")
+        rc, out, err = run_semdiff(self.repo, "diff", "main")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(out["summary"]["files"], 0)
 
     def test_linear_mode_emits_no_merge_base(self):
         rc, out, err = run_semdiff(self.repo, "diff", "main", "feature",

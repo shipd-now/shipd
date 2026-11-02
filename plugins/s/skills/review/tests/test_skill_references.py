@@ -1439,8 +1439,8 @@ class EndpointsFieldParityTest(unittest.TestCase):
     harness reference that ships to every harness declaring
     `file-references`."""
 
-    FIELDS = ("base_given", "base", "base_sha", "head", "head_sha",
-             "merge_base", "mode")
+    FIELDS = ("base_given", "base", "base_sha", "head_given", "head",
+              "head_sha", "merge_base", "mode")
 
     def test_both_surfaces_name_the_same_endpoints_field_set(self):
         for path in (JSON_OUTPUT_MD, HARNESS_REVIEW_MD):
@@ -1450,6 +1450,13 @@ class EndpointsFieldParityTest(unittest.TestCase):
                     self.assertIn(
                         f'"{field}"', text,
                         f"{path} does not name endpoints field {field!r}")
+
+    def test_skill_freezes_head_and_handles_empty_head(self):
+        text = _read(SKILL_MD)
+        for needle in ("rev-parse --verify", "head_given",
+                       "Nothing to review"):
+            self.assertIn(needle, text,
+                          f"SKILL.md does not contain {needle!r}")
 
 
 class TableConditionAgreementTest(unittest.TestCase):
