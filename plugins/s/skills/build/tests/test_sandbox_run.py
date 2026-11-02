@@ -207,6 +207,15 @@ class ProjectConfigTest(SandboxRunBase):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(res.stdout.strip(), "fake-gh")
 
+    def test_invalid_env_path_exits_3(self):
+        marker = os.path.join(self.base, "ran")
+        for rel in ("/abs/path", "../x"):
+            self.write_config({"sandbox": {"env": {"REVIEW_BOT_HOME": rel}}})
+            res = self.run_sbx("touch " + marker)
+            self.assertEqual(res.returncode, 3, rel)
+            self.assertIn("invalid sandbox config", res.stderr)
+            self.assertFalse(os.path.exists(marker))
+
     def test_missing_fake_bin_exits_3(self):
         self.write_config({"sandbox": {"fake_bin": "tests/nope"}})
         marker = os.path.join(self.base, "ran")

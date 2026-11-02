@@ -121,9 +121,16 @@ def main(argv):
         die(2, "command names the real HOME outside the repo: %s" % match)
 
     try:
-        config, _ = spec_common.resolve_config(repo)
+        config, provenance = spec_common.resolve_config(repo)
     except Exception as exc:  # a malformed config must not run unsandboxed
         die(3, "cannot read config: %s" % exc)
+    if "sandbox" in config:
+        import config_registry
+        try:
+            config_registry.REGISTRY["sandbox"].validate(
+                config["sandbox"], provenance.get("sandbox"))
+        except Exception as exc:
+            die(3, "invalid sandbox config: %s" % exc)
     declared = config.get("sandbox")
     declared = declared if isinstance(declared, dict) else {}
 
