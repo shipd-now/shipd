@@ -116,6 +116,28 @@ class RunStartTest(RunTestBase):
         self.assertEqual(gh.posts(), [])
         self.assertEqual(runner.calls, [])
 
+    def test_bot_reviewer_on_the_bots_pr_is_refused(self):
+        gh = FakeGh(comments=[waiting(to="rev-b")],
+                    login="shipd-factory[bot]",
+                    pr_author="app/shipd-factory")
+        runner = FakeRunner()
+        code, out, err = self.run_verb(
+            gh, "7", "--role", "reviewer", "--agent", "rev-b",
+            runner=runner)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(err.count("Error:"), 1, err)
+        self.assertEqual(gh.posts(), [])
+        self.assertEqual(runner.calls, [])
+
+    def test_bot_author_on_its_own_pr_is_not_warned(self):
+        gh = FakeGh(user_fail=True, viewer="shipd-factory[bot]",
+                    pr_author="app/shipd-factory", state="MERGED")
+        code, out, err = self.run_verb(
+            gh, "7", "--role", "author", "--agent", "a")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("was authored by", err)
+        self.assertIn("acting as @shipd-factory[bot]", err)
+
     def test_start_line_names_github_token(self):
         secret = "fake-token-value-run"
         gh = FakeGh(login="rev", pr_author="mikkel")

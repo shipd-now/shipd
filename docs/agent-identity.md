@@ -57,7 +57,7 @@ the room itself.
 2. Read the output. It names the login, the author, and the source:
 
    ```json
-   {"login": "reviewer-b", "author": "mikkel", "source": "GH_TOKEN", "may_approve": true}
+   {"login": "reviewer-b", "author": "mikkel", "source": "GH_TOKEN", "is_author": false, "may_approve": true}
    ```
 
    The `source` value names the first credential `gh` uses, in `gh`'s
@@ -69,11 +69,25 @@ the room itself.
 
 3. Check the exit code. `whoami` exits `1` with one `Error:` line when `gh`
    cannot read the login. It also exits `1` when the login matches the author,
-   ignoring case.
+   ignoring case. A GitHub App's `app/<slug>` and `<slug>[bot]` count as one
+   account.
 
 The `/s:room` skill runs `whoami` before every approving review and stops on
 the error. `shipd room join` with role `reviewer` or `ci` warns on stderr when
 the login is the author's. It still joins.
+
+## Verify an author bot
+
+An author session that runs on a GitHub App installation token (`GH_TOKEN`)
+checks that it owns the pull request before it fixes a finding:
+
+```sh
+shipd room whoami 412 --author
+```
+
+GitHub refuses `gh api user` for an installation token, so `whoami` reads the
+login from the GraphQL viewer instead. The verb exits `0` with `is_author`
+true on the bot's own pull request and `1` with one `Error:` line otherwise.
 
 ## Keep the token out of the repository
 

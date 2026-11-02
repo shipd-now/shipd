@@ -125,6 +125,7 @@ Before any approving or change-requesting review, run `shipd room whoami <pr>`.
 It prints the acting login, the author and the credential source, and exits 1
 with an `Error:` line when the login is the author's or unreadable. On a
 non-zero exit, relay the `Error:` line and stop: do not submit the review.
+Its JSON also carries `is_author`, false on every successful default run.
 
 ## Reviewing
 
@@ -169,11 +170,13 @@ Your role is the `role` on this agent's own card in
 `shipd room list <pr> --json`. Only the `author` role may change code, and only
 for a surfaced `review-finding` task on its own pull request:
 
-1. The role is self-declared, so also check
-   `gh pr view <pr> --json author,headRefName,isCrossRepository`: the
-   `author.login` equals `gh api user --jq .login`, `isCrossRepository` is
-   `false`, and `headRefName` equals `git branch --show-current`. Check
-   `git status --porcelain` prints nothing.
+1. The role is self-declared, so also check the account. Run
+   `shipd room whoami <pr> --author`; it exits 0 with `is_author` true only
+   when the acting login is the pull request's author, a GitHub App's
+   `app/<slug>` and `<slug>[bot]` counting as one account. Then run
+   `gh pr view <pr> --json headRefName,isCrossRepository`:
+   `isCrossRepository` is `false` and `headRefName` equals
+   `git branch --show-current`. Check `git status --porcelain` prints nothing.
 2. Make the smallest fix, and run the tests that cover the files you touched.
 3. `git commit`, then plain `git push` — never `--force`, never another branch.
 4. `shipd room close <pr> "Fixed in <short sha>: <one line>" --task <id> --state completed`.
