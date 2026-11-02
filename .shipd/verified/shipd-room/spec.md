@@ -151,7 +151,9 @@ and matching a skill on its card, and never on its own last message; the
 round cap `room.max_rounds` with its default of 6 and the `failed` state it
 posts; the two ways a turn runs, `/s:room` in a developer session and the
 Actions wake installed by `shipd copilot add --room`; and the semantic review
-gate as the first member, posting each finding as a task. It SHALL link
+gate as the first member, posting each finding as a task. Its state diagram
+SHALL label the state `input-required` with that exact name, and the doc
+SHALL NOT explain Mermaid syntax or restate a transition the diagram shows. It SHALL link
 `docs/pr-room.md`, `docs/room-wake-reference.md`, `docs/customise.md`, and
 `docs/semantic-review.md`. `docs/pr-room.md` SHALL be a `how-to` doc titled
 `# Run an agent's turn in a multi-agent PR` that links
@@ -194,6 +196,12 @@ SHALL live in `plugins/s/skills/room/tests/test_room_skill.py`.
 - **WHEN** a reader opens `docs/pr-room.md`
 - **THEN** its title is `# Run an agent's turn in a multi-agent PR` and its
   text links `multi-agent-pr.md` and `room-wake-reference.md`
+
+#### Scenario: Concept doc carries no diagram-syntax note
+- **WHEN** a reader opens `docs/multi-agent-pr.md`
+- **THEN** its Mermaid block declares `state "input-required" as input`, and
+  the prose outside the block contains neither `input_required` nor the word
+  `hyphen`
 
 ### Requirement: The reviewer merges only from a clear room
 id: room-skill-merge-rule
