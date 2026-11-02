@@ -23,15 +23,15 @@ artifact set: the sub-agent SHALL read it as a read-only reference, and the
 report SHALL travel by that plan-named path rather than as prose in the spawn
 message. The role contract
 lives in the `s:sub-agent` agent definition, so the spawn message SHALL carry
-only the change name, the coordinator script path, and any Orchestrator
-addenda. The handoff SHALL NOT restate global baseline rules that the sub-agent
+only the change name, the coordinator script path, the absolute path of
+`sandbox-run.sh`, and any Orchestrator addenda. The handoff SHALL NOT restate global baseline rules that the sub-agent
 already inherits or reads (project instructions, the constitution); the spec on
 disk remains the single compiled source of context.
 
 #### Scenario: Sub-agent starts clean
 - **WHEN** the orchestrator spawns an execution sub-agent
-- **THEN** the spawn message contains the change name, coordinator path, and
-  addenda only — no conversation history, no duplicated global rules, no
+- **THEN** the spawn message contains the change name, coordinator path, sandbox
+  wrapper path, and addenda only — no conversation history, no duplicated global rules, no
   copied role prompt — and the sub-agent obtains change context by reading the
   artifacts
 

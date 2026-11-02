@@ -37,6 +37,9 @@ ROWS = {
         "repo", "a non-negative number of days; 0 or null disables "
         "retention", None),
     "dir": ("repo", "a relative path such as .shipd", None),
+    "sandbox": (
+        "repo", "an object with fake_bin (a relative path) and env (a map "
+        "of variable names to relative paths)", None),
     "guardrails": ("repo", "false, or an object such as "
                    '{"disable": ["<rule>"]}', None),
     "lint": ("repo", "an object with run_scripts (true or false) and "
@@ -199,6 +202,18 @@ class RegistryTest(unittest.TestCase):
             "guardrails", {"disable": ["r"]}, "/x"), [])
         self.assertTrue(cr.validate_value(
             "guardrails", {"disable": [""]}, "/x"))
+
+    def test_sandbox_validator(self):
+        good = {"fake_bin": "tests/fake-bin",
+                "env": {"REVIEW_BOT_HOME": "review-bot"}}
+        self.assertEqual(cr.validate_value("sandbox", good, "/x"), [])
+        self.assertEqual(cr.validate_value("sandbox", {}, "/x"), [])
+        for bad in ({"env": {"X": "../outside"}}, {"fakebin": "x"},
+                    {"fake_bin": "/abs"}, {"env": {"bad-name": "x"}},
+                    "str"):
+            findings = cr.validate_value("sandbox", bad, "/x")
+            self.assertTrue(findings, bad)
+            self.assertIn("sandbox", findings[0].message, bad)
 
     def test_unknown_key_finding_has_did_you_mean(self):
         findings = cr.validate_value("vioce", False, "/x")

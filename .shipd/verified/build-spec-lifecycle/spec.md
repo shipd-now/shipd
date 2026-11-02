@@ -232,7 +232,7 @@ validator's full role contract — that reads the change's delta specs, the
 relevant masters, the code, and, when `plan.md` names a design scratch directory,
 that directory as a read-only reference, and attempts to refute each
 `#### Scenario:` by exercising the real behavior. The validator's spawn message
-SHALL carry only the change name; it SHALL receive neither the builders'
+SHALL carry only the change name and the absolute path of `sandbox-run.sh`; it SHALL receive neither the builders'
 summaries nor the orchestrator's conversation. The build SHALL NOT set the status
 to `verified` while any scenario verdict is `refuted`; a refutation returns the
 build to the fix loop before validation runs again. Where the resolved
@@ -253,7 +253,7 @@ complete, the suite green, the spec re-linting clean) alone SHALL allow
 
 #### Scenario: Validator is isolated from the builders
 - **WHEN** the validator sub-agent is spawned
-- **THEN** its spawn message carries the change name only — no builder
+- **THEN** its spawn message carries the change name and the sandbox wrapper path only — no builder
   summaries and no orchestrator history — and its role contract comes from
   the `s:validator` definition
 
