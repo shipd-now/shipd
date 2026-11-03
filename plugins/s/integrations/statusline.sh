@@ -555,7 +555,7 @@ else
   out="${out}${sep}${scolor}${status}${RESET}"
 fi
 if [ "$have_tasks" -eq 1 ]; then
-  tasks_seg="${done_count}/${total_count}"
+  tasks_seg="${done_count}/${total_count} tasks"
   if [ "$X" -gt 1 ]; then
     tasks_seg="${tasks_seg} (${total_count} of ${Y})"
   fi
