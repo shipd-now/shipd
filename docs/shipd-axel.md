@@ -12,7 +12,7 @@ The software factory runs on axel, a self-hosted cluster of Google's ax agent
 runtime, with each job in an Agent Substrate gVisor sandbox. A job runs shipd's
 `/s:plan` then `/s:build` against a target repo, pushes a `change/<slug>`
 branch, and opens a pull request. The App gives the job its GitHub identity, so
-every push shows the author `shipd-axel[bot]`.
+the job pushes the branch and opens the pull request as `shipd-axel[bot]`.
 
 ```mermaid
 flowchart TD
@@ -66,7 +66,7 @@ every 40 minutes while a long job runs:
 2. The script finds the App's installation for that repo.
 3. GitHub issues a token limited to that one repo and the three permissions.
 
-Each token expires within an hour, and the host caches none. The private key
+Each token expires within an hour. The private key
 lives only on the host, in `~/.config/axel/` with mode 0600, pushed from
 1Password. Minting fails on a repo without the App: `shipd-axel is not installed on <repo>`.
 
