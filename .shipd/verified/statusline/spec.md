@@ -68,7 +68,7 @@ requirement, and collect live changes from that directory's `planned/`, plus,
 when no `store_root` is declared, `.worktrees/*/<dir>/planned/` (one level
 deep). It
 SHALL print exactly one line rendering the picked spec as
-`☕ <change> · <status> · <done>/<total>`, where `<status>` comes from the
+`☕ <change> · <status> · <done>/<total> tasks`, where `<status>` comes from the
 plan status header (`?` when missing or invalid) and `<done>/<total>` are
 the checkbox counts from that change's `tasks.md` (segment omitted when
 `tasks.md` is absent). The pick SHALL prefer a change whose status is
@@ -93,7 +93,7 @@ no heartbeat is live (absent, stale, or not `running`) or the picked
 status is not `active`, then the status segment SHALL render without a
 dot. When more than one change is live (X > 1), the name segment SHALL
 render `<change> (1 of X)` and the tasks segment SHALL render
-`<done>/<total> (<total> of <Y>)`, where Y is the summed checkbox totals of
+`<done>/<total> tasks (<total> of <Y>)`, where Y is the summed checkbox totals of
 every live change carrying a `tasks.md`. When several changes are live and
 none is pickable, it SHALL print `☕ <n> specs · none selected`; when a
 content directory resolves but holds no live change, it SHALL print

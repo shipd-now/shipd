@@ -20,7 +20,7 @@
 #                            compare against the engine's folder.
 #
 # Segments:
-#   spec       "<name> · <status> · <done>/<total>", with position "(1 of X)"
+#   spec       "<name> · <status> · <done>/<total> tasks", with position "(1 of X)"
 #              and aggregate "(<total> of <Y>)" brackets when more than one
 #              change is live; "no active specs" for a shipd project with no
 #              live change; "<n> specs · none selected" when none is pickable;
@@ -555,7 +555,7 @@ else
   out="${out}${sep}${scolor}${status}${RESET}"
 fi
 if [ "$have_tasks" -eq 1 ]; then
-  tasks_seg="${done_count}/${total_count}"
+  tasks_seg="${done_count}/${total_count} tasks"
   if [ "$X" -gt 1 ]; then
     tasks_seg="${tasks_seg} (${total_count} of ${Y})"
   fi

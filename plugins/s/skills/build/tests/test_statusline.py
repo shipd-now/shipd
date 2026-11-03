@@ -777,7 +777,7 @@ class TrailingSegmentsTest(StatuslineTestBase):
                          tasks="- [x] 1 a\n- [ ] 2 b\n")
         line = self.rendered(context=100)
         self.assertTrue(
-            line.endswith("1/2 · ████ 100%"), line)
+            line.endswith("1/2 tasks · ████ 100%"), line)
 
 
 class ContextColorTest(StatuslineTestBase):
