@@ -99,6 +99,9 @@ class FakeRepoGh:
             return 0, json.dumps(self.listing), ""
         if args == ["api", "user"]:
             return 0, json.dumps({"login": self.login}), ""
+        if args[:2] == ["api", "graphql"] and any(
+                "viewer" in a for a in args):
+            return 1, "", "no viewer"
         if args[:2] == ["pr", "view"]:
             return self.fakes[int(args[2])](args, input)
         for arg in args:
@@ -446,6 +449,15 @@ class RepoPollTest(RepoTestBase):
         self.assertEqual(gh.fakes[7].posts(), [])
         self.assertEqual(gh.fakes[7].calls, [])
         self.assertEqual(err.count("#7"), 1, err)
+
+    def test_a_bot_login_skips_the_apps_own_pr(self):
+        gh = FakeRepoGh(login="shipd-factory[bot]")
+        gh.add_pr(7, [waiting(10, to="rev-b")], author="app/shipd-factory")
+        code, out, err = self.run_repo(gh, limit=3)
+        self.assertEqual(code, 130, err)
+        self.assertEqual(self.runner.calls, [])
+        self.assertEqual(gh.fakes[7].posts(), [])
+        self.assertIn("authored by the acting", err)
 
     def test_a_pr_without_a_task_for_the_agent_costs_no_turn(self):
         gh = FakeRepoGh()

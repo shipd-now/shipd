@@ -8,10 +8,12 @@ agent drives to take part in one:
   join <pr>      post or refresh this agent's own card comment (``--role``
                  sets its role: author, reviewer, or ci)
   list <pr>      the room's cards and tasks
-  whoami <pr>    the acting login, the author, and the credential source
+  whoami <pr> [--author]
+                 the acting login, the author, and the credential source
                  (gh's order: GH_TOKEN, GITHUB_TOKEN, or the enterprise pair
                  on a GHES host, then GH_CONFIG_DIR, then gh-login);
-                 exits 1 when the login authored the pull request
+                 exits 1 when the login authored the pull request, or
+                 with ``[--author]`` when it did not
   message <pr>   open a task (``--new``) or advance one (``--task ID``)
   close <pr>     post a task's terminal message
   watch <pr>     wait for a task that is this agent's turn (NDJSON)
@@ -31,7 +33,8 @@ endpoint (only the semantic-review gate opens tasks there). Its messages —
 (``in_reply_to`` the task id); every other task stays on issue comments.
 
 Every comment a verb posts opens with a speaker heading naming the agent,
-its card's role, and the GitHub login read once per verb from ``gh api user``.
+its card's role, and the GitHub login read once per verb from ``gh api user``,
+falling back to the GraphQL viewer.
 
 Mutating verbs print one JSON object on stdout and one human line on stderr;
 a fatal outcome is one ``Error: <reason>`` line and exit ``1``; invalid
@@ -486,21 +489,64 @@ def _resolve_finding_thread(gh, repo, number, task_id):
         sys.stderr.write(warning)
 
 
+def login_key(login):
+    """The comparison key for a GitHub login: ``""`` for a non-string or blank
+    value, else the stripped lowercase login with a leading ``app/<slug>``
+    rewritten to ``<slug>[bot]``, so the two names GitHub gives one App
+    compare equal."""
+    if not isinstance(login, str) or not login.strip():
+        return ""
+    key = login.strip().lower()
+    if key.startswith("app/") and len(key) > 4:
+        key = key[4:] + "[bot]"
+    return key
+
+
+def same_account(a, b):
+    """True when ``a`` and ``b`` name one GitHub account: both keys from
+    ``login_key`` are non-empty and equal. A blank or missing login never
+    matches, not even another blank one."""
+    ka, kb = login_key(a), login_key(b)
+    return bool(ka) and ka == kb
+
+
+def _login_from(out):
+    """The ``login`` of a ``gh api user`` body, or ``""``."""
+    try:
+        data = json.loads(out or "null")
+        return str(data.get("login") or "") if isinstance(data, dict) else ""
+    except ValueError:
+        return ""
+
+
+def _viewer_login(gh):
+    """The ``data.viewer.login`` of the GraphQL viewer query, or ``""`` when
+    the call fails or the answer carries no login."""
+    rc, out, _err = gh(["api", "graphql", "-f", "query={viewer{login}}"])
+    if rc != 0:
+        return ""
+    try:
+        data = json.loads(out or "null")
+        data = data.get("data") if isinstance(data, dict) else None
+        viewer = data.get("viewer") if isinstance(data, dict) else None
+        return str(viewer.get("login") or "") \
+            if isinstance(viewer, dict) else ""
+    except ValueError:
+        return ""
+
+
 def _login(gh, memo):
-    """The posting GitHub login from ``gh api user``, read once per verb and
-    kept in ``memo``. A failed read or an empty login warns once and yields
-    ``""``, so the heading drops its ``(for @login)`` segment."""
+    """The posting GitHub login, read once per verb and kept in ``memo``:
+    ``gh api user`` first, then the GraphQL viewer when that fails or names
+    no login (a GitHub App installation token is refused ``/user``). Only
+    when both reads fail does it warn once and yield ``""``, so the heading
+    drops its ``(for @login)`` segment."""
     if "login" in memo:
         return memo["login"]
-    login = ""
     rc, out, err = gh(["api", "user"])
-    if rc == 0:
-        try:
-            data = json.loads(out or "null")
-            login = str(data.get("login") or "") \
-                if isinstance(data, dict) else ""
-        except ValueError:
-            login = ""
+    login = _login_from(out) if rc == 0 else ""
+    if not login:
+        login = _viewer_login(gh)
     if not login:
         sys.stderr.write(
             "warning: could not read the GitHub login (gh api user%s); "
@@ -626,7 +672,7 @@ def cmd_join(opts, parser, gh):
     if opts.role in ("reviewer", "ci"):
         login = _login(gh, {})
         author = _pr_author(gh, number, repo) if login else ""
-        if login and author and login.lower() == author.lower():
+        if login and author and same_account(login, author):
             sys.stderr.write(
                 "warning: acting as @%s, who authored this pull request; "
                 "a %s cannot approve it\n" % (login, opts.role))
@@ -695,18 +741,25 @@ def cmd_whoami(opts, parser, gh):
     author = _pr_author(gh, number, repo)
     if not login:
         raise RoomError("could not read the acting GitHub login (gh api "
-                        "user failed); an approval needs a readable account")
+                        "user and the GraphQL viewer failed); an approval "
+                        "needs a readable account")
     if not author:
         raise RoomError("could not read the author of %s#%d; an approval "
                         "needs a known author" % (repo, number))
-    if login.lower() == author.lower():
+    is_author = same_account(login, author)
+    if opts.author:
+        if not is_author:
+            raise RoomError("acting as @%s, but %s#%d was authored by @%s; "
+                            "only the author may fix its findings"
+                            % (login, repo, number, author))
+    elif is_author:
         raise RoomError("acting as @%s, who authored %s#%d; an author "
                         "cannot approve their own pull request"
                         % (login, repo, number))
     _emit({"login": login, "author": author,
            "source": _credential_source(os.environ,
                                         _room_host(opts.pr, os.environ)),
-           "may_approve": True})
+           "is_author": is_author, "may_approve": not is_author})
     return 0
 
 
@@ -1028,8 +1081,12 @@ def build_parser():
 
     p = sub.add_parser("whoami", parents=[common],
                        help="the acting account, refused when it authored "
-                            "the pull request")
+                            "the pull request; with --author, refused "
+                            "unless it did")
     p.add_argument("pr", help="pull request number, URL, or branch")
+    p.add_argument("--author", action="store_true",
+                   help="check the acting account IS the author (exit 0 "
+                        "with is_author true), for the author's own fix")
     p.set_defaults(func=cmd_whoami)
 
     p = sub.add_parser("message", parents=[common],
