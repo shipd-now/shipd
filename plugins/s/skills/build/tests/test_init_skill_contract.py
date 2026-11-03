@@ -65,7 +65,13 @@ class InitSkillContractTest(unittest.TestCase):
         for label, text in (("skill", self.skill), ("body", self.body)):
             for token in tokens:
                 self.assertIn(token, text, "%s missing %r" % (label, token))
-        self.assertIn("AskUserQuestion", self.skill)
+
+    def test_wizard_uses_one_settings_sheet(self):
+        for label, text in (("skill", self.skill), ("body", self.body)):
+            for token in ("settings sheet", "Already set (kept):"):
+                self.assertIn(token, text, "%s missing %r" % (label, token))
+            self.assertNotIn("one key per", text, label)
+        self.assertIn("3 draft, 7 false", self.skill)
 
     def test_needs_setup_reference_names_the_actions(self):
         text = _norm(_read(REFS, "needs-setup.md"))

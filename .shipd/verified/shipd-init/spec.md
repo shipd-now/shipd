@@ -22,67 +22,103 @@ without writing. `README.md`, `docs/cheatsheet.md`, and `AGENTS.md` SHALL list
 ### Requirement: The setup wizard
 id: init-wizard-steps
 
-The wizard SHALL run its steps in the order of `artefacts/wizard-keys.md`:
-where files live (`dir`, `store_root`), how changes ship (`pr-mode`,
-`autonomous-pipeline`), personal stores (`memory_dir`, `wiki_base`), session
-behaviour (`voice`, `guardrails`), then the constitution. It SHALL ask one
-AskUserQuestion per key, listing the key's current value (or its default) first.
-The bare wizard SHALL skip every key that `shipd config` reports with a file
-provenance; a section run alone SHALL ask every key in that section. Every
-answer SHALL be written through `shipd config set <key> <value>`, except a
-default that is the key's absence, which writes nothing. The where-files-live
-step SHALL end by running `spec_status.py init`. If `shipd config set` exits
-1, then the skill SHALL relay its `error:` and `hint:` lines. Where every
-`error:` line names the key being set, the skill SHALL ask that key once more.
-Where an `error:` line names a different key, the skill SHALL offer to fix
-that key first, through its own dialog and `shipd config set`, then retry the
-original key once; it SHALL NOT re-ask the original key in a loop. The skill SHALL NOT edit any `.shipd-config.json` by hand. While
-`spec_status.py init-status` reports `unattended: true`, the skill SHALL open
-no dialog and SHALL run only `spec_status.py init`.
+The wizard SHALL cover its keys in this order: where files live (`dir`,
+`store_root`), how changes ship (`pr-mode`, `autonomous-pipeline`), personal
+stores (`memory_dir`, `wiki_base`), session behaviour (`voice`, `guardrails`),
+then the constitution. It SHALL present them as one numbered settings sheet,
+printed as plain response text in the layout of `artefacts/settings-sheet.md`,
+with each line showing the key's current value (or its default). It SHALL
+collect the answers from one typed reply and SHALL NOT open an AskUserQuestion
+for any key. A reply of `ok` SHALL accept every line; a reply of `<n> <value>`
+pairs SHALL change only the named lines. The bare wizard SHALL list every key
+that `shipd config` reports with a file provenance in an unnumbered
+`Already set (kept):` block and SHALL number only the unset keys; a section run
+alone SHALL number every key in that section. If a reply names a line outside
+the sheet or fits no reply form, then the skill SHALL re-print the sheet once
+with a note, and on a second such reply SHALL stop with nothing written.
 
-#### Scenario: Declared keys are skipped
+Every answer SHALL be written through `shipd config set <key> <value>`, except
+a default that is the key's absence, which writes nothing. The skill SHALL
+write the `dir` and `store_root` lines first, then run `spec_status.py init`,
+then write the remaining lines. If `shipd config set` exits 1, then the skill
+SHALL relay its `error:` and `hint:` lines and SHALL continue with the other
+lines. When any line failed, the skill SHALL print one retry sheet holding
+only the failed lines, plus a line for any other key an `error:` line names,
+written before the failed keys are retried. A line that fails again SHALL be
+skipped with a note; the skill SHALL NOT print a second retry sheet. The
+skill SHALL NOT edit any `.shipd-config.json` by hand. While
+`spec_status.py init-status` reports `unattended: true`, the skill SHALL print
+no sheet and SHALL run only `spec_status.py init`.
+
+#### Scenario: One sheet replaces the dialogs
+- **GIVEN** a fresh project with no config layer declaring any wizard key
+- **WHEN** bare `/s:init` runs
+- **THEN** one numbered sheet of nine lines prints with each default shown,
+  and no AskUserQuestion opens
+
+#### Scenario: Accepting the sheet writes the defaults
+- **WHEN** the user replies `ok` to the fresh-project sheet
+- **THEN** `shipd config set` runs for `dir`, `pr-mode`,
+  `autonomous-pipeline`, `memory_dir`, and `voice`, and not for `store_root`,
+  `wiki_base`, or `guardrails`
+
+#### Scenario: Named lines change, the rest keep their default
+- **WHEN** the user replies `3 draft, 7 false` to the fresh-project sheet
+- **THEN** `pr-mode` is written as `draft`, `voice` as `false`, and every
+  other line takes its shown default
+
+#### Scenario: Declared keys are kept, not numbered
 - **GIVEN** the repo layer declares `"pr-mode": "draft"`
 - **WHEN** bare `/s:init` runs
-- **THEN** no `pr-mode` dialog opens and the other unset keys are asked
+- **THEN** `pr-mode` appears under `Already set (kept):` with no line number,
+  and only the unset keys are numbered
 
-#### Scenario: A config section re-asks only config keys
+#### Scenario: A config section numbers only config keys
 - **GIVEN** a project whose layout exists and whose repo layer declares
   `pr-mode`
 - **WHEN** `/s:init config` runs
-- **THEN** dialogs open for the six config keys only, the `pr-mode` dialog
-  lists `draft` first, and no `dir` or `store_root` dialog opens
+- **THEN** the sheet numbers the six config keys, the `pr-mode` line shows
+  `draft`, and no `dir` or `store_root` line appears
 
-#### Scenario: Rejected value is re-asked
-- **WHEN** the user types `bogus` for `pr-mode` and `shipd config set` exits 1
-- **THEN** the skill shows the `hint: accepted values: auto, draft` line and
-  asks `pr-mode` once more
+#### Scenario: Rejected value gets one retry sheet
+- **WHEN** the user replies `3 bogus` and `shipd config set pr-mode bogus`
+  exits 1
+- **THEN** the skill shows the `hint: accepted values: auto, draft` line,
+  writes the other lines, and prints a retry sheet holding only the
+  `pr-mode` line
 
-#### Scenario: Another invalid key is fixed first
+#### Scenario: Another invalid key joins the retry sheet
 - **GIVEN** the user layer declares `"pr-mode": "bogus"`
-- **WHEN** the user answers `voice` and `shipd config set voice false` exits 1
-  with an `error:` line naming `pr-mode`
-- **THEN** the skill relays the lines, opens a `pr-mode` dialog, and retries
-  `voice` once after `pr-mode` is set
+- **WHEN** `shipd config set voice false` exits 1 with an `error:` line naming
+  `pr-mode`
+- **THEN** the retry sheet holds a `pr-mode` line and a `voice` line, and
+  `pr-mode` is written before `voice` is retried once
+
+#### Scenario: Unparseable reply re-prints once
+- **WHEN** the user replies `12 foo` to a nine-line sheet
+- **THEN** the sheet re-prints once with a note naming line 12, and nothing
+  is written yet
 
 #### Scenario: Unattended runs only the scaffold
 - **GIVEN** `SHIPD_UNATTENDED=1`
 - **WHEN** `/s:init` runs on a first-run repository
-- **THEN** no dialog opens and `spec_status.py init` creates the layout
+- **THEN** no sheet prints and `spec_status.py init` creates the layout
 
 ### Requirement: Constitution starter in the wizard only
 id: init-constitution-starter
 
-The wizard's last step SHALL offer the starter
+The wizard's sheet SHALL carry a `constitution` line offering the starter
 `skills/init/references/constitution-starter.md` only when the content
-directory holds no `constitution.md`, and on acceptance SHALL copy it there.
-No section run and no needs-setup scaffold SHALL write a `constitution.md`, and
-the skill SHALL NOT overwrite an existing one. The starter SHALL be a
-commented template whose example rules sit inside HTML comments.
+directory holds no `constitution.md`, and when that line is accepted SHALL copy
+the starter there. No section run and no needs-setup scaffold SHALL write a
+`constitution.md`, and the skill SHALL NOT overwrite an existing one. The
+starter SHALL be a commented template whose example rules sit inside HTML
+comments.
 
 #### Scenario: Existing constitution is kept
 - **GIVEN** the content directory already holds `constitution.md`
 - **WHEN** bare `/s:init` runs
-- **THEN** no constitution dialog opens and the file is unchanged
+- **THEN** the sheet carries no constitution line and the file is unchanged
 
 #### Scenario: Section runs never write one
 - **WHEN** `/s:init config` runs on a project with no `constitution.md`
