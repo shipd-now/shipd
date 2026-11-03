@@ -20,7 +20,7 @@
 #                            compare against the engine's folder.
 #
 # Segments:
-#   spec       "<name> · <status> · <done>/<total>", with position "(1 of X)"
+#   spec       "<name> · <status> · <done>/<total> tasks", with position "(1 of X)"
 #              and aggregate "(<total> of <Y>)" brackets when more than one
 #              change is live; "no active specs" for a shipd project with no
 #              live change; "<n> specs · none selected" when none is pickable;
