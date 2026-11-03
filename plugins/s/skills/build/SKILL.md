@@ -340,7 +340,9 @@ parameter entirely for `session`). The `s:sub-agent` definition
 (`${CLAUDE_PLUGIN_ROOT}/agents/sub-agent.md`) already carries the full role
 contract, so there is no template to build or substitute: the spawn message
 supplies only the change name, the absolute `<CLAIM_SCRIPT>` path (resolve
-`${CLAUDE_PLUGIN_ROOT}` to the real path first), and any Orchestrator addenda.
+`${CLAUDE_PLUGIN_ROOT}` to the real path first), the absolute
+`${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/sandbox-run.sh` path (as
+`<SANDBOX_RUN>`), and any Orchestrator addenda.
 Give each spawn a description of `builder <n> · <change>` so the agents pane
 shows the shipd role. Name the change's worktree root (`.worktrees/<change-name>`
 on branch `change/<change-name>`) as the sub-agent's working directory — so
@@ -526,7 +528,8 @@ actually satisfies the spec:
    step below the orchestrator — and a description of `validator · <change>`. The
    `s:validator` definition (`${CLAUDE_PLUGIN_ROOT}/agents/validator.md`)
    carries its full role contract, so its spawn message supplies only the change
-   name; it gets a **clean context**. Its inputs are the change's delta specs,
+   name and the absolute `sandbox-run.sh` path (resolve `${CLAUDE_PLUGIN_ROOT}`
+   first); it gets a **clean context**. Its inputs are the change's delta specs,
    the relevant masters, the code, and — when `plan.md` names one — the
    plan-named design scratch directory as a read-only reference, so it can
    refute design-fidelity scenarios against the real design — **not** the
