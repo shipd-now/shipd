@@ -173,6 +173,29 @@ def _validate_retention(value, path):
              "a non-negative integer or null", value)
 
 
+def _rel_path_ok(value):
+    return (isinstance(value, str) and value != ""
+            and not os.path.isabs(value)
+            and ".." not in value.replace("\\", "/").split("/"))
+
+
+def _validate_sandbox(value, path):
+    expected = ("an object with optional fake_bin (a non-empty relative "
+                "path without ..) and env (a map of NAMES to such paths)")
+    if not isinstance(value, dict) or set(value) - {"fake_bin", "env"}:
+        _bad("sandbox", path, expected, value)
+    if "fake_bin" in value and not _rel_path_ok(value["fake_bin"]):
+        _bad("sandbox", path, expected, value)
+    if "env" in value:
+        env = value["env"]
+        if not isinstance(env, dict):
+            _bad("sandbox", path, expected, value)
+        for name, rel in env.items():
+            if not re.match(r"^[A-Z_][A-Z0-9_]*$", name) \
+                    or not _rel_path_ok(rel):
+                _bad("sandbox", path, expected, value)
+
+
 def _validate_idle(value, path):
     if not _is_int(value) or value < 0:
         _bad("worktree_idle_minutes", path, "a non-negative integer", value)
@@ -284,6 +307,9 @@ REGISTRY = {spec.key: spec for spec in (
     _row("room", _via_core(sc.room_from_config, "room"),
          "an object with agent (a non-empty string) and max_rounds (an "
          "integer of at least 1)", "user"),
+    _row("sandbox", _validate_sandbox,
+         "an object with fake_bin (a relative path) and env (a map of "
+         "variable names to relative paths)", "repo"),
     _row("statusline", _validate_statusline,
          'an object such as {"lines": [["spec", "context"]]}; segments: '
          'spec, directory, context', "user", "shipd statusline layout"),

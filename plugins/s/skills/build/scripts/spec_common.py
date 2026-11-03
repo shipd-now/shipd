@@ -420,6 +420,7 @@ RECOGNIZED_CONFIG_KEYS = (
     "pr",
     "pr-mode",
     "room",
+    "sandbox",
     "statusline",
     "store_autocommit",
     "store_root",

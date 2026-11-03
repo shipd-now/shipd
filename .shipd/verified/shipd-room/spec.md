@@ -78,17 +78,22 @@ id: room-skill-no-code
 The skill SHALL read the agent's role as the `role` on its own card in
 `shipd room list <pr> --json`. While working a surfaced `review-finding`
 task, an agent whose role is `author` MAY edit, commit, and push code, only
-when the working tree is on the pull request's head branch (`gh pr view
-<pr> --json headRefName` equals `git branch --show-current`) and is clean:
-it SHALL make the smallest change that addresses the finding, run the tests
-covering the touched files, commit, push with plain `git push` and never
-with `--force`, and close the task `completed` naming the commit's short
-SHA. If any of those checks or the test run fails, then it SHALL push
-nothing and fall back to the prose hand-off. Every other role, and every
-task that is not a `review-finding`, SHALL post prose only and never edit,
-commit, or push code; a task that needs a code change SHALL be answered with
-a reply naming `/s:fix` or `/s:plan` as the hand-off. No agent SHALL push to
-a branch other than its own pull request's head branch. A picked
+when `shipd room whoami <pr> --author` exits `0` (the acting login is the pull
+request's author, a GitHub App's `app/<slug>` and `<slug>[bot]` counting as
+one account), the pull request is not cross-repository (`gh pr view <pr>
+--json isCrossRepository` is `false`), the working tree is on the pull
+request's head branch (`gh pr view <pr> --json headRefName` equals `git
+branch --show-current`), and the tree is clean: it SHALL make the smallest
+change that addresses the finding, run the tests covering the touched files,
+commit, push with plain `git push` and never with `--force`, and close the
+task `completed` naming the commit's short SHA. If any of those checks or the
+test run fails, then it SHALL push nothing and fall back to the prose
+hand-off. The skill, its harness body and its reference SHALL NOT ask the
+agent to compare `author.login` with `gh api user` by hand. Every other role,
+and every task that is not a `review-finding`, SHALL post prose only and never
+edit, commit, or push code; a task that needs a code change SHALL be answered
+with a reply naming `/s:fix` or `/s:plan` as the hand-off. No agent SHALL push
+to a branch other than its own pull request's head branch. A picked
 `review-finding` task whose finding the PR head already addresses SHALL be
 closed `completed` with a one-line note naming the commit.
 
@@ -99,13 +104,16 @@ closed `completed` with a one-line note naming the commit.
 
 #### Scenario: Skill states the author's fix rule and its guard
 - **WHEN** the room skill test reads the skill
-- **THEN** it finds `author`, `review-finding`, `headRefName`, `git push`,
-  and the rule never to push with `--force`
+- **THEN** it finds `author`, `review-finding`, `shipd room whoami <pr>
+  --author`, `isCrossRepository`, `headRefName`, `git push`, and the rule
+  never to push with `--force`, and does not find `gh api user`
 
 #### Scenario: Harness body carries the same rule
 - **WHEN** `harness_bodies.render("room", ("background-tasks",),
   refs_dir="R")` runs
-- **THEN** the output names `author`, `headRefName`, `/s:fix`, and `/s:plan`
+- **THEN** the output names `author`, `whoami <pr> --author`,
+  `isCrossRepository`, `headRefName`, `/s:fix`, and `/s:plan`, and the
+  reference names `whoami <pr> --author` and not `gh api user`
 
 ### Requirement: Room harness body
 id: room-skill-body
@@ -151,7 +159,9 @@ and matching a skill on its card, and never on its own last message; the
 round cap `room.max_rounds` with its default of 6 and the `failed` state it
 posts; the two ways a turn runs, `/s:room` in a developer session and the
 Actions wake installed by `shipd copilot add --room`; and the semantic review
-gate as the first member, posting each finding as a task. It SHALL link
+gate as the first member, posting each finding as a task. Its state diagram
+SHALL label the state `input-required` with that exact name, and the doc
+SHALL NOT explain Mermaid syntax or restate a transition the diagram shows. It SHALL link
 `docs/pr-room.md`, `docs/room-wake-reference.md`, `docs/customise.md`, and
 `docs/semantic-review.md`. `docs/pr-room.md` SHALL be a `how-to` doc titled
 `# Run an agent's turn in a multi-agent PR` that links
@@ -194,6 +204,12 @@ SHALL live in `plugins/s/skills/room/tests/test_room_skill.py`.
 - **WHEN** a reader opens `docs/pr-room.md`
 - **THEN** its title is `# Run an agent's turn in a multi-agent PR` and its
   text links `multi-agent-pr.md` and `room-wake-reference.md`
+
+#### Scenario: Concept doc carries no diagram-syntax note
+- **WHEN** a reader opens `docs/multi-agent-pr.md`
+- **THEN** its Mermaid block declares `state "input-required" as input`, and
+  the prose outside the block contains neither `input_required` nor the word
+  `hyphen`
 
 ### Requirement: The reviewer merges only from a clear room
 id: room-skill-merge-rule

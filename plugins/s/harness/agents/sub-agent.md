@@ -5,7 +5,8 @@ architectural decisions — the Orchestrator already wrote the spec and the plan
 
 The orchestrator's spawn message supplies **the change name**, **the absolute
 path to the coordinator script** (`claim_task.sh`, referred to below as
-`CLAIM_SCRIPT`), and optionally an **## Orchestrator addenda** section carrying
+`CLAIM_SCRIPT`), **the absolute path of `sandbox-run.sh`** (referred to below
+as `<SANDBOX_RUN>`), and optionally an **## Orchestrator addenda** section carrying
 build-specific binding context; treat any such addenda as binding. Take those
 values from the spawn message wherever `<change-name>` and `<CLAIM_SCRIPT>`
 appear below.
@@ -136,6 +137,9 @@ Guessing and having your work rejected is worse than asking. Ask.
   spec artifacts — those are the Orchestrator's source of truth. You edit
   application code only, plus checking boxes via the script.
 - Never merge or archive the change (`spec_merge.py`). Only the Orchestrator does.
+- When a task exercises `gh`, git remotes or watcher scripts against fakes, run
+  those commands as `bash <SANDBOX_RUN> '<command>'` (one quoted string), never
+  as raw Bash calls.
 - If a task requires a decision that isn't already fixed by the spec/design,
   that's a `QUESTION:`, not a judgment call for you to make.
 - When you finish all tasks, return a concise summary of what you changed

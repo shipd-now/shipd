@@ -255,6 +255,12 @@ def base_freshness_probe(fix):
               f"or re-run `semdiff doctor --fix`")
 
 
+def _empty_head_msg(head, head_sha, base_given, base_sha):
+    return (f"head '{head}' ({head_sha[:7]}) adds nothing over base "
+            f"'{base_given}' ({base_sha[:7]}) — nothing to review; check "
+            f"the head ref.")
+
+
 def resolve_endpoints(base, head, linear):
     """Work out what to compare.
 
@@ -275,6 +281,7 @@ def resolve_endpoints(base, head, linear):
     The returned meta also discloses the endpoints as commit ids:
     `base_given` (the ref as invoked, before promotion), `base_sha`,
     `head_sha` (null when the after side is the working tree), and
+    `head_given` (the head ref as invoked, null in working-tree mode),
     `merge_base` — the fork point in working-tree mode, the three-dot merge
     base in merge-base mode, and absent under `--linear`.
     """
@@ -293,22 +300,27 @@ def resolve_endpoints(base, head, linear):
                 f"histories?).")
         return fork_point, None, [fork_point], {
             "base": base, "head": None, "mode": "working-tree",
-            "base_given": base_given, "base_sha": base_sha,
-            "head_sha": None, "merge_base": fork_point,
+            "base_given": base_given, "head_given": head,
+            "base_sha": base_sha, "head_sha": None, "merge_base": fork_point,
         }
     if linear:
+        if head_sha == base_sha:
+            die(_empty_head_msg(head, head_sha, base_given, base_sha))
         return base, head, [base, head], {
             "base": base, "head": head, "mode": "linear",
-            "base_given": base_given, "base_sha": base_sha,
-            "head_sha": head_sha,
+            "base_given": base_given, "head_given": head,
+            "base_sha": base_sha, "head_sha": head_sha,
         }
     mb = run(["git", "merge-base", base, head]).stdout.strip()
     if not mb:
         die(f"no merge base between '{base}' and '{head}' (unrelated "
             f"histories?). Use --linear for a direct comparison.")
+    if head_sha == mb:
+        die(_empty_head_msg(head, head_sha, base_given, base_sha))
     return mb, head, [f"{base}...{head}"], {
         "base": base, "head": head, "merge_base": mb, "mode": "merge-base",
-        "base_given": base_given, "base_sha": base_sha, "head_sha": head_sha,
+        "base_given": base_given, "head_given": head,
+        "base_sha": base_sha, "head_sha": head_sha,
     }
 
 

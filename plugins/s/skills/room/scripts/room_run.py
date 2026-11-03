@@ -71,18 +71,18 @@ def _check_identity(gh, number, repo, role):
     author = room._pr_author(gh, number, repo)
     if not login:
         raise room.RoomError(
-            "could not read the acting GitHub login (gh api user failed); "
-            "an approval needs a readable account")
+            "could not read the acting GitHub login (gh api user and the "
+            "GraphQL viewer failed); an approval needs a readable account")
     if role in ("reviewer", "ci"):
         if not author:
             raise room.RoomError(
                 "could not read the author of %s#%d; an approval needs a "
                 "known author" % (repo, number))
-        if login.lower() == author.lower():
+        if room.same_account(login, author):
             raise room.RoomError(
                 "acting as @%s, who authored %s#%d; an author cannot "
                 "approve their own pull request" % (login, repo, number))
-    elif author and login.lower() != author.lower():
+    elif author and not room.same_account(login, author):
         sys.stderr.write(
             "warning: acting as @%s, but %s#%d was authored by @%s\n"
             % (login, repo, number, author))
@@ -120,9 +120,9 @@ def _fix_required(body):
 
 
 def _ci_reviews(gh, repo, number, login, head, warned):
-    """The reviews by ``login`` (case-insensitive) of ``head`` whose
-    verdict line is the fix-required marker, oldest first. A failed or unparseable
-    read warns once (tracked in ``warned``) and returns ``[]``."""
+    """The reviews by ``login`` (matched by ``room.login_key``) of ``head``
+    whose verdict line is the fix-required marker, oldest first. A failed or
+    unparseable read warns once (tracked in ``warned``) and returns ``[]``."""
     rc, out, _err = gh(["api", "--paginate",
                         "repos/%s/pulls/%d/reviews" % (repo, number)])
     reviews = None
@@ -147,7 +147,7 @@ def _ci_reviews(gh, repo, number, login, head, warned):
             sys.stderr.write("warning: could not read the reviews of %s#%d\n"
                              % (repo, number))
         return []
-    wanted = login.lower()
+    wanted = room.login_key(login)
     found = []
     for review in reviews:
         if not isinstance(review, dict):
@@ -155,7 +155,7 @@ def _ci_reviews(gh, repo, number, login, head, warned):
         user = review.get("user")
         who = user.get("login") if isinstance(user, dict) else None
         body = review.get("body")
-        if isinstance(who, str) and who.lower() == wanted and \
+        if isinstance(who, str) and room.login_key(who) == wanted and \
                 review.get("commit_id") == head and \
                 isinstance(body, str) and _fix_required(body):
             found.append(review)
