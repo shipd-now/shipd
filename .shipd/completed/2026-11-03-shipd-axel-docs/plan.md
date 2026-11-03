@@ -1,5 +1,5 @@
 # shipd-axel-docs
-Status: complete
+Status: verified
 Planned-at: 90b4ac75747c6892b128310a342d623b8b65b9f4
 Gated-hash: 3672bae9be7f
 
