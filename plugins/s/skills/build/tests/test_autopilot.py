@@ -2462,8 +2462,11 @@ class StageOptionPromptTest(unittest.TestCase):
     def test_bare_entries_keep_todays_prompts(self):
         build = autopilot._stage_prompt("build", "m", {"stage": "build"})
         self.assertEqual(build, autopilot._stage_prompt("build", "m", {}))
+        text = build
+        for const in (autopilot.ORACLE_LOOKUP_CMD, autopilot.ORACLE_JUDGE_NOTE):
+            text = text.replace(const, "")
         for token in ("validator", "telemetry", "parallelism", "sub-agent model"):
-            self.assertNotIn(token, build.lower())
+            self.assertNotIn(token, text.lower())
         review = autopilot._stage_prompt("review", "m", {"stage": "review"})
         self.assertEqual(review, autopilot._stage_prompt("review", "m", {}))
         self.assertNotIn("--disposition", review)

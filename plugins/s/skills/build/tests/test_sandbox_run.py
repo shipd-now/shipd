@@ -12,6 +12,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -183,6 +184,52 @@ class LeakRefusalTest(SandboxRunBase):
         self.assertEqual(res.returncode, 0, res.stderr)
         names = [l.split("=", 1)[0] for l in res.stdout.splitlines()]
         self.assertNotIn("REVIEW_BOT_HOME", names)
+
+    def test_repo_path_through_symlinked_home_allowed(self):
+        real = os.path.join(self.base, "realhome")
+        link = os.path.join(self.base, "linkhome")
+        os.makedirs(real)
+        os.symlink(real, link)
+        repo = os.path.join(real, "proj")
+        os.makedirs(repo)
+        self.git_init(repo)
+        res = self.run_sbx("echo ran %s/proj/scripts/tool.sh" % link,
+                           env=self.env(HOME=link), cwd=repo)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("ran", res.stdout)
+
+    def _pyenv_home(self):
+        pyenv = os.path.join(self.home, ".pyenv")
+        shims = os.path.join(pyenv, "shims")
+        target = os.path.join(pyenv, "versions", "x", "bin", "python3")
+        os.makedirs(shims)
+        os.makedirs(os.path.dirname(target))
+        os.symlink(sys.executable, target)
+        shim = os.path.join(shims, "python3")
+        with open(shim, "w") as fh:
+            fh.write('#!/bin/sh\nexec "${PYENV_ROOT:-$HOME/.pyenv}'
+                     '/versions/x/bin/python3" "$@"\n')
+        os.chmod(shim, os.stat(shim).st_mode | stat.S_IXUSR)
+        return pyenv, shims
+
+    def test_pyenv_shim_still_resolves(self):
+        pyenv, shims = self._pyenv_home()
+        env = self.env(PYENV_ROOT=pyenv)
+        env["PATH"] = shims + os.pathsep + env["PATH"]
+        res = self.run_sbx("python3 -c 'print(42)'; echo HOME=$HOME",
+                           env=env)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("42", res.stdout)
+        self.assertNotIn("HOME=" + self.home + "\n", res.stdout)
+        self.assertIn(os.path.join(self.root_for(), "home"), res.stdout)
+
+    def test_unset_pyenv_root_derived_from_shim_path(self):
+        pyenv, shims = self._pyenv_home()
+        env = self.env()
+        env["PATH"] = shims + os.pathsep + env["PATH"]
+        res = self.run_sbx("echo $PYENV_ROOT", env=env)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(res.stdout.strip(), pyenv)
 
 
 class ProjectConfigTest(SandboxRunBase):

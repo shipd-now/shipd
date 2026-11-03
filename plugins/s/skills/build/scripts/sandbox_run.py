@@ -3,6 +3,11 @@
 sub-agent exercising ``gh``, ``git`` or project scripts cannot reach the real
 user state (validator-sandbox).
 
+The leak check accepts the repo root in every home form (the resolved path and
+its path under the literal and resolved real HOME, so a symlinked HOME works),
+and the env scrub keeps the toolchain locator variables (``PYENV_ROOT`` and
+kin), deriving an unset one from a ``<home>/<dir>/shims`` entry on ``PATH``.
+
 Usage (via the ``sandbox-run.sh`` shim):
     sandbox-run.sh '<command>'   run ``bash -c '<command>'`` in the sandbox
     sandbox-run.sh --reset       delete the sandbox root, print it
@@ -27,6 +32,13 @@ import spec_common  # noqa: E402
 
 TOKEN_VARS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
               "GITHUB_ENTERPRISE_TOKEN")
+
+# Locator variables the scrub keeps even when they name the real HOME.
+TOOLCHAIN_VARS = ("PYENV_ROOT", "RBENV_ROOT", "ASDF_DATA_DIR", "VIRTUAL_ENV",
+                  "CONDA_PREFIX")
+# Locators derivable from a ``<home>/<dir>/shims`` PATH entry when unset.
+SHIM_ROOTS = {"PYENV_ROOT": ".pyenv", "RBENV_ROOT": ".rbenv",
+              "ASDF_DATA_DIR": ".asdf"}
 
 
 def die(code, message):
@@ -55,19 +67,37 @@ def home_forms(home):
     return forms
 
 
-def _is_repo_ref(text, start, repo):
-    """True when ``text`` at ``start`` begins with the repo-root path and the
+def repo_home_forms(repo, forms, real_home):
+    """The resolved repo root first, then, when it sits under the resolved
+    real HOME, its path under each home form."""
+    out = [repo]
+    rhome = os.path.realpath(real_home).rstrip("/") if real_home else ""
+    if rhome and (repo == rhome or repo.startswith(rhome + os.sep)):
+        suffix = repo[len(rhome):]
+        for form in forms:
+            cand = form + suffix
+            if cand not in out:
+                out.append(cand)
+    return out
+
+
+def _is_repo_ref(text, start, repo_forms):
+    """True when ``text`` at ``start`` begins with a repo-root form and the
     next character ends that path (not a sibling such as ``<repo>-other``)."""
-    if not text.startswith(repo, start):
-        return False
-    end = start + len(repo)
-    return (end >= len(text) or text[end] == os.sep or text[end].isspace()
-            or text[end] in "'\";):")
+    for repo in repo_forms:
+        if not text.startswith(repo, start):
+            continue
+        end = start + len(repo)
+        if (end >= len(text) or text[end] == os.sep or text[end].isspace()
+                or text[end] in "'\";):"):
+            return True
+    return False
 
 
 def outside_repo_home_ref(text, forms, repo):
     """Return the first occurrence of a real-HOME path in ``text`` whose
-    continuation does not begin with the repo-root path, else None."""
+    continuation does not begin with a repo-root form (``repo`` is a list of
+    forms), else None."""
     for form in forms:
         start = text.find(form)
         while start != -1:
@@ -90,6 +120,7 @@ def main(argv):
     real_home = os.environ.get("HOME", "")
     forms = home_forms(real_home)
     repo = repo_root()
+    repo_forms = repo_home_forms(repo, forms, real_home)
     # TMPDIR is honoured as given: gettempdir() silently falls back to
     # /tmp when TMPDIR is unusable, which would hide a create failure.
     base = os.environ.get("TMPDIR") or tempfile.gettempdir()
@@ -116,7 +147,7 @@ def main(argv):
     sys.stderr.write("sandbox-run: root=%s\n" % root)
     sys.stderr.flush()
 
-    match = outside_repo_home_ref(command, forms, repo)
+    match = outside_repo_home_ref(command, forms, repo_forms)
     if match:
         die(2, "command names the real HOME outside the repo: %s" % match)
 
@@ -138,9 +169,19 @@ def main(argv):
     for name, value in os.environ.items():
         if name in TOKEN_VARS:
             continue
-        if name != "PATH" and outside_repo_home_ref(value, forms, repo):
+        if (name != "PATH" and name not in TOOLCHAIN_VARS
+                and outside_repo_home_ref(value, forms, repo_forms)):
             continue
         env[name] = value
+    path_entries = env.get("PATH", "").split(os.pathsep)
+    for name, dirname in SHIM_ROOTS.items():
+        if name in env:
+            continue
+        for form in forms:
+            base_dir = os.path.join(form, dirname)
+            if os.path.join(base_dir, "shims") in path_entries:
+                env[name] = base_dir
+                break
     home = os.path.join(root, "home")
     env.update({
         "HOME": home,
