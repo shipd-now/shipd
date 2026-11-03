@@ -19,7 +19,7 @@ The repository SHALL carry `docs/shipd-factory.md`, a `concept` doc that explain
 
 #### Scenario: Reviews and their access are stated
 - **WHEN** a reader opens the page
-- **THEN** it says reviews run as `shipd-now`, one review job per new head commit, and that setup invites `shipd-now` with push access, and no text or diagram label marks a part `(planned)`
+- **THEN** it says reviews run as `shipd-now`, one gate job and one room review job per new head commit, and that setup invites `shipd-now` with push access, and no text or diagram label marks a part `(planned)`
 
 #### Scenario: The diagram follows the layer rules
 - **WHEN** a reader reads the diagram source

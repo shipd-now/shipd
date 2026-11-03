@@ -31,7 +31,7 @@ flowchart TD
     subgraph LCluster [ax cluster]
         C1["Egress policy for the job"]
         C2["Factory job in a gVisor sandbox"]
-        C3["Review job as shipd-now"]
+        C3["Gate job, then room review, as shipd-now"]
     end
     O1 -->|"1. prepare the repo"| G2
     O2 -->|"2. install"| G1
@@ -41,7 +41,7 @@ flowchart TD
     H2 -->|"5. apply"| C1
     H2 -->|"6. start the Task, write tokens over ax ssh"| C2
     C1 -->|"limits hosts"| C2
-    H2 -->|"8. one job per new head"| C3
+    H2 -->|"8. one gate job and one room review per new head"| C3
     G2 <-->|"7. clone, then push and open PR as shipd-factory[bot]"| C2
     G2 <-->|"9. read the PR, review in its room"| C3
 ```
@@ -85,10 +85,10 @@ fixes a finding as `shipd-factory[bot]`, at most 3 rounds per pull request.
 ## What the live runs proved
 
 - **`pr-mode: auto`.** On 2026-11-01, [unkannybanny #44](https://github.com/mikkel-bergmann/unkannybanny/pull/44) merged with no human action.
-- **Author loop.** On 2026-11-03, a seeded pull request on `unkannybanny`
-  ([#47](https://github.com/mikkel-bergmann/unkannybanny/pull/47)) got a
-  fix-required gate, an author fix and a passing re-review. It then merged
-  with no human action; it armed auto-merge when it opened.
+- **Author loop.** On 2026-11-03, seeded
+  [unkannybanny #47](https://github.com/mikkel-bergmann/unkannybanny/pull/47)
+  got a fix-required gate, an author fix and a passing re-review, then merged
+  with no human action.
 - **New repo.** On 2026-11-03, the first factory pull request on a repo made
   with `/shipd-factory new` merged with no human action.
 
