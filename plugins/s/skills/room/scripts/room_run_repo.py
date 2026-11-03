@@ -203,8 +203,8 @@ def cmd_run_repo(opts, parser, gh, runner, sleep, clock, preflight=None):
     login = room._login(gh, {})
     if not login:
         raise room.RoomError(
-            "could not read the acting GitHub login (gh api user failed); "
-            "an approval needs a readable account")
+            "could not read the acting GitHub login (gh api user and the "
+            "GraphQL viewer failed); an approval needs a readable account")
     root = room._root(opts)
     agent = room._agent_name(opts, parser, root)
     model_base = None
@@ -306,7 +306,7 @@ def _run_loop(opts, parser, gh, runner, sleep, clock, preflight, login,
                 who = (pr.get("author") or {}).get("login") \
                     if isinstance(pr.get("author"), dict) else None
                 if not isinstance(who, str) or not who or \
-                        who.lower() == login.lower():
+                        room.same_account(who, login):
                     if number not in warned:
                         warned.add(number)
                         sys.stderr.write(

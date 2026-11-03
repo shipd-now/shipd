@@ -154,19 +154,24 @@ class SkillNoCodeTest(unittest.TestCase):
     def test_author_may_fix_a_finding_under_a_guard(self):
         flat = _flat(_read(SKILL_PATH))
         for needle in ("author", "review-finding", "headRefName",
-                       "author.login", "isCrossRepository",
+                       "shipd room whoami <pr> --author",
+                       "isCrossRepository",
                        "git push", "--force", "/s:fix", "/s:plan",
                        "never edits, commits, or pushes code"):
             self.assertIn(needle, flat)
+        self.assertNotIn("gh api user", flat)
 
     def test_harness_body_carries_the_author_rule(self):
         out = hb.render("room", ("background-tasks",), refs_dir=REFS)
-        for needle in ("author", "headRefName", "author.login",
+        flat_out = _flat(out)
+        for needle in ("author", "headRefName", "whoami <pr> --author",
                        "isCrossRepository", "/s:fix", "/s:plan"):
-            self.assertIn(needle, out)
+            self.assertIn(needle, flat_out)
+        self.assertNotIn("gh api user", flat_out)
         ref = _flat(_read(os.path.join(PLUGIN_ROOT, "harness", "references", "room.md")))
-        for needle in ("author.login", "isCrossRepository"):
+        for needle in ("whoami <pr> --author", "isCrossRepository"):
             self.assertIn(needle, ref)
+        self.assertNotIn("gh api user", ref)
 
 
 class BodyRenderTest(unittest.TestCase):

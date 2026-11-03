@@ -49,7 +49,9 @@ class FakeGh:
                  review_comments=None, pages=1, fail=None, state="OPEN",
                  delete_fail=False, login="bot", user_fail=False,
                  threads=None, pr_author="pr-author", head="9" * 40,
-                 reviews=None):
+                 reviews=None, viewer=None, viewer_fail=False):
+        self.viewer = viewer
+        self.viewer_fail = viewer_fail
         self.head = head
         self.reviews = [dict(r) for r in (reviews or [])]
         self.pr_author = pr_author
@@ -91,6 +93,12 @@ class FakeGh:
     def user_calls(self):
         """How many times ``gh api user`` was read."""
         return sum(1 for args, _inp in self.calls if args == ["api", "user"])
+
+    def viewer_calls(self):
+        """How many times the GraphQL ``viewer`` login was read."""
+        return sum(1 for args, _inp in self.calls
+                   if args[:2] == ["api", "graphql"]
+                   and "viewer" in self._fields(args).get("query", ""))
 
     def posts(self):
         """The parsed bodies of every recorded POST, in order."""
@@ -197,6 +205,13 @@ class FakeGh:
             return 0, json.dumps({"login": self.login}), ""
         if args[:2] == ["api", "graphql"]:
             fields = self._fields(args)
+            if "viewer" in fields.get("query", ""):
+                if self.viewer_fail:
+                    return 1, "", "HTTP 403"
+                if isinstance(self.viewer, str):
+                    return 0, json.dumps({"data": {"viewer": {
+                        "login": self.viewer}}}), ""
+                return 1, "", "no viewer"
             if "resolveReviewThread" in fields.get("query", ""):
                 for thread in self.threads:
                     if thread["id"] == fields.get("threadId"):
@@ -744,6 +759,53 @@ class JoinIdentityTest(RoomTestBase):
         self.assertNotIn("env", run.call_args.kwargs)
 
 
+class LoginFallbackTest(RoomTestBase):
+    """room-login-normalise: the GraphQL viewer fallback and the one account
+    comparison."""
+
+    def test_viewer_answers_when_the_user_read_fails(self):
+        gh = FakeGh(user_fail=True, viewer="shipd-factory[bot]")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            login = room._login(gh, {})
+        self.assertEqual(login, "shipd-factory[bot]")
+        self.assertEqual(err.getvalue(), "")
+
+    def test_both_reads_failing_keeps_the_warning(self):
+        gh = FakeGh(comments=_joined(msg_comment(
+            10, "codex-a", text="please check", state="input-required",
+            round=1, to="claude-b")), user_fail=True, viewer_fail=True)
+        code, _out, err = self.room(gh, "close", "7", "--task", "10",
+                                    "--agent", "claude-b")
+        self.assertEqual(code, 0, err)
+        self.assertIn("warning: could not read the GitHub login", err)
+        self.assertNotIn("(for @", gh.posts()[0])
+
+    def test_a_readable_user_makes_no_viewer_call(self):
+        gh = FakeGh(login="mikkel")
+        self.assertEqual(room._login(gh, {}), "mikkel")
+        self.assertEqual(gh.viewer_calls(), 0)
+
+    def test_app_and_bot_names_are_one_account(self):
+        self.assertTrue(room.same_account("app/shipd-factory",
+                                          "Shipd-Factory[bot]"))
+        self.assertTrue(room.same_account("shipd-factory[bot]",
+                                          "app/shipd-factory"))
+        self.assertFalse(room.same_account("shipd-factory",
+                                           "app/shipd-factory"))
+        self.assertFalse(room.same_account("", ""))
+        self.assertFalse(room.same_account("a", None))
+        self.assertEqual(room.login_key("App/X"), "x[bot]")
+
+    def test_bot_reviewer_on_its_own_pr_warns_on_join(self):
+        gh = FakeGh(login="shipd-factory[bot]", pr_author="app/shipd-factory")
+        code, _out, err = self.room(gh, "join", "7", "--agent", "codex-a",
+                                    "--role", "reviewer")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(gh.posts()), 1)
+        self.assertIn("who authored this pull request", err)
+
+
 class ListTest(RoomTestBase):
     """room-list-verb: the text and JSON reports."""
 
@@ -882,6 +944,7 @@ class WhoamiTest(RoomTestBase):
         self.assertEqual(data["login"], "reviewer-b")
         self.assertEqual(data["author"], "mikkel")
         self.assertIs(data["may_approve"], True)
+        self.assertIs(data["is_author"], False)
         self.assertEqual(data["source"], "gh-login")
 
     def test_author_in_another_case_is_refused(self):
@@ -896,10 +959,51 @@ class WhoamiTest(RoomTestBase):
         self.assertIn("cannot approve their own pull request", lines[0])
 
     def test_unreadable_login_is_refused(self):
-        gh = FakeGh(user_fail=True, pr_author="mikkel")
+        gh = FakeGh(user_fail=True, viewer_fail=True, pr_author="mikkel")
         code, out, err = self._whoami(gh)
         self.assertEqual(code, 1)
         self.assertEqual(out, "")
+        self.assertIn("Error:", err)
+
+    def test_bot_reviewer_on_its_own_pr_is_refused(self):
+        gh = FakeGh(login="shipd-factory[bot]", pr_author="app/shipd-factory")
+        code, out, err = self._whoami(gh)
+        self.assertEqual(code, 1)
+        lines = [ln for ln in err.splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 1, err)
+        self.assertIn("Error:", lines[0])
+
+    def test_author_flag_confirms_a_bot_author(self):
+        gh = FakeGh(user_fail=True, viewer="shipd-factory[bot]",
+                    pr_author="app/shipd-factory")
+        code, out, err = self.room(gh, "whoami", "7", "--author")
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertIs(data["is_author"], True)
+        self.assertIs(data["may_approve"], False)
+        self.assertEqual(data["login"], "shipd-factory[bot]")
+        self.assertEqual(data["author"], "app/shipd-factory")
+
+    def test_author_flag_confirms_a_user_author(self):
+        gh = FakeGh(login="Mikkel", pr_author="mikkel")
+        code, out, err = self.room(gh, "whoami", "7", "--author")
+        self.assertEqual(code, 0, err)
+        self.assertIs(json.loads(out)["is_author"], True)
+
+    def test_author_flag_refuses_another_account(self):
+        gh = FakeGh(login="reviewer-b", pr_author="mikkel")
+        code, out, err = self.room(gh, "whoami", "7", "--author")
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        lines = [ln for ln in err.splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 1, err)
+        self.assertIn("Error:", lines[0])
+        self.assertIn("only the author may fix its findings", lines[0])
+
+    def test_author_flag_refuses_an_unreadable_login(self):
+        gh = FakeGh(user_fail=True, viewer_fail=True, pr_author="mikkel")
+        code, out, err = self.room(gh, "whoami", "7", "--author")
+        self.assertEqual(code, 1)
         self.assertIn("Error:", err)
 
     def test_unreadable_author_is_refused(self):

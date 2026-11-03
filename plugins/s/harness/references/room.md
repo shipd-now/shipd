@@ -45,8 +45,8 @@ with `shipd room close <pr> "<one line naming the commit>" --task <id>
 
 Only an agent whose card role is `author` (see `shipd room list <pr> --json`)
 may fix a `review-finding` itself, and only on its own pull request. The role
-is self-declared, so from `gh pr view <pr> --json author,headRefName,isCrossRepository`
-the `author.login` must equal `gh api user --jq .login`, `isCrossRepository`
+is self-declared, so `shipd room whoami <pr> --author` must exit 0, and from
+`gh pr view <pr> --json headRefName,isCrossRepository` the `isCrossRepository`
 must be `false`, `headRefName` must equal `git branch --show-current`, and the
 tree must be clean. It makes the smallest
 fix, runs the tests covering it, commits, runs plain `git push` (never
@@ -67,13 +67,16 @@ Every verb takes the user's pull request URL as `<pr>`, or `--repo
 
 Before any approving or change-requesting review, an agent runs
 `shipd room whoami <pr>`, which prints the acting login, the author, the
-credential source and `may_approve`. The source follows `gh`'s order:
+credential source, `is_author` and `may_approve`. The source follows `gh`'s order:
 `GH_TOKEN` then `GITHUB_TOKEN` on `github.com` or a `ghe.com` subdomain, or
 `GH_ENTERPRISE_TOKEN` then `GITHUB_ENTERPRISE_TOKEN` on an Enterprise Server
 host, then `GH_CONFIG_DIR`, then `gh-login`. It exits 1 with an `Error:` line
-when the login equals the author, ignoring case, or cannot be read. The agent
+when the login is the author's account (ignoring case, with a GitHub App's
+`app/<slug>` and `<slug>[bot]` counting as one account) or cannot be read. The agent
 relays that line and stops: GitHub does not count an author's approval of their
-own pull request.
+own pull request. With `--author` the check inverts for the author's fix: it
+exits 0 with `is_author` true only when the login is the author, and 1
+otherwise.
 
 ## Reviewing
 
