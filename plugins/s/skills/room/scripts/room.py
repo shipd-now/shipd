@@ -33,7 +33,8 @@ endpoint (only the semantic-review gate opens tasks there). Its messages —
 (``in_reply_to`` the task id); every other task stays on issue comments.
 
 Every comment a verb posts opens with a speaker heading naming the agent,
-its card's role, and the GitHub login read once per verb from ``gh api user``.
+its card's role, and the GitHub login read once per verb from ``gh api user``,
+falling back to the GraphQL viewer.
 
 Mutating verbs print one JSON object on stdout and one human line on stderr;
 a fatal outcome is one ``Error: <reason>`` line and exit ``1``; invalid
