@@ -86,11 +86,14 @@ Each operator creates their own App and reviewer, and shares nothing.
 3. Set repository permissions: Contents read and write, Pull requests read and
    write, and Metadata read.
 4. Note the App id and generate a private key.
-5. Create a separate GitHub user for reviews.
+5. Create a separate GitHub user for reviews, and sign it in to `gh` on your
+   machine with `gh auth login`.
 6. Install the App on each repo, and invite the reviewer there with push access.
 
 Store three files in `~/.config/shipd-factory/` on the host, each mode 0600.
-Write them over ssh stdin with `umask 077`, never as a command argument.
+Write them over ssh stdin with `umask 077`, never as a command argument. First
+check that `gh auth token -u <reviewer-login>` prints a token. Without a reviewer
+sign-in it prints nothing, and the last line writes an empty `reviewer.token`.
 
 ```sh
 ssh <user>@<host> 'umask 077; mkdir -p ~/.config/shipd-factory; cat > ~/.config/shipd-factory/github-app.pem' < <downloaded-key>.pem
@@ -103,7 +106,7 @@ Check them, adding `<owner/repo>` to check one install.
 ssh <user>@<host> python3 ~/shipd-factory/server/credentials/ghcreds.py check [<owner/repo>]
 ```
 
-It prints `ok: app <your-app-slug>` and `ok: reviewer <reviewer-login>`. With a
+It must print `ok: app <your-app-slug>` and `ok: reviewer <reviewer-login>`. With a
 repo it also prints `ok: installed on <owner/repo>`. The factory reads the bot
 name from the App, so any App name works.
 
@@ -133,12 +136,13 @@ ssh -N -L 8080:<bind-address>:8080 <user>@<host>
 ## 7. Point the skill
 
 Install the skill. It prints `shipd-factory: installed` and its path under
-`~/.claude/skills/shipd-factory`. Set the URL, using `http://localhost:8080`
-for a tunnel. Check health, which prints `ok: true` and exits 0 when healthy.
+`~/.claude/skills/shipd-factory`. Set the URL to `http://<bind-address>:8080`
+on a private network, or `http://localhost:8080` for a tunnel. Check health,
+which prints `ok: true` and exits 0 when healthy.
 
 ```sh
 skill/install.sh
-export SHIPD_FACTORY_URL=http://<host>:8080
+export SHIPD_FACTORY_URL=http://<bind-address>:8080
 python3 ~/.claude/skills/shipd-factory/shipd_factory.py health
 ```
 
