@@ -61,7 +61,21 @@ follows the `semantic-review` commit status the poster sets:
 | `failure` | `REQUEST_CHANGES` |
 
 The event follows the status, not the raw verdict, so the two never disagree
-under any `--disposition` scope. A decision review is always submitted, with
+under any `--disposition` scope.
+
+The poster derives the status from the findings, not from the payload's
+`verdict`. A finding counts unless it has a `category` other than
+`untouched-caller` or `spec-coverage`. It also counts if any location is inside
+the pull request's diff hunks. An added or context line is inside.
+
+Under `all`, the status is `failure` only when a counted finding is `high` or
+`medium`. An `unmet` `spec_coverage` entry also fails it. The poster prints a
+`verdict reconciled:` line when the result differs from the payload. A `low`
+finding folds into the summary with no inline comment, so it opens no thread.
+The summary lists a finding in untouched code under `Already there, reached by
+this change`. That finding never blocks.
+
+A decision review is always submitted, with
 a body only when no finding anchors.
 
 GitHub rejects an author approving their own pull request. When the acting

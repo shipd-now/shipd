@@ -46,7 +46,9 @@ rendering changes. Shape:
 ```
 
 Rules: `verdict` is `changes-requested` iff any finding is high or medium, else
-`pass`. An unmet acceptance criterion MUST also appear as a `spec-coverage`
+`pass`. A finding whose every location is outside the diff hunks, and whose
+category is not `untouched-caller` or `spec-coverage`, does not count toward
+`verdict`; `review_gate.py post` recomputes `verdict` this way. An unmet acceptance criterion MUST also appear as a `spec-coverage`
 finding with severity `high`. `change` and `spec_coverage` are present only
 when a change is in scope. Valid JSON only — no fences, no commentary, **no emoji**.
 If the analysis cannot run, still emit a well-formed object with `could_not_verify`

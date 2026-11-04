@@ -207,8 +207,10 @@ array names every site.
   boundary reached without the caller's scope check, is always `high`, whatever the
   reviewer's confidence.
 
-Any high **or** medium finding blocks (Fix required); low never blocks. When
-unsure between two levels, state the doubt rather than inflating.
+Any high **or** medium finding blocks (Fix required); low never blocks, and
+neither does a finding whose every location is outside the diff hunks (other
+than an `untouched-caller` or `spec-coverage` one). When unsure between two
+levels, state the doubt rather than inflating.
 
 ### 7. Check test coverage, rolled up per cohort
 Ask of **every** finding you write, at **every** severity: would an existing
@@ -237,7 +239,9 @@ sites, not a defect at each.
    id, e.g. `head FETCH_HEAD → 8d2e59e`.
 3. **Findings header — directly below the endpoints line.** A line
    `## Findings: <marker> <VERDICT>` — `✅ Ship it` when no finding is high or
-   medium; `❌ Fix required` otherwise. This is the **same** decision as the
+   medium (a finding wholly outside the diff hunks, other than
+   `untouched-caller` or `spec-coverage`, does not count); `❌ Fix required`
+   otherwise. This is the **same** decision as the
    verdict in
    `${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` — never let
    the two diverge. In the summary comment

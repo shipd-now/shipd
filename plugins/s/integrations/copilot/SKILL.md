@@ -173,6 +173,13 @@ numbering as the summary table:
 ```
 
 - `severity` is `high`, `medium`, or `low` — the same rubric as the table.
+- `category` is the kind of defect, one of the `/s:review --json` category
+  values: `bug`, `contract`, `edge-case`, `untouched-caller`, `spec-coverage`,
+  `test-coverage`, `security`, `performance`, `stability`, `data-integrity`,
+  or `description-drift`. Use
+  `untouched-caller` for a caller or consumer the change left broken. It is
+  optional, but a finding without one is always counted as blocking by the
+  gate, never reported as already there.
 - `path` is repo-relative, exactly as the diff names the file.
 - `start_line`/`end_line` are the RIGHT-side (new-file) line range the finding
   is about, `start_line <= end_line`; a single line repeats it in both.
@@ -189,8 +196,12 @@ numbering as the summary table:
 
 The workflow verifies every `path` and range against the diff it computes
 itself; a finding it cannot place there is folded into the posted body as prose
-instead of being anchored. So the file never decides what the review says — the
-body remains the review, and the verdict marker below is what gates the merge.
+instead of being anchored. So the file does not decide what the review says —
+the body remains the review, and the verdict marker below is what gates the
+merge. The one exception: when the marker is Fix required but every entry in
+the file is `low` or already there (see the verdict rule), the workflow reads
+the review as not blocking and posts `success`. It never turns Ship it into a
+failure.
 
 **Severity rubric.**
 
@@ -217,8 +228,11 @@ without a scope check, is always **high** regardless of your confidence.
 
 **Verdict rule.** Any high **or** medium finding blocks: the verdict is
 **Fix required**. With no high and no medium finding, it is **Ship it**.
-Low findings never block. When unsure between two levels, state the doubt
-rather than inflating.
+Low findings never block. A finding located only in code the pull request did
+not change, other than an `untouched-caller` or an unmet scenario, is reported
+as already there and never blocks: rate it as usual, give it its `category`,
+and the gate lists it apart from the blocking findings. When unsure between two
+levels, state the doubt rather than inflating.
 
 **Fast-pass marker (optional).** When the pull request carries a completed shipd
 change directory whose every delta scenario you judged met, emit the fast-pass
