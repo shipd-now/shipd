@@ -1,5 +1,5 @@
 # shipd-factory-setup-page
-Status: ready
+Status: active
 Planned-at: 171e580704f2b97cb315571322b0286fb106bb3d
 Gated-hash: b898e10e133b
 

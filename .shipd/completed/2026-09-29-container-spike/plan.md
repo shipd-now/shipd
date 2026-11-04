@@ -17,7 +17,7 @@ a remote cluster and x86_64 images. This spike proves the local path end to end.
 ### Details
 
 - `tools/container/Dockerfile`: a Linux arm64 image with Claude Code, gh,
-  difftastic, python3, git, ripgrep, and jq, derived from the axel
+  difftastic, python3, git, ripgrep, and jq, derived from the factory host
   `claude-runner` Dockerfile.
 - `tools/container/spike.py`: the host launcher. Preflight, image build by
   Dockerfile hash, `container run` with read-only mounts of the workspace root
@@ -91,7 +91,7 @@ Affected capabilities: `container-spike` (new). Impact: `tools/container/`
 - **Run directory** `~/.shipd/container/runs/<UTC stamp>/` (or `--run-dir`)
   holding `result.json` and the turn transcripts. Tests stub `container` with
   a shell script on PATH that logs its argv.
-- **Precedent**: `/home/debian/claude-runner/Dockerfile` on axel, read
+- **Precedent**: `/home/debian/claude-runner/Dockerfile` on the factory host, read
   2026-09-29, is the image's starting point.
 
 ## Questions and answers
