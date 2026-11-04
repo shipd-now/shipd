@@ -86,8 +86,8 @@ Each operator creates their own App and reviewer, and shares nothing.
 3. Set repository permissions: Contents read and write, Pull requests read and
    write, and Metadata read.
 4. Note the App id and generate a private key.
-5. Create a separate GitHub user for reviews, and sign it in to `gh` on your
-   machine with `gh auth login`.
+5. Create a separate GitHub user for reviews, sign it in with `gh auth login`,
+   then switch back with `gh auth switch -u <your-login>`.
 6. Install the App on each repo, and invite the reviewer there with push access.
 
 Store three files in `~/.config/shipd-factory/` on the host, each mode 0600.
