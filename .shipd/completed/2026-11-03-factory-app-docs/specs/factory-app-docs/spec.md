@@ -1,17 +1,17 @@
 ## ADDED Requirements
 
-### Requirement: shipd-axel App page
-id: shipd-axel-page
+### Requirement: factory App page
+id: factory-app-page
 
-The repository SHALL carry `docs/shipd-axel.md`, a `concept` doc that explains the `shipd-axel` GitHub App to a repo owner deciding whether to install it. The page SHALL state the App's permissions and scope, how its tokens are minted and delivered, the separate reviewer identity and how reviews run, and how to install and remove it, including the `shipd-now` collaborator that reviews need. The page SHALL carry exactly one Mermaid `flowchart TD` diagram with one subgraph per layer, and SHALL NOT link to the App's private source repository.
+The repository SHALL carry `docs/factory-app.md`, a `concept` doc that explains the factory GitHub App to a repo owner deciding whether to install it. The page SHALL state the App's permissions and scope, how its tokens are minted and delivered, the separate reviewer identity and how reviews run, and how to install and remove it, including the `shipd-now` collaborator that reviews need. The page SHALL carry exactly one Mermaid `flowchart TD` diagram with one subgraph per layer, and SHALL NOT link to the App's private source repository.
 
 #### Scenario: The page lints clean
-- **WHEN** `python3 -B plugins/s/skills/document/scripts/docs_lint.py docs/shipd-axel.md` runs
+- **WHEN** `python3 -B plugins/s/skills/document/scripts/docs_lint.py docs/factory-app.md` runs
 - **THEN** it exits 0, and the file's first line is `<!-- doc-type: concept -->`
 
 #### Scenario: The page maps to the App's homepage URL
-- **WHEN** the website's `reconcileManifest` adopts `shipd-axel.md`
-- **THEN** the derived slug is `shipd-axel`, the route `/docs/shipd-axel`
+- **WHEN** the website's `reconcileManifest` adopts `factory-app.md`
+- **THEN** the derived slug is `factory-app`, the route `/docs/factory-app`
 
 #### Scenario: Permissions and scope are stated
 - **WHEN** a reader opens the page

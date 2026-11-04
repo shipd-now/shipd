@@ -1,7 +1,7 @@
 # The shipd runner image: a Linux arm64 sandbox that drives headless Claude
 # Code sessions inside an Apple `container` VM.
 #
-# Derived from the axel `claude-runner` Dockerfile. The launcher
+# Derived from the factory host's `claude-runner` Dockerfile. The launcher
 # (`tools/container/spike.py`) tags a build `shipd-runner:<sha256(this
 # file)[:12]>`, so every edit here produces a new tag and a fresh build.
 FROM node:22-bookworm

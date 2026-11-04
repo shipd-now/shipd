@@ -31,4 +31,4 @@ The repository SHALL carry `docs/shipd-factory.md`, a `concept` doc that explain
 
 #### Scenario: No private name or link
 - **WHEN** a reader checks every link and every line of the page
-- **THEN** no text names `shipd-axel` or a private repository, no link points at the App's source repository, and every GitHub link points at a public page
+- **THEN** no text names the retired App name or a private repository, no link points at the App's source repository, and every GitHub link points at a public page

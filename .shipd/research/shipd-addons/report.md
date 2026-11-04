@@ -134,7 +134,7 @@ and shipd's generator stay out of scope until a second add-on needs them.
   `claude plugin tag --push`, so ranges on `s` resolve against tags [4].
 - **Install steps for a user.**
   1. Run `gh auth setup-git` for the private repository [5].
-  2. Run `claude plugin marketplace add mikkel-bergmann/shipd-axel`.
+  2. Run `claude plugin marketplace add <owner>/<factory-repo>`.
   3. Run `claude plugin install shipd-ax@shipd-ax`, then enable auto-update in
      `/plugin` [5].
 - **Naming convention.** Plugin and marketplace names follow `shipd-<topic>`, so
