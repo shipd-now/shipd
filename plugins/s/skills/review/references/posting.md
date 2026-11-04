@@ -31,7 +31,7 @@ nothing:
   counted finding is `high` or `medium` and no scenario is `unmet` (the poster
   derives the verdict from the findings, ignoring `low` and already-there
   ones, and prints a `verdict reconciled:` line when it disagrees with the
-  payload); `high-only` → `success` iff no finding is high; `none` →
+  payload); `high-only` → `success` iff no counted finding is high; `none` →
   always `success`. The findings and the rendered verdict stay
   severity-honest in every scope — only the merge-gating status is
   policy-aware, and a non-`all` scope is stamped on the summary comment and in
@@ -114,8 +114,8 @@ The flow:
 5. **Run the poster.** `review_gate.py post <pr> --from "$TMPDIR/review.json"`,
    adding `--disposition <scope>`, `--model <tier>`, `--status <mode>`,
    `--room-agent <name>` and `--room-to <name>` when the invoker passed them. It upserts the marker summary comment, posts one inline comment per
-   anchorable location across a finding's `locations` array (folding a finding
-   into the summary only when none of its locations anchor), and sets the
+   anchorable location across a finding's `locations` array (folding a `high` or `medium`
+   finding into the summary only when none of its locations anchor; a `low` always folds), and sets the
    `semantic-review` commit status on the head SHA by scope — under the default
    `all`, `success` iff no counted finding is `high` or `medium` and no
    scenario is `unmet`, else `failure`, with a `verdict reconciled:` line

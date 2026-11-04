@@ -1019,6 +1019,15 @@ class CountedFindingsTest(unittest.TestCase):
                               category="untouched-caller")]))
         self.assertEqual(gh.posted_status["state"], "failure")
 
+    def test_contract_and_test_coverage_in_untouched_file_count(self):
+        for category in ("contract", "test-coverage"):
+            with self.subTest(category=category):
+                gh, _, _ = self._post(_review(
+                    verdict="pass",
+                    findings=[self._f("high", "package.json:3",
+                                      category=category)]))
+                self.assertEqual(gh.posted_status["state"], "failure")
+
     def test_location_without_line_counts(self):
         gh, _, _ = self._post(_review(
             verdict="pass",
@@ -1988,6 +1997,12 @@ class FixRequiredReclassifyTest(unittest.TestCase):
         state, _, _ = self._run(
             ["\U0001F534 high"],
             [self._entry("high", "install.sh", category=None)])
+        self.assertEqual(state, "failure")
+
+    def test_contract_finding_in_untouched_file_keeps_failure(self):
+        state, _, _ = self._run(
+            ["\U0001F534 high"],
+            [self._entry("high", "package.json", category="contract")])
         self.assertEqual(state, "failure")
 
     def test_untouched_caller_keeps_failure(self):

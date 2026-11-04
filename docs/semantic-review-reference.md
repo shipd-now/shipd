@@ -65,7 +65,7 @@ under any `--disposition` scope.
 
 The poster derives the status from the findings, not from the payload's
 `verdict`. A finding counts unless it has a `category` other than
-`untouched-caller` or `spec-coverage`. It also counts if any location is inside
+`untouched-caller`, `spec-coverage`, `contract` or `test-coverage`. It also counts if any location is inside
 the pull request's diff hunks. An added or context line is inside.
 
 Under `all`, the status is `failure` only when a counted finding is `high` or

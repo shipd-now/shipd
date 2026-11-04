@@ -209,7 +209,7 @@ array names every site.
 
 Any high **or** medium finding blocks (Fix required); low never blocks, and
 neither does a finding whose every location is outside the diff hunks (other
-than an `untouched-caller` or `spec-coverage` one). When unsure between two
+than an `untouched-caller`, `spec-coverage`, `contract` or `test-coverage` one). When unsure between two
 levels, state the doubt rather than inflating.
 
 ### 7. Check test coverage, rolled up per cohort
@@ -240,7 +240,7 @@ sites, not a defect at each.
 3. **Findings header — directly below the endpoints line.** A line
    `## Findings: <marker> <VERDICT>` — `✅ Ship it` when no finding is high or
    medium (a finding wholly outside the diff hunks, other than
-   `untouched-caller` or `spec-coverage`, does not count); `❌ Fix required`
+   `untouched-caller`, `spec-coverage`, `contract` or `test-coverage`, does not count); `❌ Fix required`
    otherwise. This is the **same** decision as the
    verdict in
    `${CLAUDE_PLUGIN_ROOT}/skills/review/references/json-output.md` — never let

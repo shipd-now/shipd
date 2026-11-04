@@ -2119,7 +2119,7 @@ id: gate-verdict-from-severity
 `review_gate.py post` SHALL derive the review's effective verdict from the
 payload and the pull request's diff rather than trusting the payload's
 `verdict` field. A finding SHALL be *already there* when it carries a
-`category` other than `untouched-caller` or `spec-coverage`, every one of its
+`category` other than `untouched-caller`, `spec-coverage`, `contract` or `test-coverage`, every one of its
 `locations` parses to a path and a line, and no location is touched; a
 location SHALL be touched when its path is in the pull request's file list
 and either that file carries no readable patch or the line is a RIGHT-side
@@ -2173,6 +2173,16 @@ description SHALL count them separately as `N already there`.
 #### Scenario: A broken untouched caller still blocks
 - **WHEN** a `high` finding of category `untouched-caller` sits in a file the
   pull request does not change
+- **THEN** it is counted and the status is `failure`
+
+#### Scenario: A contract finding in an unchanged file still blocks
+- **WHEN** a `high` finding of category `contract` sits in a file the pull
+  request does not change
+- **THEN** it is counted and the status is `failure`
+
+#### Scenario: A test-coverage finding in an unchanged file still blocks
+- **WHEN** a `high` finding of category `test-coverage` sits in a file the pull
+  request does not change
 - **THEN** it is counted and the status is `failure`
 
 #### Scenario: A finding without a parsable line still counts

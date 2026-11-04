@@ -953,7 +953,7 @@ jobs:
           # A `fix-required` marker is the reviewer's own verdict, and it is
           # trusted over severities and the diff only until its findings file
           # says nothing counted blocks: every entry `low`, or already there
-          # (a `category` other than `untouched-caller` or `spec-coverage`,
+          # (a `category` other than `untouched-caller`, `spec-coverage`, `contract` or `test-coverage`,
           # and no line of its range touched by the pull request), with no
           # more `🔴 high`/`🟠 med` rows in the body than blocking already-there
           # entries. The step then posts `success` and `APPROVE` instead.
@@ -977,7 +977,7 @@ jobs:
 
           findings_path, files_path, body_path, out_path, marker_state = sys.argv[1:6]
           HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
-          EXEMPT = ("untouched-caller", "spec-coverage")
+          EXEMPT = ("untouched-caller", "spec-coverage", "contract", "test-coverage")
 
 
           def commentable(patch):

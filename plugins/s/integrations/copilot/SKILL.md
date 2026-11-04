@@ -229,7 +229,8 @@ without a scope check, is always **high** regardless of your confidence.
 **Verdict rule.** Any high **or** medium finding blocks: the verdict is
 **Fix required**. With no high and no medium finding, it is **Ship it**.
 Low findings never block. A finding located only in code the pull request did
-not change, other than an `untouched-caller` or an unmet scenario, is reported
+not change, other than an `untouched-caller`, `contract` or `test-coverage` finding or an
+unmet scenario, is reported
 as already there and never blocks: rate it as usual, give it its `category`,
 and the gate lists it apart from the blocking findings. When unsure between two
 levels, state the doubt rather than inflating.

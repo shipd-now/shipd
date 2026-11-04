@@ -117,8 +117,10 @@ BLOCKING_SEVERITIES = ("high", "medium")
 
 # Categories whose findings stay counted even when no location is touched:
 # each is a defect the change causes outside its own lines (a caller left
-# broken by a changed contract, or an unmet scenario).
-EXEMPT_CATEGORIES = ("untouched-caller", "spec-coverage")
+# broken by a changed contract, an unmet scenario, an unlisted file or a
+# missing test).
+EXEMPT_CATEGORIES = ("untouched-caller", "spec-coverage", "contract",
+                     "test-coverage")
 
 # The scopes `autoreply` acts under, and the canonical reply each posts. `all`
 # is absent by design: it means per-finding judgement, which is the skill's job.

@@ -614,7 +614,7 @@ id: gate-nonblocking-fix-required-greens
 The review-gate workflow SHALL classify each entry of its reviewer's findings
 file (`$RUNNER_TEMP/shipd-copilot-review-findings.json`) against the diff it
 read itself. An entry SHALL be *already there* when it carries a `category`
-other than `untouched-caller` or `spec-coverage`, a string `path` and integer
+other than `untouched-caller`, `spec-coverage`, `contract` or `test-coverage`, a string `path` and integer
 `start_line`/`end_line`, and no line of that range is touched; a line SHALL be
 touched when the path is one of the pull request's files and either that file
 carries no readable patch or the line is a RIGHT-side line inside one of its
@@ -667,6 +667,11 @@ state this exception where it says which signal gates the merge.
 #### Scenario: A broken untouched caller keeps the failure
 - **WHEN** the only blocking entry lies in an untouched file with category
   `untouched-caller`
+- **THEN** the status is `failure`
+
+#### Scenario: A contract finding in an untouched file keeps the failure
+- **WHEN** the only blocking entry lies in an untouched file with category
+  `contract`
 - **THEN** the status is `failure`
 
 #### Scenario: A missing findings file keeps the failure
