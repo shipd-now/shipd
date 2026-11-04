@@ -611,7 +611,7 @@ class PostTest(unittest.TestCase):
         findings = [
             {"id": "f1", "severity": "high", "locations": ["a.py:5"],
              "what": "boom", "why": "w", "fix": "x"},
-            {"id": "f2", "severity": "low", "locations": ["a.py:3"],
+            {"id": "f2", "severity": "medium", "locations": ["a.py:3"],
              "what": "bang", "why": "w", "fix": "x"}]
         review_gate.post(
             "7", _review(verdict="changes-requested", findings=findings), gh)
@@ -804,7 +804,7 @@ class SuggestionTest(unittest.TestCase):
         self._degrades(dict(self.OK, start_line=5, end_line=7))
 
     def test_suggestion_body_still_opens_with_the_severity_marker(self):
-        for sev in ("high", "medium", "low"):
+        for sev in ("high", "medium"):
             comment = _inline_comments(_post_finding(_finding(
                 severity=sev, suggestion=dict(self.OK))))[0]
             self.assertIn(SUGGESTION_FENCE, comment["body"])
@@ -955,6 +955,123 @@ class ReviewEventTest(unittest.TestCase):
         self.assertFalse(any("inline review rejected" in l for l in lines))
 
 
+class CountedFindingsTest(unittest.TestCase):
+    """`post` derives the verdict from counted findings: lows never block and
+    never thread, and findings in untouched code are reported, not counted."""
+
+    def _post(self, review, **kw):
+        gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
+        lines = []
+        result = review_gate.post("7", review, gh, out=lines.append, **kw)
+        return gh, result, lines
+
+    @staticmethod
+    def _f(sev, loc, **extra):
+        f = {"id": "f", "severity": sev, "locations": [loc], "what": "w",
+             "why": "y", "fix": "x"}
+        f.update(extra)
+        return f
+
+    def test_low_only_changes_requested_approves(self):
+        gh, result, lines = self._post(_review(
+            verdict="changes-requested", findings=[self._f("low", "a.py:3")]))
+        self.assertEqual(gh.posted_status["state"], "success")
+        self.assertEqual(result["review_event"], "APPROVE")
+        self.assertIn("## Findings: \u2705 Ship it", gh.summary_body())
+        self.assertEqual(
+            len([l for l in lines if l.startswith("verdict reconciled:")]), 1)
+
+    def test_pass_with_medium_on_changed_line_fails(self):
+        gh, result, _ = self._post(_review(
+            verdict="pass", findings=[self._f("medium", "a.py:3")]))
+        self.assertEqual(gh.posted_status["state"], "failure")
+        self.assertEqual(result["review_event"], "REQUEST_CHANGES")
+
+    def test_high_in_untouched_file_is_already_there(self):
+        gh, result, _ = self._post(_review(
+            verdict="changes-requested",
+            findings=[self._f("high", "install.sh:12",
+                              category="security")]))
+        self.assertEqual(gh.posted_status["state"], "success")
+        self.assertEqual(result["review_event"], "APPROVE")
+        body = gh.summary_body()
+        self.assertIn("### Already there, reached by this change", body)
+        self.assertIn("(already there)", body)
+        self.assertNotIn("### Additional findings", body)
+        self.assertIn("1 already there", gh.posted_status["description"])
+
+    def test_medium_outside_hunk_of_changed_file_is_already_there(self):
+        gh, _, _ = self._post(_review(
+            verdict="changes-requested",
+            findings=[self._f("medium", "a.py:40", category="bug")]))
+        self.assertEqual(gh.posted_status["state"], "success")
+
+    def test_medium_on_context_line_counts(self):
+        gh, _, _ = self._post(_review(
+            verdict="pass",
+            findings=[self._f("medium", "a.py:1", category="bug")]))
+        self.assertEqual(gh.posted_status["state"], "failure")
+
+    def test_untouched_caller_counts(self):
+        gh, _, _ = self._post(_review(
+            verdict="pass",
+            findings=[self._f("high", "install.sh:12",
+                              category="untouched-caller")]))
+        self.assertEqual(gh.posted_status["state"], "failure")
+
+    def test_contract_and_test_coverage_in_untouched_file_count(self):
+        for category in ("contract", "test-coverage"):
+            with self.subTest(category=category):
+                gh, _, _ = self._post(_review(
+                    verdict="pass",
+                    findings=[self._f("high", "package.json:3",
+                                      category=category)]))
+                self.assertEqual(gh.posted_status["state"], "failure")
+
+    def test_location_without_line_counts(self):
+        gh, _, _ = self._post(_review(
+            verdict="pass",
+            findings=[self._f("high", "install.sh", category="bug")]))
+        self.assertEqual(gh.posted_status["state"], "failure")
+
+    def test_unmet_scenario_blocks(self):
+        gh, _, _ = self._post(_review(
+            verdict="pass",
+            spec_coverage=[{"scenario": "s", "state": "unmet"}]))
+        self.assertEqual(gh.posted_status["state"], "failure")
+
+    def test_unknown_severity_blocks(self):
+        gh, _, _ = self._post(_review(
+            verdict="pass", findings=[self._f("critical", "a.py:3")]))
+        self.assertEqual(gh.posted_status["state"], "failure")
+
+    def test_consistent_low_pass_prints_no_reconciliation(self):
+        gh, _, lines = self._post(_review(
+            verdict="pass", findings=[self._f("low", "a.py:3")]))
+        self.assertEqual(gh.posted_status["state"], "success")
+        self.assertFalse(any("verdict reconciled" in l for l in lines))
+
+    def test_low_on_changed_line_posts_no_inline_comment(self):
+        gh, _, _ = self._post(_review(
+            verdict="pass", findings=[self._f("low", "a.py:3")]))
+        for post in gh.review_posts:
+            self.assertEqual(post.get("comments", []), [])
+        body = gh.summary_body()
+        self.assertIn("### Additional findings", body)
+        self.assertIn("\U0001F7E1 low", body)
+
+    def test_low_only_review_leaves_nothing_unresolved(self):
+        gh, _, _ = self._post(_review(
+            verdict="pass", findings=[self._f("low", "a.py:3")]))
+        self.assertEqual(review_gate.resolve("7", gh)["unresolved"], 0)
+
+    def test_autoreply_still_answers_a_legacy_low_thread(self):
+        threads = [_gate_thread(1, "low")]
+        gh = FakeGh(review_threads=threads)
+        result = review_gate.autoreply("7", gh, "high-only")
+        self.assertEqual(result["replied"], 1)
+
+
 DECISIONS = {"success": "APPROVE", "failure": "REQUEST_CHANGES"}
 
 
@@ -984,7 +1101,7 @@ class PostDispositionTest(unittest.TestCase):
         gh = FakeGh()
         review_gate.post(
             "7", _review(verdict="changes-requested", findings=[self.LOW]), gh)
-        self.assertEqual(gh.posted_status["state"], "failure")
+        self.assertEqual(gh.posted_status["state"], "success")
         # Default scope leaves the summary free of policy provenance.
         self.assertNotIn("Disposition:", gh.summary_body())
         self.assertNotIn("Model:", gh.summary_body())
@@ -1772,19 +1889,34 @@ def _extract_classifier_bash(yml_text):
     return "\n".join(lines)
 
 
-def _classify(body, fail_open="false"):
+def _classify(body, fail_open="false", findings=None, files=None):
     """Run the extracted classifier bash on ``body`` in a real subprocess
-    shell, returning ``(state, description)``. ``body`` is written to a
-    workspace file and read back with ``$(<file)``, exactly as the workflow
-    itself does — never piped, never passed through the environment."""
+    shell, returning ``(state, description, classes)``. ``body`` is written to
+    a workspace file and read back with ``$(<file)``, exactly as the workflow
+    itself does — never piped, never passed through the environment.
+    ``findings`` and ``files`` are written as the reviewer's findings file and
+    the pull request's file list; ``classes`` is the parsed
+    `shipd-gate-finding-classes.json`, or None where it was not written."""
     script = _extract_classifier_bash(_read_gate_yml())
     with tempfile.TemporaryDirectory() as d:
         body_path = os.path.join(d, "body.md")
         with open(body_path, "w") as fh:
             fh.write(body)
+        files_path = os.path.join(d, "files.json")
+        with open(files_path, "w") as fh:
+            if files is not None:
+                json.dump(files, fh)
+        if findings is not None:
+            with open(os.path.join(
+                    d, "shipd-copilot-review-findings.json"), "w") as fh:
+                json.dump(findings, fh)
         wrapper = (
             "set -euo pipefail\n"
             'HEAD_SHA=deadbeef\n'
+            f'RUNNER_TEMP="{d}"\n'
+            f'py_bin="{sys.executable}"\n'
+            f'files_file="{files_path}"\n'
+            'ungrounded=\n'
             f'body="$(<"{body_path}")"\n'
             + script +
             '\nprintf "STATE=%s\\nDESC=%s\\n" "${state:-}" "${description:-}"\n'
@@ -1793,6 +1925,11 @@ def _classify(body, fail_open="false"):
         env["SHIPD_GATE_FAIL_OPEN"] = fail_open
         r = subprocess.run(["bash", "-c", wrapper],
                             capture_output=True, text=True, env=env)
+        classes = None
+        classes_path = os.path.join(d, "shipd-gate-finding-classes.json")
+        if os.path.exists(classes_path):
+            with open(classes_path) as fh:
+                classes = json.load(fh)
     if r.returncode != 0:
         raise AssertionError(f"classifier script failed: {r.stderr}")
     state = desc = None
@@ -1801,7 +1938,101 @@ def _classify(body, fail_open="false"):
             state = line[len("STATE="):]
         elif line.startswith("DESC="):
             desc = line[len("DESC="):]
-    return state, desc
+    return state, desc, classes
+
+
+class FixRequiredReclassifyTest(unittest.TestCase):
+    """A `fix-required` marker greens when the findings file shows nothing
+    counted blocks; a `ship-it` marker is never turned into `failure`."""
+
+    FIX = "<!-- shipd-verdict: fix-required -->"
+    SHIP = "<!-- shipd-verdict: ship-it -->"
+    GREEN = "Copilot code review: ship it (only low or already-there findings)."
+    DOCS = [{"filename": "docs/e2e.md",
+             "patch": "@@ -0,0 +1,2 @@\n+a\n+b"}]
+    SRC = [{"filename": "src/a.py",
+            "patch": "@@ -1,2 +1,3 @@\n a\n+b\n c"}]
+
+    @staticmethod
+    def _entry(severity, path, line=12, category="security", **extra):
+        e = {"severity": severity, "path": path, "start_line": line,
+             "end_line": line + 2, "detail": "d"}
+        if category is not None:
+            e["category"] = category
+        e.update(extra)
+        return e
+
+    def _run(self, rows, findings, files=None, marker=None):
+        body = "## Findings\n\n" + "".join(
+            "| %d | %s | x |\n" % (i, r) for i, r in enumerate(rows, 1))
+        body += "\n" + (marker or self.FIX) + "\n"
+        return _classify(body, findings=findings,
+                         files=self.DOCS if files is None else files)
+
+    def test_only_low_findings_green(self):
+        state, desc, classes = self._run(
+            ["\U0001F7E1 low", "\U0001F7E1 low"],
+            [self._entry("low", "src/a.py", 1),
+             self._entry("low", "src/a.py", 2)], files=self.SRC)
+        self.assertEqual((state, desc), ("success", self.GREEN))
+        self.assertTrue(classes["reclassified"])
+
+    def test_high_in_untouched_file_greens_and_is_listed(self):
+        state, desc, classes = self._run(
+            ["\U0001F534 high"], [self._entry("high", "install.sh")])
+        self.assertEqual((state, desc), ("success", self.GREEN))
+        self.assertEqual(classes, {"already_there": [0],
+                                   "reclassified": True})
+
+    def test_medium_on_changed_line_keeps_failure(self):
+        state, _, classes = self._run(
+            ["\U0001F7E0 med"],
+            [self._entry("low", "src/a.py", 1),
+             self._entry("medium", "src/a.py", 2, category="bug")],
+            files=self.SRC)
+        self.assertEqual(state, "failure")
+        self.assertFalse(classes["reclassified"])
+
+    def test_uncategorized_off_diff_finding_keeps_failure(self):
+        state, _, _ = self._run(
+            ["\U0001F534 high"],
+            [self._entry("high", "install.sh", category=None)])
+        self.assertEqual(state, "failure")
+
+    def test_contract_finding_in_untouched_file_keeps_failure(self):
+        state, _, _ = self._run(
+            ["\U0001F534 high"],
+            [self._entry("high", "package.json", category="contract")])
+        self.assertEqual(state, "failure")
+
+    def test_untouched_caller_keeps_failure(self):
+        state, _, _ = self._run(
+            ["\U0001F534 high"],
+            [self._entry("high", "install.sh", category="untouched-caller")])
+        self.assertEqual(state, "failure")
+
+    def test_missing_findings_file_keeps_failure(self):
+        state, _, classes = self._run(["\U0001F7E1 low"], None)
+        self.assertEqual(state, "failure")
+        self.assertIsNone(classes)
+
+    def test_body_rating_more_blocking_findings_keeps_failure(self):
+        state, _, _ = self._run(
+            ["\U0001F7E1 low", "\U0001F7E0 med"],
+            [self._entry("low", "src/a.py", 1)], files=self.SRC)
+        self.assertEqual(state, "failure")
+
+    def test_ship_it_is_never_turned_into_failure(self):
+        state, _, _ = self._run(
+            ["\U0001F534 high"], [self._entry("high", "src/a.py", 1)],
+            files=self.SRC, marker=self.SHIP)
+        self.assertEqual(state, "success")
+
+    def test_unreadable_diff_classifies_nothing(self):
+        state, _, _ = _classify(
+            "| 1 | \U0001F534 high | x |\n" + self.FIX + "\n",
+            findings=[self._entry("high", "install.sh")], files=[])
+        self.assertEqual(state, "failure")
 
 
 class VerdictBackwardsScanTest(unittest.TestCase):
@@ -1819,7 +2050,7 @@ class VerdictBackwardsScanTest(unittest.TestCase):
             f"{self.SHIP_IT}\n"
             "Writing the findings file to the workspace now...\n"
         )
-        state, _ = _classify(body)
+        state, _, _ = _classify(body)
         self.assertEqual(state, "success")
 
     def test_marker_quoted_midsentence_no_verdict(self):
@@ -1827,7 +2058,7 @@ class VerdictBackwardsScanTest(unittest.TestCase):
             f"Per the skill, end with `{self.SHIP_IT}` verbatim.\n"
             "No further verdict is given here.\n"
         )
-        state, _ = _classify(body)
+        state, _, _ = _classify(body)
         self.assertEqual(state, "")
 
     def test_marker_inside_transcript_line_no_verdict(self):
@@ -1835,34 +2066,34 @@ class VerdictBackwardsScanTest(unittest.TestCase):
             f"│ echo '{self.SHIP_IT}'\n"
             "That's the end of the transcript.\n"
         )
-        state, _ = _classify(body)
+        state, _, _ = _classify(body)
         self.assertEqual(state, "")
 
     def test_marker_with_trailing_text_no_verdict(self):
         body = f"{self.SHIP_IT} (all clear)\n"
-        state, _ = _classify(body)
+        state, _, _ = _classify(body)
         self.assertEqual(state, "")
 
     def test_no_marker_at_all_no_verdict(self):
         body = "Everything checks out from what I can tell.\n"
-        state, _ = _classify(body)
+        state, _, _ = _classify(body)
         self.assertEqual(state, "")
 
     def test_fix_required_last_with_ship_it_earlier_is_fix_required(self):
         body = (
             f"{self.SHIP_IT}\n\nOn reflection:\n\n{self.FIX_REQUIRED}\n"
         )
-        state, _ = _classify(body)
+        state, _, _ = _classify(body)
         self.assertEqual(state, "failure")
 
     def test_marker_with_trailing_spaces_parses(self):
         body = f"{self.SHIP_IT}   \n"
-        state, _ = _classify(body)
+        state, _, _ = _classify(body)
         self.assertEqual(state, "success")
 
     def test_indented_marker_parses(self):
         body = f"    {self.SHIP_IT}\n"
-        state, _ = _classify(body)
+        state, _, _ = _classify(body)
         self.assertEqual(state, "success")
 
 
@@ -2044,6 +2275,9 @@ class FastPassPostTest(unittest.TestCase):
         gh = FakeGh(variable_get_enabled=True)
         review = _review(
             verdict="changes-requested",
+            findings=[{"id": "f1", "severity": "medium",
+                       "locations": ["z.py:1"], "what": "boom", "why": "w",
+                       "fix": "x"}],
             change={"slug": "test-change", "location": "completed", "dir": ".shipd/completed/2026-01-01-test-change"},
             spec_coverage=[
                 {"scenario": "WHEN x THEN y", "state": "met"}

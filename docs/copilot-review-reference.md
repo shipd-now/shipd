@@ -102,8 +102,8 @@ line equal to a marker, tolerating surrounding whitespace.
 
 | The last line equal to a marker | Status posted |
 | --- | --- |
-| `<!-- shipd-verdict: fix-required -->` | `failure` — the merge is blocked. |
-| `<!-- shipd-verdict: ship-it -->` | `success`. |
+| `<!-- shipd-verdict: fix-required -->` | `failure` — the merge is blocked. If the review is grounded and every finding is `low` or already there, it posts `success` and `APPROVE` with a gate note instead. |
+| `<!-- shipd-verdict: ship-it -->` | `success`, never turned into `failure`. |
 | *anything else* | `success`, described as *no verdict marker was parsed* — unless the repository turned [strictness](#strictness-shipd_gate_fail_open) on, which leaves the check `pending`. |
 
 **Only a whole line decides.** A quoted marker never equals a line. A bare

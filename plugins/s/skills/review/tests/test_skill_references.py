@@ -1643,7 +1643,7 @@ def _workflow_namespace():
     old_argv = sys.argv
     try:
         sys.argv = ["prog", "body", "findings", "files", "payload",
-                    "fallback", "neutral"]
+                    "fallback", "neutral", "classes"]
         exec(compile(source, COPILOT_GATE_YML, "exec"), namespace)
     finally:
         sys.argv = old_argv

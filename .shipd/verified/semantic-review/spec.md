@@ -583,10 +583,10 @@ object to the named pull request via `gh`: upserting a single summary comment
 identified by the hidden marker `<!-- shipd-semantic-review -->` (editing the
 existing marker comment in place on re-runs, and recognizing the legacy marker
 `<!-- am-semantic-review -->` on lookup while writing only the current one),
-posting one inline comment for every location, across every finding's
-`locations` array, that anchors to a RIGHT-side commentable line of the pull
-request diff, folding into the summary any finding none of whose locations
-anchor, retrying once with no inline comments if the review POST is rejected,
+posting one inline comment for every location, across the `locations` array
+of every `high`- or `medium`-severity finding, that anchors to a RIGHT-side
+commentable line of the pull request diff, folding into the summary every
+`low` finding and any finding none of whose locations anchor, retrying once with no inline comments if the review POST is rejected,
 submitting that review with the event the `gate-review-event` requirement selects, and setting a commit status
 with context `semantic-review` on the pull request's head SHA.
 
@@ -608,7 +608,12 @@ SHALL read a severity whether or not the marker carries the dot, so a finding
 comment posted before this change is still classified rather than reported as
 unparseable.
 
-Where a finding declares its fix confident and supplies a replacement covering
+A `low` finding SHALL NOT be posted as an inline comment, whatever its
+locations: an inline comment opens a review thread that a repository requiring
+conversation resolution would let block a merge the rubric says a `low` never
+blocks, so the poster folds it into the summary as the CI gate workflow does.
+
+Where a `high`- or `medium`-severity finding declares its fix confident and supplies a replacement covering
 one or more contiguous whole lines that anchor `locations[0]` to a RIGHT-side
 commentable line, that location's inline comment SHALL carry the replacement
 as a committable `suggestion` block so the fix can be applied without
@@ -632,7 +637,7 @@ suggestion SHALL NOT change the comment's leading severity marker, and the
 - **THEN** it returns that body's severity rather than nothing
 
 #### Scenario: A confident whole-line fix becomes committable
-- **WHEN** a finding declares its fix confident with a replacement covering
+- **WHEN** a `medium` finding declares its fix confident with a replacement covering
   contiguous whole lines that anchor `locations[0]` to the diff
 - **THEN** its inline comment contains a `suggestion` fenced block carrying
   that replacement
@@ -664,8 +669,8 @@ suggestion SHALL NOT change the comment's leading severity marker, and the
   `semantic-review` status state is `success`
 
 #### Scenario: Red verdict anchors findings inline
-- **WHEN** `post` publishes a `changes-requested` verdict whose findings each
-  name one location that anchors to the diff
+- **WHEN** `post` publishes a `changes-requested` verdict whose `high` and
+  `medium` findings each name one location that anchors to the diff
 - **THEN** one inline comment is posted per finding at its anchored location
 
 #### Scenario: Re-post updates instead of stacking
@@ -714,6 +719,12 @@ suggestion SHALL NOT change the comment's leading severity marker, and the
   line
 - **THEN** the finding is folded into the summary's "Additional findings"
   section and no inline comment is posted for it
+
+#### Scenario: A low finding on a diff line folds into the summary
+- **WHEN** `post` publishes a `low` finding whose location anchors to a
+  RIGHT-side commentable line
+- **THEN** no inline comment is posted for it and it appears in the summary's
+  "Additional findings" section with its 🟡 dot
 
 ### Requirement: Required-check protection verb
 id: required-check-protect
@@ -2101,3 +2112,139 @@ verdict, and SHALL post nothing to a pull request.
 - **WHEN** `plugins/s/skills/review/SKILL.md` is inspected
 - **THEN** it instructs that a `semdiff` refusal for a head adding nothing is
   reported as "Nothing to review" with no findings verdict and no post
+
+### Requirement: The poster derives the verdict from counted findings
+id: gate-verdict-from-severity
+
+`review_gate.py post` SHALL derive the review's effective verdict from the
+payload and the pull request's diff rather than trusting the payload's
+`verdict` field. A finding SHALL be *already there* when it carries a
+`category` other than `untouched-caller`, `spec-coverage`, `contract` or `test-coverage`, every one of its
+`locations` parses to a path and a line, and no location is touched; a
+location SHALL be touched when its path is in the pull request's file list
+and either that file carries no readable patch or the line is a RIGHT-side
+line inside one of the file's diff hunks (an added or context line). Every other finding SHALL be *counted*. The effective verdict SHALL be
+`changes-requested` when any counted finding's severity is `high` or
+`medium`, or is present and not one of `high`, `medium`, `low`, or when any
+`spec_coverage` entry's state is `unmet`, and `pass` otherwise; a finding
+with no severity SHALL count as `low`. The blocking severities SHALL be
+declared in exactly one place in the poster. The commit status (under every
+disposition scope), the review event, the summary's `## Findings` header,
+the status description, and fast-pass eligibility SHALL all read the
+effective verdict and the counted findings only. When the effective verdict
+differs from the payload's `verdict`, the poster SHALL print one line naming
+both.
+
+The summary SHALL list already-there findings under a `### Already there,
+reached by this change` section, each with its severity dot, location, what,
+why and fix, SHALL NOT repeat them under "Additional findings", SHALL suffix
+each one's summary-table row with `(already there)`, and the status
+description SHALL count them separately as `N already there`.
+
+#### Scenario: Low-only findings approve
+- **WHEN** `post` publishes a `changes-requested` payload whose only findings
+  are `low`, under the default scope, to a pull request authored by another
+  login
+- **THEN** the status is `success`, the review event is `APPROVE`, the header
+  reads `✅ Ship it`, and a reconciliation line is printed
+
+#### Scenario: A medium finding still requests changes
+- **WHEN** `post` publishes a `pass` payload carrying one `medium` finding on
+  a changed line
+- **THEN** the status is `failure` and the review event is `REQUEST_CHANGES`
+
+#### Scenario: A high finding in an untouched file never requests changes
+- **WHEN** `post` publishes a `changes-requested` payload whose only finding
+  is a `high` `security` finding located in a file the pull request does not
+  change
+- **THEN** the status is `success`, the event is `APPROVE`, and the summary
+  lists the finding under `Already there, reached by this change`
+
+#### Scenario: A finding outside the hunks of a changed file is already there
+- **WHEN** a `medium` `bug` finding's only location is a line of a changed
+  file that lies outside every hunk of that file's patch
+- **THEN** it is already there and the status is `success`
+
+#### Scenario: A finding on a context line still counts
+- **WHEN** a `medium` finding's location is an unchanged context line inside
+  a hunk
+- **THEN** it is counted and the status is `failure`
+
+#### Scenario: A broken untouched caller still blocks
+- **WHEN** a `high` finding of category `untouched-caller` sits in a file the
+  pull request does not change
+- **THEN** it is counted and the status is `failure`
+
+#### Scenario: A contract finding in an unchanged file still blocks
+- **WHEN** a `high` finding of category `contract` sits in a file the pull
+  request does not change
+- **THEN** it is counted and the status is `failure`
+
+#### Scenario: A test-coverage finding in an unchanged file still blocks
+- **WHEN** a `high` finding of category `test-coverage` sits in a file the pull
+  request does not change
+- **THEN** it is counted and the status is `failure`
+
+#### Scenario: A finding without a parsable line still counts
+- **WHEN** a `high` finding's only location names a path with no line
+- **THEN** it is counted and the status is `failure`
+
+#### Scenario: An unmet scenario blocks without a finding
+- **WHEN** `post` publishes a `pass` payload with no findings and one
+  `spec_coverage` entry whose state is `unmet`
+- **THEN** the status is `failure`
+
+#### Scenario: An unknown severity blocks
+- **WHEN** `post` publishes a payload whose only counted finding has severity
+  `critical`
+- **THEN** the status is `failure`
+
+#### Scenario: A consistent payload prints no reconciliation
+- **WHEN** `post` publishes a `pass` payload whose only findings are `low`
+- **THEN** the status is `success` and no reconciliation line is printed
+
+### Requirement: Folded findings carry no per-finding disposition
+id: folded-findings-disposition
+
+Under every disposition scope the skill's disposition loop SHALL act only on
+findings the poster posted as review threads. A `low` finding and an
+already-there finding SHALL carry no thread, so the loop SHALL author no reply
+for them, the resolve verb's unresolved count SHALL never include them, and
+under `all` the loop MAY implement a folded finding but SHALL NOT be required
+to. A thread posted for a `low` finding before this change SHALL keep being
+handled by the reply, autoreply, resolve and prior verbs as before.
+
+#### Scenario: A low-only review needs no disposition
+- **GIVEN** the invoker asked for the findings to be dispositioned under scope
+  `all`
+- **WHEN** the posted review carries only `low` findings
+- **THEN** no reply is authored and the resolve verb reports an unresolved
+  count of zero
+
+#### Scenario: A legacy low thread is still resolvable
+- **WHEN** a pull request carries a `low` finding thread posted before this
+  change and the autoreply verb runs under `high-only`
+- **THEN** that thread receives the canonical reply as before
+
+### Requirement: Low-findings change ships docs, tests, and a version bump
+id: low-findings-docs-version
+
+The change SHALL replace the tests pinning a low-only `changes-requested`
+payload to `failure` and a `low` finding to an inline comment with tests of
+this change's scenarios, update `review/references/posting.md`,
+`review/references/json-output.md`, `review/SKILL.md`,
+`docs/semantic-review-reference.md`, and `docs/copilot-review-reference.md`
+to describe the counted-findings verdict, folded lows, and the already-there
+section, and advance the plugin version in
+`plugins/s/.claude-plugin/plugin.json` by one patch above the value `main`
+carries.
+
+#### Scenario: Docs name the derived verdict
+- **WHEN** `review/references/posting.md` is read
+- **THEN** it states that the status ignores `low` and already-there findings
+  and that `low` findings are folded into the summary rather than threaded
+
+#### Scenario: The version advances
+- **WHEN** the change's pull request is compared with `main`
+- **THEN** `plugins/s/.claude-plugin/plugin.json` carries a version one patch
+  above `main`'s

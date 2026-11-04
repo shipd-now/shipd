@@ -2609,6 +2609,35 @@ class GateReviewPostTest(GateScriptCase):
         self.assertIn("### Findings not anchored to the diff", review["body"])
         self.assertIn("Low severity finding.", review["body"])
 
+    def test_an_untouched_code_finding_greens_with_the_gate_note(self):
+        finding = {"severity": "high", "category": "security",
+                   "path": "install.sh", "start_line": 12, "end_line": 14,
+                   "detail": "Unsafe heredoc in the script."}
+        posts = self.cli_gate(findings=[finding])
+        self.assertStates(posts, ["pending", "success"])
+        review = self.review()
+        self.assertEqual(review["event"], "APPROVE")
+        self.assertEqual(review.get("comments", []), [])
+        self.assertIn("**Gate note:** the reviewer's fix-required verdict "
+                      "does not block", review["body"])
+        self.assertIn("### Already there, reached by this change",
+                      review["body"])
+        self.assertIn("Unsafe heredoc in the script.", review["body"])
+        self.assertNotIn("### Findings not anchored to the diff",
+                         review["body"])
+        lines = review["body"].splitlines()
+        self.assertEqual(lines[0], "**\u2615 shipd** semantic review")
+        self.assertTrue(lines[2].startswith("**Gate note:**"))
+
+    def test_an_uncategorized_untouched_finding_keeps_the_failure(self):
+        finding = {"severity": "high", "path": "install.sh",
+                   "start_line": 12, "end_line": 14, "detail": "Unsafe."}
+        posts = self.cli_gate(findings=[finding])
+        self.assertStates(posts, ["pending", "failure"])
+        review = self.review()
+        self.assertEqual(review["event"], "REQUEST_CHANGES")
+        self.assertNotIn("Gate note", review["body"])
+
     def test_a_single_line_finding_keeps_the_single_line_anchor(self):
         finding = dict(self.ANCHORED, start_line=11, end_line=11)
         self.cli_gate(findings=[finding])
