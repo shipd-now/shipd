@@ -27,8 +27,11 @@ nothing:
 - `disposition=<all|high-only|none>` (default `all`) — how much per-finding
   judgement this review is worth. It selects the posting flow's step 6 (see
   below) and passes straight through to the poster as `--disposition`, which
-  maps the `semantic-review` commit status by scope: `all` → `success` iff the
-  verdict is `pass`; `high-only` → `success` iff no finding is high; `none` →
+  maps the `semantic-review` commit status by scope: `all` → `success` iff no
+  counted finding is `high` or `medium` and no scenario is `unmet` (the poster
+  derives the verdict from the findings, ignoring `low` and already-there
+  ones, and prints a `verdict reconciled:` line when it disagrees with the
+  payload); `high-only` → `success` iff no counted finding is high; `none` →
   always `success`. The findings and the rendered verdict stay
   severity-honest in every scope — only the merge-gating status is
   policy-aware, and a non-`all` scope is stamped on the summary comment and in
@@ -111,10 +114,15 @@ The flow:
 5. **Run the poster.** `review_gate.py post <pr> --from "$TMPDIR/review.json"`,
    adding `--disposition <scope>`, `--model <tier>`, `--status <mode>`,
    `--room-agent <name>` and `--room-to <name>` when the invoker passed them. It upserts the marker summary comment, posts one inline comment per
-   anchorable location across a finding's `locations` array (folding a finding
-   into the summary only when none of its locations anchor), and sets the
+   anchorable location across a finding's `locations` array (folding a `high` or `medium`
+   finding into the summary only when none of its locations anchor; a `low` always folds), and sets the
    `semantic-review` commit status on the head SHA by scope — under the default
-   `all`, `success` iff the verdict is `pass`, else `failure`. The review it
+   `all`, `success` iff no counted finding is `high` or `medium` and no
+   scenario is `unmet`, else `failure`, with a `verdict reconciled:` line
+   when that differs from the payload. `low` findings fold into the summary
+   (no inline comment, so no thread) and findings in code the pull request did
+   not change get their own `Already there, reached by this change` section;
+   neither blocks. The review it
    submits follows that status: `APPROVE` on `success`, `REQUEST_CHANGES` on
    `failure`. An acting login equal to the pull request's author (or an
    unreadable login) submits a `COMMENT` only, and only when findings anchor.
@@ -141,9 +149,11 @@ straight to step 8's report.
    answered. Absent that ask, skip straight to step 8: implement nothing,
    author no reply. Where dispositioning was asked for, a posted finding is
    advice nobody is required to read until it is dispositioned, and every
-   gate thread must end up carrying disposition evidence. How much judgement
-   you spend depends on the acting scope:
-   - **`all` (the default) — every finding, low included.** Walk the findings
+   gate thread must end up carrying disposition evidence. The loop acts only
+   on findings the poster threaded (`high` or `medium` on a changed line);
+   folded `low` and already-there findings carry no thread and need no
+   reply. How much judgement you spend depends on the acting scope:
+   - **`all` (the default) — every threaded finding.** Walk the findings
      (newest post first) and give each exactly one of two dispositions — never
      leave a finding with neither. A finding that is neither implemented (by
      your edit or by its suggestion having been applied) nor replied to is

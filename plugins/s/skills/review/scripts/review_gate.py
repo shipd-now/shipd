@@ -110,6 +110,18 @@ _SEV_LABEL = {"high": "high", "medium": "med", "low": "low"}
 # verdict stay severity-honest in every scope.
 DISPOSITIONS = ("all", "high-only", "none")
 
+# The single owner of the blocking threshold: only a counted finding of one of
+# these severities (or an unknown one) makes the effective verdict
+# `changes-requested`. A `low` never blocks and never opens a thread.
+BLOCKING_SEVERITIES = ("high", "medium")
+
+# Categories whose findings stay counted even when no location is touched:
+# each is a defect the change causes outside its own lines (a caller left
+# broken by a changed contract, an unmet scenario, an unlisted file or a
+# missing test).
+EXEMPT_CATEGORIES = ("untouched-caller", "spec-coverage", "contract",
+                     "test-coverage")
+
 # The scopes `autoreply` acts under, and the canonical reply each posts. `all`
 # is absent by design: it means per-finding judgement, which is the skill's job.
 AUTOREPLY_DISPOSITIONS = ("high-only", "none")
@@ -261,6 +273,52 @@ def _split_findings(findings, commentable):
 
 
 # --- rendering --------------------------------------------------------------
+
+def _touched(path, line, files_by_name, commentable):
+    """True when ``path:line`` is code the pull request touched: the path is in
+    the PR's file list and either that file carries no readable patch (removed,
+    binary, too large) or ``line`` is a RIGHT-side added or context line inside
+    one of its hunks."""
+    if path not in files_by_name:
+        return False
+    if not (files_by_name[path].get("patch") or ""):
+        return True
+    return line in commentable.get(path, set())
+
+
+def already_there(f, files_by_name, commentable):
+    """True when finding ``f`` sits only in code the pull request did not
+    change: it has a non-empty category outside ``EXEMPT_CATEGORIES``, every
+    location parses to a path and line, and none is touched. Anything missing
+    or unparsable fails closed (the finding stays counted)."""
+    category = f.get("category")
+    if not isinstance(category, str) or not category \
+            or category in EXEMPT_CATEGORIES:
+        return False
+    locations = _parse_locations(f)
+    if not locations:
+        return False
+    for path, line in locations:
+        if path is None or line is None:
+            return False
+        if _touched(path, line, files_by_name, commentable):
+            return False
+    return True
+
+
+def effective_verdict(counted, spec_coverage):
+    """The verdict the counted findings support: `changes-requested` when any
+    has a blocking or unknown severity (a missing one counts as `low`), or any
+    ``spec_coverage`` entry is `unmet`; else `pass`."""
+    for f in counted:
+        sev = f.get("severity", "low")
+        if sev in BLOCKING_SEVERITIES or sev not in ("high", "medium", "low"):
+            return "changes-requested"
+    for entry in (spec_coverage or []):
+        if isinstance(entry, dict) and entry.get("state") == "unmet":
+            return "changes-requested"
+    return "pass"
+
 
 def status_state(verdict, findings=None, disposition="all"):
     """The `semantic-review` commit-status state under the acting ``disposition``
@@ -475,13 +533,14 @@ def render_summary(review, unanchored, disposition="all", model=None,
         for i, f in enumerate(findings, 1):
             sev = f.get("severity", "low")
             rating = "%s %s" % (_SEV_DOT.get(sev, ""), _SEV_LABEL.get(sev, sev))
-            out.append("| %d | %s | %s |" % (i, rating.strip(), _detail_cell(f)))
+            detail = _detail_cell(f)
+            if f.get("already_there"):
+                detail += " (already there)"
+            out.append("| %d | %s | %s |" % (i, rating.strip(), detail))
     else:
         out.append(NO_PROBLEMS)
-    if unanchored:
-        out += ["", "### Additional findings",
-                "", "_Findings not anchored to a line in the PR diff:_", ""]
-        for f in unanchored:
+    def bullets(group):
+        for f in group:
             sev = f.get("severity", "low")
             locations = f.get("locations") or []
             loc = locations[0] if locations else "(no location)"
@@ -496,6 +555,18 @@ def render_summary(review, unanchored, disposition="all", model=None,
                 out.append("  - Why: %s" % why)
             if fix:
                 out.append("  - Fix: %s" % fix)
+
+    unanchored = [f for f in unanchored if not f.get("already_there")]
+    if unanchored:
+        out += ["", "### Additional findings",
+                "", "_Findings not anchored to a line in the PR diff:_", ""]
+        bullets(unanchored)
+    there = [f for f in findings if f.get("already_there")]
+    if there:
+        out += ["", "### Already there, reached by this change",
+                "", "_Code this pull request did not change, reached by it. "
+                "These never request changes._", ""]
+        bullets(there)
     if fast_pass_outcome:
         out += ["", fast_pass_outcome]
     if earlier:
@@ -716,18 +787,23 @@ def _inline_body(f, suggestion=None, location_index=0, room=None):
 
 
 def _status_description(review, disposition="all"):
-    findings = review.get("findings") or []
+    all_findings = review.get("findings") or []
+    findings = [f for f in all_findings if not f.get("already_there")]
+    there = len(all_findings) - len(findings)
     verdict = review.get("verdict") or "unknown"
     suffix = ("" if not disposition or disposition == "all"
               else " (disposition %s)" % disposition)
+    extra = ", %d already there" % there if there else ""
     if not findings:
+        if there:
+            return ("%s: %d already there%s" % (verdict, there, suffix))[:140]
         return ("%s: no findings%s" % (verdict, suffix))[:140]
     counts = {"high": 0, "medium": 0, "low": 0}
     for f in findings:
         counts[f.get("severity", "low")] = counts.get(f.get("severity", "low"), 0) + 1
     parts = ["%d %s" % (counts[s], s) for s in ("high", "medium", "low")
              if counts.get(s)]
-    return ("%s: %s%s" % (verdict, ", ".join(parts), suffix))[:140]
+    return ("%s: %s%s%s" % (verdict, ", ".join(parts), extra, suffix))[:140]
 
 
 # --- PR room markers --------------------------------------------------------
@@ -1063,10 +1139,23 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
     files = _pr_files(gh, repo, number)
     commentable = {f.get("filename"): commentable_lines(f.get("patch") or "")
                    for f in files}
-    findings = review.get("findings") or []
-    anchored, unanchored = _split_findings(findings, commentable)
+    files_by_name = {f.get("filename"): f for f in files}
+    findings = [
+        dict(f, already_there=True)
+        if already_there(f, files_by_name, commentable) else f
+        for f in (review.get("findings") or [])]
+    counted = [f for f in findings if not f.get("already_there")]
+    effective = effective_verdict(counted, review.get("spec_coverage"))
+    if effective != review.get("verdict"):
+        out("verdict reconciled: payload said %s, findings say %s"
+            % (review.get("verdict"), effective))
+    review = dict(review, verdict=effective, findings=findings)
+    threadable = [f for f in counted
+                  if f.get("severity", "low") in BLOCKING_SEVERITIES]
+    anchored, unanchored = _split_findings(threadable, commentable)
+    unanchored += [f for f in counted if f not in threadable]
 
-    state = status_state(review.get("verdict"), findings, disposition)
+    state = status_state(effective, counted, disposition)
     # Computed once, before the first upsert, so this run's own fold and
     # fast-pass re-upserts never add an entry.
     earlier = earlier_reviews(_find_summary(gh, repo, number))
