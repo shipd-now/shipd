@@ -13,8 +13,8 @@ Author both pages through `/s:document`. The facts, names, placeholders and sect
 ## 2. Setup page
 
 - [ ] 2.1 [req: shipd-factory-setup-page] Create `docs/shipd-factory-setup.md` with `<!-- doc-type: how-to -->`, the title `# Run your own shipd-factory host`, and the Beta, invite only line from `plan.md`.
-- [ ] 2.2 [req: shipd-factory-setup-page] Add the six numbered sections to `docs/shipd-factory-setup.md` in the plan's order, with the plan's commands, names and placeholders.
-- [ ] 2.3 [req: shipd-factory-setup-page] Run `python3 -B plugins/s/skills/document/scripts/docs_lint.py docs/shipd-factory-setup.md` until it exits 0, and confirm `wc -l` prints at most 150.
+- [ ] 2.2 [req: shipd-factory-setup-page] Add the seven numbered sections to `docs/shipd-factory-setup.md` in the plan's order, with the plan's commands, names and placeholders.
+- [ ] 2.3 [req: shipd-factory-setup-page] Run `python3 -B plugins/s/skills/document/scripts/docs_lint.py docs/shipd-factory-setup.md` until it exits 0, and confirm `wc -l` prints at most 170.
 - [ ] 2.4 [req: shipd-factory-setup-page] Run `grep -n -i -E 'a[x]el|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|mikkel-bergmann|1password|vault' docs/shipd-factory-setup.md` and confirm it prints nothing.
 
 ## 3. Archived records and comments

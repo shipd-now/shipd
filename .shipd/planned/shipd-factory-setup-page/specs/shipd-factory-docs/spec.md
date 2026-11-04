@@ -43,11 +43,11 @@ The repository SHALL carry `docs/shipd-factory.md`, a `concept` doc that explain
 ### Requirement: shipd-factory setup page
 id: shipd-factory-setup-page
 
-The repository SHALL carry `docs/shipd-factory-setup.md`, a `how-to` doc of at most 150 lines that walks an invited operator through running their own factory host. The page SHALL say near the top that it is Beta, invite only, because the factory code is private and access is by invitation. It SHALL cover, in order: the Linux host with Google's ax agent runtime and its cluster; the `~/shipd-factory` checkout and the `shipd-factory-orchestrator` service on port 8080; the GitHub App key, App id and reviewer token in `~/.config/shipd-factory/` at mode 0600, checked with the credential helper; the Claude token for jobs; network reach to the orchestrator API; and `SHIPD_FACTORY_URL` followed by onboarding a repo. The page SHALL use placeholders such as `<host>` and SHALL NOT carry an IP address, a personal GitHub login, a private repo name, the host codename or password-vault details.
+The repository SHALL carry `docs/shipd-factory-setup.md`, a `how-to` doc of at most 170 lines that walks an invited operator through running their own factory host. The page SHALL say near the top that it is Beta, invite only, because the factory code is private and access is by invitation. It SHALL cover, in order: what the host needs, with links to Google's upstream ax and Agent Substrate repositories; installing the cluster with the factory's scripts; the `~/shipd-factory` checkout and the `shipd-factory-orchestrator` service on port 8080; creating the operator's own GitHub App and reviewer account, with the App key, App id and reviewer token in `~/.config/shipd-factory/` at mode 0600, checked with the credential helper; the Claude token for jobs; network reach to the orchestrator API; and `SHIPD_FACTORY_URL` followed by onboarding a repo. The page SHALL use placeholders such as `<host>` and SHALL NOT carry an IP address, a personal GitHub login, a private repo name, the host codename or password-vault details.
 
 #### Scenario: The setup page lints clean
 - **WHEN** `python3 -B plugins/s/skills/document/scripts/docs_lint.py docs/shipd-factory-setup.md` runs
-- **THEN** it exits 0, the first line is `<!-- doc-type: how-to -->`, and the file is at most 150 lines
+- **THEN** it exits 0, the first line is `<!-- doc-type: how-to -->`, and the file is at most 170 lines
 
 #### Scenario: Beta status is stated up front
 - **WHEN** a reader opens the setup page
@@ -55,7 +55,15 @@ The repository SHALL carry `docs/shipd-factory-setup.md`, a `how-to` doc of at m
 
 #### Scenario: The steps run in order
 - **WHEN** a reader follows the setup page
-- **THEN** the sections cover host and cluster, orchestrator, GitHub credentials, Claude token, network, and pointing the skill, in that order, and name `shipd-factory-orchestrator`, port 8080, `~/.config/shipd-factory/`, mode 0600, `ghcreds.py check`, `SHIPD_FACTORY_URL=http://<host>:8080` and `/shipd-factory onboard`
+- **THEN** the sections cover what the host needs, installing the cluster, orchestrator, the operator's GitHub App and reviewer, Claude token, network, and pointing the skill, in that order, and name `shipd-factory-orchestrator`, port 8080, `~/.config/shipd-factory/`, mode 0600, `ghcreds.py check`, `SHIPD_FACTORY_URL=http://<host>:8080` and `/shipd-factory onboard`
+
+#### Scenario: Host needs and upstream links are stated
+- **WHEN** a reader reaches the first section
+- **THEN** it names Debian 13 on x86_64, 4 vCPU, 12 GB RAM and 64 GB disk as the tested setup, passwordless sudo over ssh, outbound internet, and no GPU; names Agent Substrate, ax and a gVisor worker pool on one kind cluster; and links `https://github.com/google/ax` and `https://github.com/agent-substrate/substrate`
+
+#### Scenario: Each operator creates their own App
+- **WHEN** a reader reaches the GitHub section
+- **THEN** it says nothing is shared, and walks through creating a GitHub App with webhook off and Contents read and write, Pull requests read and write and Metadata read, generating its key, creating a separate reviewer user and its token, installing the App and inviting the reviewer with push access
 
 #### Scenario: Network reach is explained
 - **WHEN** a reader reaches the network section
