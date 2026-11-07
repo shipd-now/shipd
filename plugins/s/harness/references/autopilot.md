@@ -131,7 +131,7 @@ The step never repeats for a member in one run.
 
 ## Failure contract: park and continue
 
-After the launch confirmation no human is present, so the in-session drive
+Once the launch brief prints, no human is present, so the in-session drive
 never asks. A failed stage grade (`grade-failed <stage>`), a gate rejection
 (`gate-rejected`), a command entry exiting non-zero (`command-failed <entry>
 exit <rc>`), and the pre-build step's `sync-conflict`, `drift-error`,

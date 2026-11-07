@@ -1,7 +1,7 @@
 <!-- description: Drive an approved epic's members to shipped pull requests unattended. -->
 # /s:autopilot — drive an approved epic to shipped pull requests
 
-Your job is thin: preflight one epic, confirm what the run may spend, launch
+Your job is thin: preflight one epic, print what the run may spend, launch
 the driver in the foreground, and relay its report. You never plan, build,
 gate, or review anything yourself, and you never answer a driven session's
 question on the user's behalf — the driver owns every stage decision.
@@ -24,7 +24,7 @@ with the remedies they name, ask nothing, and drive nothing. The `epic-status`
 line is what checks the approval — only `ready` and `active` epics can be
 driven, and a missing, `draft`, or `complete` epic fails it. That approval is
 the last human gate; everything past it belongs to the driver. `warn` lines are
-not failures — carry every one of them into the confirmation.
+not failures — carry every one of them into the launch brief.
 
 Relay the roster `epic-show` printed. The run drives the members shown as
 `unplanned`, in risk-ascending order, and reports every other state without
@@ -36,11 +36,14 @@ it will use, driving nothing:
 python3 "$S/autopilot.py" <epic> --dry-run
 ```
 
-## 2. Confirm the run controls
+## 2. Launch brief
 
-The run spends real model time and opens real pull requests, so confirm its
-scope against the dry run's member list before launching. This confirmation is
-the last question of the run: after it the in-session drive asks nothing else.
+The run spends real model time and opens real pull requests, so print a launch
+brief before driving: the mode, each control resolved from the invocation or its
+default, the dry run's member list, and every `warn` line. The brief also names
+the read-only live view, `python3 "$S/dashboard.py" tui --epic <epic>`, which
+the user can open from another terminal.
+The run asks no question: start the drive in the same turn.
 
 | control | what it caps | default |
 | --- | --- | --- |
@@ -51,22 +54,6 @@ the last question of the run: after it the in-session drive asks nothing else.
 
 The in-session drive runs members in waves the driver's `--waves` mode computes
 from their planned capabilities, capped at `--parallel N`.
-
-Offer three choices — deliver every member (the recommended default), deliver
-one member first as a cautious trial (`--max-members 1`), or cancel and drive
-nothing — and honour a typed override of any knob. On cancel, stop here.
-
-**Brief every question.** Open each question with the brief that
-`skills/document/references/question-brief.md` defines, and follow its rule
-on dialogs and typed rounds.
-
-<!-- if:question-dialogs -->
-Put that choice in a single question dialog, in a turn that carries the dry
-run's member list and no other load-bearing prose.
-<!-- else -->
-Put that choice to the user as a plain-text numbered list, with the dry run's
-member list printed above it, and wait for a typed reply.
-<!-- end -->
 
 ## 3. Run the driver in the foreground
 
