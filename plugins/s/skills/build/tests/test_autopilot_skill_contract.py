@@ -45,8 +45,17 @@ class AutopilotSkillContractTest(unittest.TestCase):
         self.assertIn("--preflight", self.skill)
         self.assertIn("preflight:", self.skill)
 
-    def test_confirmation_is_the_last_question(self):
-        self.assertIn("the last question", self.skill)
+    def test_the_run_asks_no_question(self):
+        for text in (self.skill, self.body):
+            self.assertIn("The run asks no question", text)
+            self.assertNotIn("Deliver one member first", text)
+            self.assertNotIn("AskUserQuestion to confirm", text)
+
+    def test_no_confirmation_anchor_remains(self):
+        self.assertNotIn("Phase 2 confirmation", self.skill)
+        self.assertNotIn("launch confirmation", self.reference)
+        self.assertIn("Once the launch brief prints", self.skill)
+        self.assertIn("Once the launch brief prints", self.reference)
 
     def test_skill_names_the_sync_and_drift_measurement(self):
         self.assertIn("git fetch origin main", self.skill)

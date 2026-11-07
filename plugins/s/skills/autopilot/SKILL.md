@@ -7,11 +7,11 @@ description: >-
 
 # /s:autopilot — Autonomous epic delivery
 
-You are the **Autopilot wrapper**. Your job is thin: preflight one epic, confirm
-the run controls with the user, run the autopilot **in the foreground**, and
+You are the **Autopilot wrapper**. Your job is thin: preflight one epic, print
+the launch brief, run the autopilot **in the foreground**, and
 relay its report. You **never plan, build, gate, review, or answer a driven
-session's questions yourself** — and after the confirmation you never ask one
-either. The autopilot drives real headless sessions and owns every stage
+session's questions yourself** — and you never ask one
+either. The run asks no question. The autopilot drives real headless sessions and owns every stage
 decision. You only orchestrate the launch and relay the result.
 
 Requirements: this repo must have the resolved content-directory layout
@@ -41,7 +41,7 @@ The skill drives the epic one of two ways:
   invocation asks for it — e.g. `/s:autopilot <epic> detached`, or the user
   asking in words for a detached or unattended run.
 
-Decide the mode before Phase 1 and carry it through the confirmation in Phase 2.
+Decide the mode before Phase 1 and carry it through the launch brief in Phase 2.
 
 Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 - Autopilot driver: `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py`
@@ -63,9 +63,9 @@ required argument to `/s:autopilot <epic>`.
    ```
    It prints one `ok|warn|fail <check> — <detail>` line per check, then either
    `preflight: ok` or `preflight: <n> problem(s)`. If **any** line is `fail`,
-   **stop here before the run controls are confirmed**: print the failing lines
+   **stop here before the drive**: print the failing lines
    with the remedies they name, ask nothing, and drive nothing. `warn` lines are
-   not failures — carry every one of them into the Phase 2 confirmation brief.
+   not failures — carry every one of them into the Phase 2 launch brief.
    A passed preflight means every driven member is `ready` (its `members` check
    fails on `unplanned`, `draft`, and `rejected`), so the in-session drive's
    first `--waves` call returns build waves only.
@@ -91,15 +91,12 @@ required argument to `/s:autopilot <epic>`.
    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> --dry-run
    ```
 
-## Phase 2 — Confirm the run controls
+## Phase 2 — Launch brief
 
-The autopilot spends real model time and opens real PRs. Before launching,
-**AskUserQuestion** to confirm scope with these controls (surface the dry-run's
-member list so the choice is informed), **naming which mode the run will use**
-(in-session, unless a detached run was requested — see Mode selection above).
-The brief carries every `warn` line from the Phase 1 preflight. **This
-confirmation is the last question of the run**: after it the in-session drive
-issues no AskUserQuestion and no typed question round.
+The autopilot spends real model time and opens real PRs. The run controls come
+from the invocation: flags such as `--max-members 1`, or plain words such as
+"just the first spec" (`--max-members 1`) and "serial" (`--parallel 1`). Each
+control the invocation does not name takes its default.
 
 - **`--max-members N`** — cap how many members this run drives (default:
   unlimited; every driven member).
@@ -110,8 +107,13 @@ issues no AskUserQuestion and no typed question round.
   (default: 3; `1` is a serial, one-member-at-a-time run). The detached driver
   ignores this control and stays serial.
 
-For an **in-session** run, show the waves that cap implies, so the user confirms
-which members will run together:
+Print the launch brief before driving. It carries the mode the run will use
+(in-session, unless a detached run was requested — see Mode selection above),
+each resolved control marked `(invocation)` or `(default)`, the dry run's member
+list, and every `warn` line from the Phase 1 preflight.
+
+For an **in-session** run, the brief also carries the waves the resolved cap
+implies:
 ```
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> --waves --parallel N
 ```
@@ -119,24 +121,21 @@ Each `wave <index> [<stage>]:` line names the members that wave runs together
 and, for a build wave, each member's planned capabilities; the mode drives
 nothing. A `blocked: <member> (waiting on <dep>, ...)` line names a `ready`
 member held out of every build wave until its `After` dependencies merge into
-the base branch. Surface those wave and `blocked:` lines in the confirmation
-alongside the dry run's member list, and re-run the command with the chosen `N` whenever the user
-overrides the control, so the confirmed waves are the ones the run will use.
+the base branch. Surface those wave and `blocked:` lines in the brief
+alongside the dry run's member list.
 
-Offer at least: **"Deliver all members"** (the recommended default, unlimited),
-**"Deliver one member first"** (`--max-members 1`, a cautious single-member
-trial), and **"Cancel"** (drive nothing). Honor a typed override of any knob. On
-**Cancel**, stop without running the autopilot.
-
-Before launching, **name the live view**: the run writes a heartbeat the
+The brief also **names the live view**: the run writes a heartbeat the
 delivery board reads, so from another terminal the user can watch stages land
 live with
 ```
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/dashboard.py" tui --epic <epic>
 ```
-(press `q` to quit; the board is read-only and never touches the run). Surface
-this command as part of the confirmation so the user can open it before the run
-starts.
+(press `q` to quit; the board is read-only and never touches the run). Then
+the drive starts in the same turn.
+
+The run asks no question: the skill issues no AskUserQuestion and no typed
+question round, and there is no cancel choice — not invoking the skill is the
+cancel.
 
 ## In-session drive (default mode)
 
@@ -151,7 +150,7 @@ it, and the mode itself performs no session, gate, or worktree action:
 ```
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> --waves --parallel N --json
 ```
-with `N` the `--parallel` value confirmed in Phase 2. It prints one object:
+with `N` the `--parallel` value the launch brief resolved. It prints one object:
 ```
 {"epic": "<epic>", "parallel": N,
  "waves": [{"index": 1, "stage": "plan",
@@ -169,6 +168,10 @@ planned delta `capabilities` are pairwise disjoint, so no two members running
 side by side write the same verified capability. The `skipped` array is every
 member whose state is neither `unplanned` nor `ready`: left undriven and
 reported with its state.
+
+Where the launch brief resolved `--max-members N`, drive at most N members,
+taken in the waves' order (wave by wave, member by member); list every other
+member as unreached in the run summary.
 
 The `blocked` array (always present, empty when none) is every `ready` member
 whose `After` cell names a dependency that has not yet merged into the base
@@ -533,7 +536,7 @@ substitute for it.
 
 ### Failure contract: park and continue
 
-After the Phase 2 confirmation, no human is present: the drive never issues an
+Once the launch brief prints, no human is present: the drive never issues an
 AskUserQuestion and never opens a typed question round. A failure **parks** the
 member, and the drive carries on with every member that does not depend on it.
 
@@ -577,7 +580,7 @@ each such `waiting_on` dependency with
 ```
 gh pr view change/<dep> --json state
 ```
-every `60 seconds`, for at most the confirmed `--timeout` seconds in total.
+every `60 seconds`, for at most the resolved `--timeout` seconds in total.
 Once every waited-on dependency reports `MERGED`, fetch and re-run `--waves`.
 If the bound expires or any dependency reports `CLOSED`, end the run listing
 those members as blocked. A member blocked on a parked or held member is never
@@ -641,7 +644,7 @@ This phase applies only to the **detached** mode (see Mode selection above). In
 the default in-session mode, skip this phase and go to the in-session drive
 phase instead.
 
-Run the driver with the confirmed knobs and **wait for it to finish** — never
+Run the driver with the resolved controls and **wait for it to finish** — never
 background it:
 ```
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/autopilot.py" <epic> [--max-members N] [--timeout S] [--max-resumes R] [--session-model MODEL]
@@ -653,7 +656,7 @@ review `medium`, and everything else `low`. A stage declaring `session`
 inherits the driver's own model, named by `--session-model` when the harness
 cannot see it. The dry run prints each stage's level as its `Stage levels:`
 line and the anchor beside it, and the run report records them as
-`stage_effort` and `session_model` — surface them when confirming the run. A
+`stage_effort` and `session_model` — surface them in the launch brief. A
 `models` config map pins a level to a concrete model, and a `model` key names
 the base a variant harness (OpenCode) appends a level to; both are optional.
 The autopilot creates a worktree per member, drives plan → gate → build (honoring
@@ -690,7 +693,3 @@ verbatim, then add human-readable pointers:
 
 Then stop — this skill does no other work. It never edits code, never plans or
 builds, and never answers a driven session on the user's behalf.
-
-**Brief every question.** Open each question with the brief that
-`${CLAUDE_PLUGIN_ROOT}/skills/document/references/question-brief.md`
-defines, and follow its rule on dialogs and typed rounds.

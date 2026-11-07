@@ -284,24 +284,29 @@ id: deliver-skill
 
 An `/s:autopilot <epic>` skill SHALL preflight the run by running
 `autopilot.py <epic> --preflight`, relaying every `ok|warn|fail` line; if any
-line is `fail`, then the skill SHALL stop before the run controls are
-confirmed, naming the failing lines and their remedies, and drive nothing.
-It SHALL then show the member roster and the resolved pipeline, carry every
-`warn` line into the confirmation brief, and confirm the run controls with
-the user — the last question of the run — before driving the epic and
-relaying its report. The skill SHALL default to the **in-session drive**, and
-SHALL use the detached `claude -p` driver only when the invocation asks for a
-detached run; the confirmation SHALL name which mode the run will use, and
-for the in-session drive SHALL include a `--parallel N` control — the number
-of members driven concurrently, default 3, where 1 is a serial run — and
-SHALL show the waves the driver's `--waves` mode computes for that value.
-When the run is detached, the skill SHALL run the driver in the foreground,
-point at `claude --resume <session-id>` for each needs-human member, and for
-each rejected member note that the automatic oracle-backed enrichment
-attempt already failed, point at `/s:plan <member>` as the manual enrichment
-entry point, and print `claude --resume <session-id>` when the report
-carries the member's enrichment session id. Before launching either mode,
-the skill SHALL name the dashboard TUI command (`dashboard.py tui --epic
+line is `fail`, then the skill SHALL stop before the drive, naming the
+failing lines and their remedies, and drive nothing. The skill SHALL read the
+run controls — `--max-members`, `--timeout`, `--max-resumes`, and, for the
+in-session drive, `--parallel` — from the invocation, as flags or plain
+words, and SHALL apply each control's default (unlimited, 1800, 4, and 3)
+when the invocation names none. It SHALL then show the member roster and the
+resolved pipeline, and print a launch brief naming the mode, the resolved
+controls, the dry run's member list, every `warn` line, and, for the
+in-session drive, the waves the driver's `--waves` mode computes for the
+`--parallel` value — and SHALL start the drive in the same turn without
+asking any question. The skill SHALL issue no AskUserQuestion and no typed
+question round at any point of the run. The skill SHALL default to the
+**in-session drive**, and SHALL use the detached `claude -p` driver only when
+the invocation asks for a detached run. Where the invocation caps
+`--max-members N`, the in-session drive SHALL drive at most N members in the
+waves mode's order and report the rest as unreached. When the run is
+detached, the skill SHALL run the driver in the foreground, point at
+`claude --resume <session-id>` for each needs-human member, and for each
+rejected member note that the automatic oracle-backed enrichment attempt
+already failed, point at `/s:plan <member>` as the manual enrichment entry
+point, and print `claude --resume <session-id>` when the report carries the
+member's enrichment session id. Before launching either mode, the launch
+brief SHALL name the dashboard TUI command (`dashboard.py tui --epic
 <epic>`) as the live view. The skill SHALL keep `deliver` among its trigger
 phrases so the former `/s:deliver` vocabulary still resolves to it. The
 skill SHALL NOT plan or build a member itself in either mode and SHALL NOT
@@ -313,26 +318,39 @@ the member rather than asking.
 - **THEN** the preflight's `epic-status` line is `fail`, the skill reports the
   epic is not approved, and drives nothing
 
-#### Scenario: A failing preflight stops before the confirmation
+#### Scenario: A failing preflight stops before the drive
 - **GIVEN** a preflight whose `members` line is `fail`
 - **WHEN** the skill runs Phase 1
 - **THEN** it prints the failing line with its remedy, asks nothing, and
   drives nothing
 
-#### Scenario: Warn lines reach the confirmation
+#### Scenario: A plain invocation delivers every member without asking
+- **GIVEN** an approved epic with a passing preflight
+- **WHEN** the user invokes `/s:autopilot <epic>` with no controls
+- **THEN** the skill prints the launch brief with every default control and
+  starts driving every driven member in the same turn, with no
+  AskUserQuestion and no typed question
+
+#### Scenario: The invocation narrows the run
+- **WHEN** the user invokes `/s:autopilot <epic>` asking for just the first
+  member, or passing `--max-members 1`
+- **THEN** the launch brief shows `--max-members 1`, the drive drives one
+  member, and the rest are reported as unreached
+
+#### Scenario: Warn lines reach the launch brief
 - **GIVEN** a preflight with a `warn drift —` line and no `fail`
-- **WHEN** the skill confirms the run controls
-- **THEN** the brief carries that line and the run may proceed
+- **WHEN** the skill prints the launch brief
+- **THEN** the brief carries that line and the drive starts
 
 #### Scenario: In-session is the default
 - **WHEN** the skill is invoked for an approved epic with no detached request
-- **THEN** the run confirmed with the user is the in-session drive and no
-  headless `claude -p` process is started
+- **THEN** the launch brief names the in-session drive and no headless
+  `claude -p` process is started
 
-#### Scenario: The parallel control is confirmed with its waves
-- **WHEN** the skill confirms an in-session run
-- **THEN** the controls include `--parallel` with default 3 and the
-  confirmation shows the waves computed for that value
+#### Scenario: The parallel control is shown with its waves
+- **WHEN** the skill launches an in-session run
+- **THEN** the launch brief shows `--parallel` (3 unless the invocation names
+  another value) and the waves computed for that value
 
 #### Scenario: A detached run is opted into
 - **WHEN** the invocation asks for a detached run
@@ -340,7 +358,7 @@ the member rather than asking.
   report
 
 #### Scenario: Preflight names the live board
-- **WHEN** the skill confirms the run controls before launching
+- **WHEN** the skill prints the launch brief
 - **THEN** its output names the dashboard TUI command for watching the run live
 
 #### Scenario: Report is relayed with HITL pointers
@@ -1431,7 +1449,7 @@ NOT pass the verbs' default base.
 ### Requirement: Park and continue
 id: in-session-park-and-continue
 
-After the Phase 2 confirmation the in-session drive SHALL issue no
+Once the launch brief prints, the in-session drive SHALL issue no
 AskUserQuestion and no typed question round. A failed stage grade, a gate
 rejection, a command entry exiting non-zero, and the pre-build step's
 `sync-conflict`, `drift-error`, `drift-conflict`, and `replan-failed`
@@ -1448,7 +1466,7 @@ whose `waiting_on` names a parked or held member (repeated to a fixpoint),
 skip a wave emptied by the drop, and never start a held member. When no
 runnable wave remains but `blocked` holds entries that are not held, the
 drive SHALL poll `gh pr view change/<dep> --json state` for each `waiting_on`
-every 60 seconds for at most the confirmed `--timeout` seconds in total, and
+every 60 seconds for at most the resolved `--timeout` seconds in total, and
 once every such dependency reports `MERGED` SHALL fetch and re-run `--waves`;
 if the bound expires or a dependency reports `CLOSED`, then the drive SHALL
 end the run listing those members as blocked. The run summary SHALL list

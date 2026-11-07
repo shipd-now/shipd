@@ -22,10 +22,14 @@ def _read(path):
 
 
 def _roster():
-    """Return {skill: (skill_md_path, body_path_or_None)} for asking skills."""
+    """Return {skill: (skill_md_path, body_path_or_None)} for asking skills.
+
+    A skill whose text says "The run asks no question" names AskUserQuestion
+    only to prohibit it, so it is not an asking skill."""
     out = {}
     for path in sorted(glob.glob(os.path.join(PLUGIN, "skills", "*", "SKILL.md"))):
-        if "AskUserQuestion" not in _read(path):
+        text = _read(path)
+        if "AskUserQuestion" not in text or "The run asks no question" in text:
             continue
         skill = os.path.basename(os.path.dirname(path))
         body = os.path.join(PLUGIN, "harness", "bodies", skill + ".md")
