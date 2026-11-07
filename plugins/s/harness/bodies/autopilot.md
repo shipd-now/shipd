@@ -40,7 +40,9 @@ python3 "$S/autopilot.py" <epic> --dry-run
 
 The run spends real model time and opens real pull requests, so print a launch
 brief before driving: the mode, each control resolved from the invocation or its
-default, the dry run's member list, and every `warn` line.
+default, the dry run's member list, and every `warn` line. The brief also names
+the read-only live view, `python3 "$S/dashboard.py" tui --epic <epic>`, which
+the user can open from another terminal.
 The run asks no question: start the drive in the same turn.
 
 | control | what it caps | default |

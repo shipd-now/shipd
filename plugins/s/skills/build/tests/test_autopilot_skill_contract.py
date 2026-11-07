@@ -51,6 +51,24 @@ class AutopilotSkillContractTest(unittest.TestCase):
             self.assertNotIn("Deliver one member first", text)
             self.assertNotIn("AskUserQuestion to confirm", text)
 
+    def test_every_askuserquestion_mention_is_a_prohibition(self):
+        # The question-brief roster exempts this skill on its "The run asks
+        # no question" sentence, so pin that every AskUserQuestion mention
+        # left in it forbids the dialog rather than issuing one.
+        for text in (self.skill, self.body):
+            flat = " ".join(text.split())
+            start = flat.find("AskUserQuestion")
+            while start != -1:
+                window = flat[max(0, start - 40):start].lower()
+                self.assertTrue(
+                    "no " in window or "never" in window,
+                    flat[max(0, start - 60):start + 20],
+                )
+                start = flat.find("AskUserQuestion", start + 1)
+
+    def test_body_names_the_live_view(self):
+        self.assertIn("dashboard.py\" tui --epic <epic>", self.body)
+
     def test_no_confirmation_anchor_remains(self):
         self.assertNotIn("Phase 2 confirmation", self.skill)
         self.assertNotIn("launch confirmation", self.reference)
