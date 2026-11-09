@@ -4304,6 +4304,14 @@ class WikiVerbTest(SpecStatusTestBase):
         self.write_wiki_file(
             "log.md", "# Log\n\n## [2026-07-30] seed | Scaffolded the store.\n")
 
+    def test_wiki_show_json_fingerprint_tracks_the_queue(self):
+        self.populate_store()
+        first = json.loads(self.cli("wiki-show", "--json").stdout)
+        self.assertRegex(first["fingerprint"], r"^[0-9a-f]{12}$")
+        self.write_wiki_file("queue.md", "# Queue\n")
+        second = json.loads(self.cli("wiki-show", "--json").stdout)
+        self.assertNotEqual(first["fingerprint"], second["fingerprint"])
+
     def test_wiki_show_json_describes_the_whole_store(self):
         self.populate_store()
         r = self.cli("wiki-show", "--json")

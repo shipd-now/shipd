@@ -565,8 +565,10 @@ actually satisfies the spec:
    The `s:teacher` definition (`${CLAUDE_PLUGIN_ROOT}/agents/teacher.md`)
    carries its full role contract, so its spawn message supplies only the
    change name and the absolute `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts`
-   path (resolve `${CLAUDE_PLUGIN_ROOT}` first). **Do not wait for it** —
-   continue straight into Phase 6; Phase 7 collects its report.
+   path (resolve `${CLAUDE_PLUGIN_ROOT}` first). Name the change's worktree
+   root (`.worktrees/<change>`) as the teacher's working directory, as Phase 3
+   does for executors. **Do not wait for it** — continue straight into
+   Phase 6; Phase 7 collects its report.
 
 ## Phase 6 — Merge & archive (homegrown engine, no OpenSpec CLI)
 

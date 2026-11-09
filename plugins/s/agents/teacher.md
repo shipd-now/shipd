@@ -27,8 +27,10 @@ lives).
 
 ## Your inputs (and only these)
 
-- `cat change <change>` — the change's `plan.md`: its `## Implementation`
-  decisions and its `## Questions and answers` ledger. The read resolves
+- `cat change <change>` — read **only the `plan.md` portion** of its output:
+  the plan's `## Implementation` decisions and its `## Questions and answers`
+  ledger. The verb also prints the change's delta specs and `tasks.md`; those
+  are not inputs, so skip past them. The read resolves
   `.shipd/planned/<change>/` first and falls back to the archived
   `.shipd/completed/*-<change>/`, so it survives the merge phase archiving the
   change while you run.
@@ -41,9 +43,10 @@ lives).
 - The **capture durability rubric** —
   `<SCRIPTS_DIR>/../../ask/references/capture-rubric.md`.
 
-Never read builder summaries, the orchestrator's conversation, the code, or
-the change's delta specs and the `.shipd/verified/` masters: `verified/`
-already holds the merged contract, so re-teaching it only duplicates it.
+Never use builder summaries, the orchestrator's conversation, the code, the
+delta specs and `tasks.md` that `cat change` prints after `plan.md`, or the
+`.shipd/verified/` masters: `verified/` already holds the merged contract, so
+re-teaching it only duplicates it.
 
 ## 1. The store gate
 
@@ -55,6 +58,10 @@ false. Otherwise write nothing and report the single line
 repo-local fallback store lives inside the change's worktree, so a write there
 would land after the build commit; never teach into it, and never into the
 personal memory store.
+
+When the gate passes, record the JSON's `fingerprint` — the store's
+`index.md`/`queue.md`/`log.md` fingerprint at this read. Step 5's write
+carries it.
 
 ## 2. Candidates
 
@@ -119,6 +126,10 @@ python3 STATUS_CLI --root <repo-root> wiki-queue-add <slug> \
   blocks removed and every pending block kept, and the full log with a new
   `## [YYYY-MM-DD] teach | build <change>` entry naming the touched pages and
   drained `q-<slug>`s.
+- **The store may change under you.** Parallel builds' teachers and sibling
+  captures write the same `index.md`, `queue.md`, and `log.md`, so the write
+  carries the fingerprint from the gate read and the emit refuses it when the
+  store moved since.
 
 ## 5. The one write
 
@@ -127,13 +138,19 @@ directory (`staging=$(mktemp -d)`) mirroring the store layout, then install it
 with a single call:
 
 ```
-python3 EMIT_CLI --root <repo-root> wiki --from "$staging"
+python3 EMIT_CLI --root <repo-root> wiki --from "$staging" --expect <fingerprint>
 ```
 
 The emit backs up the affected files, installs the staged set, runs the
 whole-store wiki lint, and restores byte-for-byte on any finding. On a lint
 finding, fix the staged files once and re-run; if it fails again, report
 `failed — <reason>`. When nothing is Include, run no emit at all.
+
+On a fingerprint refusal (the store changed since it was read; nothing was
+written), re-run `wiki-show --json`, re-read `cat wiki index`, `cat wiki
+queue`, and the log, restage `index.md`, `queue.md`, and `log.md` on that new
+base, and retry once with the new fingerprint. A second refusal is
+`failed — store changed during the run`.
 
 ## Output contract
 

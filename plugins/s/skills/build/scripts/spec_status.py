@@ -5007,6 +5007,7 @@ def _wiki_show_data(root, personal=False, bodies=False):
         "store": wiki,
         "present": present,
         "fallback": is_fallback,
+        "fingerprint": sc.wiki_fingerprint(wiki),
         "personal": personal,
         "chain": inherited,
         "base": base_doc,

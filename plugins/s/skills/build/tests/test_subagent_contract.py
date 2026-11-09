@@ -410,6 +410,15 @@ class TeacherContractTest(unittest.TestCase):
                        '--origin "build/<change>"', "at most five"):
             self.assertIn(needle, self.text)
 
+    def test_write_carries_the_gate_fingerprint(self):
+        for needle in ("--expect", "fingerprint",
+                       "failed \u2014 store changed during the run"):
+            self.assertIn(needle, self.text)
+
+    def test_cat_change_reads_only_the_plan(self):
+        self.assertIn("read **only the `plan.md` portion**", self.text)
+        self.assertIn("those\n  are not inputs", self.text)
+
     def test_output_contract_line_heads(self):
         for head in ("taught \u2014", "drained \u2014", "withheld \u2014",
                      "queued \u2014", "skipped \u2014", "failed \u2014",

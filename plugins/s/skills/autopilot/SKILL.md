@@ -456,13 +456,15 @@ Stage options for this build, overriding the skill's defaults:
   sub-agent; the mechanical verification still runs.
 - Skip the token telemetry: do not persist the per-tool token breakdown and
   do not render the token report.
+- Skip the post-verify teacher: do not spawn the `s:teacher` sub-agent.
 - Cap concurrent execution sub-agents at <parallelism>.
 - Spawn execution sub-agents with the Agent tool's `model` set to
   `<resolved>` (the pipeline's `<subagent_model>`).
 ```
 Include the validator line only when the entry declares `validator` false, the
-telemetry line only when it declares `telemetry` false, the cap line only when
-it declares `parallelism`, and the sub-agent-model line only when it declares
+telemetry line only when it declares `telemetry` false, the teacher line only
+when it declares `teach` false, the cap line only when it declares
+`parallelism`, and the sub-agent-model line only when it declares
 `subagent_model` — resolved by the table above, anchored on this stage's own
 model.
 

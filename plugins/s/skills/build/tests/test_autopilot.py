@@ -2474,6 +2474,32 @@ class StageOptionPromptTest(unittest.TestCase):
         self.assertNotIn("autoreply", review.lower())
 
 
+class BuildOptionLinesMirrorTest(unittest.TestCase):
+    """The autopilot skill's in-session build-options block mirrors every line
+    `_build_option_lines` emits (compared with whitespace collapsed, and the
+    concrete values swapped for the block's placeholders)."""
+
+    SKILL = os.path.normpath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "..", "autopilot",
+        "SKILL.md"))
+
+    def test_every_emitted_line_appears_in_the_skill(self):
+        entry = {"stage": "build", "validator": False, "telemetry": False,
+                 "teach": False, "parallelism": 7,
+                 "subagent_model": "model-x"}
+        rendered = autopilot._build_option_lines(entry, "opus")
+        lines = [ln for ln in rendered.splitlines() if ln.startswith("- ")]
+        self.assertEqual(len(lines), 5)
+        with open(self.SKILL, encoding="utf-8") as fh:
+            skill = " ".join(fh.read().split())
+        for line in lines:
+            line = line.replace("at 7.", "at <parallelism>.")
+            # The sub-agent-model line names the resolved model; the skill's
+            # template line continues past it with the symbolic provenance.
+            line = line.replace("`model-x`.", "`<resolved>`")
+            self.assertIn(" ".join(line.split()), skill, line)
+
+
 class EntryLabelTest(unittest.TestCase):
     def test_gate_attempts_render_in_the_label(self):
         label = autopilot._entry_label(

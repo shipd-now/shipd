@@ -243,13 +243,17 @@ page, preserving drained answers verbatim in a dated `sources/` file, carrying
 `Authority: advisory` for an `advisory: ` answer, and staging `index.md`,
 `queue.md`, and `log.md` in full with a `## [YYYY-MM-DD] teach | build <change>`
 entry. It SHALL write only through one `spec_emit.py wiki --from <staging>`
-call, SHALL never edit store files in place, SHALL never ask a question or run
-`wiki-queue-answer`, and SHALL never touch the repository, the change artifacts,
-or git. Its report SHALL be one line per outcome — `taught — [[slug]]
-(new|updated): <summary>`, `drained — q-<slug>`, `withheld — <item>:
-consent-gated`, `queued — q-<slug>: contradiction with [[page]]`, `skipped —
-<reason>`, `failed — <reason>`, or the single line `nothing durable` — closed by
-a one-line count. The frontmatter SHALL pin no `model:`. The `/s:teach` skill
+call carrying `--expect` with the fingerprint from its `wiki-show --json`
+gate read, and on a fingerprint refusal SHALL re-read and restage `index.md`,
+`queue.md`, and `log.md` once and retry, reporting `failed — store changed
+during the run` on a second refusal. It SHALL never edit store files in
+place, SHALL never ask a question or run `wiki-queue-answer`, and SHALL never
+touch the repository, the change artifacts, or git. Its report SHALL be one
+line per outcome — `taught — [[slug]] (new|updated): <summary>`,
+`drained — q-<slug>`, `withheld — <item>: consent-gated`,
+`queued — q-<slug>: contradiction with [[page]]`, `skipped — <reason>`,
+`failed — <reason>`, or the single line `nothing durable` — closed by a
+one-line count. The frontmatter SHALL pin no `model:`. The `/s:teach` skill
 SHALL name the teacher as the build-time path and itself as the full sweep.
 
 #### Scenario: Contract file carries the flow
@@ -284,6 +288,15 @@ SHALL name the teacher as the build-time path and itself as the full sweep.
 - **WHEN** a durable decision contradicts an existing wiki page
 - **THEN** neither page is written and `queue.md` gains a pending block whose
   origin is `build/<change>`
+
+#### Scenario: The write carries the gate read's fingerprint
+- **GIVEN** a store whose `queue.md` changes after the teacher's
+  `wiki-show --json` gate read
+- **WHEN** the teacher's `spec_emit.py wiki --from <staging> --expect
+  <fingerprint>` is refused
+- **THEN** it re-reads and restages `index.md`, `queue.md`, and `log.md` on
+  the new fingerprint and retries once, and a second refusal reports
+  `failed — store changed during the run`
 
 #### Scenario: Teach skill points at the teacher
 - **WHEN** `plugins/s/skills/teach/SKILL.md` is inspected
