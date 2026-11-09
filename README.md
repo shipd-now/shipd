@@ -578,7 +578,7 @@ shipd/
     └── s/                        # the plugin (name: "s" → /s: prefix)
         ├── .claude-plugin/
         │   └── plugin.json       # plugin manifest (carries the version)
-        ├── agents/               # sub-agent definitions (s:sub-agent, s:validator)
+        ├── agents/               # sub-agent definitions (s:sub-agent, s:validator, s:teacher)
         ├── bin/
         │   └── shipd             # the CLI
         ├── integrations/

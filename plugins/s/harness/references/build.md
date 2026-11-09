@@ -51,6 +51,24 @@ in every direction: a failure to produce it is an Observations line, never a
 blocker, and a pipeline that declares `telemetry` false prints the same report
 without its token blocks.
 
+## The post-verify teacher
+
+Right after the change is stamped `verified`, read `spec_status.py wiki-show
+--json` from the worktree. When it reports `present` true and `fallback` false
+and the pipeline's `build` entry does not declare `teach` false, spawn one
+`shipd-teacher` agent on the workers' tier, its spawn message carrying only
+the change name and the absolute path of the engine's `skills/build/scripts/`
+directory. It distils the change's durable knowledge into the workspace wiki
+through one staged write, at most five pages. Do not wait for it: carry on
+into the merge, then collect its report before printing the report and render
+it as the first Observations line, prefixed `wiki:` — for example
+`wiki: taught [[slug]]; drained q-foo` or `wiki: nothing durable`. With no
+workspace store, or `teach` false, spawn nothing and render
+`wiki: skipped — no workspace store` or
+`wiki: skipped — teach disabled by pipeline`. The teacher is best-effort: a
+failed or missing report is named on that line and never fails the build or
+delays the merge.
+
 ## Shipping modes
 
 **auto** (no `pr-mode` line, or `pr-mode = "auto"`) — open the pull request

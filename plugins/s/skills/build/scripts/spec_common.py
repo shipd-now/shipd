@@ -2316,6 +2316,24 @@ def wiki_dir(ws_root):
     return os.path.join(specs_dir(ws_root), "wiki")
 
 
+WIKI_FINGERPRINT_FILES = ("index.md", "queue.md", "log.md")
+
+
+def wiki_fingerprint(wiki_dir):
+    """The store's bookkeeping fingerprint: the first 12 hex chars of sha256
+    over the bytes of ``index.md``, ``queue.md``, and ``log.md`` in that fixed
+    order, a missing file contributing empty bytes. A staged wiki write passes
+    the fingerprint of the read it built on, so a store changed under it is
+    refused instead of overwritten (spec-io wiki-emission)."""
+    digest = hashlib.sha256()
+    for name in WIKI_FINGERPRINT_FILES:
+        path = os.path.join(wiki_dir, name)
+        if os.path.isfile(path):
+            with open(path, "rb") as fh:
+                digest.update(fh.read())
+    return digest.hexdigest()[:12]
+
+
 def wiki_base_dir(ws_root):
     """Return the durable base wiki store directory declared by the optional
     ``wiki_base`` config key resolved from ``ws_root`` (shipd-config

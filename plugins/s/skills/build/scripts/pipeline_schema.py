@@ -49,7 +49,7 @@ _DISPOSITIONS = ("all", "high-only", "none")
 _SHARED_STAGE_KEYS = frozenset({"skip", "tools", "replace", "model",
                                 "autopilot"})
 _BUILD_EXTRA_KEYS = frozenset({"subagent_model", "validator", "telemetry",
-                               "parallelism"})
+                               "teach", "parallelism"})
 _REVIEW_EXTRA_KEYS = frozenset({"disposition"})
 
 _STAGE_FORM_KEYS = {name: _SHARED_STAGE_KEYS for name in PIPELINE_STAGES}
@@ -200,6 +200,8 @@ def _validate_stage_entry(entry, stage, errors):
             errors.append(("validator", "`validator` must be a boolean"))
         if "telemetry" in entry and not _is_bool(entry["telemetry"]):
             errors.append(("telemetry", "`telemetry` must be a boolean"))
+        if "teach" in entry and not _is_bool(entry["teach"]):
+            errors.append(("teach", "`teach` must be a boolean"))
         if "parallelism" in entry and not _is_int_ge(entry["parallelism"], 1):
             errors.append(("parallelism",
                            "`parallelism` must be an integer >= 1"))

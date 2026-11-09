@@ -3456,7 +3456,7 @@ def cmd_config_check(root):
 # label, in this order (spec-status pipeline-show-verb). `autopilot` is an
 # object and renders as `autopilot.<key>=<value>` per declared sub-key.
 _PIPELINE_OPTION_KEYS = ("model", "subagent_model", "validator", "telemetry",
-                         "parallelism", "disposition")
+                         "teach", "parallelism", "disposition")
 
 
 def _render_option(value):
@@ -5007,6 +5007,7 @@ def _wiki_show_data(root, personal=False, bodies=False):
         "store": wiki,
         "present": present,
         "fallback": is_fallback,
+        "fingerprint": sc.wiki_fingerprint(wiki),
         "personal": personal,
         "chain": inherited,
         "base": base_doc,

@@ -297,7 +297,7 @@ def emit_video(root, slug, src, replace):
     return 0
 
 
-def emit_wiki(root, src, personal=False):
+def emit_wiki(root, src, personal=False, expect=None):
     """Install a staged wiki-store subset into the wiki store (spec-io
     wiki-emission).
 
@@ -319,7 +319,12 @@ def emit_wiki(root, src, personal=False):
     refusal names both missing prerequisites. When ``personal`` is set, the
     destination is the personal memory store at ``<memory_dir>/wiki``, resolved
     by fixed path (bypassing workspace discovery), again with identical
-    semantics."""
+    semantics.
+
+    When ``expect`` is given it is the store fingerprint
+    (``sc.wiki_fingerprint``) of the read the staging was built on; a store
+    whose current fingerprint differs is refused before any backup or install,
+    so a concurrent writer's bookkeeping is never overwritten."""
     if not os.path.isdir(src):
         raise EmitError("staging directory not found: %s" % src)
     if personal:
@@ -336,6 +341,15 @@ def emit_wiki(root, src, personal=False):
                 % (os.path.abspath(root), sc.specs_dir(root)))
         ws_root, is_fallback = resolved
         wiki = sc.wiki_dir(ws_root)
+
+    if expect is not None:
+        current = sc.wiki_fingerprint(wiki)
+        if current != expect:
+            raise EmitError(
+                "wiki store %s changed since it was read: --expect %s, current "
+                "fingerprint %s; re-read index.md, queue.md, and log.md, "
+                "restage them, and re-run with --expect %s; nothing was written"
+                % (wiki, expect, current, current))
 
     # Enumerate staged files, validating each against the recognized subset.
     ops = []  # list of (rel, staged_abs, dest_abs, is_source)
@@ -474,6 +488,10 @@ def main(argv=None):
         "--personal", action="store_true",
         help="install into the personal memory store (<memory_dir>/wiki) by "
              "fixed path instead of the workspace store")
+    p_wiki.add_argument(
+        "--expect", metavar="FINGERPRINT", default=None,
+        help="refuse unless the store's index.md/queue.md/log.md fingerprint "
+             "(wiki-show --json `fingerprint`) still matches")
 
     args = parser.parse_args(argv)
     root = os.path.abspath(args.root)
@@ -502,7 +520,7 @@ def main(argv=None):
         if args.mode == "docs":
             return emit_docs(root, args.slug, args.src, args.replace)
         if args.mode == "wiki":
-            return emit_wiki(root, args.src, args.personal)
+            return emit_wiki(root, args.src, args.personal, args.expect)
     except (EmitError, sc.ConfigError) as exc:
         cc.err(str(exc))
         return 1

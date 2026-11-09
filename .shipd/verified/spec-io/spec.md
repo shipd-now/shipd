@@ -259,7 +259,10 @@ naming both missing prerequisites. The `wiki` subcommand SHALL accept a
 `--personal` flag: when set, it SHALL install into the personal memory store
 at `<memory_dir>/wiki` (default `~/.shipd-memory/wiki`), resolved by fixed
 path and bypassing workspace discovery, instead of the workspace store, with
-the identical backup, lint, and restore semantics.
+the identical backup, lint, and restore semantics. If an `--expect
+<fingerprint>` is given and does not match the store's current fingerprint
+over `index.md`, `queue.md`, and `log.md`, then the emission SHALL be refused
+before any write, naming both fingerprints.
 
 #### Scenario: Page install with index update
 - **WHEN** `spec_emit.py wiki --from <staging>` stages a new page and an
@@ -295,3 +298,10 @@ the identical backup, lint, and restore semantics.
 - **THEN** the staged set installs into `<memory_dir>/wiki` (default
   `~/.shipd-memory/wiki`) by fixed path, with the same lint and rollback
   guarantees, and the workspace store is untouched
+
+#### Scenario: Stale read is refused
+- **GIVEN** a store whose `queue.md` changed after its fingerprint was read
+- **WHEN** `spec_emit.py wiki --from <staging> --expect <old-fingerprint>`
+  runs
+- **THEN** it exits non-zero naming the old and current fingerprints, and
+  every store file is byte-identical to before

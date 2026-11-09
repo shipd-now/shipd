@@ -678,6 +678,60 @@ class WikiEmitTest(SpecEmitTestBase):
         self.assertFalse(os.path.exists(
             os.path.join(self.wiki(), "wiki", "intro.md")))
 
+    def _fingerprint(self):
+        """The store fingerprint, computed independently of the engine:
+        sha256 over index.md, queue.md, log.md bytes, first 12 hex chars."""
+        import hashlib
+        digest = hashlib.sha256()
+        for name in ("index.md", "queue.md", "log.md"):
+            path = os.path.join(self.wiki(), name)
+            if os.path.isfile(path):
+                with open(path, "rb") as fh:
+                    digest.update(fh.read())
+        return digest.hexdigest()[:12]
+
+    def _byte_snapshot(self):
+        snap = {}
+        for dirpath, _dirs, names in os.walk(self.wiki()):
+            for name in names:
+                path = os.path.join(dirpath, name)
+                with open(path, "rb") as fh:
+                    snap[os.path.relpath(path, self.wiki())] = fh.read()
+        return snap
+
+    def test_stale_expect_is_refused_before_any_write(self):
+        self.declare_workspace()
+        self.seed_store()
+        stale = self._fingerprint()
+        # A concurrent writer changes the queue after the read.
+        self._w("queue.md", "# Queue\n\n## q-other\n- Answer: pending\n")
+        current = self._fingerprint()
+        before = self._byte_snapshot()
+        self.stage_wiki({
+            "wiki/intro.md": "# Intro\n\nThe intro page.\n",
+            "index.md": ("# Index\n\n- [[welcome]] — The welcome page.\n"
+                         "- [[intro]] — Introduction.\n"),
+        })
+        r = self.cli("wiki", "--from", self.stage, "--expect", stale)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn(stale, r.stderr)
+        self.assertIn(current, r.stderr)
+        self.assertEqual(self._byte_snapshot(), before)
+
+    def test_matching_expect_installs(self):
+        self.declare_workspace()
+        self.seed_store()
+        self.stage_wiki({
+            "wiki/intro.md": "# Intro\n\nThe intro page.\n",
+            "index.md": ("# Index\n\n- [[welcome]] — The welcome page.\n"
+                         "- [[intro]] — Introduction.\n"),
+        })
+        r = self.cli("wiki", "--from", self.stage,
+                     "--expect", self._fingerprint())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.wiki(), "wiki", "intro.md")))
+
     def test_requires_workspace(self):
         # No workspace declared → the mode fails naming the missing workspace.
         self.stage_wiki({"wiki/intro.md": "# Intro\n\nHi.\n"})

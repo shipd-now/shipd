@@ -127,6 +127,17 @@ class PipelineShowDeclaredTest(unittest.TestCase):
         self.assertIn("deploy", r.stderr)      # the unknown stage
         self.assertEqual(r.stdout, "")         # no half-emitted JSON
 
+    def test_declared_teach_false_renders_after_telemetry(self):
+        self._write_config(self.root, {"autonomous-pipeline": [
+            {"stage": "build", "telemetry": False, "teach": False}]})
+        r = self.cli("pipeline-show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        build = next(line for line in r.stdout.splitlines()
+                     if "telemetry=false" in line)
+        self.assertIn("teach=false", build)
+        self.assertLess(build.index("telemetry=false"),
+                        build.index("teach=false"))
+
     def test_runs_without_workspace_or_change(self):
         # A declared, valid pipeline resolves with no workspace declared and no
         # change selected.

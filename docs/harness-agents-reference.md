@@ -31,6 +31,7 @@ system prompt.
 | --- | --- |
 | `shipd-sub-agent` | The execution worker a `/s:build` delegates its tasks to. |
 | `shipd-validator` | The adversarial validator a build spawns to refute each scenario. |
+| `shipd-teacher` | The teacher a verified build spawns to distil the change's durable knowledge into the workspace wiki. |
 
 ## The verbs
 

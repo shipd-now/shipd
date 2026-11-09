@@ -51,8 +51,9 @@ The dotted arrows back to rung 2 carry the point. An answer you give once can
 become standing knowledge, so the same question never reaches you twice. Not
 every answer earns that. The capture path classifies your reply before it
 writes anything, and only the durable kind settles into the store (see
-[What gets captured](#what-gets-captured)). `/s:teach` later distills the
-captured queue entries into proper wiki pages.
+[What gets captured](#what-gets-captured)). Where a workspace wiki exists, a
+verified build's teacher drains the answered entries into proper wiki pages
+on its own. `/s:teach` remains the full sweep.
 
 ## The two verdicts
 
@@ -219,9 +220,9 @@ The capture path writes an answer **once**. `wiki-queue-answer` refuses a block
 that already carries an answer, so nothing silently overwrites what a human
 said.
 
-Corrections go through **`/s:teach`**, the sole distiller of queue entries into
-wiki pages. Run it to drain answered entries into pages, then edit the decision
-on the page. A page outranks a raw queue entry on the oracle's ladder, so
+Corrections go through **`/s:teach`**. A verified build also distills answered
+entries into pages, but only `/s:teach` corrects them. Run it to drain any
+answered entries left in the queue, then edit the decision on the page. A page outranks a raw queue entry on the oracle's ladder, so
 future lookups cite the corrected page. During planning, the same path appears
 per consultation as `/s:teach <change> Q<n>`.
 
