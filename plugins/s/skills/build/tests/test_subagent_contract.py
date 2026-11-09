@@ -27,6 +27,8 @@ ORACLE_AGENT_FILES = (
     os.path.normpath(os.path.join(HERE, "..", "..", "..", "harness", "agents",
                                   "oracle.md")),
 )
+TEACHER_CONTRACT = os.path.normpath(
+    os.path.join(HERE, "..", "..", "..", "agents", "teacher.md"))
 BUILD_SKILL = os.path.normpath(os.path.join(HERE, "..", "SKILL.md"))
 
 
@@ -376,10 +378,73 @@ class SandboxContractTest(unittest.TestCase):
             self.assertIn("<SANDBOX_RUN>", fh.read())
 
     def test_harness_twins_match_bodies(self):
-        for name in ("sub-agent.md", "validator.md"):
+        for name in ("sub-agent.md", "validator.md", "teacher.md"):
             agent = _agent_body(os.path.join(os.path.dirname(CONTRACT), name))
             twin = _agent_body(os.path.join(HARNESS_DIR, name))
             self.assertEqual(agent, twin, name)
+
+
+class TeacherContractTest(unittest.TestCase):
+    """Pins the s:teacher role contract (requirement teacher-agent-contract)."""
+
+    def setUp(self):
+        with open(TEACHER_CONTRACT, encoding="utf-8") as fh:
+            self.text = fh.read()
+
+    def frontmatter(self):
+        lines = self.text.split("\n")
+        self.assertEqual(lines[0], "---")
+        return lines[1:lines.index("---", 1)]
+
+    def test_frontmatter_names_teacher_without_model_pin(self):
+        front = self.frontmatter()
+        self.assertIn("name: teacher", front)
+        self.assertTrue(any(line.startswith("description: ")
+                            for line in front))
+        self.assertFalse(any(line.startswith("model:") for line in front))
+
+    def test_body_names_the_flow(self):
+        for needle in ("cat change", "wiki-show --json", "cat wiki index",
+                       "cat wiki queue", "capture-rubric.md", "spec_emit.py",
+                       "wiki --from", "wiki-queue-add",
+                       '--origin "build/<change>"', "at most five"):
+            self.assertIn(needle, self.text)
+
+    def test_output_contract_line_heads(self):
+        for head in ("taught \u2014", "drained \u2014", "withheld \u2014",
+                     "queued \u2014", "skipped \u2014", "failed \u2014",
+                     "nothing durable"):
+            self.assertIn(head, self.text)
+
+    def test_guardrails_forbid_in_place_edits_answers_and_git(self):
+        self.assertIn("\n## Guardrails\n", self.text)
+        section = self.text.split("\n## Guardrails\n", 1)[1].split(
+            "\n## ", 1)[0]
+        for needle in ("never", "in place", "wiki-queue-answer", "git"):
+            self.assertIn(needle, section)
+
+
+class BuildTeacherWiringTest(unittest.TestCase):
+    """Pins the build skill's post-verify teacher spawn (post-verify-teach)."""
+
+    def setUp(self):
+        with open(BUILD_SKILL, encoding="utf-8") as fh:
+            self.text = fh.read()
+
+    def test_spawn_gate_and_observation_lines(self):
+        for needle in ("subagent_type: s:teacher", "teacher \u00b7 <change>",
+                       "wiki-show --json",
+                       "wiki: skipped \u2014 no workspace store",
+                       "wiki: skipped \u2014 teach disabled by pipeline",
+                       "never blocks"):
+            self.assertIn(needle, self.text)
+
+    def test_phase7_wiki_line_covers_queued_and_skipped(self):
+        phase7 = self.text.split("## Phase 7", 1)[1].split("\n## ", 1)[0]
+        for needle in ("queued \u2014", "queued q-",
+                       "wiki: skipped \u2014 <reason>",
+                       "single `skipped \u2014 <reason>`"):
+            self.assertIn(needle, phase7)
 
 
 if __name__ == "__main__":

@@ -138,8 +138,9 @@ command or agent files. The plugin already provides `/s:*`, so both verbs
 retire the copies shipd wrote earlier.
 
 A harness that declares the `subagents` feature also receives its agent
-files beside its commands. The files are `shipd-sub-agent` and
-`shipd-validator`, in the location that harness reads them from.
+files beside its commands. The files are `shipd-sub-agent`,
+`shipd-validator`, and `shipd-teacher`, in the location that harness reads
+them from.
 [Harness agents reference](harness-agents-reference.md) records each
 harness's agent locations, its frontmatter, and the steps to add a harness.
 

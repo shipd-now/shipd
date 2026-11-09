@@ -23,6 +23,14 @@ throwaway staging directory, so an interrupted or invalid run never corrupts the
 store — the emit backs up the affected files, installs the staged subset, runs
 the whole-store wiki lint, and restores byte-for-byte on any finding.
 
+**A verified build teaches too.** Right after a build stamps a change
+`verified`, it spawns the `s:teacher` agent
+(`${CLAUDE_PLUGIN_ROOT}/agents/teacher.md`), the change-scoped build-time path:
+it distils that one change into the workspace store with no interview and at
+most five pages, and skips fallback stores. This skill remains the full sweep,
+the only path for promotion to a base store, and the only path for
+`<change> Q<n>` corrections.
+
 **Announce the version first.** Read the running plugin version from
 `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and include `shipd:teach
 v<version>` in your first user-visible status sentence (e.g. "shipd:teach v0.6.8 —

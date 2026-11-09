@@ -2414,7 +2414,7 @@ class OracleAwareSessionTest(unittest.TestCase):
 
 class StageOptionPromptTest(unittest.TestCase):
     BUILD_OPTS = {"stage": "build", "validator": False, "telemetry": False,
-                  "parallelism": 2, "subagent_model": "low"}
+                  "teach": False, "parallelism": 2, "subagent_model": "low"}
     REVIEW_OPTS = {"stage": "review", "disposition": "high-only",
                    "model": "low"}
 
@@ -2423,6 +2423,7 @@ class StageOptionPromptTest(unittest.TestCase):
         low = prompt.lower()
         self.assertIn("validator", low)
         self.assertIn("telemetry", low)
+        self.assertIn("s:teacher", prompt)  # the skip-the-teacher addendum
         self.assertIn("2", prompt)          # the sub-agent cap
         self.assertIn("sub-agent", low)
         # The sub-agent model is named verbatim — a level or a concrete id.
@@ -2483,9 +2484,10 @@ class EntryLabelTest(unittest.TestCase):
     def test_build_options_render_in_the_label(self):
         label = autopilot._entry_label(
             {"stage": "build", "validator": False, "telemetry": False,
-             "parallelism": 2, "subagent_model": "medium"})
+             "teach": False, "parallelism": 2, "subagent_model": "medium"})
         self.assertIn("validator off", label)
         self.assertIn("telemetry off", label)
+        self.assertIn("teach off", label)
         self.assertIn("parallelism 2", label)
         self.assertIn("subagent_model medium", label)
 

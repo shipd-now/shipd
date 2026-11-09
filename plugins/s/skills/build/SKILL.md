@@ -486,7 +486,9 @@ A sub-agent that hits missing context returns a message starting with `QUESTION:
      cross-feature convention, a workspace fact. Route it to the workspace wiki
      via `/s:teach` or the oracle queue, where the capture durability rubric
      (`${CLAUDE_PLUGIN_ROOT}/skills/ask/references/capture-rubric.md`) governs
-     the queue write.
+     the queue write. The post-verify teacher (Phase 5 step 7) picks durable
+     items up from the plan's `## Questions and answers` ledger and the
+     answered queue, so recording them there is enough.
    - **Noise** — session logistics, venting, a tangent that changed nothing:
      recorded nowhere, deliberately.
 
@@ -547,6 +549,24 @@ actually satisfies the spec:
    ```
    python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" set-status verified <change-name>
    ```
+7. **Spawn the teacher.** Right after the `verified` stamp, read the store gate
+   from the worktree:
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" wiki-show --json
+   ```
+   and read its `present` and `fallback` fields. When the verb fails,
+   `present` is false, or `fallback` is true, spawn nothing and record
+   `wiki: skipped — no workspace store` for Phase 7. When the `build` entry
+   resolved in Phase 0 declares `teach` false, spawn nothing and record
+   `wiki: skipped — teach disabled by pipeline`. Otherwise spawn one teacher
+   with the Agent tool: `subagent_type: s:teacher`, description
+   `teacher · <change>`, `model` the workers' tier per the Phase 3 model policy
+   (the declared `subagent_model`, otherwise one step below the orchestrator).
+   The `s:teacher` definition (`${CLAUDE_PLUGIN_ROOT}/agents/teacher.md`)
+   carries its full role contract, so its spawn message supplies only the
+   change name and the absolute `${CLAUDE_PLUGIN_ROOT}/skills/build/scripts`
+   path (resolve `${CLAUDE_PLUGIN_ROOT}` first). **Do not wait for it** —
+   continue straight into Phase 6; Phase 7 collects its report.
 
 ## Phase 6 — Merge & archive (homegrown engine, no OpenSpec CLI)
 
@@ -790,8 +810,21 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
    `references/shipd.config.example.json`) — and appends a record to
    `~/.shipd/builds/builds.jsonl` plus a per-build file under `~/.shipd/builds/`.
    The logged entry now also carries per-model and total elapsed time.
-3. Print the standard report, in exactly this shape (see the build-reporting
-   capability for the fixed structure):
+3. **Collect the teacher's report first.** When Phase 5 step 7 spawned the
+   teacher, collect its report now (wait for it when it is still running) and
+   render it as the **first Observations line**, prefixed `wiki:` —
+   `wiki: taught [[a]], [[b]]; drained q-x; withheld <n>; queued q-y` built
+   from its `taught —`, `drained —`, `withheld —`, and `queued —` lines (drop
+   any empty part), `wiki: nothing durable` for that single line,
+   `wiki: skipped — <reason>` when its report is a single `skipped — <reason>`
+   line, or
+   `wiki: teacher failed — <reason>` when it reported `failed —` or returned
+   nothing. When step 7 spawned no teacher, the first Observations line is the
+   skip line it recorded. The teacher is best-effort: it never blocks the merge
+   or the report, and its outcome never fails the build.
+
+   Then print the standard report, in exactly this shape (see the
+   build-reporting capability for the fixed structure):
    ```
    Build complete. {summary}
    Change: {change} — {done}/{total} tasks, Status: {status}
@@ -853,7 +886,8 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
    sub-agent cannot message its parent mid-run and no parent resumes it to
    collect a result, so anything left running in your context is never
    observed, and the orchestrator grades the stage from the repository the
-   moment your turn ends.
+   moment your turn ends. The teacher is likewise awaited before the final
+   report text: collect its report in step 3 rather than leaving it running.
 5. **Close the build from the main checkout, now that the PR has merged** —
    *auto mode only; a draft-mode ship never reaches this step, since its PR
    has not merged.*
@@ -973,3 +1007,6 @@ untouched:
 - Keep the user in the loop at the plan gate (Phase 2) and the finish (Phase 7).
 - Telemetry and logging are best-effort: a `build_report.py` failure never blocks
   archiving, committing, or reporting.
+- The post-verify teacher is best-effort, like telemetry: a failed or absent
+  teacher report is one `wiki:` Observations line, never a build failure or a
+  merge delay.

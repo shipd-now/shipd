@@ -338,8 +338,8 @@ An unskipped entry may carry typed options beside its form:
   driving session) or a concrete model id. The set of concrete ids is open, so
   any other non-empty string is taken as one.
 - **`build`** — `subagent_model` (same tier type as `model`), `validator`
-  (boolean, default `true`), `telemetry` (boolean, default `true`), and
-  `parallelism` (integer >= 1).
+  (boolean, default `true`), `telemetry` (boolean, default `true`), `teach`
+  (boolean, default `true`), and `parallelism` (integer >= 1).
 - **`review`** — `disposition`: one of `all`, `high-only`, or `none` (default
   `all`); the set is closed.
 - **Any stage or custom entry** — `autopilot`, an object of driver knobs:
@@ -362,7 +362,8 @@ An unskipped entry may carry typed options beside its form:
 Defaults are **schema-declared and never injected**: a resolved entry carries
 exactly the keys its author wrote, so `{ "stage": "build" }` resolves to
 `{ "stage": "build" }` — not to an entry with `validator` and `telemetry`
-spelled out — even though those defaults govern the run.
+spelled out — even though those defaults govern the run. `teach` false skips
+the post-verify teacher that distils a verified change into the workspace wiki.
 
 #### Preset names — the one-line form
 

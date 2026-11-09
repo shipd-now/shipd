@@ -627,7 +627,7 @@ def _print_preflight(result, as_json=False, out=print):
 # a label is stable whatever order the entry's author wrote its keys in.
 # ``off``/``on`` renders the boolean options; the rest render their value.
 _LABEL_OPTIONS = ("model", "subagent_model", "validator", "telemetry",
-                  "parallelism", "disposition")
+                  "teach", "parallelism", "disposition")
 _LABEL_AUTOPILOT = ("attempts", "timeout", "max_resumes")
 
 
@@ -893,6 +893,9 @@ def _build_option_lines(entry, model_anchor):
     if entry.get("telemetry") is False:
         lines.append("- Skip the token telemetry: do not persist the per-tool "
                      "token breakdown and do not render the token report.")
+    if entry.get("teach") is False:
+        lines.append("- Skip the post-verify teacher: do not spawn the "
+                     "`s:teacher` sub-agent.")
     if entry.get("parallelism") is not None:
         lines.append("- Cap concurrent execution sub-agents at %s."
                      % entry["parallelism"])

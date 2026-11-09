@@ -82,14 +82,15 @@ id: named-agent-types
 
 The plugin SHALL define its worker roles as named agent types under
 `plugins/s/agents/`: `sub-agent.md` (execution, registering as
-`s:sub-agent`) and `validator.md` (validation, registering as `s:validator`),
-each a frontmatter (`name`, `description`) plus a self-sufficient system-prompt
-body carrying that role's full contract. Neither definition SHALL pin a
-`model:` in frontmatter — the orchestrator passes the tier-below model per
-spawn. Build SHALL spawn workers with these agent types, with a spawn
-description of `builder <n> · <change>` for executors and
-`validator · <change>` for the validator, so the session's agent list shows
-the shipd role rather than a generic type.
+`s:sub-agent`), `validator.md` (validation, registering as `s:validator`), and
+`teacher.md` (post-verify teaching, registering as `s:teacher`), each a
+frontmatter (`name`, `description`) plus a self-sufficient system-prompt body
+carrying that role's full contract. No definition SHALL pin a `model:` in
+frontmatter — the orchestrator passes the tier-below model per spawn. Build
+SHALL spawn workers with these agent types, with a spawn description of
+`builder <n> · <change>` for executors, `validator · <change>` for the
+validator, and `teacher · <change>` for the teacher, so the session's agent
+list shows the shipd role rather than a generic type.
 
 #### Scenario: Agents pane shows the shipd role
 - **WHEN** a build spawns an execution sub-agent
@@ -101,8 +102,13 @@ the shipd role rather than a generic type.
 - **THEN** it is spawned with agent type `s:validator` and description
   `validator · <change>`
 
+#### Scenario: Teacher spawns under its own type
+- **WHEN** Phase 5 spawns the teacher after the `verified` stamp
+- **THEN** it is spawned with agent type `s:teacher` and description
+  `teacher · <change>`
+
 #### Scenario: Tier policy survives the definitions
-- **WHEN** either agent definition is read
+- **WHEN** any of the three agent definitions is read
 - **THEN** its frontmatter contains no `model:` pin, and the spawn-time model
   parameter alone selects the tier
 

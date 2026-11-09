@@ -297,7 +297,8 @@ class AgentSourceTest(unittest.TestCase):
         return text.split("---\n", 2)[2].strip()
 
     def test_agent_roles_exclude_the_retired_oracle(self):
-        self.assertEqual(hr.AGENT_ROLES, ("sub-agent", "validator"))
+        self.assertEqual(hr.AGENT_ROLES,
+                         ("sub-agent", "validator", "teacher"))
 
     def test_one_source_file_per_role_with_a_description_marker(self):
         directory = os.path.join(PLUGIN_ROOT, "harness", "agents")

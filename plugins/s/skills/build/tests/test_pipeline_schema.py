@@ -64,7 +64,8 @@ class ExcludeUnsetTest(unittest.TestCase):
 
     def test_declared_options_are_carried_verbatim(self):
         entry = {"stage": "build", "validator": False, "telemetry": False,
-                 "parallelism": 2, "subagent_model": "tier-two-below"}
+                 "teach": False, "parallelism": 2,
+                 "subagent_model": "tier-two-below"}
         self.assertEqual(ps.validate_entries([entry]), [entry])
 
     def test_undeclared_autopilot_keys_are_not_injected(self):
@@ -437,6 +438,11 @@ class ErrorRenderingTest(unittest.TestCase):
         self.assertIn("telemetry", msg)
         # One rendered line per validation error.
         self.assertEqual(len(msg.splitlines()), 2)
+
+    def test_non_boolean_teach_is_rejected_naming_teach(self):
+        with self.assertRaises(ValueError) as cm:
+            ps.validate_entries([{"stage": "build", "teach": "maybe"}])
+        self.assertIn("teach", str(cm.exception))
 
 
 if __name__ == "__main__":
