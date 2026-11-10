@@ -13,9 +13,11 @@ import json
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.normpath(os.path.join(HERE, "..", "scripts"))
@@ -204,20 +206,27 @@ class _FakeGit:
     """A ``command_fn`` standing in for git in the merged-into-base check.
     ``git rev-parse --verify --quiet <ref>`` answers rc 0 for every ref in
     ``refs``; ``git ls-tree --name-only <ref> -- .shipd/completed/`` answers
-    ``listing`` (one entry per line). ``fail_all`` makes every call rc 1.
-    Every call is recorded in ``calls`` as ``(argv, cwd)``."""
+    ``listing`` (one entry per line). ``git rev-parse --show-toplevel``
+    answers ``toplevel``, or the parent of ``cwd`` when it is ``None``.
+    ``fail_all`` makes every call rc 1. Every call is recorded in ``calls`` as
+    ``(argv, cwd)``."""
 
     def __init__(self, listing=(), refs=("origin/main", "main"),
-                 fail_all=False):
+                 fail_all=False, toplevel=None):
         self.listing = list(listing)
         self.refs = set(refs)
         self.fail_all = fail_all
+        self.toplevel = toplevel
         self.calls = []
 
     def __call__(self, cmd, cwd):
         self.calls.append((list(cmd), cwd))
         if self.fail_all:
             return 1, "", "fatal"
+        if cmd == ["git", "rev-parse", "--show-toplevel"]:
+            top = self.toplevel if self.toplevel is not None \
+                else os.path.dirname(cwd)
+            return 0, top + "\n", ""
         if cmd[:4] == ["git", "rev-parse", "--verify", "--quiet"]:
             return (0, cmd[4] + "\n", "") if cmd[4] in self.refs \
                 else (1, "", "")
@@ -239,7 +248,8 @@ class MergedIntoBaseTest(AutopilotTestBase):
         self.assertEqual(
             ls, [["git", "ls-tree", "--name-only", "origin/main", "--",
                   ".shipd/completed/"]])
-        self.assertTrue(all(cwd == self.root for _c, cwd in git.calls))
+        ls_cwd = [cwd for c, cwd in git.calls if c[1] == "ls-tree"]
+        self.assertEqual(ls_cwd, [self.root])
 
     def test_suffix_match_is_not_merged(self):
         git = _FakeGit([".shipd/completed/2026-10-15-extra-a"])
@@ -249,9 +259,29 @@ class MergedIntoBaseTest(AutopilotTestBase):
         git = _FakeGit([".shipd/completed/001-a"])
         self.assertTrue(autopilot._merged_into_base(git, self.root, "a"))
 
-    def test_git_failure_is_not_merged(self):
+    def test_content_directory_outside_git_raises(self):
         git = _FakeGit([".shipd/completed/001-a"], fail_all=True)
+        with self.assertRaises(autopilot.AutopilotError) as ctx:
+            autopilot._merged_into_base(git, self.root, "a")
+        self.assertIn(autopilot.sc.specs_dir(self.root), str(ctx.exception))
+        self.assertIn("'a'", str(ctx.exception))
+
+    def test_unresolvable_base_ref_is_not_merged(self):
+        git = _FakeGit([".shipd/completed/001-a"], refs=())
         self.assertFalse(autopilot._merged_into_base(git, self.root, "a"))
+
+    def test_failing_tree_read_raises_with_the_cause(self):
+        inner = _FakeGit([".shipd/completed/001-a"])
+
+        def git(cmd, cwd):
+            if cmd[:2] == ["git", "ls-tree"]:
+                return 128, "", "fatal: not a tree"
+            return inner(cmd, cwd)
+
+        with self.assertRaises(autopilot.AutopilotError) as ctx:
+            autopilot._merged_into_base(git, self.root, "a")
+        self.assertIn("'a'", str(ctx.exception))
+        self.assertIn("fatal: not a tree", str(ctx.exception))
 
     def test_falls_back_to_local_main(self):
         git = _FakeGit([".shipd/completed/001-a"], refs=("main",))
@@ -259,6 +289,50 @@ class MergedIntoBaseTest(AutopilotTestBase):
         ls = [c for c, _cwd in git.calls if c[1] == "ls-tree"]
         self.assertEqual(len(ls), 1)
         self.assertEqual(ls[0][3], "main")
+
+
+class ExternalStoreDependencyTest(AutopilotTestBase):
+    """merged-dependency-check: with ``store_root`` declared, the check reads
+    the store's own repository, not the consuming repository."""
+
+    def _git(self, cwd, *args):
+        subprocess.run(["git"] + list(args), cwd=cwd, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _layout(self, store_is_git=True):
+        _write(os.path.join(self.root, ".shipd-config.json"),
+               json.dumps({"store_root": "specs"}))
+        code = os.path.join(self.root, "code")
+        store = os.path.join(self.root, "specs")
+        os.makedirs(code)
+        os.makedirs(store)
+        self._git(code, "init", "-b", "main")
+        self._git(code, "-c", "user.name=t", "-c", "user.email=t@t",
+                  "commit", "--allow-empty", "-m", "init")
+        if store_is_git:
+            self._git(store, "init", "-b", "main")
+        entry = os.path.join(autopilot.sc.specs_dir(code), "completed",
+                             "2026-01-01-change-a")
+        _write(os.path.join(entry, "plan.md"), "# change-a\n")
+        if store_is_git:
+            self._git(store, "add", "-A")
+            self._git(store, "-c", "user.name=t", "-c", "user.email=t@t",
+                      "commit", "-m", "entry")
+        return code
+
+    def test_store_base_releases_a_dependency(self):
+        code = self._layout()
+        self.assertTrue(autopilot._merged_into_base(
+            autopilot._run_command, code, "change-a"))
+        self.assertFalse(autopilot._merged_into_base(
+            autopilot._run_command, code, "change-z"))
+
+    def test_store_outside_git_raises(self):
+        code = self._layout(store_is_git=False)
+        with self.assertRaises(autopilot.AutopilotError) as ctx:
+            autopilot._merged_into_base(
+                autopilot._run_command, code, "change-a")
+        self.assertIn("change-a", str(ctx.exception))
 
 
 class WaveTest(AutopilotTestBase):
@@ -364,6 +438,15 @@ class WaveTest(AutopilotTestBase):
         self.assertEqual(result["blocked"],
                          [{"member": "b", "waiting_on": ["a"]}])
         self.assertEqual(result["skipped"], [])
+
+    def test_failed_dependency_check_raises(self):
+        _make_epic(self.root, "ep", [("a", "low"), ("b", "low")],
+                   after={"b": ["a"]})
+        self.plant_ready("a", ["x"])
+        self.plant_ready("b", ["y"])
+        with self.assertRaises(autopilot.AutopilotError):
+            autopilot.compute_waves(self.root, "ep", 3,
+                                    command_fn=_FakeGit([], fail_all=True))
 
     def test_merged_dependency_releases_its_dependent(self):
         _make_epic(self.root, "ep", [("a", "low"), ("b", "low")],
@@ -1303,6 +1386,10 @@ class _Seams:
         # The pre-build drift verb answers the configured (rc, out, err).
         if isinstance(cmd, list) and len(cmd) > 4 and cmd[4] == "drift":
             return self.drift
+        # The content directory's repository, for the dependency check.
+        if isinstance(cmd, list) and cmd == ["git", "rev-parse",
+                                             "--show-toplevel"]:
+            return 0, os.path.dirname(cwd) + "\n", ""
         # The base tree's completed/ listing, for the dependency check.
         if isinstance(cmd, list) and cmd[:2] == ["git", "ls-tree"]:
             return 0, "".join(".shipd/completed/001-%s\n" % c
@@ -2308,6 +2395,45 @@ class PreBuildDriftTest(AutopilotTestBase):
         s = _Seams(completed=("a",))
         result = s.drive(self.PGB, self.root, member=member)
         self.assertEqual(result.outcome, "shipped")
+
+    def test_failing_dependency_check_parks_with_the_cause(self):
+        member = autopilot.Member(slug="m", description="", risk="low",
+                                  state="unplanned", order=0, after=["a"])
+        s = _Seams()
+        inner = s.command_fn
+
+        def command_fn(cmd, cwd):
+            if isinstance(cmd, list) and cmd[:2] == ["git", "ls-tree"]:
+                s.commands.append((cmd, cwd))
+                return 128, "", "fatal: not a tree"
+            return inner(cmd, cwd)
+
+        s.command_fn = command_fn
+        result = s.drive(self.PGB, self.root, member=member)
+        self.assertEqual(result.outcome, "needs_human")
+        self.assertEqual(result.stage, "dependency")
+        self.assertIn("fatal: not a tree", result.reason)
+        self.assertIsNone(result.session_id)
+        self.assertFalse([c for c, _ in s.commands
+                          if c[:2] == ["git", "merge"]])
+        self.assertEqual(self._drift_cmds(s), [])
+
+    def test_store_is_fetched_and_named(self):
+        member = autopilot.Member(slug="m", description="", risk="low",
+                                  state="unplanned", order=0, after=["a"])
+        s = _Seams()
+        store = os.path.join(self.root, "store")
+        with mock.patch.object(autopilot.sc, "store_root_dir",
+                               return_value=store), \
+                mock.patch.object(autopilot.sc, "store_sync_enabled",
+                                  return_value=True):
+            result = s.drive(self.PGB, self.root, member=member)
+        fetches = [(c, cwd) for c, cwd in s.commands
+                   if c == ["git", "fetch", "origin", "main"]]
+        self.assertEqual(len(fetches), 2)
+        self.assertEqual(fetches[1][1], autopilot.sc.specs_dir(self.root))
+        self.assertEqual(result.stage, "dependency")
+        self.assertIn("in the store repository", result.reason)
 
     def test_replaced_and_skipped_build_run_no_step(self):
         for build in ({"stage": "build", "replace": {"command": "echo x"}},

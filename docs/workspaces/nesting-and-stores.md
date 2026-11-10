@@ -197,6 +197,14 @@ still exists at the *previous* flat-layout path while the resolved one does
 not, naming both paths and a `git mv` remedy. The check is report-only: it
 never moves, creates, or deletes anything on your behalf.
 
+### Dependencies between epic members
+
+Autopilot reads an `After` dependency from the base branch of the store
+repository: the remote-tracking `origin/main`, else the local `main`. A
+dependent member releases once that branch carries the dependency's
+`completed/` entry. Push the store to release the dependents. A store outside
+any git work tree makes the check fail with an error.
+
 ### Known limitations
 
 - **The worktree guard does not see an external store.**

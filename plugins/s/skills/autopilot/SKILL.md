@@ -175,10 +175,10 @@ member as unreached in the run summary.
 
 The `blocked` array (always present, empty when none) is every `ready` member
 whose `After` cell names a dependency that has not yet merged into the base
-branch — read from the base branch's tree (`origin/main`, else `main`), never
-from a worktree — with the unmerged slugs in `waiting_on`. A blocked member
-joins no wave; it reappears in a build wave on a later `--waves` run once its
-dependencies have merged.
+branch — read from the base branch's tree (`origin/main`, else `main`) of the
+repository that tracks the content directory, never from a worktree — with the
+unmerged slugs in `waiting_on`. A blocked member joins no wave; it reappears in
+a build wave on a later `--waves` run once its dependencies have merged.
 
 Never parse the dry run's `Member order (After, then risk ascending):` block or its
 `skipped:` lines for this — the dry run is the **detached** mode's preview

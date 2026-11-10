@@ -269,6 +269,7 @@ def compute_waves(root, epic, parallel, command_fn=None):
     members' capabilities are all disjoint from its own and whose size is
     below ``parallel``, else it opens a new one — the shared verified library
     being the one write that makes two members unsafe to build side by side.
+    A failed merged-dependency check raises :class:`AutopilotError`.
     Members in any other state are reported as skipped under their state. Wave
     indexes run from 1 across both kinds, and the result is deterministic for
     a given tree and set of refs. ``command_fn`` (default
@@ -699,30 +700,58 @@ def _run_command(cmd, cwd):
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 
 
-def _merged_into_base(command_fn, root, slug):
-    """True when ``slug`` has merged into the base branch: the base branch's
-    tree — ``origin/<base>`` where that ref resolves, else ``<base>``
-    (``spec_status.DEFAULT_AMEND_BASE``) — holds a ``completed/`` entry named
-    by a leading digits-and-dashes prefix then ``-<slug>``. Read with ``git
-    ls-tree`` from ``root``; any git failure counts as not merged, so a stale
-    or missing ref blocks a dependent rather than admitting it."""
+def _dependency_base(command_fn, root, deps):
+    """The ``(repo, ref)`` the merged-dependency check reads: ``repo`` is the
+    git work tree ``git rev-parse --show-toplevel`` reports from the content
+    directory (``spec_common.specs_dir``) — the consuming repository for an
+    in-repo content directory, the store's own repository where
+    ``store_root`` relocates it. ``ref`` is the first of ``origin/<base>``,
+    ``<base>`` (``spec_status.DEFAULT_AMEND_BASE``) that resolves in ``repo``,
+    else ``None``. A content directory outside any git work tree raises
+    :class:`AutopilotError` naming ``deps`` — the dependency slug, or a
+    member's ``After`` slugs joined with ``, ``."""
+    specs = sc.specs_dir(root)
+    rc, out, err = command_fn(["git", "rev-parse", "--show-toplevel"], specs)
+    repo = (out or "").strip() if rc == 0 else ""
+    if not repo:
+        raise AutopilotError(
+            "dependency check for '%s' failed: content directory '%s' is not "
+            "inside a git work tree (%s)"
+            % (deps, specs, _first_text_line(err, out) or "exit %d" % rc))
     base = ss.DEFAULT_AMEND_BASE
-    ref = None
     for candidate in ("origin/" + base, base):
         rc, _out, _err = command_fn(
-            ["git", "rev-parse", "--verify", "--quiet", candidate], root)
+            ["git", "rev-parse", "--verify", "--quiet", candidate], repo)
         if rc == 0:
-            ref = candidate
-            break
+            return repo, candidate
+    return repo, None
+
+
+def _merged_into_base(command_fn, root, slug, base=None):
+    """True when ``slug`` has merged into the base branch of the repository
+    that tracks the content directory (epic-autopilot
+    merged-dependency-check): that ref's tree holds a ``completed/`` entry
+    named by a leading digits-and-dashes prefix then ``-<slug>``. ``base`` is
+    the ``(repo, ref)`` pair :func:`_dependency_base` returns, resolved here
+    when ``None``. The tree is read with ``git ls-tree`` in ``repo`` on the
+    ``completed/`` path relative to its top level. A ``None`` ref counts as
+    not merged, so a missing ref blocks a dependent rather than admitting it;
+    a git failure raises :class:`AutopilotError` naming the dependency, the
+    repository, and git's first error line, never reporting it unmerged."""
+    repo, ref = base if base is not None else _dependency_base(
+        command_fn, root, slug)
     if ref is None:
         return False
     completed = os.path.relpath(
-        os.path.join(sc.specs_dir(root), "completed"), root)
+        os.path.realpath(os.path.join(sc.specs_dir(root), "completed")),
+        os.path.realpath(repo))
     completed = completed.replace(os.sep, "/") + "/"
-    rc, out, _err = command_fn(
-        ["git", "ls-tree", "--name-only", ref, "--", completed], root)
+    rc, out, err = command_fn(
+        ["git", "ls-tree", "--name-only", ref, "--", completed], repo)
     if rc != 0:
-        return False
+        raise AutopilotError(
+            "dependency check for '%s' failed in %s: %s"
+            % (slug, repo, _first_text_line(err, out) or "exit %d" % rc))
     pattern = re.compile(r"^[0-9][0-9-]*-%s$" % re.escape(slug))
     return any(pattern.match(line.strip().rstrip("/").rsplit("/", 1)[-1])
                for line in out.splitlines() if line.strip())
@@ -1133,6 +1162,19 @@ def _sync_base_ref(command_fn, root):
     return "origin/" + base if rc == 0 else base
 
 
+def _sync_store_ref(command_fn, root):
+    """Refresh the external store's base before the merged-dependency check:
+    where ``store_root`` is declared and ``store_sync`` resolves true, a
+    best-effort ``git fetch origin main`` in the content directory (exit code
+    ignored). Otherwise nothing runs."""
+    if sc.store_root_dir(root) is None:
+        return
+    if not sc.store_sync_enabled(sc.resolve_config(root)[0]):
+        return
+    command_fn(["git", "fetch", "origin", ss.DEFAULT_AMEND_BASE],
+               sc.specs_dir(root))
+
+
 def _drift_prompt(member, base_ref):
     """The judge turn's prompt: run the drift skill and reply with its JSON."""
     return ("Run `/s:drift %s --base %s --json` for the change `%s` in this "
@@ -1215,7 +1257,9 @@ def _first_text_line(*texts):
 def _pre_build_step(root, member, cwd, entry, knobs, command_fn, session_fn,
                     judge_fn, gate_fn, out, hook, on_sess):
     """Run the pre-build drift step before a built-in ``build`` stage: resolve
-    the base ref, check ``After`` dependencies merged, merge the ref into the
+    the base ref, fetch the external store's base where ``store_root`` and
+    ``store_sync`` allow it, check ``After`` dependencies merged (a failed
+    check parks at ``dependency`` with its error), merge the ref into the
     worktree, run the drift verb, judge drift with a headless ``/s:drift``,
     and re-plan and re-gate on ``revise``. ``knobs`` is ``(attempts, timeout,
     resumes, effort)`` from the build entry. Returns ``(outcome, stage, reason,
@@ -1224,13 +1268,25 @@ def _pre_build_step(root, member, cwd, entry, knobs, command_fn, session_fn,
     slug = member.slug
     attempts, timeout, resumes, effort = knobs
     ref = _sync_base_ref(command_fn, root)
+    _sync_store_ref(command_fn, root)
 
-    waiting = [d for d in member.after
-               if not _merged_into_base(command_fn, root, d)]
+    waiting, dep_repo, dep_ref = [], None, None
+    if member.after:
+        try:
+            dep_repo, dep_ref = _dependency_base(
+                command_fn, root, ", ".join(member.after))
+            waiting = [d for d in member.after
+                       if not _merged_into_base(command_fn, root, d,
+                                                base=(dep_repo, dep_ref))]
+        except AutopilotError as exc:
+            return "needs_human", "dependency", str(exc), None
     if waiting:
+        where = dep_ref or ss.DEFAULT_AMEND_BASE
+        if sc.store_root_dir(root) is not None:
+            where += " in the store repository %s" % dep_repo
         return ("needs_human", "dependency",
                 "waiting on %s: not merged into %s; re-run with --member "
-                "%s once merged" % (", ".join(waiting), ref, slug), None)
+                "%s once merged" % (", ".join(waiting), where, slug), None)
 
     rc, mout, merr = command_fn(["git", "merge", "--no-edit", ref], cwd)
     if rc != 0:
