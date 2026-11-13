@@ -16,9 +16,9 @@ where shipd lets avoidable work through to that last gate:
   with the code, although the plan rules already order a test task first.
 - About ten findings were a doc, spec, or PR body describing behaviour the
   code no longer has. Nothing checks for that drift before the PR opens.
-- #407 and #409 each shipped a plugin version another PR had just taken on
-  `main`. The plan fixes the number early, and CI checks it against a base
-  that is stale by merge time.
+- #407 and #409 each bumped to a plugin version another PR had just taken on
+  `main`, and needed a review round to fix it. The plan fixes the number
+  early, and CI checks it against a base that is stale by merge time.
 - 25 of 39 fixed findings carry no reply. `review_gate.py resolve` accepts any
   later commit as evidence, even one that never touches the flagged file, so
   a thread cannot tell a fix from a push past it.
@@ -75,8 +75,9 @@ doc-drift findings than the 10 in the baseline.
   never judges them.
 - **Build picks the plugin version at ship time.** Plans stop naming a
   version number; the bump task says only "advance the plugin version". Right
-  before the push, build sets `plugin.json` to one patch above the version on
-  a freshly fetched `origin/main`. Before arming auto-merge it re-runs
+  before the push, build checks `plugin.json` against a freshly fetched
+  `origin/main`. When the branch's version is not above main's, build sets it
+  to one patch above main's. Before arming auto-merge it re-runs
   `version_guard.py` against a fresh `origin/main` and bumps again when `main`
   has moved. `AGENTS.md`'s bump rule changes to match. CI's existing guards
   stay.
