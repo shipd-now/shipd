@@ -26,7 +26,7 @@ At first the new tools had no name and no single home. Some skills, such as the 
 
 ## automikk
 
-I started to think of the set as "automikk", a way for me to replace my own work with automation, before it had a repository. Eventually I put most of it into one repository. The automikk repository dates its first commit 2026-07-22.
+automikk is an older project of mine, from more than three years earlier: a way for me to replace my own work with automation. I revived it to hold the new tools, and put most of them into one repository. That repository dates its first commit 2026-07-22.
 
 I used the tools every day. I kept improving them, and I kept adding skills.
 
