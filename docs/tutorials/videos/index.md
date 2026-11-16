@@ -2,8 +2,8 @@
 
 # The shipd video series
 
-The shipd video series teaches the spec-driven workflow in a three-minute
-intro and ten episodes of five minutes each. Each episode has a script that
+The shipd video series teaches the spec-driven workflow in an intro
+and ten episodes, each five minutes long. Each episode has a script that
 lists what the viewer sees and what the presenter says. Every script follows
 the same structure, which [the template](template.md) defines.
 

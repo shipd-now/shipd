@@ -47,11 +47,11 @@ The repository SHALL carry `docs/tutorials/videos/index.md`, a `concept` doc tha
 ### Requirement: Intro episode
 id: video-intro
 
-The repository SHALL carry `docs/tutorials/videos/00-intro.md`, an Episode 0 script of about three minutes that declares `how-to`, carries the template's six sections in order, and tells where shipd came from in the author's own account. The repository SHALL also carry `docs/history.md`, a `concept` doc holding that account, and every history claim in the intro SHALL cite it.
+The repository SHALL carry `docs/tutorials/videos/00-intro.md`, an Episode 0 script of about five minutes that declares `how-to`, carries the template's six sections in order, and tells where shipd came from in the author's own account. The repository SHALL also carry `docs/history.md`, a `concept` doc holding that account, and every history claim in the intro SHALL cite it.
 
-#### Scenario: The intro follows the template and runs three minutes
+#### Scenario: The intro follows the template and runs five minutes
 - **WHEN** a reader opens `00-intro.md`
-- **THEN** its level-2 headings read `Introduction`, `At a glance`, `Script`, `Takeaways`, `Next`, `Sources`, its first beat starts at `0:00` and its last beat ends at `3:00`, and `docs_lint.py` exits 0 on it
+- **THEN** its level-2 headings read `Introduction`, `At a glance`, `Script`, `Takeaways`, `Next`, `Sources`, its first beat starts at `0:00` and its last beat ends at `5:00`, and `docs_lint.py` exits 0 on it
 
 #### Scenario: The intro cites the history page
 - **WHEN** a reader opens the intro's `## Sources`
