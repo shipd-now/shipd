@@ -137,6 +137,7 @@ carries:
 | `thread_id` | the review thread's ID |
 | `resolved` | whether the thread is resolved |
 | `disposition` | one of the four classes below |
+| `finding` | with `--from`, the `id` of the payload finding this thread belongs to, or `null` |
 
 `disposition` is one of:
 
@@ -150,6 +151,12 @@ carries:
 Only `replied` suppresses a recurrence of the same finding: `replied` is the
 only disposition that shows a person read the finding and answered it. The
 other three carry no such evidence, so a matching finding posts again.
+
+The poster posts one comment per finding, at its first anchorable location.
+An older pull request can carry one thread per location for the same finding.
+Run `prior <pr> --from <review-json|->` to map each of those threads to its
+finding. A thread matches when its `hash` equals the identity of any location
+of a payload finding.
 
 A thread posted before the identity marker shipped reports `hash` as `null`.
 A `null` hash matches nothing, so such a finding always posts again — that
