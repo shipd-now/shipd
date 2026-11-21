@@ -256,7 +256,8 @@ def _parse_locations(f):
 def _split_findings(findings, commentable):
     """Partition ``findings`` into ``(anchored, unanchored)`` against the
     per-path ``commentable`` line sets. ``anchored`` items are
-    ``(finding, path, line, index)`` tuples (one per anchorable location);
+    ``(finding, path, line, index)`` tuples (one per finding, at its first
+    anchorable location);
     ``unanchored`` is the raw findings (only if none of its locations are
     commentable)."""
     anchored, unanchored = [], []
@@ -267,6 +268,7 @@ def _split_findings(findings, commentable):
             if path is not None and line in commentable.get(path, set()):
                 anchored.append((f, path, line, idx))
                 has_anchored = True
+                break
         if not has_anchored:
             unanchored.append(f)
     return anchored, unanchored

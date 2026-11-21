@@ -1448,6 +1448,13 @@ def threads_from(gh, tid):
 
 
 class ResolveTest(unittest.TestCase):
+    def test_old_per_location_threads_each_resolve_on_a_later_commit(self):
+        _f, threads = _old_location_threads()
+        gh = FakeGh(review_threads=threads, commits=["2024-02-01T00:00:00Z"])
+        result = review_gate.resolve("7", gh)
+        self.assertEqual(sorted(gh.resolved_thread_ids), ["T1", "T2"])
+        self.assertEqual(result["unresolved"], 0)
+
     def test_mutation_is_owned_by_room_schema(self):
         self.assertFalse(hasattr(review_gate, "_RESOLVE_MUTATION"))
         gh = FakeGh(review_threads=[_thread(1, author="gate-bot", replies=1)])
@@ -1594,6 +1601,13 @@ class FoldedFindingSeverityDotTest(unittest.TestCase):
 
 
 class AutoreplyTest(unittest.TestCase):
+    def test_none_replies_to_both_old_per_location_threads(self):
+        _f, threads = _old_location_threads()
+        gh = FakeGh(review_threads=threads)
+        result = review_gate.autoreply("7", gh, "none")
+        self.assertEqual(result["replied"], 2)
+        self.assertEqual(len(gh.reply_posts), 2)
+
     def test_high_only_replies_below_the_threshold(self):
         threads = [_gate_thread(1, "high"), _gate_thread(2, "medium"),
                    _gate_thread(3, "low")]
@@ -1805,6 +1819,18 @@ class IdentityMarkerTest(unittest.TestCase):
         self.assertNotEqual(h1, h2)
 
 
+def _old_location_threads(**kw):
+    f = {"id": "f1", "locations": ["a.py:5", "b.py:9"], "what": "boom",
+         "severity": "high", "why": "w", "fix": "x"}
+    threads = []
+    for i, path in enumerate(("a.py", "b.py")):
+        extra = kw.get(i, {})
+        threads.append(_thread(
+            i + 1, body=review_gate._inline_body(f, location_index=i),
+            path=path, **extra))
+    return f, threads
+
+
 class PriorTest(unittest.TestCase):
     """`review_gate.py prior <pr>` reports each gate thread's identity,
     severity, `what`, and disposition class — deciding nothing about
@@ -1812,6 +1838,46 @@ class PriorTest(unittest.TestCase):
 
     CANONICAL_NONE = review_gate._AUTOREPLY_BODY["none"]
     CANONICAL_HIGH_ONLY = review_gate._AUTOREPLY_BODY["high-only"]
+
+    def test_old_per_location_threads_map_to_their_finding(self):
+        f, threads = _old_location_threads()
+        gh = FakeGh(review_threads=threads)
+        entries = review_gate.prior("7", gh, findings=[f])
+        self.assertEqual([e["finding"] for e in entries], ["f1", "f1"])
+
+    def test_reply_on_a_later_location_thread_names_the_finding(self):
+        f, threads = _old_location_threads(
+            **{1: {"reply_bodies": ["Not applicable"]}})
+        gh = FakeGh(review_threads=threads)
+        entries = review_gate.prior("7", gh, findings=[f])
+        replied = [e for e in entries if e["disposition"] == "replied"]
+        self.assertEqual(len(replied), 1)
+        self.assertEqual(replied[0]["finding"], "f1")
+
+    def test_without_findings_entries_carry_no_finding_key(self):
+        _f, threads = _old_location_threads()
+        gh = FakeGh(review_threads=threads)
+        for e in review_gate.prior("7", gh):
+            self.assertNotIn("finding", e)
+
+    def test_cli_from_tags_entries(self):
+        import tempfile
+        f, threads = _old_location_threads()
+        gh = FakeGh(review_threads=threads)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "review.json")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(_review(findings=[f]), fh)
+            code, out = _run_main(["prior", "7", "--from", path], gh)
+        self.assertEqual(code, 0)
+        self.assertEqual([e["finding"] for e in json.loads(out)],
+                         ["f1", "f1"])
+
+    def test_finding_identities_lists_every_location_hash(self):
+        f = {"locations": ["a.py:5", "b.py:9"], "what": "boom"}
+        self.assertEqual(review_gate.finding_identities(f), [
+            review_gate._finding_hash("a.py", "boom"),
+            review_gate._finding_hash("b.py", "boom", 1)])
 
     def test_a_reasoned_reply_classifies_replied(self):
         threads = [_gate_thread(1, "high", what="reasoned finding",
@@ -2368,24 +2434,31 @@ class MultiLocationFindingTest(unittest.TestCase):
     finding hash that includes the location index. Suggestions attach only to
     the locations[0] comment."""
 
-    def test_two_anchorable_locations_post_two_inline_comments(self):
-        """Two locations, both in diff, post two distinct inline comments."""
+    def test_two_anchorable_locations_post_one_inline_comment(self):
+        """Two locations, both in diff, post one comment naming the other."""
         finding = _finding(locations=["a.py:5", "b.py:10"])
         gh = _post_finding(finding, files=[
             {"filename": "a.py", "patch": PATCH_A},
             {"filename": "b.py", "patch": "@@ -8,3 +8,3 @@\n unchanged\n+added\n unchanged\n"},
         ])
         comments = _inline_comments(gh)
-        self.assertEqual(len(comments), 2)
+        self.assertEqual(len(comments), 1)
         self.assertEqual(comments[0]["path"], "a.py")
         self.assertEqual(comments[0]["line"], 5)
-        self.assertEqual(comments[1]["path"], "b.py")
-        self.assertEqual(comments[1]["line"], 10)
-        # Both should carry the finding's what/why/fix
-        for comment in comments:
-            self.assertIn("boom", comment["body"])
-            self.assertIn("w", comment["body"])  # why
-            self.assertIn("x", comment["body"])  # fix
+        body = comments[0]["body"]
+        self.assertIn("boom", body)
+        self.assertIn("Also recurs at: b.py:10", body)
+        self.assertEqual(review_gate._extract_finding_hash(body),
+                         review_gate._finding_hash("a.py", "boom"))
+
+    def test_two_sites_in_one_file_post_one_comment(self):
+        """The 2026-11-21 case: one file, two sites, one comment."""
+        finding = _finding(locations=["a.py:2", "a.py:4"], severity="medium")
+        gh = _post_finding(finding)
+        comments = _inline_comments(gh)
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(comments[0]["line"], 2)
+        self.assertIn("Also recurs at: a.py:4", comments[0]["body"])
 
     def test_one_anchorable_one_off_diff_location_posts_one_comment(self):
         """Mixed anchorable/off-diff locations post only the anchorable one."""
@@ -2408,23 +2481,27 @@ class MultiLocationFindingTest(unittest.TestCase):
         body = gh.summary_body()
         self.assertIn("Additional findings", body)
 
-    def test_all_off_diff_multi_location_shows_locations_zero_and_more(self):
-        """All off-diff multi-location finding shows locations[0] + (+N more)."""
+    def test_folded_finding_names_every_location(self):
+        """A folded multi-location finding names every location."""
         finding = _finding(locations=["z.py:99", "y.py:88", "x.py:77"])
         gh = _post_finding(finding)
-        comments = _inline_comments(gh)
-        self.assertEqual(len(comments), 0)
+        self.assertEqual(len(_inline_comments(gh)), 0)
         body = gh.summary_body()
         self.assertIn("Additional findings", body)
-        # Should show z.py:99 (locations[0]) and (+2 more)
-        self.assertIn("z.py:99", body)
-        self.assertIn("(+2 more)", body)
-        # Should not show the full location strings separately
-        self.assertNotIn("y.py:88", body)
-        self.assertNotIn("x.py:77", body)
+        self.assertIn("- **z.py:99** [", body)
+        self.assertIn("  - Also recurs at: y.py:88, x.py:77", body)
+        self.assertIn("z.py:99 (+2 more)", body)
+
+    def test_folded_already_there_finding_names_every_location(self):
+        finding = dict(_finding(locations=["z.py:99", "y.py:88"]),
+                       already_there=True, category="bug")
+        gh = _post_finding(finding)
+        body = gh.summary_body()
+        self.assertIn("- **z.py:99** [", body)
+        self.assertIn("  - Also recurs at: y.py:88", body)
 
     def test_suggestion_only_on_locations_zero_comment(self):
-        """Suggestion attaches only to locations[0] comment."""
+        """The one comment anchors at locations[0] and carries the suggestion."""
         finding = _finding(
             locations=["a.py:5", "b.py:10"],
             suggestion={"confident": True, "start_line": 5, "end_line": 5,
@@ -2434,11 +2511,23 @@ class MultiLocationFindingTest(unittest.TestCase):
             {"filename": "b.py", "patch": "@@ -8,3 +8,3 @@\n unchanged\n+added\n unchanged\n"},
         ])
         comments = _inline_comments(gh)
-        self.assertEqual(len(comments), 2)
-        # First comment (locations[0]) has suggestion
+        self.assertEqual(len(comments), 1)
         self.assertIn(SUGGESTION_FENCE, comments[0]["body"])
-        # Second comment (locations[1]) is prose only
-        self.assertNotIn(SUGGESTION_FENCE, comments[1]["body"])
+
+    def test_off_diff_first_location_anchors_next_site(self):
+        finding = _finding(
+            locations=["z.py:99", "a.py:5"],
+            suggestion={"confident": True, "start_line": 5, "end_line": 5,
+                       "lines": ["    return None"]})
+        gh = _post_finding(finding)
+        comments = _inline_comments(gh)
+        self.assertEqual(len(comments), 1)
+        self.assertEqual((comments[0]["path"], comments[0]["line"]), ("a.py", 5))
+        body = comments[0]["body"]
+        self.assertNotIn(SUGGESTION_FENCE, body)
+        self.assertIn("Also recurs at: z.py:99", body)
+        self.assertEqual(review_gate._extract_finding_hash(body),
+                         review_gate._finding_hash("a.py", "boom", 1))
 
     def test_summary_shows_plus_n_more_for_multi_location(self):
         """Summary table and folded findings show locations[0] + (+N more)."""
@@ -2604,7 +2693,8 @@ class RoomFindingTest(unittest.TestCase):
                 self.assertEqual(msg.text, "boom")
                 self.assertEqual(self._data(msg), {
                     "severity": sev, "path": "a.py", "line": 5,
-                    "hash": digest, "why": "w", "fix": "x"})
+                    "hash": digest, "why": "w", "fix": "x",
+                    "locations": ["a.py:5"]})
 
     def test_suggestion_fence_precedes_the_room_line(self):
         body = review_gate._inline_body(
@@ -2621,6 +2711,7 @@ class RoomFindingTest(unittest.TestCase):
         data = self._data(msg)
         self.assertEqual(data["path"], "b.py")
         self.assertEqual(data["line"], 9)
+        self.assertEqual(data["locations"], ["a.py:5", "b.py:9"])
         self.assertEqual(data["hash"],
                          review_gate._extract_finding_hash(body))
 
@@ -2689,6 +2780,17 @@ class RoomPostTest(unittest.TestCase):
         self._assert_summary_markers(gh.summary_body())
         self.assertNotIn("third", "".join(
             c["body"] for c in review["comments"]))
+
+    def test_multi_location_finding_opens_one_task(self):
+        gh = FakeGh(files=self.FILES)
+        f = {"id": "f1", "severity": "high", "locations": ["a.py:2", "a.py:4"],
+             "what": "dup", "why": "w", "fix": "x"}
+        review_gate.post(
+            "7", _review(verdict="changes-requested", findings=[f]), gh,
+            room_agent="author")
+        comments = gh.review_posts[0]["comments"]
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(comments[0]["body"].count("<!-- shipd-room "), 1)
 
     def test_rejected_review_keeps_summary_markers(self):
         gh = FakeGh(files=self.FILES, review_fail_times=1)
