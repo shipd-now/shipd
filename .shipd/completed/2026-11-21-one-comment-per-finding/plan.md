@@ -1,5 +1,5 @@
 # one-comment-per-finding
-Status: active
+Status: verified
 Planned-at: f05885040682aa3309edf95ee335f4d8f623f3d3
 Gated-hash: e0baf5430390
 
