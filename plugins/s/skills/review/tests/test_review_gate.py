@@ -1819,12 +1819,12 @@ class IdentityMarkerTest(unittest.TestCase):
         self.assertNotEqual(h1, h2)
 
 
-def _old_location_threads(**kw):
+def _old_location_threads(extras=None):
     f = {"id": "f1", "locations": ["a.py:5", "b.py:9"], "what": "boom",
          "severity": "high", "why": "w", "fix": "x"}
     threads = []
     for i, path in enumerate(("a.py", "b.py")):
-        extra = kw.get(i, {})
+        extra = (extras or {}).get(i, {})
         threads.append(_thread(
             i + 1, body=review_gate._inline_body(f, location_index=i),
             path=path, **extra))
@@ -1847,7 +1847,7 @@ class PriorTest(unittest.TestCase):
 
     def test_reply_on_a_later_location_thread_names_the_finding(self):
         f, threads = _old_location_threads(
-            **{1: {"reply_bodies": ["Not applicable"]}})
+            {1: {"reply_bodies": ["Not applicable"]}})
         gh = FakeGh(review_threads=threads)
         entries = review_gate.prior("7", gh, findings=[f])
         replied = [e for e in entries if e["disposition"] == "replied"]
