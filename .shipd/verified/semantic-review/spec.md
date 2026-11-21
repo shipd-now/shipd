@@ -583,21 +583,30 @@ object to the named pull request via `gh`: upserting a single summary comment
 identified by the hidden marker `<!-- shipd-semantic-review -->` (editing the
 existing marker comment in place on re-runs, and recognizing the legacy marker
 `<!-- am-semantic-review -->` on lookup while writing only the current one),
-posting one inline comment for every location, across the `locations` array
-of every `high`- or `medium`-severity finding, that anchors to a RIGHT-side
-commentable line of the pull request diff, folding into the summary every
+posting exactly one inline comment for every `high`- or `medium`-severity
+finding any of whose `locations` anchors to a RIGHT-side commentable line of
+the pull request diff, anchored at the first such location in `locations`
+order, folding into the summary every
 `low` finding and any finding none of whose locations anchor, retrying once with no inline comments if the review POST is rejected,
 submitting that review with the event the `gate-review-event` requirement selects, and setting a commit status
 with context `semantic-review` on the pull request's head SHA.
 
-A finding declaring more than one location SHALL carry a stable identity per
-location — so each recurring site is dispositioned independently of its
-siblings — while a finding declaring exactly one location SHALL keep the same
-identity it carried before this requirement's locations array existed, so
-prior disposition continuity is unaffected. An inline comment for a location
-other than `locations[0]` SHALL additionally name the finding's other
-locations, so a reader reaches the full recurrence from any one posted
-comment.
+A finding declaring more than one location SHALL post no second inline
+comment, and its one inline comment SHALL name every other location of the
+finding on an `Also recurs at:` line, so a reader reaches the full recurrence
+from the one posted comment and the room holds one task per finding. That
+comment SHALL carry the identity the per-location scheme gives its anchored
+site — the location's path and `what`, plus the location's index when the
+finding declares more than one location — so a finding declaring exactly one
+location, or anchored at `locations[0]`, keeps the identity it carried before.
+Where `--room-agent` is passed, the comment's room task data SHALL carry the
+finding's full `locations` list beside the anchored `path` and `line`.
+
+Where a multi-location finding is folded into the summary's "Additional
+findings" or "Already there, reached by this change" section, its bullet SHALL
+name `locations[0]` and then every other location on an `Also recurs at:`
+line, so every location appears somewhere in the posted text. The summary
+table row MAY keep the compact `(+N more)` form.
 
 An anchored inline comment's leading severity marker SHALL carry the severity's
 🔴/🟠/🟡 dot directly before the severity word, and each bullet of the summary
@@ -621,7 +630,8 @@ retyping. A suggestion SHALL NOT attach to any location other than
 `locations[0]` — a suggestion is a single-range edit that cannot replay
 identically across sites whose surrounding code differs. A finding whose
 replacement is absent, covers part of a line, spans a discontiguous range, or
-whose `locations[0]` does not anchor SHALL render as prose instead. Emitting a
+whose one inline comment anchors at a location other than `locations[0]`
+SHALL render as prose instead. Emitting a
 suggestion SHALL NOT change the comment's leading severity marker, and the
 `--json` mode SHALL stay free of emoji and prose.
 
@@ -700,12 +710,27 @@ suggestion SHALL NOT change the comment's leading severity marker, and the
 - **THEN** the commit status is `success` and the findings still render in
   full
 
-#### Scenario: A multi-location finding posts one comment per anchorable site
-- **WHEN** a finding's `locations` array names two sites that both anchor to
-  RIGHT-side commentable lines in two different files
-- **THEN** the poster submits one inline comment for each site, each carrying
-  the finding's what/why/fix and each carrying its own distinct identity
-  marker
+#### Scenario: A multi-location finding posts one comment
+- **WHEN** a `medium` finding's `locations` array names
+  `public/js/ui/progress.js:90` and `public/js/ui/progress.js:92`, both on
+  RIGHT-side commentable lines
+- **THEN** the poster submits one inline comment for the finding, anchored at
+  line 90, whose body carries `Also recurs at: public/js/ui/progress.js:92`
+  and the identity marker a single-location finding at that path and `what`
+  would carry
+
+#### Scenario: An off-diff first location anchors at the next site
+- **WHEN** a confident finding's `locations[0]` does not anchor and its
+  `locations[1]` does
+- **THEN** one inline comment is posted at `locations[1]`, its
+  `Also recurs at:` line names `locations[0]`, and it carries no suggestion
+  block
+
+#### Scenario: One room task per finding
+- **WHEN** `post --room-agent <name>` publishes a finding with two anchorable
+  locations
+- **THEN** exactly one inline comment carries a room Message, and its data
+  part's `locations` lists both sites
 
 #### Scenario: A partly-anchorable multi-location finding keeps its anchorable site
 - **WHEN** a finding's `locations` array names one site that anchors and one
@@ -719,6 +744,12 @@ suggestion SHALL NOT change the comment's leading severity marker, and the
   line
 - **THEN** the finding is folded into the summary's "Additional findings"
   section and no inline comment is posted for it
+
+#### Scenario: A folded finding names every location
+- **WHEN** a finding with locations `z.py:99`, `y.py:88` and `x.py:77` is
+  folded into "Additional findings"
+- **THEN** its bullet names `z.py:99` and carries
+  `Also recurs at: y.py:88, x.py:77`
 
 #### Scenario: A low finding on a diff line folds into the summary
 - **WHEN** `post` publishes a `low` finding whose location anchors to a
@@ -1347,7 +1378,11 @@ a newline, and its `what` text lowercased with whitespace runs collapsed to a
 single space. The marker SHALL be the body's last element, never its first, so
 the severity marker stays the opening token `parse_severity` reads. The hash
 SHALL NOT incorporate a line number, so a finding whose line moved still
-matches.
+matches. A finding declaring more than one location SHALL additionally add
+the location's index to the hashed text for every location after
+`locations[0]`, and the finding's identities SHALL be the hashes of all its
+locations so computed, which includes the hash of every per-location thread
+posted before one comment per finding.
 
 The system SHALL provide `review_gate.py prior <pr>`, emitting one JSON entry
 per gate-authored review thread carrying the thread's `hash` (or null where the
@@ -1356,12 +1391,16 @@ body has no marker), `path`, `severity`, `what`, `thread_id`, `resolved`, and a
 whose non-root comments are all exactly one of the canonical `autoreply` bodies
 SHALL classify `autoreplied`; a thread carrying any other reply SHALL classify
 `replied`; a thread with no reply but a commit landed after its creation SHALL
-classify `commit-only`; a thread with neither SHALL classify `none`. The verb
-SHALL decide nothing about suppression and SHALL mutate nothing.
+classify `commit-only`; a thread with neither SHALL classify `none`. Given
+`--from <review-json|->`, each entry SHALL also carry `finding`: the `id` of
+the first payload finding one of whose identities equals the entry's `hash`,
+or null. The verb SHALL decide nothing about suppression and SHALL mutate
+nothing.
 
 The `/s:review` skill, **when and only when posting to a pull request**, SHALL
-read `prior` back before reporting and omit a finding whose hash matches a
-thread classified `replied`. It SHALL NOT omit a finding matching any other
+read `prior --from` back before reporting and omit a finding that some
+`replied` entry names in `finding`, whichever of the finding's locations that
+thread was posted at. It SHALL NOT omit a finding matching any other
 classification, and SHALL state in its report how many findings it omitted and
 which pull request answered them. A review that is not posting SHALL read
 nothing back and omit nothing.
@@ -1389,6 +1428,24 @@ nothing back and omit nothing.
 #### Scenario: An auto-dispositioned finding is reported
 - **WHEN** a prior thread's only replies are the canonical `autoreply` body
 - **THEN** the thread classifies `autoreplied` and the finding is reported
+
+#### Scenario: An old per-location thread maps to its finding
+- **WHEN** a pull request carries two gate threads posted per location for
+  one finding with locations `a.py:5` and `b.py:9`, and `prior --from` reads a
+  payload holding that finding with id `f1`
+- **THEN** both entries carry `finding` `f1`
+
+#### Scenario: A reply on a later site suppresses the finding
+- **WHEN** only the old thread at the finding's second location carries a
+  reasoned reply
+- **THEN** that entry classifies `replied` with `finding` naming the finding,
+  so the finding is omitted rather than posted again
+
+#### Scenario: Old sibling threads resolve unchanged
+- **WHEN** `resolve` runs on a pull request whose old per-location threads for
+  one finding each carry a later commit
+- **THEN** each of those threads is resolved and none is reported
+  undispositioned
 
 #### Scenario: A moved line still matches
 - **WHEN** a dismissed finding recurs at the same path with identical `what`

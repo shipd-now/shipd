@@ -256,8 +256,8 @@ def _parse_locations(f):
 def _split_findings(findings, commentable):
     """Partition ``findings`` into ``(anchored, unanchored)`` against the
     per-path ``commentable`` line sets. ``anchored`` items are
-    ``(finding, path, line, index)`` tuples (one per anchorable location);
-    ``unanchored`` is the raw findings (only if none of its locations are
+    ``(finding, path, line, index)`` tuples (one per finding, at its first
+    anchorable location); ``unanchored`` is the raw findings (only if none of its locations are
     commentable)."""
     anchored, unanchored = [], []
     for f in findings:
@@ -267,6 +267,7 @@ def _split_findings(findings, commentable):
             if path is not None and line in commentable.get(path, set()):
                 anchored.append((f, path, line, idx))
                 has_anchored = True
+                break
         if not has_anchored:
             unanchored.append(f)
     return anchored, unanchored
@@ -544,12 +545,12 @@ def render_summary(review, unanchored, disposition="all", model=None,
             sev = f.get("severity", "low")
             locations = f.get("locations") or []
             loc = locations[0] if locations else "(no location)"
-            if len(locations) > 1:
-                loc = "%s (+%d more)" % (loc, len(locations) - 1)
             dot = _SEV_DOT.get(sev, "")
             rated_sev = ("%s %s" % (dot, sev)) if dot else sev
             out.append(
                 "- **%s** [%s] — %s" % (loc, rated_sev, f.get("what") or ""))
+            if len(locations) > 1:
+                out.append("  - Also recurs at: " + ", ".join(locations[1:]))
             why, fix = f.get("why"), f.get("fix")
             if why:
                 out.append("  - Why: %s" % why)
@@ -726,6 +727,23 @@ def _suggestion(f, commentable=None):
     return start, end, lines
 
 
+def finding_identities(f):
+    """Every identity the per-location scheme gave ``f``, in location order:
+    ``_finding_hash(path_i, what, i)`` (index only when ``f`` declares more
+    than one location) for each location whose path parses. `prior --from`
+    matches a thread to a finding by any of them, so threads posted per
+    location by an earlier gate still map to their finding."""
+    locations = f.get("locations") or []
+    out = []
+    for i, loc in enumerate(locations):
+        path, _line = _parse_location(loc)
+        if path is None:
+            continue
+        out.append(_finding_hash(path, f.get("what"),
+                                 i if len(locations) > 1 else 0))
+    return out
+
+
 def _inline_body(f, suggestion=None, location_index=0, room=None):
     """The text body of one anchored inline comment — the finding's what / why
     / fix as prose, followed by a committable ``suggestion`` fenced block when
@@ -741,8 +759,10 @@ def _inline_body(f, suggestion=None, location_index=0, room=None):
     line dropped, so a moved line still matches), its `what` text, and
     optionally the location index when the finding declares multiple locations.
 
-    When a finding has multiple locations, the inline body is appended with
-    an "Also recurs at:" line naming all other sites.
+    When a finding has multiple locations, this one comment names every other
+    site on an "Also recurs at:" line and carries its anchored site's
+    per-location identity (the index is hashed only for a multi-location
+    finding).
 
     Given a ``room``, one PR-room Message line (``_room_finding_line``) opens
     an ``input-required`` task for this site, placed before the blank line
@@ -841,14 +861,16 @@ def _room_finding_line(room, f, path, line, digest):
     round-1 task for any agent with the `review-finding` skill, addressed to
     no one (or to ``room["to"]`` when ``--room-to`` named an agent). No ``taskId`` — the review POST returns no per-comment ids, so
     ``build_tasks`` takes the inline comment's own id. The data part carries
-    this site's identity ``digest`` so a picker needs no prose parsing."""
+    this site's identity ``digest`` and the finding's full ``locations`` list
+    so a picker needs no prose parsing."""
     msg = room_schema.Message(
         role="agent",
         parts=({"kind": "text", "text": f.get("what") or ""},
                {"kind": "data",
                 "data": {"severity": f.get("severity", "low"), "path": path,
                          "line": line, "hash": digest, "why": f.get("why"),
-                         "fix": f.get("fix")}}),
+                         "fix": f.get("fix"),
+                         "locations": list(f.get("locations") or [])}}),
         context_id=room["context"], agent=room["agent"],
         metadata=dict({"round": 1, "skill": ROOM_SKILL,
                        "state": "input-required"},
@@ -948,8 +970,8 @@ def _review_comment(f, path, line, commentable=None, location_index=0,
     multi-line range takes the ``start_line``/``line`` pair; every other
     finding keeps its location-line anchor unchanged.
 
-    A suggestion is only ever attached to the comment anchored at locations[0];
-    all other comments render as prose only. ``room`` passes through to
+    A suggestion attaches only when the finding's one comment anchors at
+    locations[0]; otherwise the comment is prose only. ``room`` passes through to
     ``_inline_body``."""
     # Suggestions only attach to the primary location (index 0)
     suggestion = _suggestion(f, commentable) if location_index == 0 else None
@@ -1617,7 +1639,7 @@ def _canonical_autoreply_bodies():
     return set(_AUTOREPLY_BODY.values())
 
 
-def prior(pr, gh):
+def prior(pr, gh, findings=None):
     """Report each gate-authored review thread on ``pr``: its identity hash,
     path, severity, `what`, resolution state, and disposition class. This is
     the evidence class only — it decides nothing about suppression (that
@@ -1631,7 +1653,11 @@ def prior(pr, gh):
     thread's creation classifies `commit-only`; neither classifies `none`.
 
     Returns a list of ``{"hash", "path", "severity", "what", "thread_id",
-    "resolved", "disposition"}`` dicts, one per gate-authored thread."""
+    "resolved", "disposition"}`` dicts, one per gate-authored thread. Given
+    ``findings`` (a review payload's list), each entry also carries
+    ``"finding"``: the ``id`` of the first finding whose
+    ``finding_identities`` contain the entry's hash, or ``None``. Without
+    ``findings`` no such key is added."""
     number, _base_sha, _sha, _url = _resolve_pr(gh, pr)
     repo = _resolve_repo(gh)
     viewer, commit_dates, threads = _list_review_threads(gh, repo, number)
@@ -1664,6 +1690,12 @@ def prior(pr, gh):
             "resolved": bool(t.get("isResolved")),
             "disposition": disposition,
         })
+        if findings is not None:
+            digest = entries[-1]["hash"]
+            entries[-1]["finding"] = next(
+                (f.get("id") for f in findings
+                 if digest is not None
+                 and digest in finding_identities(f)), None)
     return entries
 
 
@@ -1714,7 +1746,10 @@ def _cmd_protect(args, gh):
 
 
 def _cmd_prior(args, gh):
-    entries = prior(args.pr, gh)
+    findings = None
+    if args.from_:
+        findings = _load_review(args.from_).get("findings") or []
+    entries = prior(args.pr, gh, findings=findings)
     print(json.dumps(entries))
     return 0
 
@@ -1785,6 +1820,9 @@ def main(argv=None, gh=None):
         "prior", help="report each gate thread's identity and disposition "
                       "class (JSON); decides no suppression, mutates nothing")
     pv.add_argument("pr", help="PR number, URL, or branch")
+    pv.add_argument("--from", dest="from_", default=None,
+                    help="review JSON file, or - for stdin; tags each entry "
+                         "with the id of the payload finding it belongs to")
     pv.set_defaults(func=_cmd_prior)
 
     args = parser.parse_args(argv)

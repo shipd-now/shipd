@@ -88,16 +88,15 @@ The flow:
    semantics described under "Determine what to review". Do the full
    analysis; do not shortcut it. The rendered report names the base commit
    it used, so a reader can see precisely what the review compared.
-3. **Read prior dispositions and drop what was already answered.** Run
-   `review_gate.py prior <pr>` and, for every finding this review is about to
-   post, compare its `hash` — the same identity `_finding_hash(<path>,
-   <normalized what>)` computes (plus the location's own index, for a finding
-   that names more than one) and `_inline_body` embeds as the trailing
-   `<!-- shipd-finding <hash> -->` marker — against `prior`'s entries. Omit a
-   finding whose hash matches an entry classified `replied`: a human already
-   gave it a reasoned answer, and reposting it unchanged only repeats the
-   finding back at them. Leave every other finding in place — none of the
-   other three classes is evidence a human dismissed it:
+3. **Read prior dispositions and drop what was already answered.** Write the
+   draft `--json` object for the findings this review is about to post to a
+   temp file, run `review_gate.py prior <pr> --from <that file>`, and omit
+   each finding whose `id` an entry classified `replied` names in its
+   `finding` field. `finding` matches a thread at any of the finding's
+   locations, including threads an earlier gate posted per location, so a
+   human's reasoned answer anywhere suppresses the whole finding: reposting
+   it unchanged only repeats it back at them. Leave every other finding in
+   place — none of the other three classes is evidence a human dismissed it:
    - **`commit-only`** — only a commit landed after the thread, which is
      purely time-based and proves nothing about implementation; a recurrence
      after it is a regression, the most valuable finding the gate can produce.
@@ -114,7 +113,8 @@ The flow:
 5. **Run the poster.** `review_gate.py post <pr> --from "$TMPDIR/review.json"`,
    adding `--disposition <scope>`, `--model <tier>`, `--status <mode>`,
    `--room-agent <name>` and `--room-to <name>` when the invoker passed them. It upserts the marker summary comment, posts one inline comment per
-   anchorable location across a finding's `locations` array (folding a `high` or `medium`
+   finding at its first anchorable location, naming the others on an
+   `Also recurs at:` line (folding a `high` or `medium`
    finding into the summary only when none of its locations anchor; a `low` always folds), and sets the
    `semantic-review` commit status on the head SHA by scope — under the default
    `all`, `success` iff no counted finding is `high` or `medium` and no
