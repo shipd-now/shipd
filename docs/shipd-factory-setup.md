@@ -147,4 +147,4 @@ python3 ~/.claude/skills/shipd-factory/shipd_factory.py health
 ```
 
 Then run `/shipd-factory onboard <owner/repo>`, as in
-[Set up a repo](shipd-factory.md#set-up-a-repo).
+[Set up and remove](shipd-factory.md#set-up-and-remove).
