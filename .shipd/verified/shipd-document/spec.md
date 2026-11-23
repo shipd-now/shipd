@@ -164,7 +164,7 @@ unreadable-file problems.
 id: document-registration
 
 The plugin SHALL register the skill on its standard surfaces: an
-`/s:document` row in the repo `README.md` skill table, an `AGENTS.md` rule
+`/s:document` row in `docs/cheatsheet.md`'s command table, an `AGENTS.md` rule
 that documentation under `docs/` is authored and revised through
 `/s:document` plus a mention in its skill list, a CI `unittest discover`
 line for `plugins/s/skills/document/tests`, a harness body template at
@@ -175,7 +175,7 @@ capability), and a plugin version bump in
 
 #### Scenario: The surfaces name the skill
 - **WHEN** the change is merged
-- **THEN** `README.md`'s skill table has an `/s:document` row, `AGENTS.md`
+- **THEN** `docs/cheatsheet.md`'s command table has an `/s:document` row, `AGENTS.md`
   names `/s:document` for docs authoring, `ci.yml` discovers the skill's
   tests, and the plugin version is bumped
 

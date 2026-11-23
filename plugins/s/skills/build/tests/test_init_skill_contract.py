@@ -55,8 +55,7 @@ class InitSkillContractTest(unittest.TestCase):
         self.assertEqual(claiming, ["init"])
 
     def test_registry_files_mention_the_command(self):
-        for rel in ("README.md", os.path.join("docs", "cheatsheet.md"),
-                    "AGENTS.md"):
+        for rel in (os.path.join("docs", "cheatsheet.md"), "AGENTS.md"):
             self.assertIn("/s:init", _read(ROOT, rel), rel)
 
     def test_both_texts_carry_the_vocabulary(self):

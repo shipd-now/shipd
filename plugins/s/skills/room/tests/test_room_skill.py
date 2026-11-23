@@ -201,8 +201,7 @@ class DocsTest(unittest.TestCase):
     """room-skill-docs."""
 
     def test_registration_surfaces_name_the_skill(self):
-        for rel in ("AGENTS.md", "README.md", os.path.join("docs",
-                                                            "cheatsheet.md")):
+        for rel in ("AGENTS.md", os.path.join("docs", "cheatsheet.md")):
             self.assertIn("/s:room", _read(os.path.join(REPO_ROOT, rel)),
                           "%s does not name /s:room" % rel)
 

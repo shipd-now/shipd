@@ -177,13 +177,12 @@ task, and SHALL link `room-run.md`. `## Reference` SHALL link `room-run.md`,
 
 The room how-to SHALL be `docs/room-run.md`, as `multi-agent-walkthrough-doc`
 states it, and `docs/pr-room.md` SHALL NOT exist. The repository SHALL list
-`/s:room` in `AGENTS.md`'s skill sentence, the `README.md` command tables,
-and the `docs/cheatsheet.md` command table. The skill tests SHALL live in
+`/s:room` in `AGENTS.md`'s skill sentence and the `docs/cheatsheet.md`
+command table; `README.md` is not a registration surface. The skill tests SHALL live in
 `plugins/s/skills/room/tests/test_room_skill.py`.
 
 #### Scenario: Registration surfaces name the skill
-- **WHEN** the room skill test reads `AGENTS.md`, `README.md`, and
-  `docs/cheatsheet.md`
+- **WHEN** the room skill test reads `AGENTS.md` and `docs/cheatsheet.md`
 - **THEN** each contains `/s:room`
 
 #### Scenario: Doc lints clean
