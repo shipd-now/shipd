@@ -49,19 +49,35 @@ Success criteria:
 - **Nine task groups, one main page per feature.** The groups and their pages
   are fixed by the page map under Design. A member may adjust a page title at
   planning time; it never moves a page to another group or adds a group.
+  Two pages join the map: `docs/document.md`, the main page for
+  `/s:document`, in Configure, and `docs/onboard.md`, the main page for
+  `/s:onboard`, in Start here.
 - **The caps stand, so a reference page nests under its main page.** A feature
   whose detail exceeds its main page's cap keeps a separate reference file.
   The main page links it from a closing "Reference" section. The reference
   page stays off the sidebar. Rejected: a new "feature" doc type with a larger
   cap — it loosens a rule the `docs-rewrite` epic defended. Rejected: cutting
   detail until a merged page fits — flag tables and payloads would be lost.
-- **A main page follows one shape.** In order: what the feature is, when to
-  use it, how to run it, then a "Reference" section. That section holds a
-  short table, or the link to the nested reference page.
+- **A feature main page follows one shape.** It opens by saying what the
+  feature is. Then it carries the same three section headings, spelled
+  exactly and in this order: `## When to use it`, `## How to run it`,
+  `## Reference`. The Reference section holds a short table, or the link to
+  the nested reference page. No main page has a `## See also` section. The
+  Start here entry pages keep their own shapes: the overview, the first-change
+  guide, core ideas, and the cheatsheet.
 - **One page owns each fact.** The second-account rule lives on the agent
   accounts page (`agent-identity.md`). Review gate setup lives on the review
   gate page (`copilot-review.md`). Install lives on the install page. Every
   other page states the fact in one sentence at most and links to the owner.
+- **A link sweep ties the groups together.** `docs-start-here` runs it, as
+  the last member to write under `docs/`, across every feature main page. On
+  each page, the first mention of a
+  command that another page owns becomes a link to that owner page. The
+  sweep adds links and rewords nothing.
+- **The first-change guide is five steps.** `docs/getting-started.md` walks
+  install, plan, build, statusline, and board. It holds no command overview,
+  no `shipd doctor` step, and no `/s:onboard` step; `docs/onboard.md` owns
+  the tour.
 - **Merge only where text repeats and the result fits the cap.** The three
   room how-tos become one how-to of 150 lines or fewer. `workspaces/teams.md`
   and `workspaces/multi-workspace-repos.md` become one page.
@@ -89,7 +105,17 @@ Success criteria:
   here. No other page carries a table of all skills or all verbs.
 - **The docs own the skill descriptions; the README links.** The README's
   skill tables, spec engine, CLI, statusline, telemetry and CI sections move
-  into `docs/` pages. The README keeps one line per group with a link.
+  into `docs/` pages. The README keeps one line per group with a link, and
+  its contributor sections: the directory structure, adding a command, adding
+  a skill, and what to run after editing. It is not a registration surface:
+  no test or spec requires a skill to be listed there. `docs/cheatsheet.md`
+  and `AGENTS.md` are the registration surfaces. The README restates no
+  install-mode detail, which `docs/install.md` owns, with three exceptions no
+  docs page carries: the directly runnable vendored
+  `.shipd/plugin/s/bin/shipd`; the in-session checkout registration steps
+  (`/plugin marketplace add <path-to-your-checkout>`, `/plugin install
+  s@shipd`); and the sentence that the plugin is the engine's distribution
+  vehicle for every harness.
 
 ## Design
 
