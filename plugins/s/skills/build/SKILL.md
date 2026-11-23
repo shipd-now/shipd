@@ -807,10 +807,10 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
      --tasks-done <done> --tasks-total <total> --status <status> \
      --commit "$COMMIT_HASH" --merge-warnings - --log
    ```
-   This only reads `~/.shipd-config.json`, and never creates it — the place to
-   configure logging (`logging_enabled`, `log_dir`, `number_format`; see
-   `references/shipd.config.example.json`) — and appends a record to
-   `~/.shipd/builds/builds.jsonl` plus a per-build file under `~/.shipd/builds/`.
+   This reads the layered config, `~/.shipd-config.json` included, and
+   never creates it — the place to configure logging (`logging_enabled`,
+   `log_dir`, `number_format`; see `references/shipd.config.example.json`) —
+   and appends a record to `~/.shipd/builds/builds.jsonl` plus a per-build file beside it.
    The logged entry now also carries per-model and total elapsed time.
 3. **Collect the teacher's report first.** When Phase 5 step 7 spawned the
    teacher, collect its report now (wait for it when it is still running) and
