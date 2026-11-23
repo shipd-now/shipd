@@ -990,6 +990,27 @@ class OneCommentListingTest(unittest.TestCase):
         self.assertEqual(len(gh.marker_comments()), 1)
         self.assertIsNotNone(known.get("id"))
 
+    def test_an_edit_that_answers_no_id_keeps_the_known_id(self):
+        # The id of a comment just edited is still correct. Dropping it would
+        # make the next update list the comments again for nothing.
+        class EditAnswersNoId(FakeGh):
+            def __call__(inner, args, input=None):
+                rc, out, err = super().__call__(args, input=input)
+                if (rc == 0 and args[0] == "api" and "PATCH" in args
+                        and "/issues/comments/" in args[1]):
+                    return 0, "", ""
+                return rc, out, err
+
+        summary = {"id": 42, "body": MARKER + "\n\nfirst\n",
+                   "html_url": "https://github.com/o/r/pull/7#issuecomment-42"}
+        gh = EditAnswersNoId(existing_comments=[summary])
+        known = {"id": 42}
+        review_gate._upsert_summary(
+            gh, "o/r", 7, "%s\nsecond" % review_gate.MARKER, known=known)
+        self.assertEqual(known, {"id": 42})
+        self.assertEqual(OneCommentListingTest._listings(gh), [])
+        self.assertEqual(gh.comment_create_calls(), [])
+
 
 class ReviewEventTest(unittest.TestCase):
     """The review event follows the `semantic-review` status the poster sets

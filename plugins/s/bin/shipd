@@ -1819,7 +1819,8 @@ def _expand_file_flag(flag, value):
         return None, None
     expanded = os.path.expanduser(value)
     if expanded == value and value.startswith("~"):
-        return None, "cannot expand %s %s: no such user" % (flag, value)
+        return None, ("cannot expand %s %s: no such user — write ./%s for a "
+                      "file whose name starts with ~" % (flag, value, value))
     return expanded, None
 
 

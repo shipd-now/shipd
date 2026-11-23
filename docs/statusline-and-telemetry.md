@@ -58,10 +58,10 @@ file and without `--settings`, `layout` saves the layout in that file and
 leaves the settings file untouched.
 
 A write that names one file never writes the other default file. The verb
-refuses these two commands with exit `2`, and writes nothing:
+refuses these commands with exit `2`, and writes nothing:
 
-- Setting a layout with `--settings` naming another settings file, and no
-  `--config`. The message names `--config`.
+- Setting a layout, or `install` with `--show` or `--hide`, with `--settings`
+  naming another settings file, and no `--config`. The message names `--config`.
 - `install` with `--config` naming another config file, and no `--settings`.
   The message names `--settings`.
 

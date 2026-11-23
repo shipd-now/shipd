@@ -993,9 +993,10 @@ def _upsert_summary(gh, repo, number, body, known=None):
     if known is not None:
         if comment.get("id") is not None:
             known["id"] = comment["id"]
-        else:
-            # The write answered without an id: forget what was known, so the
-            # next upsert lists the comments instead of creating a second one.
+        elif comment_id is None:
+            # A create answered without an id: forget that none was found, so
+            # the next upsert lists the comments instead of creating a second
+            # one. An edit keeps the id it edited, which is still correct.
             known.pop("id", None)
     return comment.get("html_url")
 
