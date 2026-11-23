@@ -1,5 +1,5 @@
 # docs-by-feature
-Status: active
+Status: complete
 Theme: developer-experience
 
 ## Introduction
@@ -162,14 +162,15 @@ job:
 
 | Tool | Calls | Output tokens |
 | --- | --- | --- |
-| Bash | 263 | 97.3k |
-| Write | 30 | 45.4k |
-| SubagentHandback | 11 | 23.3k |
-| Agent | 17 | 8.2k |
-| Read | 62 | 7.4k |
-| Edit | 16 | 4.2k |
-| Monitor | 4 | 1.9k |
-| ToolSearch | 6 | 1.3k |
-| (no tool) | 0 | 1.2k |
-| Skill | 1 | 51 |
-| **Total** | 410 | 190.2k |
+| Bash | 1258 | 647.8k |
+| Write | 84 | 160.2k |
+| SubagentHandback | 46 | 107.4k |
+| Agent | 63 | 32.8k |
+| Read | 210 | 30.2k |
+| Edit | 39 | 11.3k |
+| (no tool) | 0 | 5.1k |
+| Monitor | 7 | 3.0k |
+| ToolSearch | 11 | 2.3k |
+| Skill | 7 | 657 |
+| SendMessage | 1 | 552 |
+| **Total** | 1726 | 1.0M |
