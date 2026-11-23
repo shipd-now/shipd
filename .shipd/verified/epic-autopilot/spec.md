@@ -386,8 +386,9 @@ fresh-attempt budget (`autopilot.attempts`, default three), each session
 using the gate entry's declared model, timeout, and max-resumes. The
 session's prompt SHALL direct running `/s:plan <member>` — which locates the
 rejected change and enters enrichment mode — resolving repository-answerable
-findings by editing the artifacts, consulting the oracle inline (one `spec_status.py oracle-lookup` run per gap's compact question carrying the decision, options, and recommendation, judged per the oracle consultation contract) for decisions the repository cannot answer instead
-of any human, and exiting through the re-gate; each session SHALL be graded
+findings by editing the artifacts, settling the decisions the repository cannot answer by the headless contract
+(`skills/ask/references/headless.md`, named by its absolute path) instead of
+asking any human, and exiting through the re-gate; each session SHALL be graded
 on the member change sitting at `ready` lint-clean. After a successful
 enrichment session the autopilot SHALL re-run the gate engine and let its
 verdict decide: a pass SHALL continue the pipeline; a second rejection SHALL
@@ -422,23 +423,26 @@ same member in the same run.
 ### Requirement: Oracle-aware driven sessions
 id: oracle-aware-driven-sessions
 
-The canned resume reply the autopilot sends to every driven session SHALL
-direct the session to shape any undecided point into a compact question
-(decision, options, recommendation), consult the oracle by running `spec_status.py oracle-lookup`, named by its absolute path, and judging its output per the oracle consultation contract, adopt an `ANSWER` verdict, and fall back to its own
-recommendation on `INSUFFICIENT` or an unavailable oracle — never waiting
-for a human. The build stage prompt SHALL direct the coordinator to route
-sub-agent `QUESTION:` escalations that the spec artifacts and code cannot
-answer through the same oracle before answering on its own authority.
+Every prompt the autopilot sends to a driven session — the canned resume
+reply, and the build, enrichment, and re-plan stage prompts — SHALL state that
+no human is available and name the absolute path of the headless contract,
+`skills/ask/references/headless.md`, as the one place the oracle-then-default
+rule lives. Each SHALL also name the `spec_status.py oracle-lookup` command by
+its absolute path, and SHALL NOT restate the contract's ledger labels. The
+build stage prompt SHALL direct the coordinator to settle sub-agent
+`QUESTION:` escalations that the spec artifacts and code cannot answer by the
+same contract, never leaving the sub-agent blocked.
 
 #### Scenario: Canned reply names the oracle rung
 - **WHEN** the autopilot's canned resume reply is inspected
-- **THEN** it directs compact-question consultation through `oracle-lookup`,
-  adopting `ANSWER` and self-recommending on `INSUFFICIENT`
+- **THEN** it states that no human is available, names the headless
+  contract's path and the `oracle-lookup` command, and names no ledger label
 
 #### Scenario: Build prompt routes QUESTION escalations
 - **WHEN** the build stage prompt is rendered
-- **THEN** it directs consulting `oracle-lookup` for sub-agent `QUESTION:`
-  escalations the artifacts and code cannot answer
+- **THEN** it directs settling sub-agent `QUESTION:` escalations the
+  artifacts and code cannot answer by the headless contract, and names the
+  `oracle-lookup` command
 
 ### Requirement: Targeted single-member drive
 id: targeted-member-drive
@@ -1517,10 +1521,9 @@ id: in-session-unattended-prompts
 
 The in-session drive's plan-stage instruction and its re-plan instruction
 SHALL each end with a paragraph stating that no human is available during
-the run, that a decision the repository cannot settle is put to the oracle
-(run `spec_status.py oracle-lookup` for one compact question and judge it per the oracle consultation contract), that on `INSUFFICIENT`
-the recommended default is adopted and recorded in the plan's ledger, and
-that no question round and no AskUserQuestion is opened. The re-plan
+the run and that every decision is settled per the headless contract in
+`skills/ask/references/headless.md`, which the paragraph names by that path
+and does not restate. The re-plan
 instruction SHALL additionally name the `/s:drift` verdict's `revise:`
 pointer and reason, require the revision to stay within the plan's `USER`
 ledger entries and the epic's Decisions, and end with `spec_gate.py <member>
@@ -1529,13 +1532,13 @@ ledger entries and the epic's Decisions, and end with `spec_gate.py <member>
 #### Scenario: The plan instruction states the absence of a human
 - **WHEN** the drive spawns a plan-stage sub-agent
 - **THEN** its instruction states that no human is available and names the
-  oracle-then-default rule
+  headless contract's path
 
 #### Scenario: The re-plan instruction carries the verdict and the re-gate
 - **GIVEN** a `revise` verdict whose `revise:` names tasks 2.1 and 2.2
 - **WHEN** the drive spawns the re-plan sub-agent
-- **THEN** its instruction names that pointer and reason, forbids a question
-  round, and ends with the `--base origin/main` re-gate
+- **THEN** its instruction names that pointer and reason, names the
+  headless contract, and ends with the `--base origin/main` re-gate
 
 ### Requirement: Detached sessions run unattended
 id: unattended-session-env

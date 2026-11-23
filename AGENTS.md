@@ -208,6 +208,18 @@ installs `textual` and always passes without it. Declared-pipeline validation
 `spec_common.resolve_pipeline` only to keep the two modules free of an import
 cycle, not for any dependency it carries.
 
+### External loaders
+
+Loaders outside this repo read some shipd files by path and `##` heading — for
+example shipd-factory's shipd-run reads
+`plugins/s/skills/ask/references/headless.md`. `plugins/s/external-loaders.json`
+lists those files and headings, and
+`plugins/s/skills/build/tests/test_external_loaders.py` fails when a listed file
+or heading disappears. Renaming a listed heading, or moving a listed file, breaks
+an external loader. Do it only on purpose: change the manifest in the same
+change and tell the loader's owner. Add a file or heading to the manifest when a
+new external loader starts to depend on it.
+
 ## Evals
 
 `evals/run.py` is a local, single-arm regression harness that drives the `s`
@@ -259,8 +271,8 @@ tree copied into a scratch git repo before the session runs). An optional
   and `spec_gate.py <change> --check` (read-only) exits 0; at least one
   `## Questions and answers` entry carries a `**Verdict:**` of `ANSWER` or
   `INSUFFICIENT`; every `INSUFFICIENT` entry carries a non-empty
-  `**Answer:**` under an `**Answered by:**` of `USER` — never `ORACLE`,
-  which gave no answer there; and at
+  `**Answer:**` under an `**Answered by:**` of `ASSUMPTION` — never `ORACLE`,
+  which gave no answer there, nor `USER` or `PLANNER`; and at
   least one entry is `INSUFFICIENT`, so a run whose ledger the oracle
   answered in full fails — the case exists to prove the fallback. The
   judgement is `judge_oracle_default`, a pure function of the plan text and
@@ -330,6 +342,6 @@ flag and says a bare `--sort` must work without deciding which column it
 then uses. An `oracle-lookup` on that decision surfaces only snippets that
 take no position on it, so the contract's verdict is `INSUFFICIENT`; the
 session stops at its typed round, the harness's go-ahead reply accepts the
-planner's recommendation, and the plan records it as `**Answered by:** USER`.
+planner's recommendation, and the plan records it as `**Answered by:** ASSUMPTION`.
 The grade does not read `**Queued:**`: the fixture's repo-local store takes the queued question,
 but a case without one queues nothing, and the ledger grammar allows both.

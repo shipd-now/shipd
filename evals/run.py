@@ -584,10 +584,12 @@ _QA_FIELD_RE = re.compile(r"^\s*-\s*\*\*([A-Za-z][A-Za-z ]*):\*\*\s*(.*)$")
 ORACLE_VERDICTS = ("ANSWER", "INSUFFICIENT")
 
 # Who may hold the adopted answer on an ``INSUFFICIENT`` entry. Only
-# ``USER``: the oracle gave no answer there, so ``ORACLE`` is incoherent, and
-# ``PLANNER`` is the provisional value the gate rejects. A headless go-ahead
-# records the planner's default as ``USER``.
-ADOPTING_ANSWERERS = ("USER",)
+# ``ASSUMPTION``: the oracle gave no answer there, so ``ORACLE`` is
+# incoherent, ``PLANNER`` is the provisional value the gate rejects, and
+# ``USER`` would pass a session's own guess off as a person's answer. The
+# headless contract (``skills/ask/references/headless.md``) records the
+# planner's default as ``ASSUMPTION``.
+ADOPTING_ANSWERERS = ("ASSUMPTION",)
 
 
 def _ledger_entries(plan_text):
@@ -652,8 +654,9 @@ def judge_oracle_default(plan_text, lint_exit, gate_exit,
     3. **Oracle consulted** — at least one ledger entry carries a
        ``**Verdict:**`` of ``ANSWER`` or ``INSUFFICIENT``.
     4. **Default adopted** — every ``INSUFFICIENT`` entry carries an
-       ``**Answered by:**`` of ``USER`` (the oracle gave no answer, so
-       ``ORACLE`` is refused) and a non-empty ``**Answer:**``.
+       ``**Answered by:**`` of ``ASSUMPTION`` (the oracle gave no answer, so
+       ``ORACLE``, ``PLANNER`` and ``USER`` are all refused) and a
+       non-empty ``**Answer:**``.
     5. **Fallback proven** — at least one entry's verdict is
        ``INSUFFICIENT``. The case exists to prove the oracle-then-default
        path, so a ledger the oracle answered in full fails.
@@ -692,7 +695,7 @@ def judge_oracle_default(plan_text, lint_exit, gate_exit,
         if answerer not in ADOPTING_ANSWERERS:
             return RunResult(
                 False, "adopted answer: ledger entry %s is INSUFFICIENT and "
-                       "its **Answered by:** is %r, expected USER"
+                       "its **Answered by:** is %r, expected ASSUMPTION"
                        % (label, answerer or None))
         if not (fields.get("Answer") or "").strip():
             return RunResult(

@@ -100,12 +100,12 @@ first wave.
   Members already planned in this run (read each with
   `spec_status.py --root <root> cat change <slug>`; keep names, interfaces,
   and shared decisions consistent with them): <slug>: <root>, ...
-  Consult the oracle as /s:plan prescribes, but open no question round. For
-  every decision the oracle leaves open (INSUFFICIENT, an advisory ANSWER, or
-  no verdict), adopt your recommended default as a settled decision and record
-  a `## Questions and answers` entry with `**Answered by:** PLANNER`: the
-  options in `**Question:**` with the default first, the default in
-  `**Answer:**`, and `**Queued:**` when the oracle filed one.
+  Follow the headless contract in `skills/ask/references/headless.md`
+  (Codebase first, Oracle next, Never a dialog), with one override of its
+  Default last part: for every decision the oracle leaves open (INSUFFICIENT,
+  an advisory ANSWER, or no verdict), record `**Answered by:** PLANNER`, not
+  `ASSUMPTION`, because the final round asks a human and rewrites the entry to
+  USER. Every other field is as that part states.
   Where your plan builds on a PLANNER default in an earlier member's
   ledger, append your slug to that entry's `**Relied on by:**` field
   (adding the field as the entry's last line if absent) in the earlier

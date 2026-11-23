@@ -1197,7 +1197,7 @@ _LEDGER_PASS = (
     "- **Question:** Which column should `--sort` with no argument order by?\n"
     "  Options: (1) name; (2) age; (3) team. Recommendation: (1).\n"
     "- **Verdict:** INSUFFICIENT\n"
-    "- **Answered by:** USER\n"
+    "- **Answered by:** ASSUMPTION\n"
     "- **Answer:** Option 1, `name` — the first column, and the one a reader\n"
     "  scans for.\n"
     "- **Queued:** q-report-sort-default\n")
@@ -1208,7 +1208,7 @@ _LEDGER_NO_VERDICT = (
     "## Questions and answers\n\n"
     "### Q1: Which column does a bare --sort use?\n"
     "- **Question:** Which column should `--sort` with no argument order by?\n"
-    "- **Answered by:** USER\n"
+    "- **Answered by:** ASSUMPTION\n"
     "- **Answer:** `name`.\n")
 
 # The unanswered fixture: the oracle said INSUFFICIENT and no default was
@@ -1218,7 +1218,7 @@ _LEDGER_INSUFFICIENT_NO_ANSWER = (
     "### Q1: Which column does a bare --sort use?\n"
     "- **Question:** Which column should `--sort` with no argument order by?\n"
     "- **Verdict:** INSUFFICIENT\n"
-    "- **Answered by:** USER\n"
+    "- **Answered by:** ASSUMPTION\n"
     "- **Answer:**\n"
     "- **Queued:** q-report-sort-default\n")
 
@@ -1262,7 +1262,7 @@ class JudgeOracleDefaultTests(unittest.TestCase):
         self.assertIn("**Answer:**", result.failure)
 
     def test_insufficient_answered_by_planner_fails_naming_the_entry(self):
-        ledger = _LEDGER_PASS.replace("**Answered by:** USER",
+        ledger = _LEDGER_PASS.replace("**Answered by:** ASSUMPTION",
                                       "**Answered by:** PLANNER")
         result = run.judge_oracle_default(_plan(ledger), 0, 0)
         self.assertFalse(result.passed)
@@ -1273,7 +1273,7 @@ class JudgeOracleDefaultTests(unittest.TestCase):
         answered = (_LEDGER_PASS.split("\n\n", 1)[1]
                     .replace("### Q1:", "### Q2:")
                     .replace("**Verdict:** INSUFFICIENT", "**Verdict:** ANSWER")
-                    .replace("**Answered by:** USER", "**Answered by:** ORACLE"))
+                    .replace("**Answered by:** ASSUMPTION", "**Answered by:** ORACLE"))
         result = run.judge_oracle_default(
             _plan(_LEDGER_PASS + "\n" + answered), 0, 0)
         self.assertTrue(result.passed, result.failure)
@@ -1283,7 +1283,7 @@ class JudgeOracleDefaultTests(unittest.TestCase):
         answered in full passes points 1-4 and fails the fifth."""
         ledger = (_LEDGER_PASS
                   .replace("**Verdict:** INSUFFICIENT", "**Verdict:** ANSWER")
-                  .replace("**Answered by:** USER", "**Answered by:** ORACLE"))
+                  .replace("**Answered by:** ASSUMPTION", "**Answered by:** ORACLE"))
         result = run.judge_oracle_default(_plan(ledger), 0, 0)
         self.assertFalse(result.passed)
         self.assertTrue(result.failure.startswith("fallback:"),
@@ -1293,7 +1293,7 @@ class JudgeOracleDefaultTests(unittest.TestCase):
     def test_insufficient_answered_by_oracle_fails_naming_the_entry(self):
         """The oracle gave no answer on an INSUFFICIENT entry, so ORACLE
         cannot hold its adopted default."""
-        ledger = _LEDGER_PASS.replace("**Answered by:** USER",
+        ledger = _LEDGER_PASS.replace("**Answered by:** ASSUMPTION",
                                       "**Answered by:** ORACLE")
         result = run.judge_oracle_default(_plan(ledger), 0, 0)
         self.assertFalse(result.passed)
@@ -1302,11 +1302,24 @@ class JudgeOracleDefaultTests(unittest.TestCase):
         self.assertIn("Q1", result.failure)
         self.assertIn("'ORACLE'", result.failure)
 
+    def test_insufficient_answered_by_user_fails_naming_the_entry(self):
+        """A session's own default is an ASSUMPTION, never a person's
+        answer, so USER no longer holds it."""
+        ledger = _LEDGER_PASS.replace("**Answered by:** ASSUMPTION",
+                                      "**Answered by:** USER")
+        result = run.judge_oracle_default(_plan(ledger), 0, 0)
+        self.assertFalse(result.passed)
+        self.assertTrue(result.failure.startswith("adopted answer:"),
+                        result.failure)
+        self.assertIn("Q1", result.failure)
+        self.assertIn("'USER'", result.failure)
+        self.assertIn("ASSUMPTION", result.failure)
+
     def test_backticked_fields_are_read(self):
         ledger = (_LEDGER_PASS
                   .replace("**Verdict:** INSUFFICIENT",
                            "**Verdict:** `INSUFFICIENT`")
-                  .replace("**Answered by:** USER", "**Answered by:** `USER`"))
+                  .replace("**Answered by:** ASSUMPTION", "**Answered by:** `ASSUMPTION`"))
         result = run.judge_oracle_default(_plan(ledger), 0, 0)
         self.assertTrue(result.passed, result.failure)
 
@@ -1378,7 +1391,7 @@ class GradeOracleDefaultTests(TmpPathTestCase):
         _write_change(scratch, "demo", status="ready")
         change_dir = os.path.join(scratch, ".shipd", "planned", "demo")
         _add_ledger(change_dir, _LEDGER_PASS.replace(
-            "**Answered by:** USER", "**Answered by:** PLANNER"))
+            "**Answered by:** ASSUMPTION", "**Answered by:** PLANNER"))
         result = run.grade_oracle_default(scratch, host_repo=REPO_ROOT)
         self.assertFalse(result.passed)
         self.assertIn("spec_gate", result.failure)

@@ -1,0 +1,15 @@
+{
+  "note": "Files and ## headings that external loaders read by name. Renaming or removing one breaks a loader outside this repo; update this manifest and tell the loader's owner in the same change. See AGENTS.md, 'External loaders'.",
+  "files": [
+    {
+      "path": "skills/ask/references/headless.md",
+      "loader": "shipd-factory shipd-run",
+      "headings": [
+        "Codebase first",
+        "Oracle next",
+        "Default last",
+        "Never a dialog"
+      ]
+    }
+  ]
+}
