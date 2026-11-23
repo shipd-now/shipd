@@ -6,13 +6,13 @@ Some decisions do not live in the codebase. Which retention window? Which
 naming convention? Which of two defensible layouts does this team use?
 Settling one used to mean interrupting a human.
 
-The **oracle** is the rung in between. It is an inline consultation, not an
+The **oracle** is the rung in between, and [What is shipd?](what-is-shipd.md)
+shows where it sits in the workflow. It is an inline consultation, not an
 agent. The caller shapes one compact decision — the decision, its options, and
-your recommended default. It runs one engine call, `spec_status.py
-oracle-lookup`, which searches the durable knowledge the workspace already
-holds and prints cited snippets. The caller then judges that output under the
-oracle contract (`plugins/s/skills/ask/references/oracle-contract.md`). It
-reaches one of exactly two verdicts: a cited recommendation, or an admission
+your recommended default. It runs one engine call, `oracle-lookup`, which
+searches the durable knowledge the workspace already holds and prints cited
+snippets. The caller then judges that output under the oracle contract
+(`plugins/s/skills/ask/references/oracle-contract.md`). It reaches one of exactly two verdicts: a cited recommendation, or an admission
 that nobody has decided this yet.
 
 A consultation costs under 5K tokens, because no agent spawns and no
@@ -55,12 +55,45 @@ writes anything, and only the durable kind settles into the store (see
 verified build's teacher drains the answered entries into proper wiki pages
 on its own. `/s:teach` remains the full sweep.
 
-## The two verdicts
+## When to use it
+
+Run `/s:ask` when a decision does not live in the codebase, and before you
+interrupt a person to settle it. The skill puts the oracle's verdict in front
+of you, and asks you only when the oracle has no answer.
+
+`/s:plan` consults the oracle by itself, so a planning run needs no `/s:ask`.
+
+Never ask the oracle what reading the repository answers. The read rung comes
+first, and a discoverable fact never climbs the ladder.
+
+## How to run it
+
+```
+/s:ask should the queue prune answered entries, and after how long?
+```
+
+The skill shapes your request into a compact question, runs `oracle-lookup`,
+judges the output itself, and relays the verdict. It opens no interview round.
+
+On an advisory `ANSWER` it puts the decision to you, with the oracle's position
+recommended first and cited, rather than treating it as settled. On
+`INSUFFICIENT` it asks you the question in a single dialog, listing the
+oracle's recommendation first. It then distills your reply, classifies it, and
+writes a keepable answer back to the queued entry. The next caller to hit that
+decision gets an `ANSWER`.
+
+`/s:plan` consults the same rung automatically before any question round it
+would otherwise open. It puts your typed answers through the same
+classification. You never invoke the oracle there; you simply get asked less.
+
+## Reference
+
+### The two verdicts
 
 The verdict always opens with a first line of exactly `ANSWER` or
 `INSUFFICIENT`. Callers branch on that line mechanically.
 
-### `ANSWER` — somebody already decided this
+#### `ANSWER` — somebody already decided this
 
 ```
 ANSWER
@@ -84,7 +117,7 @@ A repo artifact cites as `verified/<capability>`, `epic/<slug>`, or
 personal memory page `(personal)`, a page from an enclosing workspace
 `(inherited <ws-root>)`, and one from a base store `(base)`.
 
-#### The advisory variant
+##### The advisory variant
 
 Not everything the oracle knows is a rule. Workflow shortcuts, process habits,
 and personal preferences reach the store only on your express instruction, as
@@ -113,7 +146,7 @@ keystroke. Nothing settles behind your back on a preference you once expressed.
 An `ANSWER` with **no** `Authority:` line is binding, as before. Somebody made
 the decision, the citation says where, and the oracle never asks you again.
 
-### `INSUFFICIENT` — nobody has decided this yet
+#### `INSUFFICIENT` — nobody has decided this yet
 
 ```
 INSUFFICIENT
@@ -129,11 +162,12 @@ from there. `/s:ask` puts it to you in a dialog. `/s:plan` folds it into its
 question round. An unattended autopilot run parks on the recommendation rather
 than blocking.
 
-When the repo has no discoverable workspace, the line reads `Queued: none`. No
-store exists to file the question in, so an answer you give holds for that
+When the repo has no discoverable [workspace](workspaces.md), the line reads
+`Queued: none`. The workspace holds the wiki store the oracle reads and queues
+into. No store exists to file the question in, so an answer you give holds for that
 session only, and nothing durable lands.
 
-## The bar: definitive evidence, or nothing
+### The bar: definitive evidence, or nothing
 
 **`INSUFFICIENT` is the default verdict.** The oracle is a retrieval rung,
 not a consultant, and it speaks only for what its sources actually say:
@@ -153,27 +187,7 @@ demotion costs one question. A confident guess costs a wrong decision.
 So a thin wiki produces many `INSUFFICIENT` verdicts, by design. Each one you
 answer with a durable position thickens the store.
 
-## Using it directly
-
-```
-/s:ask should the queue prune answered entries, and after how long?
-```
-
-The skill shapes your request into a compact question, runs `oracle-lookup`,
-judges the output itself, and relays the verdict. It opens no interview round.
-
-On an advisory `ANSWER` it puts the decision to you, with the oracle's position
-recommended first and cited, rather than treating it as settled. On
-`INSUFFICIENT` it asks you the question in a single dialog, listing the
-oracle's recommendation first. It then distills your reply, classifies it, and
-writes a keepable answer back to the queued entry. The next caller to hit that
-decision gets an `ANSWER`.
-
-`/s:plan` consults the same rung automatically before any question round it
-would otherwise open. It puts your typed answers through the same
-classification. You never invoke the oracle there; you simply get asked less.
-
-## What gets captured
+### What gets captured
 
 The capture path classifies your typed answer **before any queue write**. The
 queue is a pending-only worklist, and the wiki is standing knowledge. A one-off
@@ -206,31 +220,22 @@ left unaddressed, the block goes the way of an excluded one. What lands this
 way is exactly what comes back later carrying `Authority: advisory`:
 recommended, never forced.
 
-For a preference about you rather than about the workspace, `/s:remember` and
-the personal memory store are usually the better home.
+A preference about you, rather than about the workspace, belongs in
+[personal memory](memory.md).
 
 A borderline answer leans toward the *less*-capturing tier. An answer left
 uncaptured costs one future question; one captured wrongly silently steers
 work. Where the verdict reported `Queued: none`, no store exists to write to at
 all: your answer holds for that session, and nothing durable lands.
 
-## Correcting an answer
+### Correcting an answer
 
 The capture path writes an answer **once**. `wiki-queue-answer` refuses a block
 that already carries an answer, so nothing silently overwrites what a human
 said.
 
-Corrections go through **`/s:teach`**. A verified build also distills answered
-entries into pages, but only `/s:teach` corrects them. Run it to drain any
-answered entries left in the queue, then edit the decision on the page. A page outranks a raw queue entry on the oracle's ladder, so
-future lookups cite the corrected page. During planning, the same path appears
-per consultation as `/s:teach <change> Q<n>`.
+Corrections go through **`/s:teach`**; [the wiki](wiki.md#correct-an-answer)
+gives the steps.
 
 A typed answer always supersedes the oracle. You are the final authority, and
 the wiki merely caches your standing answer.
-
-## See also
-
-- [What is shipd?](what-is-shipd.md) — where the oracle sits in the workflow.
-- [Workspaces](workspaces.md) — the workspace that holds the wiki store the
-  oracle reads and queues into.
