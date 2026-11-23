@@ -300,8 +300,9 @@ def _strip_question_fields(text):
     """Return ``text`` without the ``**Question:**`` field of every
     ``## Questions and answers`` entry, so a question that quotes a
     placeholder word does not fire check (2). The field is the text after its
-    label up to the next ``**Name:**`` token — on the same line or a later
-    field line — plus its indented continuation lines. An unindented prose
+    label up to the next ``**Name:**`` token — on the same line, an indented
+    continuation line or a later field line — plus its indented continuation
+    lines. An unindented prose
     line after the question, and any other field, stays scanned. Text outside
     the section is untouched."""
     out = []
@@ -322,6 +323,10 @@ def _strip_question_fields(text):
                         skipping = False
                     continue
             elif skipping and line[:1] in (" ", "\t") and line.strip():
+                token = INLINE_FIELD_RE.search(line)
+                if token:
+                    out.append(line[token.start():])
+                    skipping = False
                 continue
             else:
                 skipping = False

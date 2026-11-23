@@ -360,6 +360,13 @@ class QuestionFieldPlaceholderTest(SpecGateTestBase):
         self.assertEqual(r.returncode, 2, self.out(r))
         self.assertIn("placeholder marker 'TBD'", self.read_plan("feat"))
 
+    def test_answer_on_a_wrapped_question_line_is_still_scanned(self):
+        self._plan_with(self._entry(
+            1, question="Which option?\n  more text **Answer:** TBD"))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("placeholder marker 'TBD'", self.read_plan("feat"))
+
     def test_unindented_prose_after_a_question_is_still_scanned(self):
         self._plan_with(self._entry(
             1, question="Which option?\nTODO: decide this later."))
