@@ -39,7 +39,7 @@ Each mode reports every other member state and leaves that member alone.
    and skipped. A shipped member carries its full pull request URL. A parked
    member carries its reason and a resume pointer.
 
-To watch the run live, run `shipd board --epic <epic>` from another terminal.
+To watch the run live, run [`shipd board --epic <epic>`](build.md) from another terminal.
 The board is read-only and never touches the run.
 
 ### One member's path
@@ -96,7 +96,7 @@ A member parks for one of these reasons:
 - `replan-failed` — the re-plan after a `revise` verdict did not pass.
 
 The recovery for a `gate-rejected` or `replan-failed` member is
-`/s:plan <member>`. The [Customising shipd](customise.md) page owns the
+[`/s:plan <member>`](plan.md). The [Customising shipd](customise.md) page owns the
 stage configuration of the pipeline.
 
 See also:

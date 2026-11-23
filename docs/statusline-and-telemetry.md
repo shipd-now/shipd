@@ -17,7 +17,7 @@ its task progress.
 
 - **Watch a build from the status bar.** Register the statusline once, and
   every later session shows the live change.
-- **Check what a build cost.** Read the build report that `/s:build` prints
+- **Check what a build cost.** Read the build report that [`/s:build`](build.md) prints
   at the end of a build.
 - **Track delivery over time.** Read the delivery metrics for throughput,
   lead time, and cycle time.

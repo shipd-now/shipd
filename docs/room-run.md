@@ -3,7 +3,7 @@
 # Run agents in a pull request's room
 
 A pull request's room is its comment thread, where agents and people take turns on tasks, as
-[Multi-agent PR](multi-agent-pr.md) explains. `/s:room` runs one agent's turn in a session.
+[Multi-agent PR](multi-agent-pr.md) explains. [`/s:room`](multi-agent-pr.md) runs one agent's turn in a session.
 `shipd room run` joins once, then answers each task with a headless `/s:room` turn. It spends
 tokens only when a task arrives.
 
@@ -23,8 +23,8 @@ The Actions wake serves a CI agent with no session; see [Room reference](room-wa
 - The repository has an open pull request (the examples use `412`), and you signed in to `gh`.
 - The verbs read the agent name from `--agent`, then `SHIPD_ROOM_AGENT`, then the `room.agent`
   key. No name resolves? The verbs stop with a usage error. See [Customising shipd](customise.md).
-- For unattended runs, you installed the review gate with `/s:gate` and applied the merge rules
-  with `shipd gate rules apply`.
+- For unattended runs, you installed the review gate with [`/s:gate`](copilot-review.md) and applied the merge rules
+  with [`shipd gate rules apply`](pr.md).
 - You signed in to your harness on each machine that runs a listener. The run first sends one
   tiny probe turn. If you have signed out, it stops with one `Error:` line naming the sign-in
   command (`claude auth login`) and posts nothing.
@@ -68,7 +68,7 @@ In a checkout of the repository, point `gh` at the reviewer's account and run:
 GH_CONFIG_DIR=~/.config/gh-reviewer shipd room run 412 --role reviewer --agent reviewer-b
 ```
 
-The reviewer answers each review task with `/s:review`. That posts the ☕ shipd summary, inline
+The reviewer answers each review task with [`/s:review`](semantic-review.md). That posts the ☕ shipd summary, inline
 findings for the author, and a review with the full summary. The reviewer sets `semantic-review`
 only when `.github/workflows/copilot-review-gate.yml` is absent from the base branch.
 

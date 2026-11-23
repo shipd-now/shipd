@@ -7,7 +7,7 @@ pass. It asks every human decision in one final round, then gates the plans
 together. You run it as `/s:epic-grill <epic>`.
 
 The grill never builds, never opens a pull request, and never edits the epic.
-Its hand-off is `/s:autopilot <epic>`.
+Its hand-off is [`/s:autopilot <epic>`](autopilot.md).
 
 ## When to use it
 
@@ -27,7 +27,7 @@ The grill selects two kinds of member:
 An interrupted grill leaves its planned members at `draft`. A second run of
 `/s:epic-grill <epic>` selects them again, so it resumes the first run.
 
-To plan one member on its own, use `/s:plan <member>` instead.
+To plan one member on its own, use [`/s:plan <member>`](plan.md) instead.
 
 ## How to run it
 
@@ -47,7 +47,7 @@ To plan one member on its own, use `/s:plan <member>` instead.
    line, such as `1a 2b`. An empty agenda asks nothing.
 5. **Amend and gate.** The grill edits each plan to state your answer, then
    gates every member. A member reaches `ready` only through the gate. An
-   answer that binds every member gets a flag for `/s:epic <epic> amend`.
+   answer that binds every member gets a flag for [`/s:epic <epic> amend`](epics.md).
 6. **Risk report.** The grill scores each member on the risk rubric and
    prints one table row per member. A member scored `medium` or `high` draws
    a `/s:plan-deep <epic> <member>` suggestion.

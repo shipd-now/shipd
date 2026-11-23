@@ -15,7 +15,7 @@ authors and registers them for you.
 ## When to use it
 
 - **Start a change.** Create its worktree, then run the whole lifecycle —
-  `/s:plan`, `/s:build`, merge and archive — inside it.
+  [`/s:plan`](plan.md), [`/s:build`](build.md), merge and archive — inside it.
 - **Set up every new worktree the same way.** Register a hook once, and every
   later create runs it.
 - **Clean up after a merge.** Remove the merged worktree, and reclaim the

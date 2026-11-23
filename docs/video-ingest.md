@@ -8,7 +8,7 @@ intent also cites the frame that was on screen when those words were spoken.
 
 The engine installs the brief under the content directory's `video/` folder,
 at `video/<slug>/brief.md`. An epic links the brief from its `## Video`
-section, and `/s:epic` reads it as context. A plan reads the brief the same
+section, and [`/s:epic`](epics.md) reads it as context. A plan reads the brief the same
 way.
 
 `/s:video-ingest` stages the recording, grounds the intents, installs the
@@ -20,7 +20,7 @@ Run `/s:video-ingest` when someone recorded their feedback instead of writing
 it: a walkthrough of a screen, with spoken requests for changes. The brief
 turns that recording into intents a planner can act on.
 
-`/s:plan` also accepts a recording directly; [Plan a change](plan.md) covers
+[`/s:plan`](plan.md) also accepts a recording directly; [Plan a change](plan.md) covers
 that path.
 
 ## How to run it

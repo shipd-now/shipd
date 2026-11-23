@@ -117,7 +117,7 @@ rulebook keeps loading.
 Matching is deliberately shallow: one regex against one added line. The hook
 does no multi-line matching and no AST analysis. Guardrails catch textual
 tells — a comment shape, a banned call, a stray marker — not structural
-problems. Those belong to `/s:review`.
+problems. Those belong to [`/s:review`](semantic-review.md).
 
 ### Sources
 

@@ -18,7 +18,7 @@ then names the brief it delivers against.
 A brief lives in the workspace, not in the repository. Its path is
 `initiatives/<slug>/brief.md` under the workspace's content directory. Every
 verb needs a discoverable workspace. When no workspace exists, the verb
-writes nothing. Set one up first with `/s:workspace init`, as
+writes nothing. Set one up first with [`/s:workspace init`](workspaces.md), as
 [Workspaces](workspaces.md) describes.
 
 A brief has this shape:
@@ -73,7 +73,7 @@ request.
 - An epic carries exactly one initiative. A second `set` replaces the first.
 - A member change derives its initiative through its epic.
 - `set` refuses a member change. It names the epic to attach instead.
-- A standalone change carries its own `Initiative:` line, which `/s:plan`
+- A standalone change carries its own `Initiative:` line, which [`/s:plan`](plan.md)
   writes.
 
 To write the epic itself, see [Epics](epics.md).

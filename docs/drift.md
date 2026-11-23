@@ -24,7 +24,7 @@ Run `/s:drift` when a plan has waited a while since its gate. Typical cases:
 You do not need to run it before an autopilot run. Autopilot runs the same
 check before each member's build. See [Autopilot](autopilot.md).
 
-`/s:build` runs a separate check at its start, which the
+[`/s:build`](build.md) runs a separate check at its start, which the
 [supersession gate](supersession-gate.md) page owns.
 
 ## How to run it

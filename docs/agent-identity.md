@@ -14,7 +14,7 @@ room itself.
 ## When to use it
 
 - Before a reviewer agent approves a pull request.
-- Before a `shipd room run` with role `reviewer` or `ci`.
+- Before a [`shipd room run`](room-run.md) with role `reviewer` or `ci`.
 
 The reviewer role needs an account other than the author's. A reviewer or
 `ci` run on the author's own account exits `1` with one `Error:` line and
@@ -86,7 +86,7 @@ repository; see [Review claims](room-review-claims.md).
    ignoring case. A GitHub App's `app/<slug>` and `<slug>[bot]` count as one
    account.
 
-The `/s:room` skill runs `whoami` before every approving review and stops on
+The [`/s:room`](multi-agent-pr.md) skill runs `whoami` before every approving review and stops on
 the error. `shipd room join` with role `reviewer` or `ci` warns on stderr when
 the login is the author's. It still joins.
 

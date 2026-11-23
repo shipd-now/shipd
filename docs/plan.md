@@ -16,7 +16,7 @@ pull request. `/s:plan` stops before anyone writes code.
 - **`/s:plan`** — for one buildable change, scoped and understood.
 - **`/s:plan-deep`** — for a planned change, or an epic's members, whose
   riskiest pieces you want to walk one step at a time before the build.
-- **`/s:epic`** — for a feature that spans several independent changes.
+- **[`/s:epic`](epics.md)** — for a feature that spans several independent changes.
 
 Unsure the idea holds up? Talk it through with the [rubber duck](duck.md)
 first. Still unsure of the problem or its users? Write a [PRD](prd.md) first.
@@ -50,7 +50,7 @@ The skill runs these steps:
    build. A pass promotes the change to `ready`. A failure parks it at
    `rejected`.
 8. **Hand off.** It summarizes the change, motivation first, and prints
-   `/s:build` alone on its last line.
+   [`/s:build`](build.md) alone on its last line.
 
 The argument can also carry input beyond a text request:
 
@@ -93,7 +93,7 @@ Each flagged piece gets one step: keep it, change it, research it with
 `plan.md`, delta specs, and `tasks.md` in place, then re-gates the change.
 
 A single change ends with `/s:build`. An epic ends with the launch preflight,
-and prints `/s:autopilot <epic>` only when the preflight passes.
+and prints [`/s:autopilot <epic>`](autopilot.md) only when the preflight passes.
 
 ## Reference
 

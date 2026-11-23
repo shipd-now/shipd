@@ -15,7 +15,7 @@ It ends with a report and ships nothing.
 - You suspect the spec itself is wrong, and want a diagnosis before you plan
   a change.
 
-Use `/s:plan` instead when you already know the documented behaviour must
+Use [`/s:plan`](plan.md) instead when you already know the documented behaviour must
 change. Use [Build a change](build.md) to ship planned work.
 
 ## How to run it

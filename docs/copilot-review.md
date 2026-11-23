@@ -23,7 +23,7 @@ GitHub Copilot agent skill that `shipd copilot` installs. A gate workflow turns 
 
 **In a Claude Code session, `/s:gate` runs this whole guide for you.** It preflights the
 prerequisites, runs `shipd copilot add`, and offers to commit and push. It then takes one consent
-round for the settings, relays the token recipe, and verifies with `shipd doctor`.
+round for the settings, relays the token recipe, and verifies with [`shipd doctor`](doctor.md).
 
 ### 1. Install the files
 

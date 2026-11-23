@@ -49,8 +49,8 @@ Use a workspace when one job touches several repos, and its knowledge must trave
 | [Getting started](workspaces/getting-started.md) | Machine setup, creating a job workspace, checking it into git, loading it elsewhere, and the day-to-day verbs. | `shipd workspace init myapp --git` |
 | [The member map and workspace discovery](workspaces/member-map.md) | Mapping a member to a checkout you already have, and resolving the workspace from outside it. | `shipd workspace` |
 | [Nesting job workspaces](workspaces/nesting.md) | Filing a job workspace beneath a base one, so it inherits the base's knowledge. | `shipd workspace init ~/workspaces/acme-base/myapp --nested --git` |
-| [External stores](workspaces/external-stores.md) | Relocating a repo's shipd artifacts into an external store with `store_root`. | `shipd config` |
-| [Sharing a workspace with a team](workspaces/teams.md) | Several engineers on one workspace repo, the nested team layout, the hooks consent gate, and conflict surfaces. | `shipd doctor` |
+| [External stores](workspaces/external-stores.md) | Relocating a repo's shipd artifacts into an external store with `store_root`. | [`shipd config`](customise.md) |
+| [Sharing a workspace with a team](workspaces/teams.md) | Several engineers on one workspace repo, the nested team layout, the hooks consent gate, and conflict surfaces. | [`shipd doctor`](doctor.md) |
 | [Headless consumers](workspaces/headless.md) | The minimal footprint a CI job, bot, or cloud agent needs to read a workspace. | `python3 <plugin>/skills/build/scripts/spec_status.py --root /tmp/ws workspace-show` |
 
 | verb | what it does |

@@ -52,7 +52,7 @@ job shadows the base's copy, and the engine copies nothing.
 beside the code is a PRD no other project can read. So the engine refuses to
 write one when no ancestor `.shipd-config.json` declares a workspace. `/s:prd`
 stops at that refusal rather than inventing a home. Run
-`shipd workspace init <name> --git` first.
+[`shipd workspace init <name> --git`](workspaces.md) first.
 
 **A PRD is standalone.** It needs no initiative and no epic, ever. Epics cite
 the PRD rather than the other way round, so a PRD holds no list of its epics.
@@ -68,7 +68,7 @@ success measure, before anyone decomposes the feature. The PRD records that
 thinking so every project in the workspace reads the same answer.
 
 Skip the PRD once the team has settled those three answers. Go straight to
-`/s:epic` to decompose a feature, or to `/s:plan` for a single change.
+[`/s:epic`](epics.md) to decompose a feature, or to [`/s:plan`](plan.md) for a single change.
 
 ## How to run it
 

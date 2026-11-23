@@ -108,7 +108,7 @@ The setup of the review gate lives on
 | `warn textual`, not importable | The `pip install` command the finding's own detail names. |
 | `warn difft`, not on `PATH` | The review engine's installer for `difft`. It may reach the network. |
 | `warn snapshot`, a newer version installed | `claude plugin update s@shipd`, applied in a new session. |
-| `warn statusline`, not registered | `shipd statusline install`, shown in a new session. |
+| `warn statusline`, not registered | [`shipd statusline install`](statusline-and-telemetry.md), shown in a new session. |
 | `warn gh`, not on `PATH` | The platform's install command, such as `brew install gh`. |
 | `fail git`, not on `PATH` | The platform's install command, such as `brew install git`. |
 | `warn protection`, branch not protected | A minimal protection that requires `semantic-review`. |

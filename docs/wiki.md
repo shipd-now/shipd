@@ -22,7 +22,7 @@ Run `/s:teach` for any of three jobs:
 - **Correct a standing answer.** Replace a recorded position that no longer
   holds.
 
-You rarely need a sweep after every build. Right after `/s:build` marks a
+You rarely need a sweep after every build. Right after [`/s:build`](build.md) marks a
 change `verified`, the teacher agent distils that one change into the workspace
 store. The teacher runs no interview and touches at most five pages. It skips
 a repo-local fallback store. `/s:teach` stays the full sweep.
@@ -65,7 +65,7 @@ runs these steps:
    write. The write runs the wiki lint and restores the store on any finding.
 
 When the repository has neither a workspace nor a content directory, the skill
-stops and names both. `/s:init wiki` scaffolds a store for that repository.
+stops and names both. [`/s:init wiki`](customise.md) scaffolds a store for that repository.
 
 ### Correct an answer
 
@@ -86,7 +86,7 @@ The skill skips the sweep and runs these steps:
 The skill reads a merged change's plan too. When the change or the `Q<n>` entry
 does not exist, the skill reports that and writes nothing.
 
-During planning, `/s:plan` names this form for each oracle consultation it
+During planning, [`/s:plan`](plan.md) names this form for each oracle consultation it
 records.
 
 ### Promote to a base store

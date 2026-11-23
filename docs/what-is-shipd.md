@@ -13,8 +13,8 @@ A deterministic context gate must pass before implementation starts. The
 spec, not the chat transcript, is the single source of context every agent
 works from. That is why "what got built" and "what you asked for" are the
 same document, checked into your repository.
-[Getting started](getting-started.md) walks you through that loop on your
-first change.
+[Your first change](getting-started.md) walks you through that loop on your
+first change, and [Core ideas](core-ideas.md) defines the terms.
 
 Around that core loop, shipd runs the whole delivery lifecycle. An
 orchestrator on the strongest model plans and designs the change. Execution
@@ -56,7 +56,7 @@ flowchart TD
         validator["Adversarial validator<br/>refutes every scenario"]
     end
 
-    subgraph ship [Ship]
+    subgraph ship [Review and merge]
         review["Semantic review gate<br/>+ CI"]
         pr["Auto-merged PR<br/>one change · one branch"]
     end

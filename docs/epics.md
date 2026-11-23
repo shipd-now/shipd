@@ -18,7 +18,7 @@ Use an epic when one feature needs more than one change. Typical signs:
 - the work splits along clear seams into separate pull requests;
 - several changes must obey the same architectural choice.
 
-A feature that fits in one change needs no epic. Plan it with `/s:plan`.
+A feature that fits in one change needs no epic. Plan it with [`/s:plan`](plan.md).
 
 ### The epic artifact
 
@@ -57,7 +57,7 @@ An epic carries one of four statuses:
 7. The skill ships the epic as a pull request and prints its URL.
 
 `/s:epic` never plans a member. Plan each member with `/s:plan <member>`, or
-plan every member in one pass with `/s:epic-grill <epic>`. See
+plan every member in one pass with [`/s:epic-grill <epic>`](epic-grill.md). See
 [Epic grill](epic-grill.md).
 
 ### Amend a live epic
@@ -99,7 +99,7 @@ Attach the epic to an outcome brief with [Initiatives](initiatives.md).
 | `shipd epic <slug>` | Prints an epic's status, metadata, and member states. |
 | `shipd list epics` | Lists every epic across the root and its worktrees. |
 | `shipd lint --epic <slug>` | Checks the structure of one epic. |
-| `shipd board --epic <slug>` | Shows the delivery board for one epic. |
+| [`shipd board --epic <slug>`](build.md) | Shows the delivery board for one epic. |
 
 See also:
 

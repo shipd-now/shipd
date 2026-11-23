@@ -8,7 +8,7 @@ points at a source that `/s:research` actually fetched from the web.
 
 The report is a standalone artifact. The engine installs it under the content
 directory's `research/` folder, at `research/<slug>/report.md`. An epic links
-the report from its `## Research` section, and `/s:epic` reads it as context
+the report from its `## Research` section, and [`/s:epic`](epics.md) reads it as context
 it need not derive again.
 
 `/s:research` searches, composes, installs, and stops. It never plans or

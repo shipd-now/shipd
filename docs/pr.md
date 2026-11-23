@@ -10,7 +10,7 @@ and `shipd gate rules` writes that ruleset from your configuration.
 
 ## When to use it
 
-`/s:build` and `/s:autopilot` open the pull request themselves, so a built change needs no extra
+[`/s:build`](build.md) and [`/s:autopilot`](autopilot.md) open the pull request themselves, so a built change needs no extra
 step. Run the commands on this page by hand in these cases:
 
 - Run `/s:pr` on a pushed branch that has no pull request yet.
@@ -89,8 +89,8 @@ needs before it merges. `shipd gate rules` compares that key with the ruleset on
 
 Applying needs admin permission on the repository. A refusal names the missing admin permission.
 
-`/s:gate` offers the apply step in its consent round, beside the preview from bare
-`shipd gate rules`. Afterwards, `shipd doctor` reports drift between the configuration and the
+[`/s:gate`](copilot-review.md) offers the apply step in its consent round, beside the preview from bare
+`shipd gate rules`. Afterwards, [`shipd doctor`](doctor.md) reports drift between the configuration and the
 ruleset on its `merge-rules` line.
 
 ## Reference
