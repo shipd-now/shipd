@@ -1590,7 +1590,7 @@ the pre-build step, then the member SHALL park as `needs-human` at stage
 `dependency` with the check's error as the reason and no session id. Where
 `store_root` is declared, an unmerged-dependency reason SHALL also name the
 store's repository. The stores guide
-(`docs/workspaces/nesting-and-stores.md`) SHALL state that dependents
+(`docs/workspaces/external-stores.md`) SHALL state that dependents
 release once the store repository's base branch carries the completed
 entry.
 
@@ -1634,7 +1634,7 @@ entry.
   the check, and a failing fetch does not park the member
 
 #### Scenario: The stores guide names the dependency rule
-- **WHEN** `docs/workspaces/nesting-and-stores.md` is read
+- **WHEN** `docs/workspaces/external-stores.md` is read
 - **THEN** it states that an `After` dependency releases once the store
   repository's base branch carries the completed entry
 

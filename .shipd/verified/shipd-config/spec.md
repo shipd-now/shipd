@@ -744,7 +744,7 @@ and no derivation step SHALL touch the network.
 - **THEN** they resolve to distinct store paths
 
 #### Scenario: The stores guide documents the derivation
-- **WHEN** `docs/workspaces/nesting-and-stores.md` is read
+- **WHEN** `docs/workspaces/external-stores.md` is read
 - **THEN** its per-repo folder naming section states the registry-path
   derivation and the basename fallback, and its basename-collision limitation is
   scoped to repositories no registry declares

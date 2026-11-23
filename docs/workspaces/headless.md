@@ -8,7 +8,14 @@ Read a workspace from something that is not a Claude session — a CI job, a
 chat bot, a cloud agent. This page names the whole footprint and what a
 headless read guarantees.
 
-## The footprint
+## When to use it
+
+Use this page when a CI job, a bot, or a cloud agent must read a workspace. That reader has no
+members and no machine config.
+
+## How to run it
+
+### The footprint
 
 A headless consumer needs three things:
 
@@ -26,7 +33,7 @@ that every other page of the guide uses. A headless consumer carries a bare
 clone and a plugin checkout, with no binary on its `PATH`. The script run in
 place *is* the contract.
 
-## Run a read
+### Run a read
 
 Run the verbs from inside the clone, or point at the clone from anywhere with
 the top-level `--root`:
@@ -38,7 +45,9 @@ python3 <plugin>/skills/build/scripts/spec_status.py --root /tmp/ws workspace-sh
 
 `<plugin>` is `plugins/s` in a shipd checkout, or the installed plugin root.
 
-## What a headless read guarantees
+## Reference
+
+### What a headless read guarantees
 
 **Discovery needs nothing but the config file.** The engine finds the
 workspace by walking upward for a `.shipd-config.json` that declares

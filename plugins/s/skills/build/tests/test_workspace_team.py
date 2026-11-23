@@ -514,8 +514,8 @@ class WorkspaceTeamVerbTests(WorkspaceTeamTestBase):
 class WorkspaceGuideDriftTests(unittest.TestCase):
     """A doc convention is real only when a test can refuse its violation
     (plan.md Q3, oracle-answered) — the workspaces guide presents exactly one
-    blessed team shape, `teams.md` and `multi-workspace-repos.md` both name
-    the wizard, and every page stays within its doc-type line cap."""
+    blessed team shape, `teams.md` names the wizard, and every page stays
+    within its doc-type line cap."""
 
     # Phrasing the removed sibling-workspaces shape used to use — none of it
     # may survive in the guide once the nested shape is the only one
@@ -549,10 +549,18 @@ class WorkspaceGuideDriftTests(unittest.TestCase):
                     "%s still mentions the removed sibling shape (%r)"
                     % (path, phrase))
 
-    def test_teams_and_multi_workspace_repos_name_the_team_verb(self):
-        for name in ("teams.md", "multi-workspace-repos.md"):
-            path = os.path.join(WORKSPACES_DOCS_DIR, name)
-            self.assertIn("shipd workspace team", self.read(path), path)
+    def test_teams_page_names_the_team_verb(self):
+        path = os.path.join(WORKSPACES_DOCS_DIR, "teams.md")
+        self.assertIn("shipd workspace team", self.read(path), path)
+
+    def test_part_pages_are_the_six_named(self):
+        names = sorted(
+            name for name in os.listdir(WORKSPACES_DOCS_DIR)
+            if name.endswith(".md"))
+        self.assertEqual(
+            names,
+            ["external-stores.md", "getting-started.md", "headless.md",
+             "member-map.md", "nesting.md", "teams.md"])
 
     def test_every_guide_page_stays_within_its_doc_type_cap(self):
         for path in self.guide_pages():

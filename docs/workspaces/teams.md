@@ -1,15 +1,11 @@
-<!-- doc-type: how-to -->
+<!-- doc-type: reference -->
 
 # Sharing a workspace with a team
 
 [← Workspaces](../workspaces.md)
 
 Nothing about a workspace repo is single-user. Any number of engineers clone
-the same one, through the load flow of [getting started](getting-started.md):
-
-```sh
-/s:workspace clone git@github.com:acme/myapp.git ~/workspaces/myapp
-```
+the same one, through the load flow of [getting started](getting-started.md).
 
 **Members are machine-local, always**. Each clone runs its own sync ladder and
 picks its own rung per member: a worktree, a `--reference` clone, or a full
@@ -34,7 +30,143 @@ block in `.gitignore` from the manifest's member paths, between
 clone with that manifest reconciles to the same block, so two machines running
 `shipd workspace sync --write-gitignore` produce no diff to fight over.
 
-## Inherited worktree hooks need your consent
+## When to use it
+
+- Several engineers work on one workspace: each joins the shared workspace
+  repo.
+- Several teams share one repository: build the nested team layout.
+- A group needs isolation: give it a workspace repository of its own.
+
+## How to run it
+
+### Join a shared workspace
+
+```sh
+/s:workspace clone git@github.com:acme/myapp.git ~/workspaces/myapp
+```
+
+The load flow of [getting started](getting-started.md) covers what the clone
+verb then does.
+
+### Build the team layout
+
+Build the layout with the guided wizard, run from inside the base workspace:
+
+```sh
+shipd workspace init ~/workspaces/acme-base --git
+cd ~/workspaces/acme-base
+shipd workspace team
+```
+
+`shipd workspace team` asks for one or more team names. For each team, it
+asks for repo paths, clone URLs, and any checkout you already have on this
+machine. It creates the team's folder, initializes a nested workspace,
+declares the repos, and maps the checkouts you named. The wizard reaches the
+network never — `shipd workspace sync` materializes members afterward, inside
+the team workspace that needs them.
+
+### Clone and use the team layout
+
+Clone the shared repo with plain `git clone` — it holds several workspaces,
+so the single-workspace `/s:workspace clone` verb is the wrong front door:
+
+```sh
+git clone git@github.com:acme/workspaces.git ~/workspaces/acme-base
+cd ~/workspaces/acme-base/myapp
+shipd workspace sync
+```
+
+`cd` into the team workspace you work in, and plan its materialization there.
+`shipd workspace sync` only prints the plan, so run `/s:workspace sync` in a
+Claude session to execute it. Sync reads only that team's own manifest. The
+teams you ignore stay unmaterialized, and cost nothing but their tracked
+manifest and wiki.
+
+`shipd workspace` reports the team's roster of projects and initiatives.
+`shipd board` covers every declared project's repos from the workspace root,
+and only the repos beneath the folder it runs from otherwise.
+
+## Reference
+
+### The team layout
+
+One repo can carry several team workspaces. The repo root is itself a
+workspace, the base. Each team gets a `--nested` workspace directly beneath
+it, which [nesting](nesting.md) describes.
+
+```
+~/workspaces/acme-base/           ← THE BASE WORKSPACE REPO — clone this
+  .shipd-config.json              ← the base manifest                        (tracked)
+  .shipd/wiki/                    ← knowledge every team below inherits      (tracked)
+  myapp/                          ← NESTED TEAM WORKSPACE
+    .shipd-config.json            ← this team's own manifest                 (tracked)
+    .gitignore                    ← this team's members block                (tracked)
+    .shipd/wiki/                  ← this team's own store — writes land here (tracked)
+    api/  web/                    ← this team's member repos                 (ignored)
+  billing-rollout/                ← ANOTHER NESTED TEAM WORKSPACE
+    .shipd-config.json            ← its own manifest                        (tracked)
+    .shipd/wiki/                  ← its own store, plus the base's by       (tracked)
+                                     inheritance
+    billing/  tasks/              ← its own member repos                    (ignored)
+```
+
+| | Base workspace | Each nested team workspace |
+|---|---|---|
+| **Manifest** (`.shipd-config.json`) | tracked, at the repo root | tracked, one per team folder |
+| **Wiki pages** (`.shipd/wiki/`) | tracked — every team below inherits it on read | tracked — writes land here, never at the base |
+| **Oracle queue** (`.shipd/wiki/queue.md`) | tracked — a question queued here is answerable only here | tracked — the team's own pending questions |
+| **Initiatives** (`.shipd/initiatives/`) | tracked, falls back to it when a team declares none | tracked, shadows the base's when declared |
+| **Member repos** | none — the base holds no members of its own | machine-local, held out by the team's members block |
+
+### What the layout costs
+
+Reads fall through to the base workspace, and every write lands in the
+nearest store, as [nesting](nesting.md) explains.
+
+The base wiki accumulates knowledge only from writes made **at the base**. A
+teammate teaching a page from inside `myapp/` writes it into `myapp`'s own
+store, never the base's. Run `/s:teach` from the base workspace to grow the
+knowledge every team inherits.
+
+The oracle queue splits the same way. A question queued at the base is
+answerable only from the base workspace, never from a nested team's own
+session. Queue a question there when every team should see its answer.
+
+### Enterprise guidance
+
+Take an enterprise with several engineering groups — `discovery` and
+`platform`, each holding three or four teams. They share repos the whole
+organization owns, with discipline codeowners approving every pull request.
+
+**One dedicated workspaces repository, itself a workspace, holding one
+`--nested` team workspace per team or group**. The repo root carries an
+organization-wide manifest and wiki. Each team's own folder is its own nested
+workspace, with its own manifest and wiki store.
+[Build the team layout](#build-the-team-layout) gives the wizard's commands.
+
+**Projects are systems, not teams**. The manifest forbids two projects
+claiming one repo path, and shared repos are exactly that: no team owns
+`api-core`. Declare projects along the seams your codeowners already draw. The
+`main-app` project takes the frontend and mobile repos, `api` the repos the
+backend discipline owns, and `infra` the deployment and platform repos. Two
+folders declaring the same `api-core` duplicate nothing: uniqueness holds per
+manifest, and each is that team's own view. A team is instead who works an
+**initiative** — a `Project:`-scoped brief every clone reads.
+
+**Nobody materializes everything**. The sync plan is advisory per member. An
+engineer who works three of the declared repos runs the commands for those
+three and skips the rest. An absent member draws a note, never an error. An
+engineer who already has a checkout elsewhere maps it instead of re-cloning,
+with [a member map](member-map.md) beside the manifest. The map is
+machine-local and never committed, so one layout never leaks into another.
+
+**A group whose knowledge must stay isolated gets its own repository**. Git
+has no per-directory permissions, so everyone who clones the workspaces repo
+reads every team folder in it. That includes the base wiki and every nested
+team's own store. Give that group a workspace repository of its own —
+**separate repos, not directories, are the isolation boundary.**
+
+### Inherited worktree hooks need your consent
 
 `post-worktree-scripts` resolve nearest-wins through the layered config, so a
 list in the workspace repo's tracked `.shipd-config.json` governs every member
@@ -68,7 +200,7 @@ full list still reaches the gate. Trust pins to the exact list, so any edit —
 a teammate's `git pull` included — re-arms the gate. Expect one prompt per
 shared list per machine, and one after every change to it.
 
-## Concurrency expectations
+### Concurrency expectations
 
 Every wiki write (`/s:teach`, a queued question, an answer, a discard)
 auto-commits **locally** under an exclusive lock. Concurrent writers land
@@ -96,55 +228,3 @@ at session end. Git — not shipd — reconciles whatever stays unsynced:
 `store_autocommit` turns off the local auto-commit; `store_sync` turns off
 the session-boundary hook's fetch, merge, and push. Both default `true`, and
 branching the workspace repo, or not, remains entirely your team's call.
-
-## An enterprise example: one workspaces repository
-
-Take an enterprise with several engineering groups — `discovery` and
-`platform`, each holding three or four teams. They share repos the whole
-organization owns, with discipline codeowners approving every pull request.
-
-**One dedicated workspaces repository, itself a workspace, holding one
-`--nested` team workspace per team or group**. The repo root carries an
-organization-wide manifest and wiki. Each team's own folder is its own nested
-workspace, with its own manifest and wiki store.
-[Practical examples](multi-workspace-repos.md) carries the layout's mechanics.
-Build it with the guided wizard, run from inside the base:
-
-```sh
-git clone git@github.com:acme/workspaces.git ~/workspaces/acme
-cd ~/workspaces/acme
-shipd workspace team
-```
-
-**Reads fall through, writes land nearest.** A team folder that declares no
-`projects` of its own inherits the base's; one that does shadows it instead.
-Every wiki write — `/s:teach`, a queued question, an answer — lands in the
-nearest store. That's a team's own when run from inside it, the base's only
-when run from the base itself. A question queued at the base is answerable
-only there.
-
-**Projects are systems, not teams**. The manifest forbids two projects
-claiming one repo path, and shared repos are exactly that: no team owns
-`api-core`. Declare projects along the seams your codeowners already draw. The
-`main-app` project takes the frontend and mobile repos, `api` the repos the
-backend discipline owns, and `infra` the deployment and platform repos. Two
-folders declaring the same `api-core` duplicate nothing: uniqueness holds per
-manifest, and each is that team's own view. A team is instead who works an
-**initiative** — a `Project:`-scoped brief every clone reads.
-
-**Nobody materializes everything**. The sync plan is advisory per member. An
-engineer who works three of the declared repos runs the commands for those
-three and skips the rest. An absent member draws a note, never an error. An
-engineer who already has a checkout elsewhere maps it instead of re-cloning,
-with [a member map](member-map.md) beside the manifest. The map is
-machine-local and never committed, so one layout never leaks into another.
-
-**A group whose knowledge must stay isolated gets its own repository**. Git
-has no per-directory permissions, so everyone who clones the workspaces repo
-reads every team folder in it. That includes the base wiki and every nested
-team's own store. Give that group a workspace repository of its own —
-**separate repos, not directories, are the isolation boundary.**
-
-Day to day, `shipd workspace` prints a team's roster and `shipd workspace sync`
-re-checks the members you use. `shipd board` covers every declared project's
-repos from the workspace root, and only those beneath the folder it runs from.

@@ -787,11 +787,10 @@ universes through this seam, never through a private reimplementation.
 - **THEN** it returns exactly `[(None, root)]`
 
 #### Scenario: The workspace docs state the folder rule
-- **WHEN** `docs/workspaces/teams.md` and
-  `docs/workspaces/multi-workspace-repos.md` are read
-- **THEN** each states that `shipd board` covers every declared project's
+- **WHEN** `docs/workspaces/teams.md` is read
+- **THEN** it states that `shipd board` covers every declared project's
   repos from the workspace root and only the repos beneath the folder it runs
-  from otherwise, and each stays within its how-to line cap
+  from otherwise, and it stays within the line cap of its doc type
 
 ### Requirement: Workspaces guide
 id: workspaces-doc
@@ -799,18 +798,39 @@ id: workspaces-doc
 The repository SHALL provide the workspaces guide as an index page plus six
 part pages, each conforming to the shipd documentation standard: a doc-type
 marker comment on the first line, and a total line count within that type's
-cap. `docs/workspaces.md` SHALL be the concept index: titled "Workspaces",
+cap. `docs/workspaces.md` SHALL be the concept index and the main page for
+the `/s:workspace` skill and the `shipd workspace` verb: titled "Workspaces",
 explaining the workspace concept with the layout diagram (labeling which
-folder is the workspace repo), and introducing each part with one descriptive
-sentence, a usage example, and a relative link. The part pages SHALL live
-under `docs/workspaces/`, each opening with a link back to the index:
+folder is the workspace repo). Its `## Reference` section SHALL introduce
+each part with one descriptive sentence, a usage example, and a relative
+link, and SHALL hold a table of the six `/s:workspace` arguments (`init`,
+`show`, `clone`, `sync`, `map`, `team`) and the four `shipd workspace` forms
+(bare, `init`, `sync`, `team`). The part pages SHALL live under
+`docs/workspaces/`, each opening with a link back to the index:
 `getting-started.md` (how-to: setup through day-to-day use, including the
 `workspaces_root` coverage), `member-map.md` (reference: the member map and
-workspace discovery from outside the workspace), `nesting-and-stores.md`
-(reference: nested job workspaces and `store_root`), `teams.md` (how-to:
-team-shared workspaces and the enterprise layout), `headless.md` (how-to:
-headless consumers), and `multi-workspace-repos.md` (how-to: the practical
-examples).
+workspace discovery from outside the workspace), `nesting.md` (how-to: nested
+job workspaces), `external-stores.md` (reference: `store_root`), `teams.md`
+(reference: team-shared workspaces, the nested team layout, and the
+enterprise guidance), and `headless.md` (how-to: headless consumers). The
+files `docs/workspaces/nesting-and-stores.md` and
+`docs/workspaces/multi-workspace-repos.md` SHALL NOT exist.
+
+Each of the seven pages SHALL follow the main-page shape: opening paragraphs
+saying what the page covers, then `## When to use it`, `## How to run it`,
+and a closing `## Reference` as its only level-2 headings, in that order. No
+page SHALL carry a mermaid fence. One page SHALL own each fact, and another
+page SHALL give that fact in one sentence at most with a link to the owner.
+
+The nesting page SHALL document nested job workspaces: the
+`shipd workspace init <path> --nested --git` command, that `--nested` is
+mandatory, what inherits across the chain (wiki reads, initiative briefs, the
+project registry), what stays nearest-only (every write, sync and member
+materialization), and `wiki_base` alongside nesting. The external stores page
+SHALL document `store_root`: declaring it once at the workspace root, where
+the store lands, a dedicated artifacts repo, per-repo folder naming, how
+store writes are committed, checking what resolved with `shipd config` and
+`shipd doctor`, the `After` dependency rule, and the known limitations.
 
 The guide SHALL present exactly two workspace setup paths and no third: a
 standalone workspace, and a base workspace holding `--nested` team
@@ -888,14 +908,15 @@ or identity, and with no `~/.shipd-config.json` on the machine.
 #### Scenario: Index introduces every part
 - **WHEN** `docs/workspaces.md` is inspected
 - **THEN** it is titled "Workspaces", explains the concept with the labeled
-  layout diagram, and carries one entry per part page — a descriptive
-  sentence, a usage example, and a relative link — for all six parts
+  layout diagram, and its `## Reference` section carries one entry per part
+  page — a descriptive sentence, a usage example, and a relative link — for
+  all six parts
 
 #### Scenario: Every guide page carries its marker and fits its cap
 - **WHEN** `docs_lint.py` runs over the index and the six part pages
-- **THEN** it exits 0, with the index marked `concept`, `member-map.md` and
-  `nesting-and-stores.md` marked `reference`, and the other four pages marked
-  `how-to`
+- **THEN** it exits 0, with the index marked `concept`; `member-map.md`,
+  `external-stores.md`, and `teams.md` marked `reference`; and
+  `getting-started.md`, `nesting.md`, and `headless.md` marked `how-to`
 
 #### Scenario: Member-map page carries the relocated content
 - **WHEN** `docs/workspaces/member-map.md` is inspected
@@ -972,18 +993,41 @@ or identity, and with no `~/.shipd-config.json` on the machine.
   the index's layout diagram labels the workspace repo, and no example uses
   the retired `~/jobs/` convention or the term "portable workspace"
 
-#### Scenario: The nesting and stores part carries its content
-- **WHEN** the nesting-and-stores guide page is inspected
-- **THEN** it documents nested job workspaces including what inherits across
-  the chain, and external artifact stores including where the store lands and
-  how its writes are committed
+#### Scenario: The nesting page carries its content
+- **WHEN** `docs/workspaces/nesting.md` is inspected
+- **THEN** it documents nested job workspaces with the `--nested` command,
+  what inherits across the chain, what stays nearest-only, and `wiki_base`
+  alongside nesting, and it names no `store_root` behaviour
+
+#### Scenario: The external stores page carries its content
+- **WHEN** `docs/workspaces/external-stores.md` is inspected
+- **THEN** it documents external artifact stores including where the store
+  lands, per-repo folder naming, how its writes are committed, the `After`
+  dependency rule, and the known limitations
+
+#### Scenario: Every page follows the main-page shape
+- **WHEN** the level-2 headings of the index and of each part page are listed
+- **THEN** each page's are `## When to use it`, `## How to run it`, and
+  `## Reference`, in that order, and no page holds a mermaid fence
+
+#### Scenario: The index is the main page for the workspace verbs
+- **WHEN** the `## Reference` section of `docs/workspaces.md` is read
+- **THEN** it names the six `/s:workspace` arguments and the four
+  `shipd workspace` forms, each with what it does
+
+#### Scenario: The retired pages are gone
+- **WHEN** the files under `docs/workspaces/` are listed
+- **THEN** they are `external-stores.md`, `getting-started.md`, `headless.md`,
+  `member-map.md`, `nesting.md`, and `teams.md`, and no page links
+  `nesting-and-stores.md` or `multi-workspace-repos.md`
 
 ### Requirement: Workspaces guide practical examples
 id: workspaces-doc-examples
 
-The workspaces guide SHALL provide a practical-examples part page,
-`docs/workspaces/multi-workspace-repos.md`, on carrying several workspaces in
-one repository. It SHALL document exactly one shape — a base workspace root
+The workspaces guide's teams page, `docs/workspaces/teams.md`, SHALL carry
+the practical example of carrying several workspaces in one repository; the
+guide SHALL carry no separate practical-examples page. The teams page SHALL
+document exactly one shape — a base workspace root
 holding `--nested` team workspaces — and SHALL NOT present the
 sibling-workspaces shape, nor compare the two. The page SHALL show a layout
 diagram distinguishing tracked from machine-local content, SHALL tabulate
@@ -999,24 +1043,30 @@ per-directory access control, so separate repos remain the isolation
 boundary.
 
 #### Scenario: Only the nested shape is documented
-- **WHEN** `docs/workspaces/multi-workspace-repos.md` is inspected
+- **WHEN** `docs/workspaces/teams.md` is inspected
 - **THEN** it documents the base-plus-nested shape with a layout diagram and
   a table naming where the manifest, wiki, queue, initiatives, and member
   repos live, and it presents no sibling-workspaces shape and no comparison
   between shapes
 
 #### Scenario: Commands honor the guide's conventions
-- **WHEN** the practical-examples page's commands are inspected
+- **WHEN** the teams page's commands are inspected
 - **THEN** every interactive command invokes the `shipd` binary, no
   `spec_status.py` path appears on the page, and `shipd workspace team` is
   named as the way to build the layout
 
 #### Scenario: Costs and boundaries are stated
-- **WHEN** the practical-examples page is inspected
+- **WHEN** the teams page is inspected
 - **THEN** it states that base knowledge accumulates only from writes made at
   the base and that a base-queued question is answerable only there, directs
   a multi-workspace repository to plain `git clone`, and warns that separate
   repos — not directories — are the access-control boundary
+
+#### Scenario: Each layout fact appears once
+- **WHEN** `docs/workspaces/teams.md` is inspected
+- **THEN** it holds one layout diagram and one storage table, and it states
+  the `shipd workspace team` setup, the plain `git clone` rule, and the
+  isolation boundary once each
 
 ### Requirement: Workspace member map
 id: workspace-member-map
@@ -1242,7 +1292,7 @@ commits behind an exclusive lock, that a session-boundary hook fast-forwards
 the store at session start and pushes at both boundaries, and that
 `store_autocommit` and `store_sync` each turn one of those off. The page
 SHALL NOT state that the engine takes no locks or runs no networked git, and
-SHALL remain within the shipd documentation standard's 150-line how-to cap.
+SHALL remain within the line cap of its doc type.
 The guide's `getting-started.md` page and the `workspaces.md` index SHALL
 likewise instruct no manual push or pull of the workspace repo at a session
 boundary, each staying within its own doc-type cap. The customisation guide's
