@@ -928,6 +928,47 @@ class PartialListingTest(unittest.TestCase):
         self.assertIn("exceeds", err)
 
 
+class OneCommentListingTest(unittest.TestCase):
+    """One post lists the comments once. Its later summary updates run after
+    the status is set, so a listing that failed there stopped the post
+    part-way: the status posted, the result line never printed."""
+
+    @staticmethod
+    def _listings(gh):
+        return [a for a, i in gh.calls
+                if a[0] == "api" and "/issues/" in a[1]
+                and a[1].split("?", 1)[0].endswith("/comments")
+                and "-X" not in a]
+
+    def test_a_post_lists_the_comments_once(self):
+        gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
+        review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertEqual(len(self._listings(gh)), 1)
+        self.assertEqual(len(gh.marker_comments()), 1)
+
+    def test_a_listing_that_fails_after_the_first_does_not_stop_the_post(self):
+        class SecondListingFails(FakeGh):
+            def __call__(inner, args, input=None):
+                if (args[0] == "api" and len(args) > 1 and "/issues/" in args[1]
+                        and args[1].split("?", 1)[0].endswith("/comments")
+                        and "-X" not in args):
+                    inner.listings = getattr(inner, "listings", 0) + 1
+                    if inner.listings > 1:
+                        return 1, "", "HTTP 502: Bad Gateway"
+                return super().__call__(args, input=input)
+
+        gh = SecondListingFails(files=[{"filename": "a.py", "patch": PATCH_A}])
+        result = review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertEqual(result["state"], "success")
+        self.assertEqual(gh.posted_status["state"], "success")
+        self.assertEqual(len(gh.marker_comments()), 1)
+
+    def test_a_new_summary_is_edited_not_reposted_by_later_updates(self):
+        gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
+        review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertEqual(len(gh.comment_create_calls()), 1)
+
+
 class ReviewEventTest(unittest.TestCase):
     """The review event follows the `semantic-review` status the poster sets
     (`APPROVE` on success, `REQUEST_CHANGES` on failure) and is never a

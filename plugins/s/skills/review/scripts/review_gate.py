@@ -961,16 +961,26 @@ def _find_summary(gh, repo, number):
     return next((c for c in comments if has_gate_marker(c.get("body"))), None)
 
 
-def _upsert_summary(gh, repo, number, body):
+def _upsert_summary(gh, repo, number, body, known=None):
     """Create the marker summary comment or edit the existing one in place — a
     comment carrying either the current or the legacy marker is *the* summary,
     so a pre-rename PR is edited rather than given a second one. Returns the
-    comment's html_url."""
-    existing = _find_summary(gh, repo, number)
+    comment's html_url.
+
+    ``known`` is a dict one `post` run shares across its upserts. Its ``id``
+    is the summary's id, or ``None`` when the run's one listing found none.
+    Each upsert records the id it wrote, so a later one edits that comment
+    without listing the comments again: a listing that fails after the status
+    is set would otherwise stop the post part-way."""
+    if known is not None and "id" in known:
+        comment_id = known["id"]  # None: the listing found no summary yet
+    else:
+        existing = _find_summary(gh, repo, number)
+        comment_id = existing["id"] if existing else None
     payload = json.dumps({"body": body})
-    if existing:
+    if comment_id is not None:
         rc, out, err = gh(
-            ["api", "repos/%s/issues/comments/%d" % (repo, existing["id"]),
+            ["api", "repos/%s/issues/comments/%d" % (repo, comment_id),
              "-X", "PATCH", "--input", "-"], input=payload)
     else:
         rc, out, err = gh(
@@ -978,7 +988,10 @@ def _upsert_summary(gh, repo, number, body):
              "-X", "POST", "--input", "-"], input=payload)
     if rc != 0:
         _fail("posting summary comment failed: %s" % err.strip())
-    return json.loads(out or "{}").get("html_url")
+    comment = json.loads(out or "{}")
+    if known is not None and comment.get("id") is not None:
+        known["id"] = comment["id"]
+    return comment.get("html_url")
 
 
 def _set_status(gh, repo, sha, state, description, target_url):
@@ -1209,12 +1222,15 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
     state = status_state(effective, counted, disposition)
     # Computed once, before the first upsert, so this run's own fold and
     # fast-pass re-upserts never add an entry.
-    earlier = earlier_reviews(_find_summary(gh, repo, number))
+    summary = _find_summary(gh, repo, number)
+    earlier = earlier_reviews(summary)
+    # The one comment listing of this run; every upsert below reuses its id.
+    known = {"id": summary["id"] if summary else None}
     _room_claim_fence(gh, claim, head=sha)
     comment_url = _upsert_summary(
         gh, repo, number,
         render_summary(review, unanchored, disposition, model, files,
-                       room=room, head=sha, earlier=earlier))
+                       room=room, head=sha, earlier=earlier), known=known)
     if skip_reason is None:
         _set_status(gh, repo, sha, state,
                     _status_description(review, disposition), comment_url)
@@ -1256,7 +1272,7 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
                     gh, repo, number,
                     render_summary(review, findings, disposition, model,
                                    files, room=room, head=sha,
-                                   earlier=earlier))
+                                   earlier=earlier), known=known)
             if room_agent and anchored:
                 body_summary = _review_body_summary(render_summary(
                     review, findings, disposition, model, files))
@@ -1315,7 +1331,7 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
         gh, repo, number,
         render_summary(review, unanchored, disposition, model, files,
                        fast_pass_outcome=fast_pass_outcome_line,
-                       room=room, head=sha, earlier=earlier))
+                       room=room, head=sha, earlier=earlier), known=known)
 
     if skip_reason is None:
         out("semantic-review status: %s" % state)
