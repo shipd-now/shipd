@@ -127,33 +127,45 @@ into the cheap preset.
 ### Requirement: Copilot review guide
 id: copilot-review-guide
 
-The repository SHALL provide the Copilot code-review guide as two documents,
-each conforming to the shipd documentation standard: a doc-type marker
-comment on the first line and a total line count within that type's cap.
+The repository SHALL provide the review gate guide as two documents, each
+conforming to the shipd documentation standard: a doc-type marker comment on
+the first line and a total line count within that type's cap.
 
-`docs/copilot-review.md` SHALL be the how-to (marker `how-to`), covering in
-task order: the prerequisites (a paid Copilot plan, GitHub hosting, `shipd`
-on the PATH); installing with `shipd copilot add` (naming all four managed
-file paths and `--root`), with `/s:gate` named as the skill that runs the
-whole setup; committing and pushing the files because Copilot reads skills
-and workflows from the pull request's head branch, with any
-changed-skill-reviews-itself consequence scoped to the CCR/poll surface only
-(the CLI reviewer pins instructions to the base ref); enabling reviews per-PR
-(requesting Copilot as a reviewer) and automatically (a GitHub branch
-ruleset), and that the CLI reviewer mode requires neither; the reviewer-token
-recipe — the `COPILOT_GITHUB_TOKEN` secret SHALL be documented as a dedicated
-minimal fine-grained personal access token with no repository access and only
-the account-level "Copilot Requests" permission, never a reused broad-scope
+`docs/copilot-review.md` SHALL be the main page (marker `how-to`), titled
+`# Review gate`, and SHALL follow the main-page shape: opening paragraphs
+saying what the review gate is, then `## When to use it`, `## How to run it`,
+and a closing `## Reference`, in that order, with no `## See also` section.
+The opening SHALL name the `semantic-review` commit status and SHALL link
+`/s:review` to `semantic-review.md`.
+
+`## How to run it` SHALL cover, as level-3 steps in task order: the
+prerequisites (a paid Copilot plan, GitHub hosting, `shipd` on the PATH),
+with `/s:gate` named as the skill that runs the whole setup; installing with
+`shipd copilot add` (naming all four managed file paths and `--root`);
+committing and pushing the files because Copilot reads skills and workflows
+from the pull request's head branch; enabling reviews per-PR (requesting
+Copilot as a reviewer) and automatically (a GitHub branch ruleset), and that
+the CLI reviewer mode requires neither; the reviewer-token recipe — the
+`COPILOT_GITHUB_TOKEN` secret SHALL be documented as a dedicated minimal
+fine-grained personal access token with no repository access and only the
+account-level "Copilot Requests" permission, never a reused broad-scope
 token, with the creation steps, the `gh secret set COPILOT_GITHUB_TOKEN`
-storage path, a bounded expiry with fail-safe semantics, and removal
-returning the repository to the poll fallback; verifying via `shipd doctor`'s
+storage path, a bounded expiry with fail-safe semantics, removal returning
+the repository to the poll fallback, and the repository setting that lets
+the CI reviewer submit a decision review; verifying via `shipd doctor`'s
 `protection`, `automerge`, and `copilot-secret` lines and the bare
 `shipd copilot` report; and maintenance — re-running `add` to upgrade,
-`remove` to uninstall, and editing the plugin's templates rather than the
-installed copies. The how-to SHALL link to `docs/copilot-review-reference.md`.
+`/s:gate update` to refresh a gated repository, `remove` to uninstall, and
+editing the plugin's templates rather than the installed copies. A last step
+SHALL cover the spec lint action as `ci-action`'s `ci-usage-docs` requirement
+states it.
 
-`docs/copilot-review-reference.md` SHALL be the reference (marker
-`reference`), opening with a link back to the how-to and covering: the four
+`## Reference` SHALL link `docs/copilot-review-reference.md`, naming what it
+covers, and `semantic-review.md`.
+
+`docs/copilot-review-reference.md` SHALL be the nested reference (marker
+`reference`), titled `# Review gate reference`, opening with a link back to
+the main page and covering: the four
 managed files with each file's role; the merge gate's two reviewer modes —
 the CLI reviewer mode selected by the `COPILOT_GITHUB_TOKEN` secret, in which
 the gate posts `pending` first, runs headless GitHub Copilot CLI at a pinned
@@ -164,8 +176,10 @@ requirement states (that requirement owns the reading rule and this one SHALL
 NOT restate it), posts the review text as a pull-request comment,
 works on private repositories, consumes Copilot AI credits per review, and
 leaves `pending` on a failed or timed-out run; and the poll fallback mode
-used with no secret, including why its operative guarantee is fail-open and
-its poll bounds; a trust-boundary section stating the same-repository
+used with no secret, including why its operative guarantee is fail-open, its
+poll bounds, and that a changed skill reviews the pull request that changes
+it on the poll surface only, the CLI reviewer pinning its instructions to
+the base ref; a trust-boundary section stating the same-repository
 workflow-with-secrets baseline (no new actor class), content injection
 against an LLM reviewer as the residual risk, and the mitigations — the CLI
 step's environment holds no credential but the minimal reviewer token, the
@@ -190,18 +204,31 @@ states them: `difft-required-docs` owns `difft`'s documented status and forbids
 calling it optional or claiming a review degrades, while
 `doctor-provisioning` and `reference-context` own `ripgrep`'s optionality and
 its `git grep` fallback. This requirement SHALL NOT restate any of them.
+Every level-2 and level-3 heading the reference holds today SHALL keep its
+text, so existing anchors resolve.
+
+Each fact SHALL have one owning page. The main page owns the setup steps and
+the token recipe; the reference owns the modes, the verdict, the trust
+boundary, the limits, and the report states. The page that does not own a
+fact SHALL state it in one sentence at most and link to the owner.
+
+#### Scenario: Main page follows the shape
+- **WHEN** the level-1 and level-2 headings of `docs/copilot-review.md` are
+  listed
+- **THEN** the title is `# Review gate`, and the level-2 headings are
+  `## When to use it`, `## How to run it`, and `## Reference`, in that order
 
 #### Scenario: How-to walks install, enable, token, and verify in task order
 - **WHEN** `docs/copilot-review.md` is inspected
 - **THEN** it shows `shipd copilot add`, names all four managed file paths,
   states the files must be committed and pushed because Copilot reads them
-  from the PR head branch (the changed-skill consequence scoped to the
-  CCR/poll surface), covers both enable paths, carries the full
-  reviewer-token recipe with the `gh secret set` storage path, and names
-  `shipd doctor` and bare `shipd copilot` as the verification surfaces
+  from the PR head branch, covers both enable paths, carries the full
+  reviewer-token recipe with the `gh secret set` storage path, names
+  `shipd doctor` and bare `shipd copilot` as the verification surfaces, and
+  names `/s:gate` and `/s:gate update`
 
 #### Scenario: The reviewer-token recipe stays minimal and safe
-- **WHEN** the how-to's token section is read
+- **WHEN** the main page's token step is read
 - **THEN** it directs creating a dedicated fine-grained PAT with no
   repository access and only the "Copilot Requests" account permission,
   warns against reusing a broad-scope token, and states the fail-safe
@@ -212,8 +239,8 @@ its `git grep` fallback. This requirement SHALL NOT restate any of them.
 - **THEN** the CLI reviewer mode (secret selection, pending-first,
   base-pinned instructions, pinned CLI version, strict status, review
   comment, private-repo support, credit cost, pending on failure or
-  timeout) and the poll fallback (fail-open guarantee and poll bounds) are
-  both documented
+  timeout) and the poll fallback (fail-open guarantee, poll bounds, and the
+  changed-skill consequence) are both documented
 
 #### Scenario: The trust boundary is documented honestly
 - **WHEN** the reference's trust-boundary section is read
@@ -227,9 +254,8 @@ its `git grep` fallback. This requirement SHALL NOT restate any of them.
 - **WHEN** the reference's verdict and strictness material is read
 - **THEN** it states the classification as `gate-workflow-template` defines
   it, with quoted markers never counting, and names `SHIPD_GATE_FAIL_OPEN`
-  with the
-  fail-open default, the `gh variable set` enable path, the session flow
-  as the manual out, and the pair-with-token guidance
+  with the fail-open default, the `gh variable set` enable path, the session
+  flow as the manual out, and the pair-with-token guidance
 
 #### Scenario: Limits, report states, and scope are documented
 - **WHEN** the reference is searched for the integration's limits
@@ -247,9 +273,9 @@ its `git grep` fallback. This requirement SHALL NOT restate any of them.
 
 #### Scenario: The pair cross-links and inbound links resolve
 - **WHEN** the two docs' links are checked
-- **THEN** the how-to links to `copilot-review-reference.md`, the reference
-  links back to `copilot-review.md`, and `docs/guardrails.md`'s See-also
-  entry resolves to the how-to
+- **THEN** the main page links to `copilot-review-reference.md`, the
+  reference links back to `copilot-review.md`, and every `#` anchor either
+  page uses resolves to a heading in its target
 
 ### Requirement: README carries the brand marks
 id: readme-brand-marks
@@ -512,44 +538,55 @@ reference `quickstart.md`.
 ### Requirement: Semantic review guide
 id: semantic-review-doc
 
-`docs/semantic-review.md` SHALL be a concept guide opening with a
-`<!-- doc-type: concept -->` comment on its first line, totalling 100 lines or
-fewer and passing `docs_lint.py`. It SHALL explain what the semantic review
-reads and how it rates what it finds, and SHALL list no command flag and no
-JSON field — that lookup material belongs to a reference doc.
+`docs/semantic-review.md` SHALL be the main page for `/s:review`: a concept
+guide opening with a `<!-- doc-type: concept -->` comment on its first line,
+totalling 100 lines or fewer and passing `docs_lint.py`. It SHALL list no
+command flag and no JSON field — that lookup material belongs to the nested
+reference.
 
-The guide SHALL name every `semdiff` subcommand the review uses — `files`,
-`diff`, `context`, `change`, `lint` and `doctor` — with one line stating what
-each returns. It SHALL state that the engine supplies the facts and the
-reviewer supplies the judgement.
+The page SHALL follow the main-page shape. Its opening says what the review
+is: that it reads a change structurally through `semdiff`, that the engine
+supplies the facts and the reviewer supplies the judgement, and that a
+reviewer approves only from its own account, in one sentence linking
+`agent-identity.md`. The sections `## What it looks for` and
+`## Severity and the blocking rule` SHALL follow, then `## When to use it`,
+`## How to run it`, and a closing `## Reference`, in that order. The page
+SHALL carry no `## See also` and no `## What it reads` section, and SHALL NOT
+hold the `semdiff` subcommand table, which the reference owns.
 
-The guide SHALL describe the three passes that look past the changed lines:
-downstream impact on a changed contract, the values each call site passes, and
-the risk-lens triggers. It SHALL name every trigger `semantic-review`'s
-`review-risk-lenses` requirement defines, which owns how many there are —
-this requirement SHALL NOT fix a count, having previously fixed it at five
-after a sixth was added. It SHALL state
-that a linter finding is corroboration the reviewer weighs rather than a
-review finding in itself.
+`## What it looks for` SHALL describe the three passes that look past the
+changed lines: downstream impact on a changed contract, the values each call
+site passes, and the risk-lens triggers. It SHALL name every trigger
+`semantic-review`'s `review-risk-lenses` requirement defines, which owns how
+many there are — this requirement SHALL NOT fix a count. It SHALL state that
+a linter finding is corroboration the reviewer weighs rather than a review
+finding in itself.
 
-The guide SHALL state the blocking rule: `high` and `medium` block, and `low`
-never does. It SHALL state the exposure floor — an exposed secret, and an
-authorization boundary reached without a scope check, always rate `high`.
+`## Severity and the blocking rule` SHALL state that `high` and `medium`
+block and `low` never does, and the exposure floor — an exposed secret, and
+an authorization boundary reached without a scope check, always rate `high`.
 
-The guide SHALL describe both paths a review takes: a local run that ends at
-the report, and a run against a named pull request that reads prior
-dispositions back before posting. It SHALL state that a named pull request is
-posted to by default, that the posted findings are left open for that pull
-request's owner, and that implementing and resolving them is an opt-in the
-invoker asks for. It SHALL state that the review omits a finding answered with
-a reasoned reply, that it keeps a finding only a commit cleared, and that a
-finding's identity excludes its line number.
+`## When to use it` SHALL say when to run `/s:review` on local changes before
+a push, and when to run it against a pull request, and SHALL link
+`copilot-review.md` as the way to run the review on every pull request.
 
-The guide SHALL carry exactly one mermaid diagram, of those two paths, showing
-the local path ending at the report, the posting path, and the opted-in
-disposition path looping back on a later push. It SHALL state the missing-tool behaviour exactly as `semantic-review`'s
-`difft-required-docs` requirement states it — that requirement owns it and
-requires the guide say the review stops, so this one SHALL NOT restate it.
+`## How to run it` SHALL name the `/s:review` invocation and describe both
+paths a review takes: a local run that ends at the report, and a run against
+a named pull request that reads prior dispositions back before posting. It
+SHALL state that a named pull request is posted to by default, that the
+posted findings are left open for that pull request's owner, and that
+implementing and resolving them is an opt-in the invoker asks for. It SHALL
+state that the review omits a finding answered with a reasoned reply, that it
+keeps a finding only a commit cleared, and that a finding's identity excludes
+its line number. It SHALL carry the page's one mermaid diagram, of those two
+paths, showing the local path ending at the report, the posting path, and the
+opted-in disposition path looping back on a later push. It SHALL hold a
+`### When a tool is missing` section stating the missing-tool behaviour
+exactly as `semantic-review`'s `difft-required-docs` requirement states it —
+that requirement owns it, so this one SHALL NOT restate it.
+
+`## Reference` SHALL link `semantic-review-reference.md`, naming what it
+lists, and `copilot-review.md`.
 
 `docs/copilot-review.md` SHALL link `/s:review` to this guide rather than to a
 README anchor.
@@ -560,10 +597,16 @@ README anchor.
 - **THEN** it exits `0`, and the file is 100 lines or fewer opening with the
   concept marker
 
-#### Scenario: Every subcommand is named
+#### Scenario: The guide follows the main-page shape
+- **WHEN** the level-2 headings of `docs/semantic-review.md` are listed
+- **THEN** they are `## What it looks for`,
+  `## Severity and the blocking rule`, `## When to use it`,
+  `## How to run it`, and `## Reference`, in that order
+
+#### Scenario: The subcommand table has moved
 - **WHEN** the guide is inspected
-- **THEN** it names `files`, `diff`, `context`, `change`, `lint` and `doctor`,
-  each with what it returns
+- **THEN** it names `semdiff`, holds no table of subcommands, and links
+  `semantic-review-reference.md`
 
 #### Scenario: The blocking rule and the floor are stated
 - **WHEN** the guide is inspected
@@ -574,7 +617,7 @@ README anchor.
 #### Scenario: Every trigger is named
 - **WHEN** the guide is inspected
 - **THEN** it names every risk-lens trigger `review-risk-lenses` defines, and
-  this requirement fixes no count of its own
+  `plugins/s/skills/review/tests/test_skill_references.py` passes
 
 #### Scenario: The posting default is stated
 - **WHEN** the guide is inspected
@@ -590,23 +633,34 @@ README anchor.
 
 #### Scenario: The guide carries one diagram
 - **WHEN** the guide's mermaid fences are counted
-- **THEN** exactly one is present, and it shows the local path ending at the
-  report and the opted-in disposition path looping back
+- **THEN** exactly one is present, under `## How to run it`, and it shows the
+  local path ending at the report and the opted-in disposition path looping
+  back
+
+#### Scenario: The missing-tool section survives
+- **WHEN** the guide's `### When a tool is missing` section is read
+- **THEN** it states that a review without `difft` stops
 
 #### Scenario: The how-to points at the guide
 - **WHEN** `docs/copilot-review.md` is inspected
-- **THEN** its `/s:review` link resolves to `semantic-review.md`, and its link
-  to `docs/copilot-review-reference.md` is unchanged
+- **THEN** its `/s:review` link resolves to `semantic-review.md`, and it
+  links `copilot-review-reference.md`
 
 ### Requirement: Semantic review reference
 id: semantic-review-reference-doc
 
-`docs/semantic-review-reference.md` SHALL be a lookup reference opening with a
-`<!-- doc-type: reference -->` comment on its first line, totalling 250 lines or
-fewer and passing `docs_lint.py`. It SHALL open by naming
-`docs/semantic-review.md` as its concept guide, and SHALL carry three sections:
-the `--json` finding payload, the `lint` configuration key, and the `prior`
-verb's output.
+`docs/semantic-review-reference.md` SHALL be the nested reference of
+`docs/semantic-review.md`: a lookup reference opening with a
+`<!-- doc-type: reference -->` comment on its first line, totalling 250 lines
+or fewer and passing `docs_lint.py`. It SHALL open by naming
+`docs/semantic-review.md` as its main page. Among its sections it SHALL
+carry: the engine's subcommands, the `--json` finding payload, the `lint`
+configuration key, and the `prior` verb's output. Every other section the
+page holds today SHALL survive unchanged.
+
+The subcommands section SHALL be a table naming every `semdiff` subcommand
+the review uses — `files`, `diff`, `context`, `change`, `lint`, and
+`doctor` — with one line stating what each returns.
 
 The payload section SHALL list every field of a finding — `id`, `severity`,
 `category`, `location`, `what`, `why`, `fix`, `status`, `note` and the optional
@@ -614,10 +668,10 @@ The payload section SHALL list every field of a finding — `id`, `severity`,
 surfaces accept, those surfaces being the enumeration's source and
 `semantic-review`'s `review-taxonomy-parity` requirement being what holds
 them in agreement. This requirement SHALL NOT restate the enumeration or fix
-its size, having previously named ten after `description-drift` made eleven. It SHALL state that `verdict`
-is `changes-requested` when any finding is high or medium and `pass` otherwise,
-and SHALL state the conditions a `suggestion` must meet to be committed rather
-than degraded to prose.
+its size. It SHALL state that `verdict` is `changes-requested` when any
+finding is high or medium and `pass` otherwise, and SHALL state the
+conditions a `suggestion` must meet to be committed rather than degraded to
+prose.
 
 The configuration section SHALL name both members of the `lint` key —
 `run_scripts`, a boolean defaulting to false, and `disable`, a list of linter
@@ -637,6 +691,11 @@ as null, and that a null hash matches nothing.
   docs/semantic-review-reference.md` runs
 - **THEN** it exits `0`, and the file is 250 lines or fewer opening with the
   reference marker
+
+#### Scenario: Every subcommand is named
+- **WHEN** the reference's subcommands section is inspected
+- **THEN** its table names `files`, `diff`, `context`, `change`, `lint` and
+  `doctor`, each with what it returns
 
 #### Scenario: Every category value is listed
 - **WHEN** the reference's payload section is inspected
@@ -661,6 +720,11 @@ as null, and that a null hash matches nothing.
 - **WHEN** the `prior` section is inspected
 - **THEN** it states that a thread predating the identity marker reports `hash`
   as null, and that such an entry matches nothing
+
+#### Scenario: Existing sections survive
+- **WHEN** the reference's level-2 headings are listed
+- **THEN** `## The review event` and `## Room-reviewer flags` are still
+  present
 
 #### Scenario: The guide links the reference
 - **WHEN** `docs/semantic-review.md` is inspected

@@ -2,10 +2,23 @@
 
 # Semantic review reference
 
-[The semantic review](semantic-review.md) is the concept guide: what the
-review reads, what it looks for, and how it blocks a merge. This page lists
-the `--json` payload, the `lint` configuration key, and the `prior` verb's
-output.
+[The semantic review](semantic-review.md) is the main page: what the review
+reads, what it looks for, and how it blocks a merge. This page lists the
+engine's subcommands, the `--json` payload, the `lint` configuration key, and
+the `prior` verb's output.
+
+## The engine's subcommands
+
+`semdiff` performs the mechanical work for the review through six subcommands:
+
+| subcommand | what it returns |
+|---|---|
+| `files` | changed paths, grouped into architectural cohorts |
+| `diff` | syntax-aware hunks, with formatting noise stripped |
+| `context` | the references to a changed symbol |
+| `change` | a planned change's deltas, tasks, and lint findings |
+| `lint` | findings from the repository's own linters |
+| `doctor` | the tools available on this machine |
 
 ## The `--json` payload
 
