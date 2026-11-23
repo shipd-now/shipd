@@ -1148,5 +1148,239 @@ class GraderSelectedDrivingTests(TmpPathTestCase):
         self.assertIn("mystery", failure)
 
 
+
+# ---------------------------------------------------------------------------
+# Oracle-default grading — the pure judgement over hand-written plan.md text
+# ---------------------------------------------------------------------------
+
+_PLAN_HEAD = (
+    "# sort-flag\n"
+    "Status: %s\n\n"
+    "## Idea\n\n"
+    "Add a `--sort` flag.\n\n"
+    "## Implementation\n\n"
+    "Sort the rows.\n\n")
+
+_PLAN_TAIL = (
+    "\n## Readiness attestation\n\n"
+    "### Problem and motivation\n\n"
+    "Rows print unsorted.\n")
+
+# The pass fixture: the oracle was consulted, found nothing, and the planner's
+# recommended default was adopted under the go-ahead reply. The answer wraps
+# onto a second line, as real ledgers do.
+_LEDGER_PASS = (
+    "## Questions and answers\n\n"
+    "### Q1: Which column does a bare --sort use?\n"
+    "- **Question:** Which column should `--sort` with no argument order by?\n"
+    "  Options: (1) name; (2) age; (3) team. Recommendation: (1).\n"
+    "- **Verdict:** INSUFFICIENT\n"
+    "- **Answered by:** USER\n"
+    "- **Answer:** Option 1, `name` — the first column, and the one a reader\n"
+    "  scans for.\n"
+    "- **Queued:** q-report-sort-default\n")
+
+# The missing-verdict fixture: a well-formed ledger the linter accepts (it
+# enforces only Question, Answered by, and Answer) with no oracle verdict.
+_LEDGER_NO_VERDICT = (
+    "## Questions and answers\n\n"
+    "### Q1: Which column does a bare --sort use?\n"
+    "- **Question:** Which column should `--sort` with no argument order by?\n"
+    "- **Answered by:** USER\n"
+    "- **Answer:** `name`.\n")
+
+# The unanswered fixture: the oracle said INSUFFICIENT and no default was
+# adopted into the answer.
+_LEDGER_INSUFFICIENT_NO_ANSWER = (
+    "## Questions and answers\n\n"
+    "### Q1: Which column does a bare --sort use?\n"
+    "- **Question:** Which column should `--sort` with no argument order by?\n"
+    "- **Verdict:** INSUFFICIENT\n"
+    "- **Answered by:** USER\n"
+    "- **Answer:**\n"
+    "- **Queued:** q-report-sort-default\n")
+
+
+def _plan(ledger, status="ready"):
+    return _PLAN_HEAD % status + ledger + _PLAN_TAIL
+
+
+class JudgeOracleDefaultTests(unittest.TestCase):
+    """``judge_oracle_default`` is a pure function of the plan text and the
+    lint and gate outcomes. These tests hand it literal text and exit codes:
+    they touch no file and spawn no process, ``claude`` least of all."""
+
+    def setUp(self):
+        patcher = mock.patch.object(
+            run.subprocess, "run",
+            side_effect=AssertionError("the judgement must run no process"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_consulted_and_adopted_passes(self):
+        result = run.judge_oracle_default(_plan(_LEDGER_PASS), 0, 0)
+        self.assertTrue(result.passed, result.failure)
+        self.assertIsNone(result.failure)
+
+    def test_missing_verdict_fails_naming_the_verdict(self):
+        result = run.judge_oracle_default(_plan(_LEDGER_NO_VERDICT), 0, 0)
+        self.assertFalse(result.passed)
+        self.assertIn("**Verdict:**", result.failure)
+
+    def test_missing_ledger_fails_naming_the_verdict(self):
+        result = run.judge_oracle_default(_plan(""), 0, 0)
+        self.assertFalse(result.passed)
+        self.assertIn("**Verdict:**", result.failure)
+
+    def test_insufficient_without_answer_fails_naming_the_entry(self):
+        result = run.judge_oracle_default(
+            _plan(_LEDGER_INSUFFICIENT_NO_ANSWER), 0, 0)
+        self.assertFalse(result.passed)
+        self.assertIn("Q1", result.failure)
+        self.assertIn("**Answer:**", result.failure)
+
+    def test_insufficient_answered_by_planner_fails_naming_the_entry(self):
+        ledger = _LEDGER_PASS.replace("**Answered by:** USER",
+                                      "**Answered by:** PLANNER")
+        result = run.judge_oracle_default(_plan(ledger), 0, 0)
+        self.assertFalse(result.passed)
+        self.assertIn("Q1", result.failure)
+        self.assertIn("PLANNER", result.failure)
+
+    def test_answer_verdict_alone_passes(self):
+        ledger = (_LEDGER_PASS
+                  .replace("**Verdict:** INSUFFICIENT", "**Verdict:** ANSWER")
+                  .replace("**Answered by:** USER", "**Answered by:** ORACLE"))
+        result = run.judge_oracle_default(_plan(ledger), 0, 0)
+        self.assertTrue(result.passed, result.failure)
+
+    def test_backticked_fields_are_read(self):
+        ledger = (_LEDGER_PASS
+                  .replace("**Verdict:** INSUFFICIENT",
+                           "**Verdict:** `INSUFFICIENT`")
+                  .replace("**Answered by:** USER", "**Answered by:** `USER`"))
+        result = run.judge_oracle_default(_plan(ledger), 0, 0)
+        self.assertTrue(result.passed, result.failure)
+
+    def test_later_unanswered_entry_fails_naming_it(self):
+        second = _LEDGER_INSUFFICIENT_NO_ANSWER.split("\n\n", 1)[1].replace(
+            "### Q1:", "### Q2:")
+        result = run.judge_oracle_default(
+            _plan(_LEDGER_PASS + "\n" + second), 0, 0)
+        self.assertFalse(result.passed)
+        self.assertIn("Q2", result.failure)
+
+    def test_lint_failure_fails_first_naming_lint(self):
+        result = run.judge_oracle_default(
+            _plan(_LEDGER_NO_VERDICT), 1, 0, lint_output="ERROR: broken")
+        self.assertFalse(result.passed)
+        self.assertIn("spec_lint", result.failure)
+        self.assertIn("ERROR: broken", result.failure)
+
+    def test_gate_check_failure_fails_naming_the_gate(self):
+        result = run.judge_oracle_default(
+            _plan(_LEDGER_PASS), 0, 2, gate_output="REJECTED (check): x")
+        self.assertFalse(result.passed)
+        self.assertIn("spec_gate", result.failure)
+        self.assertIn("REJECTED (check): x", result.failure)
+
+    def test_draft_plan_fails_naming_the_gate(self):
+        result = run.judge_oracle_default(
+            _plan(_LEDGER_PASS, status="draft"), 0, 0)
+        self.assertFalse(result.passed)
+        self.assertIn("gate", result.failure)
+        self.assertIn("'draft'", result.failure)
+
+
+# ---------------------------------------------------------------------------
+# Oracle-default grading — the wrapper that collects the judgement's inputs
+# ---------------------------------------------------------------------------
+
+def _add_ledger(change_dir, ledger):
+    """Append ``ledger`` to a ``_write_change`` plan.md after its
+    ``## Implementation`` section."""
+    plan_path = os.path.join(change_dir, "plan.md")
+    with open(plan_path, encoding="utf-8") as fh:
+        text = fh.read()
+    _write(plan_path, text + "\n" + ledger)
+
+
+class GradeOracleDefaultTests(TmpPathTestCase):
+    """``grade_oracle_default`` runs the real ``spec_lint.py`` and
+    ``spec_gate.py --check`` (local scripts, no model) and hands their
+    outcomes to the pure judgement."""
+
+    def test_ready_change_with_adopted_default_passes(self):
+        scratch = _empty_scratch(self.tmp_path)
+        _write_change(scratch, "demo", status="ready")
+        _add_ledger(os.path.join(scratch, ".shipd", "planned", "demo"),
+                    _LEDGER_PASS)
+        result = run.grade_oracle_default(scratch, host_repo=REPO_ROOT)
+        self.assertTrue(result.passed, result.failure)
+
+    def test_ready_change_without_ledger_fails_naming_the_verdict(self):
+        scratch = _empty_scratch(self.tmp_path)
+        _write_change(scratch, "demo", status="ready")
+        result = run.grade_oracle_default(scratch, host_repo=REPO_ROOT)
+        self.assertFalse(result.passed)
+        self.assertIn("**Verdict:**", result.failure)
+
+    def test_gate_rejection_fails_naming_the_gate(self):
+        scratch = _empty_scratch(self.tmp_path)
+        _write_change(scratch, "demo", status="ready")
+        change_dir = os.path.join(scratch, ".shipd", "planned", "demo")
+        _add_ledger(change_dir, _LEDGER_PASS.replace(
+            "**Answered by:** USER", "**Answered by:** PLANNER"))
+        result = run.grade_oracle_default(scratch, host_repo=REPO_ROOT)
+        self.assertFalse(result.passed)
+        self.assertIn("spec_gate", result.failure)
+
+    def test_no_change_fails(self):
+        scratch = _empty_scratch(self.tmp_path)
+        result = run.grade_oracle_default(scratch, host_repo=REPO_ROOT)
+        self.assertFalse(result.passed)
+        self.assertIn(".shipd/planned", result.failure)
+
+
+class OracleDefaultSelectionTests(TmpPathTestCase):
+
+    def test_expect_json_oracle_default_grader(self):
+        case_dir = os.path.join(self.tmp_path, "some-case")
+        os.makedirs(case_dir)
+        _write(os.path.join(case_dir, "expect.json"),
+               '{"grader": "oracle-default"}\n')
+        self.assertEqual(run.read_expect(case_dir), ("oracle-default", None))
+
+    def test_shipped_case_selects_oracle_default(self):
+        cases = run.discover_cases(run.CASES_DIR,
+                                   case_filter="plan-oracle-default")
+        self.assertEqual(len(cases), 1)
+        self.assertEqual(cases[0].grader, "oracle-default")
+
+    def test_oracle_default_case_resumes_on_structural_gate_and_reply(self):
+        base_case = _fake_case(self.tmp_path)
+        case = run.Case(name=base_case.name, prompt_path=base_case.prompt_path,
+                        fixture_path=base_case.fixture_path,
+                        grader="oracle-default")
+        scratch = _empty_scratch(self.tmp_path)
+        calls = []
+
+        def fake_turn(prompt, scratch_dir, resume_id, turn_index, **kwargs):
+            calls.append((prompt, resume_id, turn_index))
+            if resume_id is not None:
+                # A ready change with no ledger: the structural gate passes
+                # (so resuming stops) though the oracle grade would not.
+                _write_change(scratch_dir, "demo", status="ready")
+            return True, None, "sess-1"
+
+        ok, failure = run.run_conversation(
+            case, scratch, host_repo=REPO_ROOT, turn_runner=fake_turn)
+        self.assertTrue(ok, failure)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1][0], run.GOAHEAD_REPLY)
+        self.assertFalse(
+            run.grade_oracle_default(scratch, host_repo=REPO_ROOT).passed)
+
+
 if __name__ == "__main__":
     unittest.main()

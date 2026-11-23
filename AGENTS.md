@@ -250,6 +250,19 @@ tree copied into a scratch git repo before the session runs). An optional
   requirement id `handoff_requirement` names. The `handoff_requirement` key is
   required — an `expect.json` declaring `"handoff"` without it fails every run
   immediately, naming the case and the missing key, spawning no session.
+- `{"grader": "oracle-default"}`: **oracle-default**. Grades a headless
+  `/s:plan` run whose request carries a decision nothing on disk settles, so
+  a correct run consults the oracle and then adopts the planner's own
+  recommended default. Exactly one change must exist, as for structural, and
+  the run passes only when all four hold, checked in order: `spec_lint.py`
+  exits 0 for the change; the gate passes — `plan.md` reads `Status: ready`
+  and `spec_gate.py <change> --check` (read-only) exits 0; at least one
+  `## Questions and answers` entry carries a `**Verdict:**` of `ANSWER` or
+  `INSUFFICIENT`; and every `INSUFFICIENT` entry carries a non-empty
+  `**Answer:**` under an `**Answered by:**` of `USER` or `ORACLE`. The
+  judgement is `judge_oracle_default`, a pure function of the plan text and
+  the lint and gate exit codes, unit-tested against literal `plan.md` text
+  with no process spawned; `grade_oracle_default` only collects its inputs.
 
 **Each grader selects its own resume gate and reply.** The runner's resume
 loop is driven per grader, never one grader branched against the rest: a
@@ -257,8 +270,11 @@ handoff case sends turn 1 and is never resumed — its correct outcome is that
 the session stops, so resuming it would invite the very continuation the case
 tests against; a structural case resumes, while its structural grade has not
 passed, with a plan-specific reply that proceeds through emission, lint, and
-promotion to `ready`; a behavior case resumes with a skill-neutral reply
-carrying no such instruction. A case whose grader has no gate/reply defined
+promotion to `ready`; an oracle-default case is driven exactly like a
+structural one — its resume loop stops once a lint-clean `ready` change
+exists, and the oracle grade decides the run afterwards, so a finished plan
+is never resumed to rewrite its own ledger; a behavior case resumes with a
+skill-neutral reply carrying no such instruction. A case whose grader has no gate/reply defined
 fails the run immediately, naming the grader, rather than being driven with
 another grader's gate or reply.
 
@@ -302,3 +318,16 @@ transcript records it. Before the runner was repaired to never resume a
 handoff case, it used to override that correct stop by resuming the session
 with a reply instructing it to emit, lint, and promote a change — which made
 the case fail for a reason that was the harness's fault, not the skill's.
+
+`evals/cases/plan-oracle-default/` is the oracle-default grader's case. Its
+`fixture/` is the report CLI with a verified `reporting` spec and a wiki
+store holding one page, `report-cli-flags`, on how flags are named — topical,
+but silent on sorting. `prompt.md` asks `/s:plan` for a `--sort <column>`
+flag and says a bare `--sort` must work without deciding which column it
+then uses. An `oracle-lookup` on that decision surfaces only snippets that
+take no position on it, so the contract's verdict is `INSUFFICIENT`; the
+session stops at its typed round, the harness's go-ahead reply accepts the
+planner's recommendation, and the plan records it as `**Answered by:** USER`.
+The grade does not require the verdict to be `INSUFFICIENT`, and does not
+read `**Queued:**`: the fixture's repo-local store takes the queued question,
+but a case without one queues nothing, and the ledger grammar allows both.
