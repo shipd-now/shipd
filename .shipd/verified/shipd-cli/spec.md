@@ -1444,7 +1444,11 @@ line left empty), and SHALL save the resulting layout to
 `shipd statusline layout` verb SHALL print the saved layout one line per
 output line when bare, and when given one or more `<seg>,<seg>` arguments
 SHALL save them as the layout, one argument per line, and re-register the
-statusline when shipd's statusline is registered. A segment name outside the
+statusline when shipd's statusline is registered. When `layout` runs with
+`--config <path>` and without `--settings <path>`, it SHALL save the layout
+in the named config file only: it SHALL neither read nor write the default
+settings file, and SHALL print that the registration is left unchanged. A
+segment name outside the
 three, a segment named twice, or a layout with no segment SHALL be refused
 with exit `2` naming the problem, writing nothing. A malformed `statusline`
 value in the config file SHALL make both verbs exit `1` naming the key,
@@ -1471,6 +1475,13 @@ writing nothing.
 #### Scenario: Context first is saved in order
 - **WHEN** `shipd statusline layout context,spec` runs
 - **THEN** the config holds `[["context", "spec"]]`
+
+#### Scenario: A named config leaves the default settings alone
+- **WHEN** `shipd statusline layout spec,context directory --config <path>`
+  runs without `--settings`, with shipd's statusline registered in the
+  default settings file
+- **THEN** `<path>` holds `[["spec", "context"], ["directory"]]`, the default
+  settings file is byte-identical afterwards, and the exit code is `0`
 
 #### Scenario: An unknown segment is refused
 - **WHEN** `shipd statusline layout spec,clock` runs

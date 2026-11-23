@@ -1932,13 +1932,17 @@ def cmd_statusline(args):
     parser.add_argument(
         "action", nargs="?", choices=["install", "layout"],
         help="install: write the registration; layout: show or set the "
-             "segments per line (default: report only)")
+             "segments per line, and re-register a registered shipd "
+             "statusline unless --config is given without --settings "
+             "(default: report only)")
     parser.add_argument(
         "lines", nargs="*",
         help="layout: one word per line, segments comma separated")
     parser.add_argument(
         "--settings", default=None,
-        help="settings file to use (default: ~/.claude/settings.json)")
+        help="settings file to use (default: ~/.claude/settings.json); "
+             "`layout --config FILE` without it leaves the settings file "
+             "untouched")
     parser.add_argument(
         "--config", default=None,
         help="shipd config file holding the layout "
@@ -2008,6 +2012,14 @@ def cmd_statusline(args):
                 _report_save_error(error)
                 return 1
         layout = new
+
+    if opts.action == "layout" and opts.config and not opts.settings:
+        # A layout saved in a named config file is not the layout the default
+        # settings file renders: that registration is neither read nor
+        # rewritten unless the caller names the settings file too.
+        print("registration in %s left unchanged — pass --settings to "
+              "re-register from this config file" % path)
+        return 0
 
     command = statusline_command(PLUGIN_ROOT, layout)
     data, error = _read_settings(path)

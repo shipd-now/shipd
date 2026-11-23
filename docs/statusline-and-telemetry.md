@@ -52,7 +52,10 @@ shipd statusline layout spec,context directory
 ```
 
 Each word declares one line, and commas separate its segments. Setting a
-layout also writes the registration.
+layout also rewrites the registration in the settings file, when that file
+already registers shipd's statusline. With `--config` and without `--settings`,
+`layout` saves the layout in the named config file and leaves the settings
+file untouched.
 
 The statusline reads the root's planned changes, plus one level of
 worktrees. So a change built inside a worktree still shows up. An `active`
@@ -107,7 +110,7 @@ The default layout is one line, `spec,context`.
 
 | Flag | Effect |
 | --- | --- |
-| `--settings PATH` | Names the settings file. The default is `~/.claude/settings.json`. |
+| `--settings PATH` | Names the settings file. The default is `~/.claude/settings.json`. `layout` with `--config` skips the settings file unless this flag is given. |
 | `--config PATH` | Names the shipd config file that holds the layout. The default is `~/.shipd-config.json`. |
 | `--force` | Replaces a different existing registration. |
 | `--show SEG` | With `install`, adds a segment to the layout. |
