@@ -139,8 +139,8 @@ _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 # the authenticated viewer login, so `resolve` can pick gate-authored threads
 # and judge disposition evidence, `autoreply` can read each root's severity,
 # and `prior` can report where a finding lives.
-# Pagination beyond 100 threads/comments is out of scope (the same known cap as
-# the poster's comment listing).
+# Pagination beyond 100 threads/comments is out of scope here, a known cap.
+# The poster's file and comment listings read every page (see `_paged`).
 _THREADS_QUERY = """
 query($owner:String!, $name:String!, $number:Int!) {
   viewer { login }
@@ -936,8 +936,8 @@ def _paged(gh, path):
         batch = json.loads(out or "[]")
         items.extend(batch)
         if len(batch) < _PAGE_SIZE:
-            break
-    return items, None
+            return items, None
+    return items, "listing exceeds %d pages" % _MAX_PAGES
 
 
 def _pr_files(gh, repo, number):
@@ -952,8 +952,12 @@ def _pr_files(gh, repo, number):
 
 def _find_summary(gh, repo, number):
     """The existing summary comment dict (current or legacy marker), or
-    ``None`` when the pull request has none."""
-    comments, _ = _paged(gh, "repos/%s/issues/%d/comments" % (repo, number))
+    ``None`` when the pull request has none. A listing cut short is never read
+    as complete: a summary on an unread page would be posted a second time,
+    and its record of earlier reviews lost."""
+    comments, err = _paged(gh, "repos/%s/issues/%d/comments" % (repo, number))
+    if err:
+        _fail("fetching PR comments failed: %s" % err)
     return next((c for c in comments if has_gate_marker(c.get("body"))), None)
 
 

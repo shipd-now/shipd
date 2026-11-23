@@ -866,6 +866,68 @@ class PagedListingTest(unittest.TestCase):
         self.assertEqual(len(gh.marker_comments()), 1)
 
 
+class FailingPageGh(FakeGh):
+    """A FakeGh whose GET of one list endpoint fails from a given page on."""
+
+    def __init__(self, *, fail_suffix, fail_from_page, **kw):
+        super().__init__(**kw)
+        self.fail_suffix = fail_suffix
+        self.fail_from_page = fail_from_page
+
+    def __call__(self, args, input=None):
+        endpoint = args[1] if len(args) > 1 else ""
+        path, _, query = endpoint.partition("?")
+        page = dict(kv.split("=", 1) for kv in query.split("&") if "=" in kv
+                    ).get("page")
+        if (args[0] == "api" and input is None and "-X" not in args
+                and path.endswith(self.fail_suffix)
+                and page is not None and int(page) >= self.fail_from_page):
+            return 1, "", "HTTP 502: Bad Gateway"
+        return super().__call__(args, input=input)
+
+
+class PartialListingTest(unittest.TestCase):
+    """A listing cut short must stop the post. Read as complete, a short file
+    list hides a blocking finding, and a short comment list hides the summary
+    and posts a second one."""
+
+    def _files(self, count):
+        return [{"filename": "f%03d.py" % i, "patch": PATCH_A}
+                for i in range(count)]
+
+    def test_a_failed_later_page_of_files_stops_the_post(self):
+        gh = FailingPageGh(fail_suffix="/files", fail_from_page=2,
+                           files=self._files(150))
+        with self.assertRaises(review_gate.ReviewGateError) as ctx:
+            review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertIn("fetching PR files failed", str(ctx.exception))
+        self.assertIsNone(getattr(gh, "posted_status", None))
+
+    def test_a_failed_later_page_of_comments_stops_the_post(self):
+        chatter = [{"id": 1000 + i, "body": "note %d" % i,
+                    "html_url": "https://github.com/o/r/pull/7#issuecomment-%d"
+                                % (1000 + i)} for i in range(120)]
+        summary = {"id": 42, "body": MARKER + "\n\n## Findings: ✅ Ship it\n",
+                   "html_url": "https://github.com/o/r/pull/7#issuecomment-42"}
+        gh = FailingPageGh(fail_suffix="/comments", fail_from_page=2,
+                           existing_comments=chatter + [summary])
+        with self.assertRaises(review_gate.ReviewGateError) as ctx:
+            review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertIn("fetching PR comments failed", str(ctx.exception))
+        self.assertEqual(gh.comment_create_calls(), [])
+
+    def test_a_listing_past_the_page_cap_is_an_error(self):
+        calls = []
+
+        def endless(args, input=None):
+            calls.append(args[1])
+            return 0, json.dumps([{"n": 1}] * review_gate._PAGE_SIZE), ""
+
+        items, err = review_gate._paged(endless, "repos/o/r/pulls/7/files")
+        self.assertEqual(len(calls), review_gate._MAX_PAGES)
+        self.assertIn("exceeds", err)
+
+
 class ReviewEventTest(unittest.TestCase):
     """The review event follows the `semantic-review` status the poster sets
     (`APPROVE` on success, `REQUEST_CHANGES` on failure) and is never a
