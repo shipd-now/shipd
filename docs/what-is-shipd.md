@@ -91,4 +91,4 @@ projects. A team will state intent in prose, in a brief, or on a call
 recording, and receive verified, auditable pull requests back. shipd.now is
 the bet that the scarce resource in agent-driven development is not code
 generation but **converged context**. A system that compiles context into
-specs can ship software you can trust without watching it type.
+specs can ship software you can trust.
