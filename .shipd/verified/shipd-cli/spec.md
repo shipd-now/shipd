@@ -1450,7 +1450,20 @@ without `--settings <path>`, it SHALL save the layout
 in the named config file only: it SHALL neither read nor write the default
 settings file, and SHALL print that the registration is left unchanged. A
 `--config` that names the default config file itself SHALL behave as when
-the flag is absent. A
+the flag is absent, and so SHALL a `--settings` that names the default
+settings file itself. A write that names one file SHALL never write the
+other default file. When `layout` is given segments, or `install` is given
+`--show` or `--hide`, with `--settings <path>` naming a file other than the
+default settings file and without `--config`, the verb SHALL refuse with
+exit `2`, name `--config` as the missing flag, and write nothing. When
+`install` runs with `--config <path>` naming a file other than the default
+config file and without `--settings`, the verb SHALL refuse with exit `2`,
+name `--settings` as the missing flag, and write nothing. The verb SHALL
+expand a leading `~` or `~user` in the value of `--settings` and of
+`--config` once, before it compares, reads, or writes the file, so the path
+it compares with a default file is the path it writes. A `~user` prefix
+that matches no account SHALL be refused with exit `2` naming the flag and
+the value, writing nothing. A
 segment name outside the
 three, a segment named twice, or a layout with no segment SHALL be refused
 with exit `2` naming the problem, writing nothing. A malformed `statusline`
@@ -1492,6 +1505,30 @@ writing nothing.
   shipd's statusline is registered in the default settings file
 - **THEN** the default settings file's `statusLine` command carries the new
   layout, and the exit code is `0`
+
+#### Scenario: A named settings file never saves into the default config
+- **WHEN** `shipd statusline layout spec,context directory --settings <path>`
+  runs without `--config`, and `<path>` is not the default settings file
+- **THEN** the exit code is `2`, the message names `--config`, and neither
+  `<path>` nor the default config file is created or changed
+
+#### Scenario: A named config file never installs into the default settings
+- **WHEN** `shipd statusline install --config <path>` runs without
+  `--settings`, and `<path>` is not the default config file
+- **THEN** the exit code is `2`, the message names `--settings`, and neither
+  `<path>` nor the default settings file is created or changed
+
+#### Scenario: A literal tilde names the home directory
+- **WHEN** `shipd statusline layout context,spec --settings <path> --config
+  '~/custom-config.json'` runs, the `~` reaching the verb unexpanded
+- **THEN** `custom-config.json` in the home directory holds
+  `[["context", "spec"]]`, and no directory named `~` is created
+
+#### Scenario: An unknown user prefix is refused
+- **WHEN** `shipd statusline layout spec --settings <path> --config
+  '~no-such-user/config.json'` runs
+- **THEN** the exit code is `2`, the message names `--config` and the value,
+  and no file is written
 
 #### Scenario: An unknown segment is refused
 - **WHEN** `shipd statusline layout spec,clock` runs

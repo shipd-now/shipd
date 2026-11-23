@@ -1791,13 +1791,36 @@ def _default_config():
     return Path.home() / ".shipd-config.json"
 
 
+def _same_file(path, other):
+    """Whether two paths name one file. Neither is expanded here: the verb
+    expands a file flag once, where it is read, so the path compared is the
+    path written."""
+    try:
+        return Path(path).resolve() == Path(other).resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
 def _is_default_config(path):
     """Whether ``path`` names the global shipd config file itself."""
-    try:
-        return (Path(path).expanduser().resolve()
-                == _default_config().expanduser().resolve())
-    except OSError:
-        return False
+    return _same_file(path, _default_config())
+
+
+def _is_default_settings(path):
+    """Whether ``path`` names Claude Code's user settings file itself."""
+    return _same_file(path, _default_settings())
+
+
+def _expand_file_flag(flag, value):
+    """``(path, error)`` for a file flag's value with a leading ``~`` or
+    ``~user`` expanded, as a shell would have done had the word been bare.
+    ``error`` names a ``~user`` prefix no account matches."""
+    if value is None:
+        return None, None
+    expanded = os.path.expanduser(value)
+    if expanded == value and value.startswith("~"):
+        return None, "cannot expand %s %s: no such user" % (flag, value)
+    return expanded, None
 
 
 def _load_statusline_layout(path):
@@ -1944,7 +1967,9 @@ def cmd_statusline(args):
              "segments per line, and re-register a registered shipd "
              "statusline unless --config names another config file "
              "without --settings "
-             "(default: report only)")
+             "(default: report only). A write that names one file with "
+             "--settings or --config never writes the other default "
+             "file: it is refused until both are named")
     parser.add_argument(
         "lines", nargs="*",
         help="layout: one word per line, segments comma separated")
@@ -1952,11 +1977,12 @@ def cmd_statusline(args):
         "--settings", default=None,
         help="settings file to use (default: ~/.claude/settings.json); "
              "`layout --config FILE` without it leaves the settings file "
-             "untouched")
+             "untouched, and `install --config FILE` without it is refused")
     parser.add_argument(
         "--config", default=None,
         help="shipd config file holding the layout "
-             "(default: ~/.shipd-config.json)")
+             "(default: ~/.shipd-config.json); setting a layout with "
+             "`--settings FILE` and without it is refused")
     parser.add_argument(
         "--force", action="store_true",
         help="replace a different existing registration")
@@ -1969,8 +1995,35 @@ def cmd_statusline(args):
     opts = parser.parse_args(args)
     _load_config_registry()
 
+    # Each file flag is expanded once, here, so a literal `~` (a quoted word,
+    # `--config=~/x`, a subprocess argument) names the same file everywhere
+    # below, and the default-file comparisons see the path that is written.
+    for flag in ("settings", "config"):
+        value, error = _expand_file_flag("--" + flag, getattr(opts, flag))
+        if error is not None:
+            _err(error)
+            return 2
+        setattr(opts, flag, value)
     path = opts.settings or str(_default_settings())
     config = opts.config or str(_default_config())
+
+    # A caller who names one file gets no write to the other default file.
+    saves_layout = ((opts.action == "layout" and opts.lines)
+                    or (opts.action == "install"
+                        and (opts.show or opts.hide)))
+    if (saves_layout and opts.settings and not opts.config
+            and not _is_default_settings(path)):
+        _err("--settings names %s but the layout would be saved in the "
+             "default config file %s \u2014 pass --config to name the config "
+             "file" % (path, config))
+        return 2
+    if (opts.action == "install" and opts.config and not opts.settings
+            and not _is_default_config(config)):
+        _err("--config names %s but the registration would be written to "
+             "the default settings file %s \u2014 pass --settings to name the "
+             "settings file" % (config, path))
+        return 2
+
     layout, error = _load_statusline_layout(config)
     if error is not None:
         _err(error)
@@ -2024,7 +2077,7 @@ def cmd_statusline(args):
         layout = new
 
     if (opts.action == "layout" and opts.config and not opts.settings
-            and not _is_default_config(opts.config)):
+            and not _is_default_config(config)):
         # A layout saved in another config file is not the layout the default
         # settings file renders: that registration is neither read nor
         # rewritten unless the caller names the settings file too. Naming the

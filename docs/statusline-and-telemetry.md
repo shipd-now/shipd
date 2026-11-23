@@ -57,6 +57,16 @@ already registers shipd's statusline. With `--config` naming another config
 file and without `--settings`, `layout` saves the layout in that file and
 leaves the settings file untouched.
 
+A write that names one file never writes the other default file. The verb
+refuses these two commands with exit `2`, and writes nothing:
+
+- Setting a layout with `--settings` naming another settings file, and no
+  `--config`. The message names `--config`.
+- `install` with `--config` naming another config file, and no `--settings`.
+  The message names `--settings`.
+
+Pass both flags to write two files of your own.
+
 The statusline reads the root's planned changes, plus one level of
 worktrees. So a change built inside a worktree still shows up. An `active`
 change owns the line wherever it lives. When more than one change is live,
@@ -115,6 +125,9 @@ The default layout is one line, `spec,context`.
 | `--force` | Replaces a different existing registration. |
 | `--show SEG` | With `install`, adds a segment to the layout. |
 | `--hide SEG` | With `install`, removes a segment from the layout. |
+
+`--settings` and `--config` expand a leading `~`, also when the shell did
+not. A `~user` prefix that matches no account exits `2`.
 
 ### Report settings
 

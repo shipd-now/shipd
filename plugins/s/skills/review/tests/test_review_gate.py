@@ -968,6 +968,28 @@ class OneCommentListingTest(unittest.TestCase):
         review_gate.post("7", _review(verdict="pass"), gh)
         self.assertEqual(len(gh.comment_create_calls()), 1)
 
+    def test_a_create_that_answers_no_id_is_not_created_twice(self):
+        # GitHub made the comment but the answer carried no id. The next
+        # update must list the comments again and edit that one.
+        class CreateAnswersNoId(FakeGh):
+            def __call__(inner, args, input=None):
+                rc, out, err = super().__call__(args, input=input)
+                if (rc == 0 and args[0] == "api" and "POST" in args
+                        and "/issues/" in args[1]
+                        and args[1].endswith("/comments")):
+                    return 0, "", ""
+                return rc, out, err
+
+        gh = CreateAnswersNoId(files=[{"filename": "a.py", "patch": PATCH_A}])
+        known = {"id": None}
+        body = "%s\nfirst" % review_gate.MARKER
+        review_gate._upsert_summary(gh, "o/r", 7, body, known=known)
+        self.assertNotIn("id", known)
+        review_gate._upsert_summary(gh, "o/r", 7, body + " again", known=known)
+        self.assertEqual(len(gh.comment_create_calls()), 1)
+        self.assertEqual(len(gh.marker_comments()), 1)
+        self.assertIsNotNone(known.get("id"))
+
 
 class ReviewEventTest(unittest.TestCase):
     """The review event follows the `semantic-review` status the poster sets
