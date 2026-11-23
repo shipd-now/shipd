@@ -61,8 +61,9 @@ gh pr merge --auto --squash --delete-branch
 ```
 
 GitHub then squashes the pull request and deletes its branch once the merge rules pass. By default
-the rules require two checks, `ci` and `semantic-review`, and they require zero unresolved review
-conversations. The [review gate](copilot-review.md) posts the `semantic-review` check.
+the rules require two approvals and two checks, `ci` and `semantic-review`, and they require zero
+unresolved review conversations. The [review gate](copilot-review.md) posts the `semantic-review`
+check.
 
 Under `pr-mode: draft`, the build opens a draft pull request and arms no auto-merge, so a person
 merges it.
