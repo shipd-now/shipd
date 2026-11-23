@@ -45,7 +45,7 @@ flowchart TD
 
     subgraph plan [Plan]
         investigate["Codebase-first<br/>investigation"]
-        ladder["Memory → oracle → human<br/>question ladder"]
+        ladder["Read → oracle → human<br/>question ladder"]
         spec["Spec artifacts<br/>plan · deltas · tasks"]
         gate{"Context<br/>gate"}
     end
