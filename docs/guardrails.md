@@ -13,7 +13,54 @@ afterwards.
 Rules are plain markdown files you can read, copy, and edit. Nothing about
 them reaches the model's context until one actually fires.
 
-## How it works
+## When to use it
+
+Write a rule when a line has a textual tell that one regex can catch. The
+cost of a firing rule sets the mode you choose:
+
+- **`deny` for the certain.** Would you flag the line in review every time,
+  without reading the surrounding code? Then write a deny rule. A false
+  positive costs a wasted retry and a confused model.
+- **`remind` for the fuzzy.** If it depends — a preference that usually holds,
+  a convention with real exceptions — write a remind rule. A false positive
+  costs one sentence the model is free to disregard, which is exactly the
+  right price for advice that might be wrong.
+
+One failure mode matters: a chatty rulebook. Reminders that fire constantly
+train the model to ignore them, and they are the only part that spends
+context. Keep the deny rules sharp and the remind rules few.
+
+## How to run it
+
+1. **Add a rule.** Drop a file into the source you want it to cover:
+
+   ```
+   mkdir -p .shipd/rules
+   $EDITOR .shipd/rules/no-bare-except.md
+   ```
+
+2. **Edit a rule.** Edit its file. The hook re-reads the rulebook on every
+   invocation. A saved change applies to the very next tool call — no
+   restart, no session reload.
+3. **Override a built-in.** Write a file of the same name in a
+   higher-precedence source. Precedence is by **rule name**, which is the
+   filename stem. The winner replaces the loser wholesale — pattern and
+   message together:
+
+   ```
+   .shipd/rules/changelog-comment.md   ← this one wins
+   ~/.shipd/rules/changelog-comment.md ← over this
+   <plugin>/hooks/rules/…              ← over the built-in
+   ```
+
+So a repo that wants a narrower `changelog-comment` writes its own; the
+built-in's pattern is gone with it, not merged. To remove a rule rather than
+replace it, disable it instead (see [Kill-switches](#kill-switches)). An
+override still needs a valid pattern and message.
+
+## Reference
+
+### Hook events
 
 The plugin registers one script on two hook events, both matching `Edit|Write`:
 
@@ -34,7 +81,7 @@ hook skips a rule whose pattern fails to compile, and the rest still apply.
 The hook **fails open** everywhere: it runs on every edit in every repository,
 and an erroring hook would break all editing.
 
-## The rule file format
+### Rule file format
 
 A rule is a markdown file named `<name>.md`. The filename stem is the rule's
 name, and what a refusal or reminder cites. It opens with a frontmatter block
@@ -72,7 +119,7 @@ does no multi-line matching and no AST analysis. Guardrails catch textual
 tells — a comment shape, a banned call, a stray marker — not structural
 problems. Those belong to `/s:review`.
 
-## Where rules come from
+### Sources
 
 The registry merges three sources, **deduplicated by rule name, first source
 winning**:
@@ -96,36 +143,7 @@ Three built-in rules are active everywhere unless overridden or disabled:
 They are ordinary rule files. Read them for the exact patterns, and copy one
 as the template for your own.
 
-## Adding, editing, and overriding rules
-
-**Add a rule** by dropping a file into the source you want it to cover:
-
-```
-mkdir -p .shipd/rules
-$EDITOR .shipd/rules/no-bare-except.md
-```
-
-**Edit a rule** by editing its file. The hook re-reads the rulebook on every
-invocation, so a saved change applies to the very next tool call — no restart,
-no session reload.
-
-**Override a built-in** by writing a file of the same name in a
-higher-precedence source. Precedence is by **rule name**, which is the
-filename stem, and the winner replaces the loser wholesale — pattern and
-message together:
-
-```
-.shipd/rules/changelog-comment.md   ← this one wins
-~/.shipd/rules/changelog-comment.md ← over this
-<plugin>/hooks/rules/…              ← over the built-in
-```
-
-So a repo that wants a narrower `changelog-comment` writes its own; the
-built-in's pattern is gone with it, not merged. To remove a rule rather than
-replace it, disable it instead (below) — an override still needs a valid
-pattern and message.
-
-## Cooldown: keeping reminders quiet
+### Cooldown
 
 A `deny` rule can fire as often as it likes; each firing blocks something you
 did not want. A `remind` rule differs — it costs context every time and blocks
@@ -143,7 +161,7 @@ the hook cannot read or write never suppresses a reminder. The directory keeps
 itself small: the hook drops state files from past sessions automatically,
 about a week after their last use.
 
-## Turning it off
+### Kill-switches
 
 You author rules as files. The `guardrails` key in `.shipd-config.json` holds
 only the kill-switches.
@@ -176,7 +194,7 @@ rule objects. The rulebook supersedes it: the hook now **ignores** that member
 without erroring. Move any rule still living there to a file under
 `<content-dir>/rules/` or `~/.shipd/rules/`.
 
-## Token cost
+### Token cost
 
 Guardrails are unusually cheap, and it is worth knowing exactly why.
 
@@ -195,23 +213,10 @@ than a review round-trip, a follow-up commit, or the line surviving into
 `main`.
 
 **A firing `remind` costs one injected message**, once per session by default.
-No retry, no blocked call.
+No retry, no blocked call. That asymmetry is the authoring rule in
+[When to use it](#when-to-use-it).
 
-That asymmetry is the authoring rule:
-
-- **`deny` for the certain.** Would you flag the line in review every time,
-  without reading the surrounding code? Then write a deny rule. A false
-  positive costs a wasted retry and a confused model.
-- **`remind` for the fuzzy.** If it depends — a preference that usually holds,
-  a convention with real exceptions — write a remind rule. A false positive
-  costs one sentence the model is free to disregard, which is exactly the
-  right price for advice that might be wrong.
-
-One failure mode matters: a chatty rulebook. Reminders that fire constantly
-train the model to ignore them, and they are the only part that spends
-context. Keep the deny rules sharp and the remind rules few.
-
-## See also
+### Related pages
 
 - [What is shipd?](what-is-shipd.md) — where guardrails sit in the workflow.
 - [Install the Copilot review gate](copilot-review.md) — the semantic review
