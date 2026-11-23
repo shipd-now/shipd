@@ -13,8 +13,8 @@ owns it. Any account can install it; it acts only on repos you pick.
 The factory works where you work, and it can stay on 24/7. You set how it works
 through shipd: `.shipd-config.json` today, and skills you add to the shipd
 harness once they ship. Connectors will let the factory run by itself. shipd is
-building a Slack connector and plans more for Teams and other tools. An example
-is a shipd Slack app you install that reacts to Grafana errors in a channel.
+building a Slack connector and plans more for Teams and other tools. One example
+would be a shipd Slack app you install that reacts to Grafana errors in a channel.
 
 Each job runs in a gVisor sandbox on a self-hosted factory host. A job runs
 shipd's `/s:plan` then `/s:build`, pushes a `change/<slug>` branch, and opens a
