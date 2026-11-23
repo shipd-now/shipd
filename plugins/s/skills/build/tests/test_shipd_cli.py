@@ -1338,6 +1338,71 @@ class StatuslineVerbTest(unittest.TestCase):
             self.command([["spec", "context"], ["directory"]])
             + " --then 'bash /elsewhere'")
 
+    def default_settings_registered(self):
+        """Point the verb's default settings file at a registered shipd
+        statusline inside the temp directory, and return its path. The
+        default is patched as well as ``HOME``, so no run of these tests can
+        resolve the real ``~/.claude/settings.json``."""
+        default = os.path.join(self.tmp, "home", ".claude", "settings.json")
+        patcher = unittest.mock.patch.object(
+            shipd, "_default_settings", lambda: default)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        _out, _err, code = self.run_verb(
+            "install", "--settings", default, "--config", self.config)
+        self.assertEqual(code, 0)
+        return default
+
+    def test_layout_with_config_only_leaves_the_default_settings_alone(self):
+        default = self.default_settings_registered()
+        with open(default, "rb") as fh:
+            before = fh.read()
+        out, _err, code = self.run_verb(
+            "layout", "--config", self.config, "spec,context", "directory")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.saved_lines(),
+                         [["spec", "context"], ["directory"]])
+        with open(default, "rb") as fh:
+            self.assertEqual(fh.read(), before)
+        self.assertIn("statusline layout saved in %s" % self.config, out)
+        self.assertNotIn("statusline registered in", out)
+        self.assertIn("registration in %s left unchanged" % default, out)
+
+    def test_layout_naming_the_default_config_still_re_registers(self):
+        # `--config` naming the default config file is the same request as no
+        # flag: that file is the one the default registration renders.
+        default = self.default_settings_registered()
+        patcher = unittest.mock.patch.object(
+            shipd, "_default_config", lambda: shipd.Path(self.config))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        out, _err, code = self.run_verb(
+            "layout", "--config", self.config, "spec,context", "directory")
+        self.assertEqual(code, 0)
+        with open(default, encoding="utf-8") as fh:
+            command = json.load(fh)["statusLine"]["command"]
+        self.assertIn("--line spec,context --line directory", command)
+        self.assertNotIn("left unchanged", out)
+
+    def test_layout_with_config_only_never_reads_the_default_settings(self):
+        default = self.default_settings_registered()
+        with open(default, "w", encoding="utf-8") as fh:
+            fh.write("{not json")
+        _out, err, code = self.run_verb(
+            "layout", "--config", self.config, "context,spec")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.saved_lines(), [["context", "spec"]])
+        with open(default, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "{not json")
+
+    def test_layout_with_no_file_flags_reregisters_the_default(self):
+        default = self.default_settings_registered()
+        _out, _err, code = self.run_verb("layout", "spec", "directory")
+        self.assertEqual(code, 0)
+        with open(default, encoding="utf-8") as fh:
+            command = json.load(fh)["statusLine"]["command"]
+        self.assertEqual(command, self.command([["spec"], ["directory"]]))
+
     def test_layout_keeps_other_config_keys(self):
         with open(self.config, "w", encoding="utf-8") as fh:
             json.dump({"dir": ".custom"}, fh)
