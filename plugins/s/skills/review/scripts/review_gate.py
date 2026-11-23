@@ -139,8 +139,8 @@ _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 # the authenticated viewer login, so `resolve` can pick gate-authored threads
 # and judge disposition evidence, `autoreply` can read each root's severity,
 # and `prior` can report where a finding lives.
-# Pagination beyond 100 threads/comments is out of scope (the same known cap as
-# the poster's comment listing).
+# Pagination beyond 100 threads/comments is out of scope here, a known cap.
+# The poster's file and comment listings read every page (see `_paged`).
 _THREADS_QUERY = """
 query($owner:String!, $name:String!, $number:Int!) {
   viewer { login }
@@ -915,33 +915,72 @@ def _default_branch(gh):
     return json.loads(out)["defaultBranchRef"]["name"]
 
 
+# GitHub's largest page. A listing is complete once a page comes back short.
+_PAGE_SIZE = 100
+# A stop for a listing that never comes back short (GitHub caps a pull
+# request's file listing at 3000 entries).
+_MAX_PAGES = 50
+
+
+def _paged(gh, path):
+    """Every item of a GitHub list endpoint, read page by page. Returns
+    ``(items, error)``; ``error`` is the failing page's stderr, else ``None``.
+    One page holds at most ``_PAGE_SIZE`` items, so reading only the first
+    silently drops the rest of a long listing."""
+    items = []
+    for page in range(1, _MAX_PAGES + 1):
+        rc, out, err = gh(["api", "%s?per_page=%d&page=%d"
+                           % (path, _PAGE_SIZE, page)])
+        if rc != 0:
+            return items, err.strip() or "gh api failed"
+        batch = json.loads(out or "[]")
+        items.extend(batch)
+        if len(batch) < _PAGE_SIZE:
+            return items, None
+    return items, "listing exceeds %d pages" % _MAX_PAGES
+
+
 def _pr_files(gh, repo, number):
-    rc, out, err = gh(["api",
-                       "repos/%s/pulls/%d/files?per_page=100" % (repo, number)])
-    if rc != 0:
-        _fail("fetching PR files failed: %s" % err.strip())
-    return json.loads(out or "[]")
+    """Every file of the pull request. A pull request over one page of files
+    must not lose the rest: a finding on a file the poster cannot see is
+    filed as outside the diff, which can turn a failing verdict green."""
+    files, err = _paged(gh, "repos/%s/pulls/%d/files" % (repo, number))
+    if err:
+        _fail("fetching PR files failed: %s" % err)
+    return files
 
 
 def _find_summary(gh, repo, number):
     """The existing summary comment dict (current or legacy marker), or
-    ``None`` when the pull request has none."""
-    rc, out, err = gh(["api",
-                       "repos/%s/issues/%d/comments?per_page=100" % (repo, number)])
-    comments = json.loads(out or "[]") if rc == 0 else []
+    ``None`` when the pull request has none. A listing cut short is never read
+    as complete: a summary on an unread page would be posted a second time,
+    and its record of earlier reviews lost."""
+    comments, err = _paged(gh, "repos/%s/issues/%d/comments" % (repo, number))
+    if err:
+        _fail("fetching PR comments failed: %s" % err)
     return next((c for c in comments if has_gate_marker(c.get("body"))), None)
 
 
-def _upsert_summary(gh, repo, number, body):
+def _upsert_summary(gh, repo, number, body, known=None):
     """Create the marker summary comment or edit the existing one in place — a
     comment carrying either the current or the legacy marker is *the* summary,
     so a pre-rename PR is edited rather than given a second one. Returns the
-    comment's html_url."""
-    existing = _find_summary(gh, repo, number)
+    comment's html_url.
+
+    ``known`` is a dict one `post` run shares across its upserts. Its ``id``
+    is the summary's id, or ``None`` when the run's one listing found none.
+    Each upsert records the id it wrote, so a later one edits that comment
+    without listing the comments again: a listing that fails after the status
+    is set would otherwise stop the post part-way."""
+    if known is not None and "id" in known:
+        comment_id = known["id"]  # None: the listing found no summary yet
+    else:
+        existing = _find_summary(gh, repo, number)
+        comment_id = existing["id"] if existing else None
     payload = json.dumps({"body": body})
-    if existing:
+    if comment_id is not None:
         rc, out, err = gh(
-            ["api", "repos/%s/issues/comments/%d" % (repo, existing["id"]),
+            ["api", "repos/%s/issues/comments/%d" % (repo, comment_id),
              "-X", "PATCH", "--input", "-"], input=payload)
     else:
         rc, out, err = gh(
@@ -949,7 +988,10 @@ def _upsert_summary(gh, repo, number, body):
              "-X", "POST", "--input", "-"], input=payload)
     if rc != 0:
         _fail("posting summary comment failed: %s" % err.strip())
-    return json.loads(out or "{}").get("html_url")
+    comment = json.loads(out or "{}")
+    if known is not None and comment.get("id") is not None:
+        known["id"] = comment["id"]
+    return comment.get("html_url")
 
 
 def _set_status(gh, repo, sha, state, description, target_url):
@@ -1180,12 +1222,15 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
     state = status_state(effective, counted, disposition)
     # Computed once, before the first upsert, so this run's own fold and
     # fast-pass re-upserts never add an entry.
-    earlier = earlier_reviews(_find_summary(gh, repo, number))
+    summary = _find_summary(gh, repo, number)
+    earlier = earlier_reviews(summary)
+    # The one comment listing of this run; every upsert below reuses its id.
+    known = {"id": summary["id"] if summary else None}
     _room_claim_fence(gh, claim, head=sha)
     comment_url = _upsert_summary(
         gh, repo, number,
         render_summary(review, unanchored, disposition, model, files,
-                       room=room, head=sha, earlier=earlier))
+                       room=room, head=sha, earlier=earlier), known=known)
     if skip_reason is None:
         _set_status(gh, repo, sha, state,
                     _status_description(review, disposition), comment_url)
@@ -1227,7 +1272,7 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
                     gh, repo, number,
                     render_summary(review, findings, disposition, model,
                                    files, room=room, head=sha,
-                                   earlier=earlier))
+                                   earlier=earlier), known=known)
             if room_agent and anchored:
                 body_summary = _review_body_summary(render_summary(
                     review, findings, disposition, model, files))
@@ -1286,7 +1331,7 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
         gh, repo, number,
         render_summary(review, unanchored, disposition, model, files,
                        fast_pass_outcome=fast_pass_outcome_line,
-                       room=room, head=sha, earlier=earlier))
+                       room=room, head=sha, earlier=earlier), known=known)
 
     if skip_reason is None:
         out("semantic-review status: %s" % state)
