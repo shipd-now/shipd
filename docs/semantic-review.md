@@ -44,6 +44,11 @@ Two findings always rate `high`, whatever the reviewer's confidence: an
 exposed secret, and an authorization boundary reached without a scope check. A
 leaked credential does not wait for confirmation.
 
+The review reads a consumer in another repository at a named ref, linked pull
+request heads first. A head that migrates the consumer clears it, so no
+finding follows. A read at the default branch alone never blocks: a failed
+lookup becomes a could-not-verify entry instead.
+
 ## When to use it
 
 - Run `/s:review` on your local changes before you push them.
@@ -88,5 +93,5 @@ times out reports as failed, and the review still completes.
 
 - [Semantic review reference](semantic-review-reference.md) — the engine's
   subcommands, the `--json` payload, the review event, the room-reviewer
-  flags, the `lint` key, and `prior`'s output
+  flags, the `lint` key, `prior`'s output, and `linked`'s output
 - [Review gate](copilot-review.md) — run this review on every pull request

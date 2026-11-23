@@ -88,6 +88,12 @@ The flow:
    semantics described under "Determine what to review". Do the full
    analysis; do not shortcut it. The rendered report names the base commit
    it used, so a reader can see precisely what the review compared.
+
+   Where the review checks a consumer in another repository, list the
+   linked pull requests before judging it:
+   `review_gate.py linked <number> --repo <owner>/<repo>`. The target pull
+   request's own commits never show a migration that waits in another
+   repository. `references/call-site-tracing.md` gives the procedure.
 3. **Read prior dispositions and drop what was already answered.** Write the
    draft `--json` object for the findings this review is about to post to a
    temp file, run `review_gate.py prior <pr> --from <that file>`, and omit
