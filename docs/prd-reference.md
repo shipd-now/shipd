@@ -108,9 +108,8 @@ In a checkout with no discoverable workspace — a bare CI runner, for
 instance — the linter skips the check silently. Repository lint never depends
 on files outside the repository.
 
-The link runs one way only. A PRD holds no list of its epics and knows nothing
-about them. One PRD decomposes into several epics, or into none at all, and
-deleting an epic leaves the PRD untouched.
+The link runs one way only, from the epic up to the PRD; [PRDs](prd.md) owns
+that rule.
 
 ## Finding PRDs: `shipd search`
 
