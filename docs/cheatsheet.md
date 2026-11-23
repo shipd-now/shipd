@@ -71,7 +71,7 @@ venn-beta
 | `/s:gate` | Install the semantic review gate in a repository end to end. See [Review gate](copilot-review.md). | `/s:gate` |
 | `/s:initiative <new\|list\|review\|set> [args]` | Author, list, review, or attach workspace initiatives. See [Initiatives](initiatives.md). | `/s:initiative list` |
 | `/s:memory` | List the preferences captured in the personal memory store. See [Personal memory](memory.md). | `/s:memory` |
-| `/s:onboard [next\|back]` | Run the guided nine-step shipd tour. See [Your first change](getting-started.md). | `/s:onboard next` |
+| `/s:onboard [next\|back]` | Run the guided nine-step shipd tour. See [Guided tour](onboard.md). | `/s:onboard next` |
 | `/s:plan` | Converge context into an execution-ready spec, then stop. See [Plan a change](plan.md). | `/s:plan Add a --json flag to the export command` |
 | `/s:plan-deep <change> \| <epic> [members]` | Walk a spec's riskiest pieces step by step, edit in place, and re-gate. See [Plan a change](plan.md). | `/s:plan-deep export-cli parser-flags` |
 | `/s:pr [--ticket <id>] [--draft] [--base <ref>]` | Write a pull request's title and body, then create or update it. See [Pull requests](pr.md). | `/s:pr --ticket ABC-12` |
