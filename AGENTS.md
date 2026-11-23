@@ -259,7 +259,8 @@ tree copied into a scratch git repo before the session runs). An optional
   and `spec_gate.py <change> --check` (read-only) exits 0; at least one
   `## Questions and answers` entry carries a `**Verdict:**` of `ANSWER` or
   `INSUFFICIENT`; every `INSUFFICIENT` entry carries a non-empty
-  `**Answer:**` under an `**Answered by:**` of `USER` or `ORACLE`; and at
+  `**Answer:**` under an `**Answered by:**` of `USER` — never `ORACLE`,
+  which gave no answer there; and at
   least one entry is `INSUFFICIENT`, so a run whose ledger the oracle
   answered in full fails — the case exists to prove the fallback. The
   judgement is `judge_oracle_default`, a pure function of the plan text and

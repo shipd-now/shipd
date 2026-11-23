@@ -1132,6 +1132,28 @@ class GraderSelectedDrivingTests(TmpPathTestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[1][0], run.BEHAVIOR_GOAHEAD_REPLY)
 
+    def test_recognized_grader_without_gate_fails_without_driving(self):
+        """A grader added to the recognized set but given no gate and reply
+        fails loudly instead of falling through to the structural path."""
+        base_case = _fake_case(self.tmp_path)
+        case = run.Case(name=base_case.name, prompt_path=base_case.prompt_path,
+                        fixture_path=base_case.fixture_path,
+                        grader="gateless")
+        scratch = _empty_scratch(self.tmp_path)
+
+        def fake_turn(prompt, scratch_dir, resume_id, turn_index, **kwargs):
+            self.fail("no turn should be sent for a grader with no gate")
+
+        with mock.patch.object(run, "RECOGNIZED_GRADERS",
+                               run.RECOGNIZED_GRADERS + ("gateless",)), \
+                mock.patch.object(run.session_driver, "drive",
+                                  side_effect=AssertionError("no drive")):
+            ok, failure = run.run_conversation(
+                case, scratch, host_repo=REPO_ROOT, turn_runner=fake_turn)
+        self.assertFalse(ok)
+        self.assertEqual(
+            failure, "no resume gate/reply defined for grader 'gateless'")
+
     def test_unknown_grader_fails_naming_it_without_driving(self):
         base_case = _fake_case(self.tmp_path)
         case = run.Case(name=base_case.name, prompt_path=base_case.prompt_path,
@@ -1267,6 +1289,18 @@ class JudgeOracleDefaultTests(unittest.TestCase):
         self.assertTrue(result.failure.startswith("fallback:"),
                         result.failure)
         self.assertIn("INSUFFICIENT", result.failure)
+
+    def test_insufficient_answered_by_oracle_fails_naming_the_entry(self):
+        """The oracle gave no answer on an INSUFFICIENT entry, so ORACLE
+        cannot hold its adopted default."""
+        ledger = _LEDGER_PASS.replace("**Answered by:** USER",
+                                      "**Answered by:** ORACLE")
+        result = run.judge_oracle_default(_plan(ledger), 0, 0)
+        self.assertFalse(result.passed)
+        self.assertTrue(result.failure.startswith("adopted answer:"),
+                        result.failure)
+        self.assertIn("Q1", result.failure)
+        self.assertIn("'ORACLE'", result.failure)
 
     def test_backticked_fields_are_read(self):
         ledger = (_LEDGER_PASS

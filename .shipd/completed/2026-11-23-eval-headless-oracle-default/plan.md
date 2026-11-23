@@ -63,8 +63,9 @@ Stdlib only, nothing under `plugins/s/`, so no plugin version bump.
   edited after it was gated. Rejected: re-running the mutating gate inside the
   grader, which would promote a plan the session never gated.
 - **An adopted answer is a non-empty `**Answer:**` under an `**Answered by:**`
-  of `USER` or `ORACLE`.** The gate already rejects `PLANNER`, and the linter
-  only checks the field is present. Under the harness's go-ahead reply the
+  of `USER`.** The oracle gave no answer on an `INSUFFICIENT` entry, so
+  `ORACLE` there is incoherent. The gate already rejects `PLANNER`, and the
+  linter only checks the field is present. Under the harness's go-ahead reply the
   planner records its default as `USER`, which is what `emission.md` prescribes
   for a typed resolution of an `INSUFFICIENT` entry.
 - **Ledger parsing mirrors the linter.** The section runs from

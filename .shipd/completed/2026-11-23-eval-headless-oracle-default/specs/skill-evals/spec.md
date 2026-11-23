@@ -14,7 +14,7 @@ change's `plan.md` reads `Status: ready` and `spec_gate.py <change> --check`
 exits 0; at least one `## Questions and answers` entry carries a
 `**Verdict:**` of `ANSWER` or `INSUFFICIENT`; every entry whose verdict is
 `INSUFFICIENT` carries a non-empty `**Answer:**` under an `**Answered by:**`
-of `USER` or `ORACLE`; and at least one entry's verdict is `INSUFFICIENT`, so
+of `USER`, since the oracle gave no answer there; and at least one entry's verdict is `INSUFFICIENT`, so
 the run proves the fallback to an adopted default. The judgement over the plan text and the lint and gate
 outcomes SHALL be a pure function that reads no file and runs no process, and
 a failing run SHALL name the first point that failed.
@@ -33,6 +33,11 @@ a failing run SHALL name the first point that failed.
 #### Scenario: An insufficient verdict with no adopted answer fails
 - **WHEN** a ledger entry carries `**Verdict:** INSUFFICIENT` and an empty
   `**Answer:**`
+- **THEN** the run is graded as failed, naming that entry
+
+#### Scenario: An insufficient verdict credited to the oracle fails
+- **WHEN** a ledger entry carries `**Verdict:** INSUFFICIENT` and
+  `**Answered by:** ORACLE`
 - **THEN** the run is graded as failed, naming that entry
 
 #### Scenario: A ledger the oracle answered in full fails

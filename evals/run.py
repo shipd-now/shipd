@@ -268,6 +268,10 @@ BEHAVIOR_GOAHEAD_REPLY = (
     "Proceed. For any open question or decision, now or in later rounds, "
     "take the option you yourself recommend.")
 
+# The graders driven with the structural gate and :data:`GOAHEAD_REPLY`.
+# ``"oracle-default"`` shares them, so a finished plan is never resumed.
+STRUCTURALLY_DRIVEN_GRADERS = ("structural", "oracle-default")
+
 # How many resumed turns a run may spend answering stops before the grade
 # decides the outcome.
 MAX_RESUMES_DEFAULT = 4
@@ -403,11 +407,15 @@ def run_conversation(case, scratch, binary="claude", host_repo=HOST_REPO,
     if case.grader == "behavior":
         gate = lambda: _behavior_gate_passed(case, scratch)
         reply = BEHAVIOR_GOAHEAD_REPLY
-    else:
-        # "structural" and "oracle-default" share the structural gate and
-        # the plan-specific go-ahead reply.
+    elif case.grader in STRUCTURALLY_DRIVEN_GRADERS:
         gate = lambda: grade(scratch, host_repo=host_repo).passed
         reply = GOAHEAD_REPLY
+    else:
+        # A recognized grader added without its own gate and reply fails
+        # loudly, before any turn is sent, rather than falling through to
+        # another grader's driving.
+        return False, (
+            "no resume gate/reply defined for grader %r" % case.grader)
 
     ok, _session_id, failure = session_driver.drive(
         prompt, scratch, gate, reply, max_resumes=max_resumes, timeout=timeout,
@@ -575,9 +583,11 @@ _QA_FIELD_RE = re.compile(r"^\s*-\s*\*\*([A-Za-z][A-Za-z ]*):\*\*\s*(.*)$")
 # The two verdicts the oracle contract allows as a first line.
 ORACLE_VERDICTS = ("ANSWER", "INSUFFICIENT")
 
-# Who may hold an adopted answer. ``PLANNER`` is the provisional value the
-# gate rejects; a headless go-ahead records the planner's default as ``USER``.
-ADOPTING_ANSWERERS = ("USER", "ORACLE")
+# Who may hold the adopted answer on an ``INSUFFICIENT`` entry. Only
+# ``USER``: the oracle gave no answer there, so ``ORACLE`` is incoherent, and
+# ``PLANNER`` is the provisional value the gate rejects. A headless go-ahead
+# records the planner's default as ``USER``.
+ADOPTING_ANSWERERS = ("USER",)
 
 
 def _ledger_entries(plan_text):
@@ -642,8 +652,8 @@ def judge_oracle_default(plan_text, lint_exit, gate_exit,
     3. **Oracle consulted** — at least one ledger entry carries a
        ``**Verdict:**`` of ``ANSWER`` or ``INSUFFICIENT``.
     4. **Default adopted** — every ``INSUFFICIENT`` entry carries an
-       ``**Answered by:**`` of ``USER`` or ``ORACLE`` and a non-empty
-       ``**Answer:**``.
+       ``**Answered by:**`` of ``USER`` (the oracle gave no answer, so
+       ``ORACLE`` is refused) and a non-empty ``**Answer:**``.
     5. **Fallback proven** — at least one entry's verdict is
        ``INSUFFICIENT``. The case exists to prove the oracle-then-default
        path, so a ledger the oracle answered in full fails.
@@ -682,7 +692,7 @@ def judge_oracle_default(plan_text, lint_exit, gate_exit,
         if answerer not in ADOPTING_ANSWERERS:
             return RunResult(
                 False, "adopted answer: ledger entry %s is INSUFFICIENT and "
-                       "its **Answered by:** is %r, expected USER or ORACLE"
+                       "its **Answered by:** is %r, expected USER"
                        % (label, answerer or None))
         if not (fields.get("Answer") or "").strip():
             return RunResult(
