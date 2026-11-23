@@ -1522,8 +1522,9 @@ id: in-session-unattended-prompts
 The in-session drive's plan-stage instruction and its re-plan instruction
 SHALL each end with a paragraph stating that no human is available during
 the run and that every decision is settled per the headless contract in
-`skills/ask/references/headless.md`, which the paragraph names by that path
-and does not restate. The re-plan
+`${CLAUDE_PLUGIN_ROOT}/skills/ask/references/headless.md`, which the paragraph
+names by that path, with a clause forbidding a question round and
+AskUserQuestion, and does not otherwise restate. The re-plan
 instruction SHALL additionally name the `/s:drift` verdict's `revise:`
 pointer and reason, require the revision to stay within the plan's `USER`
 ledger entries and the epic's Decisions, and end with `spec_gate.py <member>

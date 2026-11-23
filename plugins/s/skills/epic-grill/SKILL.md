@@ -100,8 +100,9 @@ first wave.
   Members already planned in this run (read each with
   `spec_status.py --root <root> cat change <slug>`; keep names, interfaces,
   and shared decisions consistent with them): <slug>: <root>, ...
-  Follow the headless contract in `skills/ask/references/headless.md`
-  (Codebase first, Oracle next, Never a dialog), with one override of its
+  Follow the headless contract in
+  `${CLAUDE_PLUGIN_ROOT}/skills/ask/references/headless.md` (Codebase first, Oracle next,
+  Never a dialog; never open a question round or an AskUserQuestion), with one override of its
   Default last part: for every decision the oracle leaves open (INSUFFICIENT,
   an advisory ANSWER, or no verdict), record `**Answered by:** PLANNER`, not
   `ASSUMPTION`, because the final round asks a human and rewrites the entry to

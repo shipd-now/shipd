@@ -63,6 +63,7 @@ SCRIPTS_DIR = os.path.join(
 if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
+import autopilot  # noqa: E402
 import session_driver  # noqa: E402
 
 
@@ -254,9 +255,9 @@ TRANSCRIPT_NAME = "eval-transcript.json"
 # drive to a gradable terminal state — though a clean case is now expected to
 # reach a gradable state on the first turn, with no resume needed.
 GOAHEAD_REPLY = (
-    "Proceed. For any open question or decision, now or in later rounds, "
-    "take the option you yourself recommend. Complete the plan through "
-    "emission, lint, and promotion to ready.")
+    "Proceed. For any open question or decision, now or in later rounds: "
+    "%s. Complete the plan through emission, lint, and promotion to ready."
+    % autopilot.HEADLESS_NOTE)
 
 # The skill-neutral counterpart for a behavior-graded case: it answers a
 # stop the same way (accept the session's own recommendation and keep

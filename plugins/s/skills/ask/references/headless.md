@@ -33,6 +33,10 @@ a `## Questions and answers` entry with these fields:
 - `**Answer:**` holds the adopted default. It is never empty.
 - `**Queued:**` names the `q-<slug>` when the oracle filed one.
 
+Record the entry only when you write or revise a plan. Otherwise, such as a
+build coordinator answering a sub-agent `QUESTION:`, answer with the default
+and record nothing.
+
 `ASSUMPTION` marks a default that the session chose. It is not a person's
 answer, so never record it as `USER`. The gate accepts a well-formed
 `ASSUMPTION` entry, and rejects one with no verdict or an empty answer.

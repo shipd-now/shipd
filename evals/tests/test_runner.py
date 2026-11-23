@@ -1227,6 +1227,17 @@ def _plan(ledger, status="ready"):
     return _PLAN_HEAD % status + ledger + _PLAN_TAIL
 
 
+class GoAheadReplyTests(unittest.TestCase):
+    def test_plan_reply_states_no_human_and_names_the_headless_contract(self):
+        reply = run.GOAHEAD_REPLY
+        self.assertIn("no human is available", reply)
+        self.assertIn("headless.md", reply)
+        self.assertIn(os.path.join("skills", "ask", "references",
+                                   "headless.md"), reply)
+        self.assertTrue(os.path.isabs(
+            reply.split("headless contract at ")[1].split(" ")[0]))
+
+
 class JudgeOracleDefaultTests(unittest.TestCase):
     """``judge_oracle_default`` is a pure function of the plan text and the
     lint and gate outcomes. These tests hand it literal text and exit codes:

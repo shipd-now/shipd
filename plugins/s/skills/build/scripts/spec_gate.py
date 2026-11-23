@@ -39,8 +39,8 @@ default still awaits a human answer.
 
 A sixth check (context-gate assumption-entry-check) holds the entries a
 headless session records as ``**Answered by:** ASSUMPTION``: each one needs a
-``**Verdict:**`` field and a non-empty ``**Answer:**``, also once a leading
-``Proceeding on the recommendation:`` is removed. A well-formed ``ASSUMPTION``
+``**Verdict:**`` of ``INSUFFICIENT`` and a non-empty ``**Answer:**``, also
+once a leading ``Proceeding on the recommendation:`` is removed. A well-formed ``ASSUMPTION``
 entry passes; it is not provisional. The placeholder check (2) skips the
 ``**Question:**`` field of a ``## Questions and answers`` entry, because a
 question may quote a marker word.
@@ -287,17 +287,23 @@ def _placeholders_in(text):
     return found
 
 
-LEDGER_FIELD_RE = re.compile(r"^\s*(?:-\s*)?\*\*([A-Za-z][A-Za-z ]*):\*\*\s*(.*)$")
+# An optional list bullet: `-`, `*`, `+`, or a numbered `1.` / `1)`.
+BULLET = r"(?:(?:[-*+]|\d+[.)])\s+)?"
+FIELD_TOKEN = r"\*\*([A-Za-z][A-Za-z ]*):\*\*"
+LEDGER_FIELD_RE = re.compile(r"^\s*" + BULLET + FIELD_TOKEN + r"\s*(.*)$")
+INLINE_FIELD_RE = re.compile(FIELD_TOKEN)
 RECOMMENDATION_PREFIX_RE = re.compile(
     r"^\s*Proceeding on the recommendation:\s*", re.IGNORECASE)
 
 
 def _strip_question_fields(text):
     """Return ``text`` without the ``**Question:**`` field of every
-    ``## Questions and answers`` entry (the field line and its wrapped
-    continuation, up to the next field, heading, or blank line), so a
-    question that quotes a placeholder word does not fire check (2). Text
-    outside the section is untouched."""
+    ``## Questions and answers`` entry, so a question that quotes a
+    placeholder word does not fire check (2). The field is the text after its
+    label up to the next ``**Name:**`` token — on the same line or a later
+    field line — plus its indented continuation lines. An unindented prose
+    line after the question, and any other field, stays scanned. Text outside
+    the section is untouched."""
     out = []
     in_section = False
     skipping = False
@@ -309,10 +315,16 @@ def _strip_question_fields(text):
             m = LEDGER_FIELD_RE.match(line)
             if m:
                 skipping = m.group(1).strip().lower() == "question"
-            elif line.startswith("### ") or not line.strip():
-                skipping = False
-            if skipping:
+                if skipping:
+                    token = INLINE_FIELD_RE.search(m.group(2))
+                    if token:
+                        out.append(m.group(2)[token.start():])
+                        skipping = False
+                    continue
+            elif skipping and line[:1] in (" ", "\t") and line.strip():
                 continue
+            else:
+                skipping = False
         out.append(line)
     return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
@@ -380,7 +392,7 @@ def _check_task_paths(root, change):
 # The bullet and backticks are optional: spec_lint accepts the field anywhere
 # in the entry body, so the gate must not let a format variant slip through.
 PROVISIONAL_RE = re.compile(
-    r"^\s*(?:-\s*)?\*\*Answered by:\*\*\s*`?PLANNER\b")
+    r"^\s*" + BULLET + r"\*\*Answered by:\*\*\s*`?PLANNER\b")
 
 
 def _check_provisional_entries(root, change):
@@ -407,7 +419,7 @@ def _check_provisional_entries(root, change):
     return findings
 
 
-ASSUMPTION_RE = re.compile(r"^`?ASSUMPTION\b")
+ASSUMPTION_RE = re.compile(r"^`?ASSUMPTION\b", re.IGNORECASE)
 
 
 def _ledger_entries(section):
@@ -448,10 +460,15 @@ def _check_assumption_entries(root, change):
         if not label or not ASSUMPTION_RE.match(
                 fields.get("answered by", "").strip()):
             continue
-        if not fields.get("verdict", "").strip().strip("`"):
+        verdict = fields.get("verdict", "").strip().strip("`").strip()
+        if not verdict:
             findings.append(
                 "ledger entry %s is an ASSUMPTION with no **Verdict:**"
                 % label)
+        elif not re.match(r"INSUFFICIENT\b", verdict, re.IGNORECASE):
+            findings.append(
+                "ledger entry %s is an ASSUMPTION whose **Verdict:** is not "
+                "INSUFFICIENT" % label)
         answer = RECOMMENDATION_PREFIX_RE.sub(
             "", fields.get("answer", "")).strip().strip("`").strip()
         if not answer:

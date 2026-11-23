@@ -394,7 +394,10 @@ answer, a failed lookup, or no verdict, adopt the recommended default and
 record an entry with `**Verdict:** INSUFFICIENT`, `**Answered by:**
 ASSUMPTION`, the options in `**Question:**` with the default first, the
 adopted default in a non-empty `**Answer:**`, and `**Queued:**` when the oracle
-filed one), and `Never a dialog` (no question round, no AskUserQuestion). Every
+filed one), and `Never a dialog` (no question round, no AskUserQuestion). `Default last`
+records the entry only when the session writes or revises a plan; otherwise,
+such as a build coordinator answering a sub-agent `QUESTION:`, it answers with
+the default and records nothing. Every
 inline copy of this contract SHALL point at the file instead of restating it:
 the autopilot skill's plan, build, and re-plan instructions, the autopilot
 driver's prompts, and the epic-grill planner instruction. The epic-grill

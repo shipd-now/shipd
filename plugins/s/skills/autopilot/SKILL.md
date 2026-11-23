@@ -291,7 +291,8 @@ following the /s:drift verdict's `revise:` pointer and reason: the pointer
 names <revise-pointer>, and the reason is <reason>.
 
 No human is available during this run. Settle every decision per the headless
-contract in `skills/ask/references/headless.md`.
+contract in `${CLAUDE_PLUGIN_ROOT}/skills/ask/references/headless.md`. Never open a question round or an
+AskUserQuestion.
 
 Keep every `**Answered by:** USER` ledger entry and every epic Decision; never
 contradict either — resolve the revision within them.
@@ -373,7 +374,8 @@ Run /s:plan for the change `<member>` — a member of an approved epic.
 Investigate, spec it, and promote it to Status: ready.
 
 No human is available during this run. Settle every decision per the headless
-contract in `skills/ask/references/headless.md`.
+contract in `${CLAUDE_PLUGIN_ROOT}/skills/ask/references/headless.md`. Never open a question round or an
+AskUserQuestion.
 ```
 
 **Build stage instruction:**
@@ -383,7 +385,7 @@ and archive it and open its auto-merging PR.
 
 If a sub-agent escalates a QUESTION: that the spec artifacts and code cannot
 answer, settle it per the headless contract in
-`skills/ask/references/headless.md` — never leave the sub-agent blocked.
+`${CLAUDE_PLUGIN_ROOT}/skills/ask/references/headless.md` — never leave the sub-agent blocked.
 ```
 
 **Review stage instruction:**

@@ -449,6 +449,11 @@ a failing run SHALL name the first point that failed.
   non-zero
 - **THEN** the run is graded as failed, naming the gate
 
+#### Scenario: The go-ahead reply names the headless contract
+- **WHEN** the plan-specific go-ahead reply is inspected
+- **THEN** it states that no human is available and names the absolute path
+  of `headless.md`
+
 #### Scenario: The judgement runs without a session
 - **WHEN** the grader's unit tests run
 - **THEN** they judge literal `plan.md` text and spawn no `claude` process
