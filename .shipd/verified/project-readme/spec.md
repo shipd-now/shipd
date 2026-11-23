@@ -17,47 +17,14 @@ banner above that introduction.
 - **THEN** a short prose introduction states what shipd is before any install
   or engine documentation appears
 
-### Requirement: README catalogs the plugin's skills
-id: readme-catalogs-the-plugin-s-skills
-
-The `README.md` SHALL include a **Skills** section listing every skill in
-the `s` plugin. Each skill entry SHALL state its invocation name
-(`/s:<name>`) and a one-to-two sentence description consistent with that
-skill's own `description` frontmatter. The section SHALL reflect the current
-skill set exactly — no missing skills, no skills that do not exist, and no
-references to retired systems. The section SHALL carry exactly three group
-headings — **Pipeline**, **Orchestration** and **Memory** — and every skill
-SHALL appear under exactly one of them, so the section partitions the skill
-set rather than sampling it.
-
-#### Scenario: All current skills are documented
-- **WHEN** the Skills section is compared against the plugin's skill
-  directories
-- **THEN** every skill appears with its `/s:<name>` invocation and a
-  description consistent with its frontmatter
-
-#### Scenario: No stale entries
-- **WHEN** the Skills section is read
-- **THEN** it names no skill that does not exist and no retired system
-
-#### Scenario: The three groups partition the skill set
-- **WHEN** the rows of the section's three group tables are collected
-- **THEN** each directory under `plugins/s/skills/` appears in exactly one
-  of them, and no skill appears in two
-
-#### Scenario: The section's three headings are Pipeline, Orchestration and Memory
-- **WHEN** the Skills section's group headings are read
-- **THEN** they are exactly `**Pipeline**`, `**Orchestration**` and
-  `**Memory**`, in that order
-
 ### Requirement: README retains onboarding content
 id: readme-retains-onboarding-content
 
-The `README.md` SHALL preserve the existing practical guidance: what the
-project is, how to install it as a marketplace/plugin, the directory
-structure, and how to add new commands and skills, ordered newcomer-first —
-installation and the `docs/getting-started.md` link before the engine
-internals.
+The `README.md` SHALL keep the practical guidance no docs page owns: what
+the project is, how to install it as a marketplace plugin, the directory
+structure, and how to add new commands and skills. It SHALL be ordered
+newcomer-first: installation and the links into `docs/` come before the
+contributor sections.
 
 #### Scenario: Install instructions survive the rewrite
 - **WHEN** a reader wants to try the plugin
@@ -66,53 +33,19 @@ internals.
 
 #### Scenario: Newcomer content precedes internals
 - **WHEN** a reader scans the README top to bottom
-- **THEN** installation and the `docs/getting-started.md` link appear
-  before the spec-engine and statusline internals
-
-### Requirement: README documents the spec engine and status pipeline
-id: readme-documents-spec-engine
-
-The `README.md` SHALL document the homegrown spec system: the `.shipd/` layout
-(`planned/` in-flight changes, `completed/` applied changes, `verified/`
-master library) with its configurability via `.shipd-config.json` (layered
-upward search, the `dir` key) and the lean change artifacts; the five-status
-lifecycle (`draft`, `ready`, `active`, `complete`, `verified`) with one-line
-stage meanings, its pipeline ownership, and the guarded `set-status`
-transitions with `--force` override; the ☕ statusline (rendered line
-format, spec selection via `spec_status.py use`, and its
-`.claude/settings.json` registration); and the build telemetry (report
-table, the `build` config key in `~/.shipd-config.json`, `builds.jsonl` under
-`~/.shipd/builds/`). It SHALL link to the content directory's `README.md` as
-the grammar authority rather than restating the requirement/delta grammar.
-
-#### Scenario: Lifecycle is explained
-- **WHEN** a reader reaches the spec-engine documentation
-- **THEN** the five statuses appear in pipeline order with a one-line
-  meaning each, and guarded transitions with `--force` override are
-  described
-
-#### Scenario: Storage convention is explained
-- **WHEN** a reader reaches the layout documentation
-- **THEN** the `.shipd/` default, the `.shipd-config.json` layering, and the
-  `dir` key are described
+- **THEN** `## Install` and `## Documentation`, with its
+  `docs/getting-started.md` link, appear before `## Structure`
 
 ### Requirement: Pipeline follower surfaces stay current
 id: pipeline-follower-docs
 
-The root `README.md`'s autonomous-pipeline overview SHALL mention that
-entries may carry typed per-stage options validated strictly (unknown keys
-and wrong types rejected) by the engine's stdlib-only schema module,
-requiring no third-party package, linking the format authority for the full
-grammar. `docs/getting-started.md`'s doctor step SHALL give the `shipd doctor`
+`docs/getting-started.md`'s doctor step SHALL give the `shipd doctor`
 command, SHALL link `doctor.md` as the owner of the check list, SHALL NOT
 list the check names itself, and SHALL carry a one-line mention that
 `{"autonomous-pipeline": "eco"}` in `.shipd-config.json` opts a delivery
-into the cheap preset.
-
-#### Scenario: Root README names the options layer
-- **WHEN** a reader finishes the README's autonomous-pipeline paragraph
-- **THEN** it names typed per-stage options and strict validation and
-  points at the format authority for the grammar
+into the cheap preset. The root `README.md` SHALL NOT describe the
+autonomous pipeline; the content directory's `README.md` holds its grammar,
+as `shipd-config`'s `pipeline-grammar-docs` requirement states.
 
 #### Scenario: Doctor step defers to the doctor page
 - **WHEN** a reader reaches the doctor step of `docs/getting-started.md`
@@ -124,6 +57,10 @@ into the cheap preset.
   cheap-delivery opt-in
 - **THEN** one line shows `{"autonomous-pipeline": "eco"}` as the way to
   opt in
+
+#### Scenario: Root README holds no pipeline prose
+- **WHEN** `README.md` is searched for `autonomous-pipeline`
+- **THEN** no line matches
 
 ### Requirement: Copilot review guide
 id: copilot-review-guide
@@ -298,35 +235,23 @@ The repository SHALL keep the coffee-cup vector brand as `icon.svg` at the repos
 ### Requirement: Harness mode documentation
 id: harness-mode-docs
 
-The `README.md` SHALL document harness mode inside its installation documentation: the interactive `shipd install` finish, animated wordmark, harness multi-select over the registry's fifteen harnesses, `~/.shipd/harnesses.json` selection record, user-global generation, closing setup check that shows one progress line, installs missing local tooling, and lists only the remaining problems with a fix each, headless degradation, and re-run path. Its explicitly labeled harness-mode subsection SHALL cover repo-level `shipd harness add` and `remove`, ownership and overwrite safety, `--user`, skipped unsupported surfaces, the four-feature scaling model, `shipd-` command names, and registry inspection verbs. The CLI verb list SHALL include `harness`; the brand note SHALL remain present. `docs/install.md` SHALL carry the install finish for docs readers: harness selection, headless degradation, and a link to `harnesses.md` for repo-level `shipd harness add`; `docs/getting-started.md` SHALL NOT restate it.
-
-#### Scenario: Install finish is documented
-- **WHEN** a reader finishes the README's install-mode documentation
-- **THEN** the fifteen-harness multi-select, selection record, headless write-nothing degradation, and re-run path are described
-
-#### Scenario: The closing preflight is documented
-- **WHEN** a reader finishes the README's install finish paragraph
-- **THEN** it states that a confirmed finish runs the setup check, installs missing local tooling, lists each remaining problem with its fix, and that headless and aborted paths do not
-
-#### Scenario: Repo-level installation is documented
-- **WHEN** a reader reaches the README's harness-mode subsection
-- **THEN** `shipd harness add` and `remove` appear with ownership, idempotence, `--force`, and `--user` behavior
-
-#### Scenario: Feature scaling is explained
-- **WHEN** a reader reaches the feature-scaling explanation
-- **THEN** all four declared features are named and generated files are described as omitting undeclared features
-
-#### Scenario: CLI list gains the harness verb
-- **WHEN** a reader reads the README's CLI verb list
-- **THEN** it includes a `harness` row consistent with registry list and show behavior
-
-#### Scenario: Brand note is stated
-- **WHEN** a reader reaches the harness documentation's brand note
-- **THEN** it confines the animated wordmark to installation and retains ☕ as the brand mark
+`README.md` SHALL NOT document harness mode. Its `## Install` section SHALL
+name harness selection in one sentence at most and link `docs/install.md`.
+`docs/install.md` SHALL carry the install finish for docs readers: harness
+selection, headless degradation, and a link to `harnesses.md` for repo-level
+`shipd harness add`; `docs/getting-started.md` SHALL NOT restate it.
+`docs/harnesses.md` owns repo-level harness mode, as `harness-registry`'s
+`harness-user-docs` requirement states it.
 
 #### Scenario: Install page carries the mode
 - **WHEN** a reader follows `docs/install.md`'s harness step
-- **THEN** harness selection and headless degradation are named, and `harnesses.md` is linked for repo-level `shipd harness add`
+- **THEN** harness selection and headless degradation are named, and
+  `harnesses.md` is linked for repo-level `shipd harness add`
+
+#### Scenario: README defers harness mode
+- **WHEN** `README.md` is searched for `shipd harness` and `harnesses.json`
+- **THEN** no line matches, and its `## Install` section links
+  `docs/install.md`
 
 ### Requirement: Getting-started guide
 id: getting-started-doc
@@ -399,11 +324,9 @@ it.
 
 The file SHALL additionally carry exactly one mermaid diagram: a `venn-beta`
 fence, above the `/s:` table and under its own level-2 heading, whose three
-sets are the `README.md` **Skills** groups, named exactly as this
-capability's `readme-catalogs-the-plugin-s-skills` requirement names them —
-that requirement owns the group names and this one SHALL NOT restate them.
-Enumerating them here is what left this requirement naming three groups the
-README had renamed. Each of the fence's seven regions SHALL hold exactly
+sets are named `Pipeline`, `Orchestration` and `Memory`, in that order. This
+requirement owns those three names; `README.md` carries no skill list to take
+them from. Each of the fence's seven regions SHALL hold exactly
 one `text` node naming what that region holds, in at most three words — and
 in at most two for the three pairwise regions and the centre, whose area does
 not carry more — and SHALL name no skill. The fence SHALL carry no `title` line and no `style`
@@ -744,17 +667,18 @@ as null, and that a null hash matches nothing.
 ### Requirement: Multi-agent PR entry links
 id: multi-agent-pr-entry-links
 
-The three entry surfaces SHALL link the Multi-agent PR concept doc.
-`README.md`'s "Getting started" section SHALL carry one sentence that links
-`docs/multi-agent-pr.md`. `docs/what-is-shipd.md` SHALL link
+The three entry surfaces SHALL link the Multi-agent PR concept doc. The
+**Multi-agent PRs** item of `README.md`'s `## Documentation` section SHALL
+link `docs/multi-agent-pr.md`. `docs/what-is-shipd.md` SHALL link
 `multi-agent-pr.md` in a prose paragraph placed after its Mermaid diagram
 and before the paragraph that opens "Today shipd builds itself", and SHALL
 stay at 100 lines or fewer. The `/s:room` row of `docs/cheatsheet.md`'s
 command table SHALL link `multi-agent-pr.md` in its description cell.
 
 #### Scenario: README links the concept doc
-- **WHEN** a reader opens the "Getting started" section of `README.md`
-- **THEN** it contains a link to `docs/multi-agent-pr.md`
+- **WHEN** a reader opens the `## Documentation` section of `README.md`
+- **THEN** its **Multi-agent PRs** item contains a link to
+  `docs/multi-agent-pr.md`
 
 #### Scenario: Overview links the concept doc within its cap
 - **WHEN** `docs_lint.py docs/what-is-shipd.md` runs and `wc -l` counts
@@ -918,3 +842,38 @@ link, and every swept page SHALL stay within its line cap and pass
 #### Scenario: Every added link resolves
 - **WHEN** the relative links on the swept pages are collected
 - **THEN** each names an existing file under `docs/`
+
+### Requirement: README links each docs group
+id: readme-docs-group-links
+
+`README.md` SHALL carry a `## Documentation` section directly after
+`## Install`. The section SHALL hold nine list items, in this order, each
+opening with the group name in bold and carrying exactly one link into
+`docs/`: **Start here** to `docs/getting-started.md`, **Plan** to
+`docs/plan.md`, **Build** to `docs/build.md`, **Epics** to `docs/epics.md`,
+**Review and merge** to `docs/semantic-review.md`, **Multi-agent PRs** to
+`docs/multi-agent-pr.md`, **Knowledge** to `docs/oracle.md`, **Workspaces** to
+`docs/workspaces.md`, and **Configure** to `docs/customise.md`. The section
+SHALL close with one sentence that links `docs/cheatsheet.md` as the list of
+every command.
+
+The level-2 headings of `README.md` SHALL be exactly `## Install`,
+`## Documentation`, `## Structure`, `## Adding a command`,
+`## Adding a skill`, and `## After editing`, in that order. The file SHALL
+total 150 lines or fewer and SHALL hold no table.
+
+#### Scenario: Each group line links its page
+- **WHEN** the list items of the README's `## Documentation` section are read
+- **THEN** there are nine, their bold names are the nine groups in the order
+  this requirement gives, each holds exactly one `docs/` link to the page
+  this requirement assigns, and every linked file exists
+
+#### Scenario: The moved sections are gone
+- **WHEN** the level-2 headings of `README.md` are listed
+- **THEN** they are `## Install`, `## Documentation`, `## Structure`,
+  `## Adding a command`, `## Adding a skill`, and `## After editing`, and no
+  line of the file starts a table row with `|`
+
+#### Scenario: README fits its cap
+- **WHEN** `wc -l README.md` runs
+- **THEN** the count is 150 or fewer

@@ -129,8 +129,8 @@ class AutopilotSkillContractTest(unittest.TestCase):
         for reason in PARK_REASONS:
             self.assertIn(reason, self.reference)
 
-    def test_readme_still_lists_the_autopilot_command(self):
-        self.assertIn("`/s:autopilot`", _read_repo("README.md"))
+    def test_cheatsheet_lists_the_autopilot_command(self):
+        self.assertIn("/s:autopilot", _read_repo("docs", "cheatsheet.md"))
 
     def test_the_harness_text_orders_by_the_waves_mode(self):
         flat_body = " ".join(self.body.split())

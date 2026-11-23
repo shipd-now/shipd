@@ -67,8 +67,7 @@ class PlanDeepSkillContractTest(unittest.TestCase):
         self.assertEqual(claiming, ["plan-deep"])
 
     def test_registry_files_mention_the_command(self):
-        for rel in ("README.md", os.path.join("docs", "cheatsheet.md"),
-                    "AGENTS.md"):
+        for rel in (os.path.join("docs", "cheatsheet.md"), "AGENTS.md"):
             self.assertIn("/s:plan-deep", _read(ROOT, rel), rel)
 
     def test_rubric_carries_its_vocabulary(self):

@@ -142,8 +142,7 @@ The plugin SHALL ship `plugins/s/skills/drift/SKILL.md` (frontmatter
 drifted"`, `"/s:drift"`, claimed by no other skill), an ungated body template
 `plugins/s/harness/bodies/drift.md` opening with a description marker and
 containing none of `subagent`, `sub-agent`, or `AskUserQuestion`, a `/s:drift`
-row in `README.md`'s Orchestration table and in `docs/cheatsheet.md`'s command
-table and Unattended group, a mention in `AGENTS.md`'s skill roll, a
+row in `docs/cheatsheet.md`'s command table and Unattended group, a mention in `AGENTS.md`'s skill roll, a
 shipped-text contract test, and a `plugin.json` version bump.
 
 #### Scenario: Body parity and token rules pass
@@ -155,7 +154,8 @@ shipped-text contract test, and a `plugin.json` version bump.
 - **WHEN** `test_drift_skill_contract` runs
 - **THEN** it asserts the skill and body name the verb, `--epic`, `--base`,
   `--json`, all three verdicts, the `## Drift verdicts` block, the
-  `verdicts:` tally, and that `/s:drift` appears in the three registry files
+  `verdicts:` tally, and that `/s:drift` appears in `docs/cheatsheet.md` and `AGENTS.md`, the two registry
+  files
 
 ### Requirement: Drift user documentation
 id: drift-user-docs

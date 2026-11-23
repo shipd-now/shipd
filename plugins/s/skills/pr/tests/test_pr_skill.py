@@ -112,8 +112,7 @@ class CallersTest(unittest.TestCase):
         self.assertIn("/s:pr --draft", text[start:end])
 
     def test_registrations_name_the_skill(self):
-        for rel in ("AGENTS.md", "README.md",
-                    os.path.join("docs", "cheatsheet.md")):
+        for rel in ("AGENTS.md", os.path.join("docs", "cheatsheet.md")):
             self.assertIn("/s:pr", _read(os.path.join(REPO_ROOT, rel)),
                           "%s does not name /s:pr" % rel)
 

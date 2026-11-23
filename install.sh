@@ -1,5 +1,5 @@
 #!/bin/sh
-# shipd installer — see README.md ("Install mode").
+# shipd installer — see docs/install.md.
 #
 # POSIX sh, bash-3.2-safe (no arrays, no `set -u`), matching the shell
 # precedent the constitution sets for `statusline.sh`. It downloads nothing

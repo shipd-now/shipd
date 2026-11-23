@@ -8,15 +8,14 @@ The plugin SHALL ship a skill named `init` with a harness body
 `/s:init <section>` SHALL run one section alone, where the sections are
 `layout`, `config`, `workspace`, `wiki`, `memory`, `hooks`, and `gate`. If the
 section is not one of these, then the skill SHALL list the sections and stop
-without writing. `README.md`, `docs/cheatsheet.md`, and `AGENTS.md` SHALL list
-`/s:init`.
+without writing. `docs/cheatsheet.md` and `AGENTS.md` SHALL list `/s:init`.
 
 #### Scenario: Unknown section writes nothing
 - **WHEN** `/s:init colours` runs
 - **THEN** the skill lists the seven sections and no file changes
 
 #### Scenario: Registry files list the command
-- **WHEN** `README.md`, `docs/cheatsheet.md`, and `AGENTS.md` are read
+- **WHEN** `docs/cheatsheet.md` and `AGENTS.md` are read
 - **THEN** each names `/s:init`
 
 ### Requirement: The setup wizard
