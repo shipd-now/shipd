@@ -421,7 +421,7 @@ it, and `claim` only ever hands out tasks whose group is ready. So:
   Beyond the cap, spawn the cap's worth — the extra ready tasks are picked up
   as sub-agents finish and re-`claim`.
 - **The safety is the script, not your judgment.** `claim` is atomic
-  (mkdir-lock, `[~]` marks) and group-aware: concurrent sub-agents each get a
+  (lock file, `[~]` marks) and group-aware: concurrent sub-agents each get a
   distinct ready task, and none is handed a task whose barrier/earlier group is
   unfinished. An untagged (fully sequential) `tasks.md` therefore naturally runs
   one task at a time.

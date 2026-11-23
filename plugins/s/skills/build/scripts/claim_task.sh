@@ -361,9 +361,12 @@ require_change_branch() {
 # 25.10+) reports success when a concurrent process creates the directory
 # first, which let two claimers hold the lock at once and take the same task.
 # The subshell keeps `noclobber` away from this script's other redirections.
+# The redirect writes nothing: creating the file is the whole acquisition. A
+# write after the create could fail (a full disk) and leave a lock that no trap
+# removes, which would block every later claim.
 acquire_lock() {
   local tries=0
-  until (set -o noclobber; echo "$$" > "$LOCK") 2>/dev/null; do
+  until (set -o noclobber; : > "$LOCK") 2>/dev/null; do
     tries=$((tries + 1))
     [ "$tries" -gt 100 ] && die "could not acquire lock on $TASKS (stale $LOCK?)"
     sleep 0.1

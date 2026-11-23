@@ -240,6 +240,31 @@ class LockExclusivityTest(ClaimScriptTestBase):
         self.assertFalse(
             os.path.exists(os.path.join(self.change_dir, ".tasks.lock")))
 
+    def test_the_lock_is_created_empty_and_removed(self):
+        # Acquiring the lock must be the create alone. A write into the file
+        # after the create can fail on a full disk, after the file exists and
+        # before any trap is set: the stale lock then blocks every later claim.
+        self.write_tasks("## 1. Group\n- [ ] 1.1 [P1] first\n")
+        lock = os.path.join(self.change_dir, ".tasks.lock")
+        with open(self.hold, "w", encoding="utf-8"):
+            pass
+        claimer = subprocess.Popen(
+            ["bash", SCRIPT, "claim", CHANGE], cwd=self.root, env=self.env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            self.assertTrue(
+                self.wait_for_parked(1, 20),
+                "the claimer never reached its critical section")
+            held = os.path.isfile(lock)
+            size = os.path.getsize(lock) if held else None
+        finally:
+            os.remove(self.hold)
+            claimer.communicate(timeout=30)
+
+        self.assertTrue(held, "the claim lock is not a file while held")
+        self.assertEqual(size, 0, "acquiring the lock wrote into the lock file")
+        self.assertFalse(os.path.exists(lock))
+
 
 class BarrierTest(ClaimScriptTestBase):
     def setUp(self):
