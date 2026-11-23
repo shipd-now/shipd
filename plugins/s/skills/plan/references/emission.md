@@ -231,6 +231,8 @@ sequentially from `Q1` — followed by a dash list of fields:
   settled the decision is clear at a glance. A deferring planner spawned by
   `/s:epic-grill` writes the provisional `PLANNER` instead; it is rewritten to
   `USER` once the human answers, and the gate rejects a plan still holding it.
+  A headless session records the default it adopted as `ASSUMPTION`, per
+  `skills/ask/references/headless.md`; the gate accepts a complete one.
 - `- **Answer:**` the oracle's position in full for an `ANSWER` entry, the
   user's typed resolution for an `INSUFFICIENT` one.
 - `- **Cited:**` the oracle's sources — on `ANSWER` entries.

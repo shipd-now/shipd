@@ -241,6 +241,154 @@ class ProvisionalEntryCheckTest(SpecGateTestBase):
         self.assertIn("Status: ready", self.read_plan("feat"))
 
 
+class AssumptionEntryCheckTest(SpecGateTestBase):
+    @staticmethod
+    def _entry(n, verdict="- **Verdict:** INSUFFICIENT\n",
+               answer="The first option.", question="Which option?"):
+        return (
+            "### Q%d: Decision %d\n"
+            "- **Question:** %s\n"
+            "%s"
+            "- **Answered by:** ASSUMPTION\n"
+            "- **Answer:** %s\n"
+            "- **Queued:** q-decision-%d\n\n"
+            % (n, n, question, verdict, answer, n))
+
+    def _plan_with(self, *entries):
+        self.make_clean_change("feat", status="draft")
+        self.write_plan(
+            "feat",
+            CLEAN_PLAN % ("feat", "draft")
+            + "\n## Questions and answers\n\n" + "".join(entries))
+
+    def test_well_formed_assumption_passes(self):
+        self._plan_with(self._entry(1))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 0, self.out(r))
+        self.assertIn("Status: ready", self.read_plan("feat"))
+
+    def test_assumption_without_verdict_rejects_naming_the_entry(self):
+        self._plan_with(self._entry(1), self._entry(2, verdict=""))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        plan = self.read_plan("feat")
+        self.assertIn("ledger entry Q2 is an ASSUMPTION with no **Verdict:**",
+                      plan)
+        self.assertNotIn("ledger entry Q1 is an ASSUMPTION", plan)
+
+    def test_assumption_with_empty_answer_rejects(self):
+        self._plan_with(self._entry(1, answer=""))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("ledger entry Q1 is an ASSUMPTION with an empty "
+                      "**Answer:**", self.read_plan("feat"))
+
+    def test_answer_empty_after_recommendation_prefix_rejects(self):
+        self._plan_with(
+            self._entry(1, answer="Proceeding on the recommendation:"))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("empty **Answer:**", self.read_plan("feat"))
+
+    def test_answer_with_text_after_recommendation_prefix_passes(self):
+        self._plan_with(self._entry(
+            1, answer="Proceeding on the recommendation: the first option."))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 0, self.out(r))
+
+    def test_wrapped_answer_counts_as_non_empty(self):
+        self._plan_with(self._entry(1, answer="\n  The first option."))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 0, self.out(r))
+
+    def test_star_bullets_are_read(self):
+        entry = self._entry(1, verdict="").replace("- **", "* **")
+        self._plan_with(entry)
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("ledger entry Q1 is an ASSUMPTION with no **Verdict:**",
+                      self.read_plan("feat"))
+
+    def test_numbered_bullets_and_star_planner_are_read(self):
+        entry = self._entry(1).replace("- **Answered by:** ASSUMPTION",
+                                       "1. **Answered by:** PLANNER")
+        self._plan_with(entry)
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("ledger entry Q1 is provisional", self.read_plan("feat"))
+
+    def test_lowercase_assumption_is_checked(self):
+        entry = self._entry(1, answer="").replace("ASSUMPTION", "assumption")
+        self._plan_with(entry)
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("empty **Answer:**", self.read_plan("feat"))
+
+    def test_assumption_with_answer_verdict_rejects(self):
+        self._plan_with(self._entry(
+            1, verdict="- **Verdict:** ANSWER\n"))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("ledger entry Q1 is an ASSUMPTION whose **Verdict:** "
+                      "is not INSUFFICIENT", self.read_plan("feat"))
+
+    def test_planner_entry_is_still_rejected(self):
+        self._plan_with(self._entry(1).replace("ASSUMPTION", "PLANNER"))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("ledger entry Q1 is provisional", self.read_plan("feat"))
+
+
+class QuestionFieldPlaceholderTest(SpecGateTestBase):
+    _entry = staticmethod(AssumptionEntryCheckTest._entry)
+    _plan_with = AssumptionEntryCheckTest._plan_with
+
+    def test_marker_in_a_question_field_passes(self):
+        self._plan_with(self._entry(1, question="Keep the TODO marker?"))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 0, self.out(r))
+
+    def test_marker_on_a_wrapped_question_line_passes(self):
+        self._plan_with(self._entry(1, question="Which option?\n  Or TBD?"))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 0, self.out(r))
+
+    def test_answer_on_the_question_line_is_still_scanned(self):
+        self._plan_with(self._entry(
+            1, question="Which option? **Answer:** TBD"))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("placeholder marker 'TBD'", self.read_plan("feat"))
+
+    def test_answer_on_a_wrapped_question_line_is_still_scanned(self):
+        self._plan_with(self._entry(
+            1, question="Which option?\n  more text **Answer:** TBD"))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("placeholder marker 'TBD'", self.read_plan("feat"))
+
+    def test_unindented_prose_after_a_question_is_still_scanned(self):
+        self._plan_with(self._entry(
+            1, question="Which option?\nTODO: decide this later."))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("placeholder marker 'TODO'", self.read_plan("feat"))
+
+    def test_marker_in_an_answer_field_still_rejects(self):
+        self._plan_with(self._entry(1, answer="TODO later"))
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("placeholder marker 'TODO'", self.read_plan("feat"))
+
+    def test_marker_outside_the_ledger_still_rejects(self):
+        self._plan_with(self._entry(1, question="Keep the TODO marker?"))
+        plan = self.read_plan("feat").replace("Carefully.", "Carefully, TBD.")
+        self.write_plan("feat", plan)
+        r = self.cli("feat")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("placeholder marker 'TBD'", self.read_plan("feat"))
+
+
 class UnknownChangeTest(SpecGateTestBase):
     def test_unknown_change_is_general_error(self):
         r = self.cli("no-such-change")

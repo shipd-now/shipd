@@ -2518,13 +2518,22 @@ class OracleAwareSessionTest(unittest.TestCase):
         reply = autopilot.GOAHEAD_REPLY
         self.assertIn("oracle-lookup", reply)
         self.assertNotIn("s:oracle", reply)
-        # The compact-question shape: decision, options, recommendation.
-        low = reply.lower()
-        self.assertIn("decision", low)
-        self.assertIn("options", low)
-        self.assertIn("recommend", low)
-        self.assertIn("ANSWER", reply)
-        self.assertIn("INSUFFICIENT", reply)
+        # The contract lives in one reference the reply points at; the
+        # reply restates none of its ledger labels.
+        self.assertIn(autopilot.HEADLESS_CONTRACT_PATH, reply)
+        self.assertTrue(os.path.isfile(autopilot.HEADLESS_CONTRACT_PATH))
+        for label in ("ASSUMPTION", "USER", "PLANNER", "INSUFFICIENT"):
+            self.assertNotIn(label, reply)
+
+    def test_every_headless_prompt_names_the_reference(self):
+        prompts = [
+            autopilot.GOAHEAD_REPLY,
+            autopilot._stage_prompt("build", "m", {}),
+            autopilot._stage_prompt("enrich", "m", {}),
+            autopilot._replan_prompt("m", {}),
+        ]
+        for prompt in prompts:
+            self.assertIn(autopilot.HEADLESS_CONTRACT_PATH, prompt)
 
     def test_build_prompt_routes_question_escalations_through_oracle(self):
         prompt = autopilot._stage_prompt("build", "m", {})

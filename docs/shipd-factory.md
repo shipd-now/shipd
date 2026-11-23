@@ -10,10 +10,15 @@ owns it. Any account can install it; it acts only on repos you pick.
 
 ## What it is for
 
-The factory runs on a self-hosted factory host running Google's ax agent
-runtime, with each job in an Agent Substrate gVisor sandbox. A job runs shipd's
-`/s:plan` then `/s:build`, pushes a `change/<slug>` branch, and opens a pull
-request as `shipd-factory[bot]`.
+The factory works where you work, and it can stay on 24/7. You set how it works
+through shipd: `.shipd-config.json` today, and skills you add to the shipd
+harness once they ship. Connectors will let the factory run by itself. shipd is
+building a Slack connector and plans more for Teams and other tools. One example
+would be a shipd Slack app you install that reacts to Grafana errors in a channel.
+
+Each job runs in a gVisor sandbox on a self-hosted factory host. A job runs
+shipd's `/s:plan` then `/s:build`, pushes a `change/<slug>` branch, and opens a
+pull request as `shipd-factory[bot]`.
 
 ```mermaid
 flowchart TD
@@ -61,11 +66,10 @@ without the App fails with `ghcreds: shipd-factory is not installed on <repo>`.
 The orchestrator applies the egress policy, then writes the tokens into the
 sandbox over `ax ssh`.
 
-## Set up a repo
+## Set up and remove
 
 `/shipd-factory onboard <owner/repo>` prepares an existing repo, and
-`/shipd-factory new <name>` creates a private repo first. When a step needs your
-consent, the skill prints the exact command and waits.
+`/shipd-factory new <name>` creates a private repo first.
 
 1. The default branch needs a check named `ci`; onboarding stops without one.
 2. You [install the App](https://github.com/apps/shipd-factory) on the repo, the
@@ -75,6 +79,10 @@ consent, the skill prints the exact command and waits.
    `shipd merge rules` ruleset. It needs 1 approval, resolved threads, and
    checks `ci`, `semantic-review` and `room-review/shipd-factory-reviewer`.
 5. One onboarding pull request opens; the factory reviews and merges it.
+
+In **Settings → Applications → Installed GitHub Apps**, choose **Configure**
+next to shipd-factory, then uninstall it, which stops all minting. Removing
+the `shipd-now` collaborator stops new reviews.
 
 ## Reviews and author fixes
 
@@ -89,11 +97,4 @@ then fixes a finding as `shipd-factory[bot]`, at most 3 rounds per pull request.
 
 - **`pr-mode: auto`.** On 2026-11-01, [unkannybanny #44](https://github.com/mikkel-bergmann/unkannybanny/pull/44) merged with no human action.
 - **Author loop.** On 2026-11-03, seeded [unkannybanny #47](https://github.com/mikkel-bergmann/unkannybanny/pull/47) got a fix-required gate, an author fix and a passing re-review, then merged with no human action.
-- **New repo.** On 2026-11-03, the first pull request on a repo made with
-  `/shipd-factory new` merged with no human action.
-
-## Remove
-
-In **Settings → Applications → Installed GitHub Apps**, choose **Configure**
-next to shipd-factory, then uninstall it, which stops all minting. Removing
-the `shipd-now` collaborator stops new reviews.
+- **New repo.** On 2026-11-03, the first pull request on a repo made with `/shipd-factory new` merged with no human action.

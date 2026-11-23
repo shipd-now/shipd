@@ -290,10 +290,9 @@ Revise the plan for the change `<member>` in place in `planned/<member>/`,
 following the /s:drift verdict's `revise:` pointer and reason: the pointer
 names <revise-pointer>, and the reason is <reason>.
 
-No human is available during this run. Put a decision the repository cannot
-settle to the oracle (run `oracle-lookup` judged per the contract in
-`skills/ask/references/oracle-contract.md`); on INSUFFICIENT adopt your recommended default and record it in the plan's
-ledger. Never open a question round or an AskUserQuestion.
+No human is available during this run. Settle every decision per the headless
+contract in `${CLAUDE_PLUGIN_ROOT}/skills/ask/references/headless.md`. Never open a question round or an
+AskUserQuestion.
 
 Keep every `**Answered by:** USER` ledger entry and every epic Decision; never
 contradict either — resolve the revision within them.
@@ -374,10 +373,9 @@ stage's instruction — the same shape `_stage_prompt` produces in
 Run /s:plan for the change `<member>` — a member of an approved epic.
 Investigate, spec it, and promote it to Status: ready.
 
-No human is available during this run. Put a decision the repository cannot
-settle to the oracle (run `oracle-lookup` judged per the contract in
-`skills/ask/references/oracle-contract.md`); on INSUFFICIENT adopt your recommended default and record it in the plan's
-ledger. Never open a question round or an AskUserQuestion.
+No human is available during this run. Settle every decision per the headless
+contract in `${CLAUDE_PLUGIN_ROOT}/skills/ask/references/headless.md`. Never open a question round or an
+AskUserQuestion.
 ```
 
 **Build stage instruction:**
@@ -386,9 +384,8 @@ Run /s:build for the change `<member>`: implement every task, then merge
 and archive it and open its auto-merging PR.
 
 If a sub-agent escalates a QUESTION: that the spec artifacts and code cannot
-answer, consult the oracle (run `oracle-lookup` judged per
-`skills/ask/references/oracle-contract.md`) before answering on your own authority; on INSUFFICIENT, answer
-with your own recommendation — never leave the sub-agent blocked.
+answer, settle it per the headless contract in
+`${CLAUDE_PLUGIN_ROOT}/skills/ask/references/headless.md` — never leave the sub-agent blocked.
 ```
 
 **Review stage instruction:**

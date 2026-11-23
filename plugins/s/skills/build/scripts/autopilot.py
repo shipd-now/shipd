@@ -105,19 +105,19 @@ MAX_RESUMES_DEFAULT = session_driver.MAX_RESUMES_DEFAULT
 # its output under the contract reference (no agent is spawned).
 ORACLE_CONTRACT_PATH = os.path.join(
     PLUGIN_DIR, "skills", "ask", "references", "oracle-contract.md")
+HEADLESS_CONTRACT_PATH = os.path.join(
+    PLUGIN_DIR, "skills", "ask", "references", "headless.md")
 ORACLE_LOOKUP_CMD = ("python3 %s --root <repo> oracle-lookup <terms>"
                      % STATUS_PY)
+HEADLESS_NOTE = ("no human is available, so follow the headless contract at "
+                 "%s (the oracle lookup is `%s`)"
+                 % (HEADLESS_CONTRACT_PATH, ORACLE_LOOKUP_CMD))
 ORACLE_JUDGE_NOTE = ("judge its output per the contract at %s"
                      % ORACLE_CONTRACT_PATH)
 
 GOAHEAD_REPLY = (
     "Proceed. For any undecided point or decision, now or in later rounds: "
-    "shape it into a compact question (the decision, the options, your "
-    "recommendation) and consult the oracle inline by running `%s` with this "
-    "repo's root, then %s; adopt its ANSWER, "
-    "and on INSUFFICIENT — or if the lookup fails — take the option "
-    "you yourself recommend. Never wait for a human. Complete the work through "
-    "to its terminal state." % (ORACLE_LOOKUP_CMD, ORACLE_JUDGE_NOTE))
+    "%s. Complete the work through to its terminal state." % HEADLESS_NOTE)
 
 
 class AutopilotError(Exception):
@@ -1022,11 +1022,8 @@ def _stage_prompt(stage, member, entry, model_anchor=None, pr_mode="auto",
         base = ("Run /s:build for the change `%s`: implement every task, then "
                 "merge and archive it and %s.\n\n"
                 "If a sub-agent escalates a QUESTION: that the spec artifacts "
-                "and code cannot answer, consult the oracle (run `%s`, "
-                "then %s) before answering "
-                "on your own authority; on INSUFFICIENT, answer with your own "
-                "recommendation — never leave the sub-agent blocked."
-                % (member, ship, ORACLE_LOOKUP_CMD, ORACLE_JUDGE_NOTE))
+                "and code cannot answer, %s — never leave the sub-agent "
+                "blocked." % (member, ship, HEADLESS_NOTE))
         base += _build_option_lines(entry, model_anchor)
     elif stage == "enrich":
         base = (
@@ -1034,15 +1031,10 @@ def _stage_prompt(stage, member, entry, model_anchor=None, pr_mode="auto",
             "/s:plan %s — it locates the rejected change and enters "
             "enrichment mode. Resolve repository-answerable findings by "
             "editing the change's artifacts in place. For gaps the repository "
-            "genuinely cannot answer, consult the oracle instead of a "
-            "human — the session is unattended: run `%s` "
-            "once per gap (the decision, the options, your "
-            "recommendation) with this repo's root and %s; fold an ANSWER "
-            "verdict in, "
-            "and on INSUFFICIENT — or a failed lookup — adopt your own "
-            "recommendation. Exit through the re-gate so the change returns to "
+            "genuinely cannot answer, %s. "
+            "Exit through the re-gate so the change returns to "
             "Status: ready, lint-clean."
-            % (member, member, ORACLE_LOOKUP_CMD, ORACLE_JUDGE_NOTE))
+            % (member, member, HEADLESS_NOTE))
     elif stage == "replan":
         base = _replan_prompt(member, drift or {})
     elif stage == "review":
@@ -1235,15 +1227,13 @@ def _replan_prompt(member, drift):
         "Revise the installed artifacts (plan.md, delta specs, tasks.md) in "
         "place so they match the code now on `%s`. Keep every "
         "`**Answered by:** USER` answer and every epic Decision untouched. "
-        "For decisions the repository cannot answer, consult the oracle "
-        "instead of a human — run `%s` once per gap and %s; "
-        "no human is present, so never wait for one. "
+        "For decisions the repository cannot answer, %s. "
         "Finish by running `python3 %s %s --root %s --base %s` so the change "
         "returns to Status: ready, lint-clean."
         % (member, ref, drift.get("reason") or "(none given)",
            drift.get("revise") or "(none given)",
-           drift.get("summary") or "(none)", ref, ORACLE_LOOKUP_CMD,
-           ORACLE_JUDGE_NOTE, GATE_PY, member, drift.get("cwd") or ".", ref))
+           drift.get("summary") or "(none)", ref, HEADLESS_NOTE,
+           GATE_PY, member, drift.get("cwd") or ".", ref))
 
 
 def _first_text_line(*texts):

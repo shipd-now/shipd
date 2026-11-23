@@ -37,6 +37,14 @@ provisional-entry-check) rejects any ``## Questions and answers`` entry in
 ``plan.md`` whose ``**Answered by:**`` field holds ``PLANNER``: a provisional
 default still awaits a human answer.
 
+A sixth check (context-gate assumption-entry-check) holds the entries a
+headless session records as ``**Answered by:** ASSUMPTION``: each one needs a
+``**Verdict:**`` of ``INSUFFICIENT`` and a non-empty ``**Answer:**``, also
+once a leading ``Proceeding on the recommendation:`` is removed. A well-formed ``ASSUMPTION``
+entry passes; it is not provisional. The placeholder check (2) skips the
+``**Question:**`` field of a ``## Questions and answers`` entry, because a
+question may quote a marker word.
+
 The plan stamp (context-gate plan-stamp-write): on a pass the gate writes
 ``Planned-at: <sha>`` — ``git merge-base HEAD <base>`` resolved from the plan's
 own directory, ``--base`` defaulting to ``main`` — and ``Gated-hash: <hash>`` —
@@ -279,6 +287,53 @@ def _placeholders_in(text):
     return found
 
 
+# An optional list bullet: `-`, `*`, `+`, or a numbered `1.` / `1)`.
+BULLET = r"(?:(?:[-*+]|\d+[.)])\s+)?"
+FIELD_TOKEN = r"\*\*([A-Za-z][A-Za-z ]*):\*\*"
+LEDGER_FIELD_RE = re.compile(r"^\s*" + BULLET + FIELD_TOKEN + r"\s*(.*)$")
+INLINE_FIELD_RE = re.compile(FIELD_TOKEN)
+RECOMMENDATION_PREFIX_RE = re.compile(
+    r"^\s*Proceeding on the recommendation:\s*", re.IGNORECASE)
+
+
+def _strip_question_fields(text):
+    """Return ``text`` without the ``**Question:**`` field of every
+    ``## Questions and answers`` entry, so a question that quotes a
+    placeholder word does not fire check (2). The field is the text after its
+    label up to the next ``**Name:**`` token — on the same line, an indented
+    continuation line or a later field line — plus its indented continuation
+    lines. An unindented prose
+    line after the question, and any other field, stays scanned. Text outside
+    the section is untouched."""
+    out = []
+    in_section = False
+    skipping = False
+    for line in text.splitlines():
+        if line.startswith("## "):
+            in_section = line.strip() == sl.QA_SECTION
+            skipping = False
+        elif in_section:
+            m = LEDGER_FIELD_RE.match(line)
+            if m:
+                skipping = m.group(1).strip().lower() == "question"
+                if skipping:
+                    token = INLINE_FIELD_RE.search(m.group(2))
+                    if token:
+                        out.append(m.group(2)[token.start():])
+                        skipping = False
+                    continue
+            elif skipping and line[:1] in (" ", "\t") and line.strip():
+                token = INLINE_FIELD_RE.search(line)
+                if token:
+                    out.append(line[token.start():])
+                    skipping = False
+                continue
+            else:
+                skipping = False
+        out.append(line)
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
 def _check_placeholders(root, change):
     """Check (2): placeholder markers anywhere in plan.md (minus the gate-owned
     section), the delta specs, or tasks.md."""
@@ -289,7 +344,8 @@ def _check_placeholders(root, change):
     if os.path.isfile(plan_path):
         # Scan the plan without its own ephemeral gate section: a prior run's
         # findings live there and must not re-trigger the placeholder check.
-        targets.append((plan_path, _strip_gate_section(_read(plan_path))))
+        targets.append((plan_path, _strip_question_fields(
+            _strip_gate_section(_read(plan_path)))))
 
     deltas_dir = _deltas_dir(root, change)
     if os.path.isdir(deltas_dir):
@@ -341,7 +397,7 @@ def _check_task_paths(root, change):
 # The bullet and backticks are optional: spec_lint accepts the field anywhere
 # in the entry body, so the gate must not let a format variant slip through.
 PROVISIONAL_RE = re.compile(
-    r"^\s*(?:-\s*)?\*\*Answered by:\*\*\s*`?PLANNER\b")
+    r"^\s*" + BULLET + r"\*\*Answered by:\*\*\s*`?PLANNER\b")
 
 
 def _check_provisional_entries(root, change):
@@ -368,15 +424,75 @@ def _check_provisional_entries(root, change):
     return findings
 
 
+ASSUMPTION_RE = re.compile(r"^`?ASSUMPTION\b", re.IGNORECASE)
+
+
+def _ledger_entries(section):
+    """Split a ``## Questions and answers`` section into
+    ``(label, {field: value})`` pairs; a field's value runs from its line to
+    the next field line, wrapped continuation lines included."""
+    entries = []
+    for line in section:
+        if line.startswith("### "):
+            m = sl.QA_ENTRY_RE.match(line.rstrip())
+            entries.append(("Q%s" % m.group(1) if m else None, {}, [None]))
+            continue
+        if not entries:
+            continue
+        m = LEDGER_FIELD_RE.match(line)
+        label, fields, last = entries[-1]
+        if m:
+            name = m.group(1).strip().lower()
+            fields.setdefault(name, m.group(2))
+            last[0] = name
+        elif last[0] and line.strip():
+            fields[last[0]] += " " + line.strip()
+    return [(label, fields) for label, fields, _ in entries]
+
+
+def _check_assumption_entries(root, change):
+    """Check (6): every ``## Questions and answers`` entry whose
+    ``**Answered by:**`` field holds ``ASSUMPTION`` carries a
+    ``**Verdict:**`` field and a non-empty ``**Answer:**``."""
+    findings = []
+    plan_path = _plan_path(root, change)
+    if not os.path.isfile(plan_path):
+        return findings
+    section = sl._section_lines(_read(plan_path), sl.QA_SECTION)
+    if section is None:
+        return findings
+    for label, fields in _ledger_entries(section):
+        if not label or not ASSUMPTION_RE.match(
+                fields.get("answered by", "").strip()):
+            continue
+        verdict = fields.get("verdict", "").strip().strip("`").strip()
+        if not verdict:
+            findings.append(
+                "ledger entry %s is an ASSUMPTION with no **Verdict:**"
+                % label)
+        elif not re.match(r"INSUFFICIENT\b", verdict, re.IGNORECASE):
+            findings.append(
+                "ledger entry %s is an ASSUMPTION whose **Verdict:** is not "
+                "INSUFFICIENT" % label)
+        answer = RECOMMENDATION_PREFIX_RE.sub(
+            "", fields.get("answer", "")).strip().strip("`").strip()
+        if not answer:
+            findings.append(
+                "ledger entry %s is an ASSUMPTION with an empty **Answer:**"
+                % label)
+    return findings
+
+
 def collect_findings(root, change):
     """Run the structural linter, the four context checks, and the
-    provisional-entry check, returning the ordered list of finding strings
+    provisional- and assumption-entry checks, returning the ordered list of finding strings
     (empty when the change has sufficient context)."""
     findings = [str(e) for e in sl.lint_change(root, change)]
     findings += _check_delta_targets_and_base(root, change)
     findings += _check_placeholders(root, change)
     findings += _check_task_paths(root, change)
     findings += _check_provisional_entries(root, change)
+    findings += _check_assumption_entries(root, change)
     return findings
 
 

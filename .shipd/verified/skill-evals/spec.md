@@ -412,7 +412,8 @@ change's `plan.md` reads `Status: ready` and `spec_gate.py <change> --check`
 exits 0; at least one `## Questions and answers` entry carries a
 `**Verdict:**` of `ANSWER` or `INSUFFICIENT`; every entry whose verdict is
 `INSUFFICIENT` carries a non-empty `**Answer:**` under an `**Answered by:**`
-of `USER`, since the oracle gave no answer there; and at least one entry's verdict is `INSUFFICIENT`, so
+of `ASSUMPTION`, since the oracle gave no answer there and a session's own
+default is not a person's answer, so `ORACLE`, `PLANNER`, and `USER` all fail; and at least one entry's verdict is `INSUFFICIENT`, so
 the run proves the fallback to an adopted default. The judgement over the plan text and the lint and gate
 outcomes SHALL be a pure function that reads no file and runs no process, and
 a failing run SHALL name the first point that failed.
@@ -420,7 +421,7 @@ a failing run SHALL name the first point that failed.
 #### Scenario: A plan that consulted the oracle and adopted a default passes
 - **WHEN** the change lints clean, reads `Status: ready`, passes the gate's
   check mode, and its one ledger entry carries `**Verdict:** INSUFFICIENT`,
-  `**Answered by:** USER`, and a non-empty answer
+  `**Answered by:** ASSUMPTION`, and a non-empty answer
 - **THEN** the run is graded as passed
 
 #### Scenario: A ledger with no oracle verdict fails
@@ -448,6 +449,17 @@ a failing run SHALL name the first point that failed.
   non-zero
 - **THEN** the run is graded as failed, naming the gate
 
+#### Scenario: The go-ahead reply names the headless contract
+- **WHEN** the plan-specific go-ahead reply is inspected
+- **THEN** it states that no human is available and names the absolute path
+  of `headless.md`
+
 #### Scenario: The judgement runs without a session
 - **WHEN** the grader's unit tests run
 - **THEN** they judge literal `plan.md` text and spawn no `claude` process
+
+#### Scenario: An insufficient verdict credited to the user fails
+- **WHEN** a ledger entry carries `**Verdict:** INSUFFICIENT` and
+  `**Answered by:** USER`
+- **THEN** the run is graded as failed, naming that entry and expecting
+  `ASSUMPTION`
