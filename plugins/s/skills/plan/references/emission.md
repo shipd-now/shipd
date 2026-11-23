@@ -234,7 +234,8 @@ sequentially from `Q1` — followed by a dash list of fields:
   A headless session records the default it adopted as `ASSUMPTION`, per
   `skills/ask/references/headless.md`; the gate accepts a complete one.
 - `- **Answer:**` the oracle's position in full for an `ANSWER` entry, the
-  user's typed resolution for an `INSUFFICIENT` one.
+  user's typed resolution for an `INSUFFICIENT` one, or the adopted default for
+  an `ASSUMPTION`.
 - `- **Cited:**` the oracle's sources — on `ANSWER` entries.
 - `- **Queued:**` the filed `q-<slug>` — on `INSUFFICIENT` entries.
 - `- **Relied on by:**` — on a `PLANNER` entry only, its last field: the later

@@ -934,7 +934,10 @@ entry SHALL carry the full compact question (decision, options,
 recommendation), the verdict (`ANSWER` or `INSUFFICIENT`), an
 `Answered by:` property holding `ORACLE` or `USER` placed directly above the
 answer, and the answer in full — the oracle's position for `ANSWER`, the
-user's typed resolution for `INSUFFICIENT`; an `ANSWER` entry SHALL carry the
+user's typed resolution for `INSUFFICIENT`; a headless session SHALL instead
+record the default it adopted on `INSUFFICIENT` as `ASSUMPTION`, with that
+default as the answer, and a deferring `/s:epic-grill` planner SHALL record the
+provisional `PLANNER`; an `ANSWER` entry SHALL carry the
 oracle's `Cited:` sources and an `INSUFFICIENT` entry SHALL carry the
 `Queued:` `q-<slug>` the oracle filed. Entries SHALL be phrased to avoid the context
 gate's placeholder and open-question marker scans. When enrichment consults the
@@ -958,6 +961,10 @@ skill SHALL emit no such section.
 #### Scenario: No consultations, no section
 - **WHEN** planning completes without any oracle consultation
 - **THEN** the emitted `plan.md` carries no `## Questions and answers` section
+
+#### Scenario: A headless default is recorded as an assumption
+- **WHEN** a headless session gets `INSUFFICIENT` from the oracle and adopts its recommended default
+- **THEN** the entry carries `**Verdict:** INSUFFICIENT`, `**Answered by:** ASSUMPTION` and the adopted default as its answer
 
 ### Requirement: Plan-side pipeline resolution
 id: plan-pipeline-resolution

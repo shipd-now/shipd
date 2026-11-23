@@ -102,9 +102,7 @@ MAX_RESUMES_DEFAULT = session_driver.MAX_RESUMES_DEFAULT
 # Every driven session's canned reply — accept the session's own
 # recommendations and drive to the stage's gradable terminal state.
 # The oracle is consulted inline: the session runs the lookup verb and judges
-# its output under the contract reference (no agent is spawned).
-ORACLE_CONTRACT_PATH = os.path.join(
-    PLUGIN_DIR, "skills", "ask", "references", "oracle-contract.md")
+# its output per the headless contract, which links the oracle contract.
 HEADLESS_CONTRACT_PATH = os.path.join(
     PLUGIN_DIR, "skills", "ask", "references", "headless.md")
 ORACLE_LOOKUP_CMD = ("python3 %s --root <repo> oracle-lookup <terms>"
@@ -112,8 +110,6 @@ ORACLE_LOOKUP_CMD = ("python3 %s --root <repo> oracle-lookup <terms>"
 HEADLESS_NOTE = ("no human is available, so follow the headless contract at "
                  "%s (the oracle lookup is `%s`)"
                  % (HEADLESS_CONTRACT_PATH, ORACLE_LOOKUP_CMD))
-ORACLE_JUDGE_NOTE = ("judge its output per the contract at %s"
-                     % ORACLE_CONTRACT_PATH)
 
 GOAHEAD_REPLY = (
     "Proceed. For any undecided point or decision, now or in later rounds: "

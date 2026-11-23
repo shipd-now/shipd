@@ -2599,8 +2599,7 @@ class StageOptionPromptTest(unittest.TestCase):
         build = autopilot._stage_prompt("build", "m", {"stage": "build"})
         self.assertEqual(build, autopilot._stage_prompt("build", "m", {}))
         text = build
-        for const in (autopilot.ORACLE_LOOKUP_CMD, autopilot.ORACLE_JUDGE_NOTE):
-            text = text.replace(const, "")
+        text = text.replace(autopilot.ORACLE_LOOKUP_CMD, "")
         for token in ("validator", "telemetry", "parallelism", "sub-agent model"):
             self.assertNotIn(token, text.lower())
         review = autopilot._stage_prompt("review", "m", {"stage": "review"})
