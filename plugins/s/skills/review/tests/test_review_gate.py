@@ -260,6 +260,14 @@ class FakeGh:
         if endpoint == "graphql":
             return self._graphql(args[2:], input)
         path = endpoint.split("?", 1)[0]
+        query = dict(kv.split("=", 1) for kv in
+                     endpoint.split("?", 1)[1].split("&")) if "?" in endpoint else {}
+
+        def page_of(items):
+            # GitHub's list paging: per_page defaults to 30, page to 1.
+            size = int(query.get("per_page", 30))
+            start = (int(query.get("page", 1)) - 1) * size
+            return items[start:start + size]
         method = self._method(args)
 
         # A threaded reply — POST repos/.../pulls/<n>/comments with in_reply_to.
@@ -334,7 +342,7 @@ class FakeGh:
             return 0, json.dumps({"id": 1, "state": payload["state"]}), ""
 
         if path.endswith("/files"):
-            return 0, json.dumps(self.files), ""
+            return 0, json.dumps(page_of(self.files)), ""
 
         if "/issues/comments/" in path:  # PATCH an existing comment in place
             cid = int(path.rsplit("/", 1)[1])
@@ -348,7 +356,7 @@ class FakeGh:
 
         if path.endswith("/comments"):
             if method == "GET":
-                return 0, json.dumps(self._comments), ""
+                return 0, json.dumps(page_of(self._comments)), ""
             payload = json.loads(input)  # POST create
             cid = self._next_comment_id
             self._next_comment_id += 1
@@ -815,6 +823,150 @@ class SuggestionTest(unittest.TestCase):
         self.assertNotIn(SUGGESTION_FENCE, comment["body"])
         self.assertEqual((comment["path"], comment["line"]), ("a.py", 5))
         self.assertNotIn("start_line", comment)
+
+
+class PagedListingTest(unittest.TestCase):
+    """GitHub returns a list endpoint one page at a time. A pull request over
+    one page of files once lost the rest: a medium finding on file 105 of 109
+    was filed as outside the diff, and the gate posted `success`."""
+
+    def _files(self, count):
+        return [{"filename": "f%03d.py" % i, "patch": PATCH_A}
+                for i in range(count)]
+
+    def test_a_finding_past_the_first_page_of_files_still_blocks(self):
+        gh = FakeGh(files=self._files(109))
+        finding = _finding(locations=["f105.py:5"], severity="medium")
+        result = review_gate.post(
+            "7", _review(verdict="changes-requested", findings=[finding]), gh)
+        self.assertEqual(result["state"], "failure")
+        self.assertEqual(gh.posted_status["state"], "failure")
+        self.assertEqual([(c["path"], c["line"])
+                          for c in gh.review_posts[0]["comments"]],
+                         [("f105.py", 5)])
+
+    def test_every_page_of_files_is_read(self):
+        gh = FakeGh(files=self._files(250))
+        self.assertEqual(len(review_gate._pr_files(gh, "o/r", 7)), 250)
+
+    def test_a_full_last_page_ends_on_an_empty_page(self):
+        gh = FakeGh(files=self._files(200))
+        self.assertEqual(len(review_gate._pr_files(gh, "o/r", 7)), 200)
+
+    def test_a_summary_past_the_first_page_of_comments_is_edited(self):
+        chatter = [{"id": 1000 + i, "body": "note %d" % i,
+                    "html_url": "https://github.com/o/r/pull/7#issuecomment-%d"
+                                % (1000 + i)} for i in range(120)]
+        summary = {"id": 42, "body": MARKER + "\n\n## Findings: ✅ Ship it\n",
+                   "html_url": "https://github.com/o/r/pull/7#issuecomment-42"}
+        gh = FakeGh(existing_comments=chatter + [summary])
+        review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertTrue(gh.comment_patch_calls())
+        self.assertEqual(gh.comment_create_calls(), [])
+        self.assertEqual(len(gh.marker_comments()), 1)
+
+
+class FailingPageGh(FakeGh):
+    """A FakeGh whose GET of one list endpoint fails from a given page on."""
+
+    def __init__(self, *, fail_suffix, fail_from_page, **kw):
+        super().__init__(**kw)
+        self.fail_suffix = fail_suffix
+        self.fail_from_page = fail_from_page
+
+    def __call__(self, args, input=None):
+        endpoint = args[1] if len(args) > 1 else ""
+        path, _, query = endpoint.partition("?")
+        page = dict(kv.split("=", 1) for kv in query.split("&") if "=" in kv
+                    ).get("page")
+        if (args[0] == "api" and input is None and "-X" not in args
+                and path.endswith(self.fail_suffix)
+                and page is not None and int(page) >= self.fail_from_page):
+            return 1, "", "HTTP 502: Bad Gateway"
+        return super().__call__(args, input=input)
+
+
+class PartialListingTest(unittest.TestCase):
+    """A listing cut short must stop the post. Read as complete, a short file
+    list hides a blocking finding, and a short comment list hides the summary
+    and posts a second one."""
+
+    def _files(self, count):
+        return [{"filename": "f%03d.py" % i, "patch": PATCH_A}
+                for i in range(count)]
+
+    def test_a_failed_later_page_of_files_stops_the_post(self):
+        gh = FailingPageGh(fail_suffix="/files", fail_from_page=2,
+                           files=self._files(150))
+        with self.assertRaises(review_gate.ReviewGateError) as ctx:
+            review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertIn("fetching PR files failed", str(ctx.exception))
+        self.assertIsNone(getattr(gh, "posted_status", None))
+
+    def test_a_failed_later_page_of_comments_stops_the_post(self):
+        chatter = [{"id": 1000 + i, "body": "note %d" % i,
+                    "html_url": "https://github.com/o/r/pull/7#issuecomment-%d"
+                                % (1000 + i)} for i in range(120)]
+        summary = {"id": 42, "body": MARKER + "\n\n## Findings: ✅ Ship it\n",
+                   "html_url": "https://github.com/o/r/pull/7#issuecomment-42"}
+        gh = FailingPageGh(fail_suffix="/comments", fail_from_page=2,
+                           existing_comments=chatter + [summary])
+        with self.assertRaises(review_gate.ReviewGateError) as ctx:
+            review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertIn("fetching PR comments failed", str(ctx.exception))
+        self.assertEqual(gh.comment_create_calls(), [])
+
+    def test_a_listing_past_the_page_cap_is_an_error(self):
+        calls = []
+
+        def endless(args, input=None):
+            calls.append(args[1])
+            return 0, json.dumps([{"n": 1}] * review_gate._PAGE_SIZE), ""
+
+        items, err = review_gate._paged(endless, "repos/o/r/pulls/7/files")
+        self.assertEqual(len(calls), review_gate._MAX_PAGES)
+        self.assertIn("exceeds", err)
+
+
+class OneCommentListingTest(unittest.TestCase):
+    """One post lists the comments once. Its later summary updates run after
+    the status is set, so a listing that failed there stopped the post
+    part-way: the status posted, the result line never printed."""
+
+    @staticmethod
+    def _listings(gh):
+        return [a for a, i in gh.calls
+                if a[0] == "api" and "/issues/" in a[1]
+                and a[1].split("?", 1)[0].endswith("/comments")
+                and "-X" not in a]
+
+    def test_a_post_lists_the_comments_once(self):
+        gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
+        review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertEqual(len(self._listings(gh)), 1)
+        self.assertEqual(len(gh.marker_comments()), 1)
+
+    def test_a_listing_that_fails_after_the_first_does_not_stop_the_post(self):
+        class SecondListingFails(FakeGh):
+            def __call__(inner, args, input=None):
+                if (args[0] == "api" and len(args) > 1 and "/issues/" in args[1]
+                        and args[1].split("?", 1)[0].endswith("/comments")
+                        and "-X" not in args):
+                    inner.listings = getattr(inner, "listings", 0) + 1
+                    if inner.listings > 1:
+                        return 1, "", "HTTP 502: Bad Gateway"
+                return super().__call__(args, input=input)
+
+        gh = SecondListingFails(files=[{"filename": "a.py", "patch": PATCH_A}])
+        result = review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertEqual(result["state"], "success")
+        self.assertEqual(gh.posted_status["state"], "success")
+        self.assertEqual(len(gh.marker_comments()), 1)
+
+    def test_a_new_summary_is_edited_not_reposted_by_later_updates(self):
+        gh = FakeGh(files=[{"filename": "a.py", "patch": PATCH_A}])
+        review_gate.post("7", _review(verdict="pass"), gh)
+        self.assertEqual(len(gh.comment_create_calls()), 1)
 
 
 class ReviewEventTest(unittest.TestCase):
