@@ -1791,6 +1791,15 @@ def _default_config():
     return Path.home() / ".shipd-config.json"
 
 
+def _is_default_config(path):
+    """Whether ``path`` names the global shipd config file itself."""
+    try:
+        return (Path(path).expanduser().resolve()
+                == _default_config().expanduser().resolve())
+    except OSError:
+        return False
+
+
 def _load_statusline_layout(path):
     """``(lines, error)``: the saved layout, the default when the file or key
     is absent, or ``(None, reason)`` when the file or its ``statusline`` key
@@ -1933,7 +1942,8 @@ def cmd_statusline(args):
         "action", nargs="?", choices=["install", "layout"],
         help="install: write the registration; layout: show or set the "
              "segments per line, and re-register a registered shipd "
-             "statusline unless --config is given without --settings "
+             "statusline unless --config names another config file "
+             "without --settings "
              "(default: report only)")
     parser.add_argument(
         "lines", nargs="*",
@@ -2013,10 +2023,13 @@ def cmd_statusline(args):
                 return 1
         layout = new
 
-    if opts.action == "layout" and opts.config and not opts.settings:
-        # A layout saved in a named config file is not the layout the default
+    if (opts.action == "layout" and opts.config and not opts.settings
+            and not _is_default_config(opts.config)):
+        # A layout saved in another config file is not the layout the default
         # settings file renders: that registration is neither read nor
-        # rewritten unless the caller names the settings file too.
+        # rewritten unless the caller names the settings file too. Naming the
+        # default config file by its path changes nothing: it is the file the
+        # default registration renders.
         print("registration in %s left unchanged — pass --settings to "
               "re-register from this config file" % path)
         return 0

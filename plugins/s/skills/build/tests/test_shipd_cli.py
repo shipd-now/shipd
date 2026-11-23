@@ -1368,6 +1368,22 @@ class StatuslineVerbTest(unittest.TestCase):
         self.assertNotIn("statusline registered in", out)
         self.assertIn("registration in %s left unchanged" % default, out)
 
+    def test_layout_naming_the_default_config_still_re_registers(self):
+        # `--config` naming the default config file is the same request as no
+        # flag: that file is the one the default registration renders.
+        default = self.default_settings_registered()
+        patcher = unittest.mock.patch.object(
+            shipd, "_default_config", lambda: shipd.Path(self.config))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        out, _err, code = self.run_verb(
+            "layout", "--config", self.config, "spec,context", "directory")
+        self.assertEqual(code, 0)
+        with open(default, encoding="utf-8") as fh:
+            command = json.load(fh)["statusLine"]["command"]
+        self.assertIn("--line spec,context --line directory", command)
+        self.assertNotIn("left unchanged", out)
+
     def test_layout_with_config_only_never_reads_the_default_settings(self):
         default = self.default_settings_registered()
         with open(default, "w", encoding="utf-8") as fh:
