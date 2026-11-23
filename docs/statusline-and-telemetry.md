@@ -10,7 +10,7 @@ The statusline renders one live change: its name, its lifecycle status, and
 its task progress.
 
 ```
-☕ <name> · <status> · <done>/<total>
+☕ <name> · <status> · <done>/<total> tasks
 ```
 
 ## When to use it
@@ -61,7 +61,7 @@ the name gains a position bracket, and the counts gain the total over
 every live change:
 
 ```
-☕ <name> (1 of X) · <status> · <done>/<total> (<total> of <Y>)
+☕ <name> (1 of X) · <status> · <done>/<total> tasks (<total> of <Y>)
 ```
 
 A project with no live change shows `☕ no active specs`. The `statusline`
