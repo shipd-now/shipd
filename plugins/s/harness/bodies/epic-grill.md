@@ -34,12 +34,14 @@ slug (`/s:epic-grill <slug>`).
    member to the plans you read, since computed waves hold only `unplanned`
    members. For an `unplanned` member
    run `shipd worktree <member>`, then follow the `/s:plan` workflow inside
-   `.worktrees/<member>`. Open no
-   question round. For every decision the oracle leaves open, adopt your
-   recommended default and record a `## Questions and answers` entry with
-   `**Answered by:** PLANNER`: the options in `**Question:**` with the default
-   first, the default in `**Answer:**`, and `**Queued:**` when the oracle
-   filed one. Where a member's plan builds on an earlier member's `PLANNER` default,
+   `.worktrees/<member>`. Settle
+   decisions per the headless contract in the shipd plugin's
+   `skills/ask/references/headless.md` (Codebase first, Oracle next, Never a
+   dialog), with one override of its Default last part: for every decision the
+   oracle leaves open, record `**Answered by:** PLANNER`, not `ASSUMPTION`,
+   because the final round asks a human. Record `**Queued:**` when the oracle
+   filed one, since the final round answers that queue entry. Every other field
+   is as that part states. Where a member's plan builds on an earlier member's `PLANNER` default,
    append the later member's slug to that entry's `**Relied on by:**` field (adding it as
    the entry's last line if absent) in that member's installed plan, edit
    nothing else in it, and list each such reliance as a `RELIED: <member> Q<n>`

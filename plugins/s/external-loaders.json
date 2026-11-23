@@ -1,0 +1,56 @@
+{
+  "note": "Files and ## headings that external loaders read by name. An empty headings list means the loader reads the whole file. Renaming or removing one breaks a loader outside this repo; update this manifest and tell the loader's owner in the same change. See AGENTS.md, 'External loaders'.",
+  "files": [
+    {
+      "path": "skills/ask/references/headless.md",
+      "loader": "shipd-factory shipd-run",
+      "headings": [
+        "Codebase first",
+        "Oracle next",
+        "Default last",
+        "Never a dialog"
+      ]
+    },
+    {
+      "path": "skills/review/SKILL.md",
+      "loader": "shipd-factory shipd-run",
+      "headings": [
+        "Workflow"
+      ]
+    },
+    {
+      "path": "skills/review/references/risk-lenses.md",
+      "loader": "shipd-factory shipd-run",
+      "headings": []
+    },
+    {
+      "path": "skills/review/references/new-code-checks.md",
+      "loader": "shipd-factory shipd-run",
+      "headings": []
+    },
+    {
+      "path": "skills/review/references/call-site-tracing.md",
+      "loader": "shipd-factory shipd-run",
+      "headings": []
+    },
+    {
+      "path": "skills/review/references/spec-aware.md",
+      "loader": "shipd-factory shipd-run",
+      "headings": [
+        "JSON output"
+      ]
+    },
+    {
+      "path": "skills/review/references/pr-description.md",
+      "loader": "shipd-factory shipd-run",
+      "headings": []
+    },
+    {
+      "path": "skills/review/references/linters.md",
+      "loader": "shipd-factory shipd-run",
+      "headings": [
+        "The `lint` configuration key"
+      ]
+    }
+  ]
+}

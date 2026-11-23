@@ -606,6 +606,9 @@ enrichment's true-gap round — consult the oracle on each remaining decision
   with its `**Cited:**` sources, the user's typed resolution on an
   `INSUFFICIENT` entry with the `**Queued:**` `q-<slug>` the oracle filed. A
   session with no consultation emits no section.
+  A headless session has no typed resolution; it follows
+  `skills/ask/references/headless.md` and records `**Answered by:**
+  ASSUMPTION` on an `INSUFFICIENT` entry.
 - **Classify what arrived.** A typed answer folded in from a question round
   usually carries more than the decision it settles. Classify each
   substantive item against the **knowledge capture rubric**
