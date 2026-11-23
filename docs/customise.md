@@ -100,14 +100,14 @@ repo's own `.shipd/` copy may be behind it.
 | `pr` | The pull request title: `title`, a template using `{summary}` (required), `{ticket}`, and `{change}` (default `{summary}`), and `ticket_pattern`, a regular expression that finds a ticket id in the branch name. See the content directory's `README.md`. |
 | `pr-mode` | How a change's PR ships: `auto` (default) or `draft`. See the content directory's `README.md`. |
 | `room` | The PR room verbs: `agent`, the name posted under when `--agent` and `SHIPD_ROOM_AGENT` are unset (no default), and `max_rounds`, the turn cap per task. Default 6. |
-| `merge` | The merge rules `shipd gate rules apply` writes to the `shipd merge rules` ruleset: `approvals` (0 to 10, default 2), `dismiss_stale` (default true), `last_push_approval` (default true), `required_checks` (default `["ci", "semantic-review"]`), `thread_resolution` (default true), and `strict` (default false). An unknown member is an error. |
+| `merge` | The merge rules [`shipd gate rules apply`](pr.md) writes to the `shipd merge rules` ruleset: `approvals` (0 to 10, default 2), `dismiss_stale` (default true), `last_push_approval` (default true), `required_checks` (default `["ci", "semantic-review"]`), `thread_resolution` (default true), and `strict` (default false). An unknown member is an error. |
 | `guardrails` | The guardrail hook's kill-switches. See [docs/guardrails.md](guardrails.md). |
-| `statusline` | The statusline layout: an object whose `lines` lists the segments (`spec`, `directory`, `context`) on each line. Save it with `shipd statusline layout`. See [Statusline and telemetry](statusline-and-telemetry.md). |
+| `statusline` | The statusline layout: an object whose `lines` lists the segments (`spec`, `directory`, `context`) on each line. Save it with [`shipd statusline layout`](statusline-and-telemetry.md). See [Statusline and telemetry](statusline-and-telemetry.md). |
 | `voice` | Gates the session-start voice digest hook. Default `true`. |
 | `sandbox` | What `sandbox-run.sh` applies for the validator: `fake_bin` (a repo-relative directory prepended to `PATH`) and `env` (variable names mapped to paths under the sandbox root). Undeclared means generic redirection only. |
 | `workspace` | Marks the declaring directory as a workspace root; holds its `projects` and `focus` registry. |
 | `workspaces_root` | The mandated parent directory job workspaces are created and cloned under. |
-| `post-worktree-scripts` | Shell command lines run in a freshly created worktree. Register through `shipd worktree hooks add`. |
+| `post-worktree-scripts` | Shell command lines run in a freshly created worktree. Register through [`shipd worktree hooks add`](worktrees.md). |
 | `clone_sources` | Local directories the workspace sync planner probes for an existing clone before cloning fresh. |
 | `lint` | Configures `semdiff lint`: `run_scripts` and `disable`. |
 | `worktree_sweep` | Gates whether worktree creation runs `worktree.sh sweep` afterward. Default `true`. |
@@ -115,7 +115,7 @@ repo's own `.shipd/` copy may be behind it.
 | `worktree_stale_days` | The window, in days, beyond which a sweep reports an unmerged branch stale. Default 7. |
 | `store_autocommit` | Gates whether an engine write into a workspace or external store auto-commits locally. Default `true`. |
 | `store_sync` | Gates whether the session-boundary hook runs its networked git (fetch, fast-forward merge, push). Default `true`. |
-| `build` | Settings for a `/s:build` run: `logging_enabled`, `log_dir`, `number_format`, `parallelism`, and the design/video roots (`design_dir`, `video_dir`, `video_asr`, `video_vocabulary`, `video_max_frames`, `video_scene_floor`, `video_cursor`). [Statusline and telemetry](statusline-and-telemetry.md) covers the report settings and their defaults. |
+| `build` | Settings for a [`/s:build`](build.md) run: `logging_enabled`, `log_dir`, `number_format`, `parallelism`, and the design/video roots (`design_dir`, `video_dir`, `video_asr`, `video_vocabulary`, `video_max_frames`, `video_scene_floor`, `video_cursor`). [Statusline and telemetry](statusline-and-telemetry.md) covers the report settings and their defaults. |
 
 ### The delivery steps
 

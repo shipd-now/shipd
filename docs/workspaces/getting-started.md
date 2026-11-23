@@ -28,7 +28,7 @@ workspaces live:
 - `clone_sources` — directories whose immediate children the engine probes for a clone with a
   matching origin URL. Undeclared means no probing, and every member full-clones.
 - `wiki_base` — the optional base wiki the oracle falls back to after the workspace chain, and the
-  promote-to-base target for `/s:teach`. It holds a durable base **outside** the chain; for a base
+  promote-to-base target for [`/s:teach`](../wiki.md). It holds a durable base **outside** the chain; for a base
   reached by nesting instead, see [Nesting job workspaces](nesting.md).
 - `workspaces_root` — the mandated parent directory ([below](#the-mandated-parent-directory)).
 
@@ -126,7 +126,7 @@ repo works on every machine and in every teammate's clone.
   the manifest) and never repairs it; `--json` emits machine-readable records.
 - `/s:workspace sync` — execute the plan again after you edit the manifest, for example when the job
   gains a member repo.
-- `/s:ask` — the oracle answers from the job wiki first; [nesting](nesting.md) has the order.
+- [`/s:ask`](../oracle.md) — the oracle answers from the job wiki first; [nesting](nesting.md) has the order.
 - `/s:teach` — distill decisions into the job wiki, and promote answers to the base wiki.
 - Per-change work in a member repo does not change: each member keeps its own `.worktrees/<change>`
   flow. You pay the workspace worktree or clone cost **once per job, not per task**.
@@ -144,7 +144,7 @@ Declaring `workspaces_root` turns the one-folder-per-job convention into a rule:
 - The root and everything under it counts as inside, so `--nested` job workspaces stay legal
   ([nesting](nesting.md)).
 - Undeclared means no mandated root, and every surface behaves as it always has.
-- `shipd config` reports the value **as declared**, with `~` left unexpanded, and the installed
+- [`shipd config`](../customise.md) reports the value **as declared**, with `~` left unexpanded, and the installed
   sample config documents the key.
 - Doctor's `config` check validates it. A malformed value fails — not a non-empty string, or not
   absolute once `~` expands. A missing root warns.

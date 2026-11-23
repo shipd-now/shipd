@@ -53,7 +53,7 @@ every answer earns that. The capture path classifies your reply before it
 writes anything, and only the durable kind settles into the store (see
 [What gets captured](#what-gets-captured)). Where a workspace wiki exists, a
 verified build's teacher drains the answered entries into proper wiki pages
-on its own. `/s:teach` remains the full sweep.
+on its own. [`/s:teach`](wiki.md) remains the full sweep.
 
 ## When to use it
 
@@ -61,7 +61,7 @@ Run `/s:ask` when a decision does not live in the codebase, and before you
 interrupt a person to settle it. The skill puts the oracle's verdict in front
 of you, and asks you only when the oracle has no answer.
 
-`/s:plan` consults the oracle by itself, so a planning run needs no `/s:ask`.
+[`/s:plan`](plan.md) consults the oracle by itself, so a planning run needs no `/s:ask`.
 
 Never ask the oracle what reading the repository answers. The read rung comes
 first, and a discoverable fact never climbs the ladder.

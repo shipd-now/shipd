@@ -24,7 +24,7 @@ an engineering position, belongs in the [wiki](wiki.md) instead.
 - **`/s:memory`** — list the preferences the store holds.
 - **`/s:forget`** — remove one preference.
 
-Each oracle consultation, from `/s:plan` or `/s:ask`, reads your memory first.
+Each oracle consultation, from [`/s:plan`](plan.md) or [`/s:ask`](oracle.md), reads your memory first.
 
 ## How to run it
 
@@ -41,7 +41,7 @@ With no argument, the skill proposes the standing preferences you stated in
 this session. It runs these steps:
 
 1. **Resolve the store.** On first use, it scaffolds the store.
-   `/s:init memory` scaffolds it ahead of time.
+   [`/s:init memory`](customise.md) scaffolds it ahead of time.
 2. **Reconcile.** It compares each candidate with the existing `memory-*`
    pages. It classifies each one as **add** (a new page), **update** (a
    changed page), or **skip** (a duplicate).
@@ -124,7 +124,7 @@ the repository the capture ran from.
 
 ### The store report
 
-`shipd wiki --personal` reports the personal store: its root, page count,
+[`shipd wiki --personal`](wiki.md) reports the personal store: its root, page count,
 coverage, and last log entry.
 
 The `memory_dir` key sets the store's root; see

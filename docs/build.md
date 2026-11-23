@@ -10,7 +10,7 @@ session's model, implement the tasks.
 
 ## When to use it
 
-- **Build a planned change.** `/s:plan` emitted a change, and you want it
+- **Build a planned change.** [`/s:plan`](plan.md) emitted a change, and you want it
   implemented and shipped.
 - **Build from a clear request.** When the request and the repository already
   meet the plan readiness checklist, the orchestrator authors the spec itself.
@@ -87,7 +87,7 @@ file.
 | `draft` | The orchestrator opens a draft PR and arms no auto-merge. A human reviews and merges it, and the worktree stays in place. |
 
 Any other `pr-mode` value stops the build before it pushes. Set the key
-through `shipd config`; see [Customising shipd](customise.md).
+through [`shipd config`](customise.md); see [Customising shipd](customise.md).
 
 ### Board verbs
 

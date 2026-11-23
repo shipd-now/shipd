@@ -61,7 +61,7 @@ Resolution runs nearest-first: a nearer answer always shadows a farther one.
 
 ### What stays nearest-only
 
-- **Every write** — wiki store scaffolding, `/s:teach`, queued oracle
+- **Every write** — wiki store scaffolding, [`/s:teach`](../wiki.md), queued oracle
   questions, and initiative emission land in the nested job's own store, never
   an enclosing one. `workspace-show`, `wiki-show`, and `config-show` print the
   resolved chain, so you can inspect the write target before you rely on it.

@@ -5,7 +5,7 @@
 The **rubber duck** is an adversarial critic for an idea that nobody has
 planned or built yet. You generate the idea; `/s:duck` attacks it. A flawed
 assumption caught here costs nothing. The same assumption caught after
-`/s:build` costs a change.
+[`/s:build`](build.md) costs a change.
 
 The duck is strictly read-only. It edits no file, runs no mutating command,
 and emits no spec artifact. It also invokes no other skill and spawns no
@@ -14,12 +14,12 @@ the real code and the real contracts.
 
 ## When to use it
 
-Run `/s:duck` before `/s:plan`, while the idea is still cheap to change. It
+Run `/s:duck` before [`/s:plan`](plan.md), while the idea is still cheap to change. It
 fits an idea you suspect has a hole you cannot see yet, or a choice between
 two approaches.
 
 Skip it once you know the scope of the change and understand it. Run
-`/s:plan` directly instead. For a bug that already shows today, run `/s:fix`.
+`/s:plan` directly instead. For a bug that already shows today, run [`/s:fix`](fix.md).
 
 ## How to run it
 
@@ -83,11 +83,11 @@ runs that skill; you decide when to leave.
 
 | the idea turns out to be | exit |
 | --- | --- |
-| blocked on external unknowns nobody can cite | `/s:research <question>` |
-| a feature spanning several independent changes | `/s:epic <feature>` |
+| blocked on external unknowns nobody can cite | [`/s:research <question>`](research.md) |
+| a feature spanning several independent changes | [`/s:epic <feature>`](epics.md) |
 | one buildable change, scoped and understood | `/s:plan <the change>` |
 | something that already behaves wrongly today | `/s:fix <the problem>` |
-| a decision that wants a standing opinion first | `/s:ask <the decision>` |
+| a decision that wants a standing opinion first | [`/s:ask <the decision>`](oracle.md) |
 
 When the idea is not ready, the duck names what you must settle before the
 exit is worth taking.

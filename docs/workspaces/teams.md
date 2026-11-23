@@ -83,7 +83,7 @@ teams you ignore stay unmaterialized, and cost nothing but their tracked
 manifest and wiki.
 
 `shipd workspace` reports the team's roster of projects and initiatives.
-`shipd board` covers every declared project's repos from the workspace root,
+[`shipd board`](../build.md) covers every declared project's repos from the workspace root,
 and only the repos beneath the folder it runs from otherwise.
 
 ## Reference
@@ -125,7 +125,7 @@ nearest store, as [nesting](nesting.md) explains.
 
 The base wiki accumulates knowledge only from writes made **at the base**. A
 teammate teaching a page from inside `myapp/` writes it into `myapp`'s own
-store, never the base's. Run `/s:teach` from the base workspace to grow the
+store, never the base's. Run [`/s:teach`](../wiki.md) from the base workspace to grow the
 knowledge every team inherits.
 
 The oracle queue splits the same way. A question queued at the base is
@@ -171,7 +171,7 @@ team's own store. Give that group a workspace repository of its own —
 `post-worktree-scripts` resolve nearest-wins through the layered config, so a
 list in the workspace repo's tracked `.shipd-config.json` governs every member
 repo beneath it. One registration seeds every member's fresh worktree — and
-whoever last pushed wrote shell commands your next `shipd worktree` runs
+whoever last pushed wrote shell commands your next [`shipd worktree`](../worktrees.md) runs
 unasked.
 
 The receiving machine holds the switch. The engine keeps a machine-local trust

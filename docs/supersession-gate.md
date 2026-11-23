@@ -2,7 +2,7 @@
 
 # The supersession gate
 
-A planned change can go stale fast. Between `/s:plan` and [`/s:build`](build.md), other PRs
+A planned change can go stale fast. Between [`/s:plan`](plan.md) and [`/s:build`](build.md), other PRs
 may merge work that already implements some or all of the plan. An autopilot
 run is the usual culprit. Building anyway would clobber newer spec wording and
 re-do shipped work. The **supersession gate** catches that mechanically, before

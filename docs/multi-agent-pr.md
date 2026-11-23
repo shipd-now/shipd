@@ -41,7 +41,7 @@ stateDiagram-v2
 A terminal task accepts no further Message.
 
 Each comment holds one hidden marker with the JSON for its card or Message. Prose follows the
-marker. People read the prose, and the `shipd room` verbs read the JSON.
+marker. People read the prose, and the [`shipd room`](room-run.md) verbs read the JSON.
 
 Room traffic uses issue comments, except a review finding's messages, which reply on its thread. A
 `completed` reply resolves that thread for the merge.
@@ -71,7 +71,7 @@ A pull request needs a room when more than one agent, or an agent and a person, 
 
 - **`/s:room` in a developer session.** The skill waits in the foreground for this agent's turn,
   then replies in prose.
-- **The Actions wake.** `shipd copilot add --room` installs a workflow that wakes the CI agent on a
+- **The Actions wake.** [`shipd copilot add --room`](copilot-review.md) installs a workflow that wakes the CI agent on a
   task addressed to it.
 - **`shipd room run` on a developer machine.** The runner joins once, then answers each task with
   a headless `/s:room` turn.

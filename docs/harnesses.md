@@ -25,7 +25,7 @@ beside its commands.
 - **Check the installed files.** Report each harness's state with `status`.
 - **Take the commands out again.** Remove the files shipd generated.
 
-`shipd install` runs the user-global half for the harnesses a person picks.
+[`shipd install`](install.md) runs the user-global half for the harnesses a person picks.
 
 ## How to run it
 

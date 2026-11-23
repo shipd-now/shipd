@@ -1,6 +1,6 @@
 <!-- doc-type: how-to -->
 
-# Getting started
+# Your first change
 
 This guide takes you from nothing installed to your first shipd-built
 change, in six steps: install, preflight, tour, plan, build, and watch. Each
@@ -19,28 +19,8 @@ curl -fsSL https://shipd.now/install | sh
 ```
 
 That registers the `shipd` marketplace, installs the `s` plugin, and writes
-the `shipd` launcher to `~/.local/bin/shipd`. Add that directory to your PATH
-if the installer says so:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Turn on auto-update once, so later versions arrive without asking — Claude
-Code leaves it off for third-party marketplaces like `shipd`. Open `/plugin`
-→ **Marketplaces** → `shipd` and toggle auto-update on, or add
-`"autoUpdate": true` to the `shipd` marketplace entry in
-`~/.claude/settings.json`. Updates load at the next session start, or right
-away after `/reload-plugins`. Two manual fallbacks work at any time.
-`shipd update` applies a newer published version, and `shipd update --check`
-reports what it would do without changing anything. `claude plugin update
-s@shipd` does the same through the Claude Code CLI.
-
-On a terminal, the installer finishes with a harness multi-select — Cursor,
-Copilot, Codex, and the rest — and generates their `shipd` commands for you.
-A headless run (CI, no usable terminal) skips the question and prints
-instructions instead. Inside a repository, `shipd harness add` installs the
-generated command files at the repo level.
+the `shipd` launcher to `~/.local/bin/shipd`. [Install](install.md) covers
+updates, harnesses, and the other install modes.
 
 ## 2. Preflight: `shipd doctor`
 
@@ -49,11 +29,8 @@ shipd doctor
 ```
 
 It reports one line per check, then a closing `doctor: ok` or `doctor: N
-problem(s)`. The checks are `python`, `git`, `config`, `pipeline`, `schema`,
-`wiki`, `local-state`, `gh`, `difft`, `textual`, `snapshot`, `statusline`,
-`protection`, `automerge`, and `copilot-secret`. Only a `fail` line blocks you;
-`warn` lines mark optional extras. This verb installs and edits nothing. `--fix`
-installs local tooling automatically. See the [cheatsheet](cheatsheet.md).
+problem(s)`. Only a `fail` line blocks you; `warn` lines mark optional extras.
+[Doctor](doctor.md) lists every check and the `--fix` remedies.
 
 Cheapening a delivery needs nothing installed: `{"autonomous-pipeline":
 "eco"}` in `.shipd-config.json` opts a delivery into the cheap preset.
@@ -94,7 +71,8 @@ The first `/s:plan` in a new repository runs the `/s:init` wizard first; `/s:ini
 
 Read them: this is the cheapest moment to correct course. See
 [`.shipd/README.md`](../.shipd/README.md) for the full requirement and delta
-grammar these artifacts follow.
+grammar these artifacts follow. [Plan a change](plan.md) covers the planning
+flow in full.
 
 ## 5. Build it: `/s:build`
 
@@ -107,7 +85,7 @@ execution sub-agents one model tier down. It answers their questions and
 verifies the result against the delta spec's scenarios. Three durable
 outcomes follow: working code on the `change/<name>` branch, the deltas
 merged into `.shipd/verified/`, and the change archived under
-`.shipd/completed/`.
+`.shipd/completed/`. [Build a change](build.md) covers the build in full.
 
 ## 6. Watch it
 
@@ -141,10 +119,13 @@ It writes the `statusLine` entry into `~/.claude/settings.json`. When you
 installed through the installer, that entry resolves the newest cached
 plugin snapshot at render time rather than pinning one version. It keeps
 working across upgrades this way.
+[Statusline and telemetry](statusline-and-telemetry.md) covers the statusline
+and the delivery metrics.
 
 ## Where to go next
 
 - [Cheatsheet](cheatsheet.md) — every `/s:` command and `shipd` verb, with
   its options and one example
 - [What is shipd?](what-is-shipd.md) — the model behind the loop you just ran
+- [Core ideas](core-ideas.md) — the definitions of shipd's terms
 - [Workspaces](workspaces.md) — standing one job up across several repos
