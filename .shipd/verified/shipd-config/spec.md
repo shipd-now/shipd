@@ -612,7 +612,12 @@ environment bypass, remind cooldown behavior, and the token-cost properties —
 that rules consume no model context until one fires, that a firing deny costs
 the retried edit while a firing remind costs one injected reminder, and the
 deny-for-certain / remind-for-fuzzy authoring guidance. The standalone guide
-SHALL conform to the shipd documentation standard:
+SHALL follow the main-page shape: the opening saying what guardrails are,
+`## When to use it` (holding the deny-for-certain / remind-for-fuzzy
+guidance), `## How to run it` (adding a rule as numbered steps), then a
+`## Reference` section holding the hook events, the
+rule file format, the sources, the cooldown, the kill-switches, and the token
+cost. The standalone guide SHALL conform to the shipd documentation standard:
 `<!-- doc-type: reference -->` as its first line and a total line count
 within the reference cap.
 
@@ -633,6 +638,12 @@ within the reference cap.
 - **THEN** it explains both hook events over added lines, the rule format
   with a worked example, the sources and their precedence, and states that
   rules consume no model context until one fires
+
+#### Scenario: The standalone guide follows the main-page shape
+- **WHEN** the level-2 headings of `docs/guardrails.md` are read
+- **THEN** they are exactly `## When to use it`, `## How to run it` with
+  numbered steps, and `## Reference`, in that order, the last holding the
+  rule format table
 
 #### Scenario: The standalone guide carries its marker and fits its cap
 - **WHEN** `docs_lint.py` runs over `docs/guardrails.md`
