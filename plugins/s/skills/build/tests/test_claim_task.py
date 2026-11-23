@@ -145,6 +145,102 @@ class ParallelGroupTest(ClaimScriptTestBase):
         self.assertEqual(body.count("- [ ]"), 0)
 
 
+class LockExclusivityTest(ClaimScriptTestBase):
+    """The claim lock must be exclusive on its own, not by trusting an external
+    `mkdir` to refuse an existing directory. uutils coreutils' `mkdir` (the
+    default on Ubuntu 25.10+, so on GitHub's ubuntu-latest runners) reports
+    success when a concurrent process creates the directory between its
+    existence check and its `mkdir(2)`, which let two claimers hold a
+    mkdir-based lock at once and both be handed task 1.
+
+    The race is made deterministic with two PATH stubs: a `mkdir` that always
+    succeeds on an existing directory (the uutils outcome, every time), and an
+    `awk` that computes its real answer and then parks while a gate file
+    exists — so a claimer stops inside its critical section, after reading the
+    ready task and before marking it."""
+
+    def setUp(self):
+        super().setUp()
+        self.bin = os.path.join(self.root, "stub-bin")
+        self.gate = os.path.join(self.root, "gate")
+        os.makedirs(self.bin)
+        os.makedirs(self.gate)
+        self.hold = os.path.join(self.gate, "hold")
+        self.stub("mkdir", 'exec "%s" -p "$@"\n' % shutil.which("mkdir"))
+        self.stub("awk", (
+            'out="$("%(awk)s" "$@")"; rc=$?\n'
+            'if [ -e "%(hold)s" ]; then\n'
+            '  : > "%(gate)s/parked.$$"\n'
+            '  n=0\n'
+            '  while [ -e "%(hold)s" ] && [ "$n" -lt 300 ]; do\n'
+            '    sleep 0.1; n=$((n + 1))\n'
+            '  done\n'
+            'fi\n'
+            '[ -n "$out" ] && printf \'%%s\\n\' "$out"\n'
+            'exit "$rc"\n') % {
+                "awk": shutil.which("awk"),
+                "hold": self.hold, "gate": self.gate})
+        self.env = dict(os.environ)
+        self.env["PATH"] = self.bin + os.pathsep + self.env.get("PATH", "")
+
+    def stub(self, name, body):
+        path = os.path.join(self.bin, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("#!/bin/sh\n" + body)
+        os.chmod(path, 0o755)
+
+    def parked(self):
+        return len([n for n in os.listdir(self.gate) if n.startswith("parked.")])
+
+    def wait_for_parked(self, count, timeout):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.parked() >= count:
+                return True
+            time.sleep(0.02)
+        return False
+
+    def test_a_non_exclusive_mkdir_cannot_double_claim(self):
+        self.write_tasks(
+            "## 1. Group\n"
+            "- [ ] 1.1 [P1] first\n"
+            "- [ ] 1.2 [P1] second\n")
+        with open(self.hold, "w", encoding="utf-8"):
+            pass
+
+        def spawn():
+            return subprocess.Popen(
+                ["bash", SCRIPT, "claim", CHANGE], cwd=self.root, env=self.env,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        first = spawn()
+        try:
+            # The first claimer holds the lock, parked mid-critical-section.
+            self.assertTrue(
+                self.wait_for_parked(1, 20),
+                "the first claimer never reached its critical section")
+            second = spawn()
+            try:
+                # A second claimer must wait at the lock. If it parks too, it
+                # is inside the critical section alongside the first.
+                both_inside = self.wait_for_parked(2, 2)
+            finally:
+                os.remove(self.hold)
+                out2, _ = second.communicate(timeout=30)
+        finally:
+            if os.path.exists(self.hold):
+                os.remove(self.hold)
+            out1, _ = first.communicate(timeout=30)
+
+        self.assertFalse(
+            both_inside, "two claimers held the claim lock at the same time")
+        ids = sorted(out.split("\t", 1)[0] for out in (out1, out2))
+        self.assertEqual(ids, ["1", "2"])
+        self.assertEqual(self.boxes(), "~~")
+        self.assertFalse(
+            os.path.exists(os.path.join(self.change_dir, ".tasks.lock")))
+
+
 class BarrierTest(ClaimScriptTestBase):
     def setUp(self):
         super().setUp()

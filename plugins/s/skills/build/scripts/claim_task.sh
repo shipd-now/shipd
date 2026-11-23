@@ -2,8 +2,8 @@
 # claim_task.sh — task coordination for /s:build execution sub-agents.
 #
 # Improves on a naive grep+sed claimer in four ways:
-#   1. Parallel-safe: `claim` takes a mkdir-based lock, so two sub-agents can
-#      never grab the same task.
+#   1. Parallel-safe: `claim` takes an exclusive lock file, so two sub-agents
+#      can never grab the same task.
 #   2. In-progress state: a claimed task becomes `- [~]` until done, so `next`
 #      skips work already owned by another sub-agent.
 #   3. Targeted completion: `complete`/`release` act on a specific task ID,
@@ -354,21 +354,28 @@ require_change_branch() {
   fi
 }
 
+# The lock is a file the shell itself creates with `noclobber`, i.e. one
+# open(2) with O_CREAT|O_EXCL: exactly one contender can win. It is deliberately
+# not `mkdir "$LOCK"` — whether an external mkdir refuses an existing directory
+# is that tool's business, and uutils coreutils' mkdir (the default on Ubuntu
+# 25.10+) reports success when a concurrent process creates the directory
+# first, which let two claimers hold the lock at once and take the same task.
+# The subshell keeps `noclobber` away from this script's other redirections.
 acquire_lock() {
   local tries=0
-  until mkdir "$LOCK" 2>/dev/null; do
+  until (set -o noclobber; echo "$$" > "$LOCK") 2>/dev/null; do
     tries=$((tries + 1))
     [ "$tries" -gt 100 ] && die "could not acquire lock on $TASKS (stale $LOCK?)"
     sleep 0.1
   done
-  trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+  trap 'rm -f "$LOCK" 2>/dev/null || true' EXIT
 }
 
 # Drop the lock explicitly, so a retrying `claim --wait` never sleeps while
 # holding it and never double-releases via the EXIT trap.
 release_lock() {
   trap - EXIT
-  rmdir "$LOCK" 2>/dev/null || true
+  rm -f "$LOCK" 2>/dev/null || true
 }
 
 # Resolve the target line for complete/release when the ID may be omitted:
