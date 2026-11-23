@@ -4,8 +4,8 @@
 
 A harness's **agent surface** is the agent definitions shipd writes beside its
 command files. Only a harness whose registry entry declares the `subagents`
-feature has one. [Customising shipd](customise.md) covers the registry and the
-command surface.
+feature has one. [Harnesses](harnesses.md) covers the registry and the command
+surface.
 
 ## What ships
 
@@ -42,9 +42,8 @@ shipd harness status claude-code --json   # installed, stale, foreign, or absent
 shipd harness remove claude-code --user   # delete them and prune the directory
 ```
 
-When you install and enable the `s@shipd` plugin at user scope, `shipd
-harness add claude-code --user` skips the user-global agent files. It also
-retires the ones shipd wrote earlier.
+The `s@shipd` plugin already provides the Claude Code user surface, so
+`--user` skips those agent files; see [Harnesses](harnesses.md).
 
 `status` counts the agent files with the command files. A harness is
 `installed` only when both are byte-current, and `stale` names the first
