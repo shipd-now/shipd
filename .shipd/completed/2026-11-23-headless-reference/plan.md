@@ -1,5 +1,5 @@
 # headless-reference
-Status: ready
+Status: verified
 Planned-at: d93fff2f383fd537ed902e5a5342d40042a4cebb
 Gated-hash: 84cfc96de952
 
