@@ -38,6 +38,11 @@ Subcommands:
                               before posting to suppress a previously-answered
                               finding; decides no suppression itself and
                               mutates nothing
+  linked <pr>                 list the pull requests linked to the PR (JSON):
+       [--repo <owner>/<repo>] repo, number, url, state, head_sha, source —
+       [--search <terms>]     timeline cross-references, body links, then
+                              --repo's open PRs matching --search (which
+                              needs --repo); mutates nothing
 
 The `gh` runner has signature ``gh(args, input=None) -> (rc, stdout, stderr)``
 where ``args`` is everything after the ``gh`` executable.
@@ -1751,6 +1756,124 @@ def prior(pr, gh, findings=None):
     return entries
 
 
+# A pull request URL in a body: owner, repository, number.
+_PR_URL_RE = re.compile(
+    r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/(\d+)")
+
+
+def _json_values(text):
+    """Decode every JSON value in ``text`` in order. ``gh api --paginate``
+    prints one array per page back to back, so a listing spanning pages is
+    several concatenated arrays rather than one."""
+    decoder = json.JSONDecoder()
+    values, i, n = [], 0, len(text)
+    while True:
+        while i < n and text[i].isspace():
+            i += 1
+        if i >= n:
+            return values
+        value, i = decoder.raw_decode(text, i)
+        values.append(value)
+
+
+def _linked_head(gh, entry):
+    """Fill ``entry``'s ``head_sha``, ``state`` and ``url`` from
+    ``gh api repos/<repo>/pulls/<n>``. A failed read keeps the entry visible:
+    ``head_sha`` null, ``state`` ``unknown``, and ``error`` holding the first
+    stderr line."""
+    rc, out, err = gh(["api", "repos/%s/pulls/%d"
+                       % (entry["repo"], entry["number"])])
+    if rc != 0:
+        lines = [ln for ln in (err or "").splitlines() if ln.strip()]
+        entry["error"] = (lines[0].strip() if lines
+                          else "gh api exited %d" % rc)
+        return
+    pull = json.loads(out)
+    entry["head_sha"] = (pull.get("head") or {}).get("sha")
+    entry["state"] = ("merged" if pull.get("merged")
+                      else pull.get("state") or "unknown")
+    entry["url"] = pull.get("html_url") or entry["url"]
+
+
+def linked(pr, gh, repo=None, search=None):
+    """List the pull requests linked to ``pr``: each one's ``repo``,
+    ``number``, ``url``, ``state`` (``open``, ``closed``, ``merged`` or
+    ``unknown``), ``head_sha`` and ``source``. Read-only.
+
+    Three sources, in order, the first winning a duplicate:
+    ``cross-reference`` (the reviewed pull request's issue timeline),
+    ``body`` (pull request URLs in its body), and, only with ``repo``,
+    ``search`` (that repository's open pull requests matching ``search``).
+    The reviewed pull request is never listed; with ``repo``, entries in
+    other repositories are dropped. A failed timeline read fails the verb;
+    a failed head read keeps its entry with an ``error`` field."""
+    number, _base_sha, _sha, _url = _resolve_pr(gh, pr)
+    self_repo = _resolve_repo(gh)
+    want = repo.lower() if repo else None
+    entries, seen = [], {(self_repo.lower(), int(number))}
+
+    def add(entry_repo, entry_number, source, **fields):
+        key = (entry_repo.lower(), int(entry_number))
+        if key in seen or (want is not None and key[0] != want):
+            return None
+        seen.add(key)
+        entry = {"repo": entry_repo, "number": int(entry_number),
+                 "url": "https://github.com/%s/pull/%d"
+                        % (entry_repo, int(entry_number)),
+                 "state": "unknown", "head_sha": None, "source": source}
+        entry.update(fields)
+        entries.append(entry)
+        return entry
+
+    rc, out, err = gh(["api", "repos/%s/issues/%d/timeline"
+                       % (self_repo, number), "--paginate"])
+    if rc != 0:
+        _fail("reading the timeline of %s#%d failed: %s"
+              % (self_repo, number, err.strip()))
+    events = [ev for page in _json_values(out)
+              for ev in (page if isinstance(page, list) else [page])]
+    to_read = []
+    for ev in events:
+        if not isinstance(ev, dict) or ev.get("event") != "cross-referenced":
+            continue
+        issue = (ev.get("source") or {}).get("issue") or {}
+        if not issue.get("pull_request"):
+            continue
+        full_name = (issue.get("repository") or {}).get("full_name")
+        if not full_name or issue.get("number") is None:
+            continue
+        entry = add(full_name, issue["number"], "cross-reference")
+        if entry is not None:
+            to_read.append(entry)
+
+    rc, out, err = gh(["pr", "view", str(pr), "--json", "body"])
+    if rc != 0:
+        _fail("gh pr view %s failed: %s" % (pr, err.strip()))
+    body = json.loads(out).get("body") or ""
+    for owner, name, num in _PR_URL_RE.findall(body):
+        entry = add("%s/%s" % (owner, name), int(num), "body")
+        if entry is not None:
+            to_read.append(entry)
+
+    for entry in to_read:
+        _linked_head(gh, entry)
+
+    if repo:
+        args = ["pr", "list", "--repo", repo, "--state", "open"]
+        if search:
+            args += ["--search", search]
+        args += ["--json", "number,url,headRefOid"]
+        rc, out, err = gh(args)
+        if rc != 0:
+            _fail("gh pr list --repo %s failed: %s" % (repo, err.strip()))
+        for found in json.loads(out or "[]"):
+            fields = {"state": "open", "head_sha": found.get("headRefOid")}
+            if found.get("url"):
+                fields["url"] = found["url"]
+            add(repo, found["number"], "search", **fields)
+    return entries
+
+
 # --- CLI --------------------------------------------------------------------
 
 def _load_review(src):
@@ -1802,6 +1925,12 @@ def _cmd_prior(args, gh):
     if args.from_:
         findings = _load_review(args.from_).get("findings") or []
     entries = prior(args.pr, gh, findings=findings)
+    print(json.dumps(entries))
+    return 0
+
+
+def _cmd_linked(args, gh):
+    entries = linked(args.pr, gh, repo=args.repo, search=args.search)
     print(json.dumps(entries))
     return 0
 
@@ -1877,9 +2006,24 @@ def main(argv=None, gh=None):
                          "with the id of the payload finding it belongs to")
     pv.set_defaults(func=_cmd_prior)
 
+    lk = sub.add_parser(
+        "linked", help="list the pull requests linked to a PR, each with its "
+                       "repository, state and head commit (JSON); mutates "
+                       "nothing")
+    lk.add_argument("pr", help="PR number, URL, or branch")
+    lk.add_argument("--repo", default=None,
+                    help="<owner>/<repo>: list only pull requests in this "
+                         "repository, and search its open pull requests")
+    lk.add_argument("--search", default=None,
+                    help="search terms for --repo's open pull requests "
+                         "(needs --repo)")
+    lk.set_defaults(func=_cmd_linked)
+
     args = parser.parse_args(argv)
     if args.cmd == "post" and args.room_to and not args.room_agent:
         parser.error("--room-to needs --room-agent")
+    if args.cmd == "linked" and args.search and not args.repo:
+        parser.error("--search needs --repo")
     try:
         return args.func(args, gh)
     except RoomClaimLost as exc:

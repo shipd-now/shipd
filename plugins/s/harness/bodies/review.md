@@ -37,6 +37,8 @@ edits the repository.
    safety: grep is not a call graph, so name what you could not check. A
    changed limit, bound, timeout, retry count, buffer size, or threshold is a
    contract change too — chase its consumers the same way.
+   A consumer in another repository: read it with `?ref=<sha>` at each head
+   from `gh api repos/<o>/<r>/issues/<n>/timeline`; a failed read never blocks.
 5. **Follow the values the call sites actually pass.** A guard the real call
    can never reach is dead code; a comment promising behaviour the code does
    not produce is wrong even though its line exists. Confirm the path that
@@ -45,10 +47,9 @@ edits the repository.
    compare them against each other, not only against the base, and name any
    hardening applied to one and not the other.
 6. **Judge new code on its own terms.** For every function, class, guard, or
-   helper the diff introduces: does it measure the quantity its limit
-   actually governs, does an escape hatch let its guarantee lapse, does it
-   terminate cheaply on hostile input, and do its boundaries agree with its
-   doc comment?
+   helper the diff introduces: does it measure the quantity its limit actually
+   governs, does an escape hatch let its guarantee lapse, does it terminate
+   cheaply on hostile input, and do its boundaries agree with its doc comment?
 7. **Apply the risk lenses.** Whatever the cohort, watch for six triggers:
    secret or credential exposure (a key, token, password, or personal data
    in a literal, log line, error message, or fixture); authorization boundary (a
@@ -75,15 +76,14 @@ edits the repository.
    and — while under `.shipd/planned/` — surface `shipd lint <change>`
    findings verbatim; an archived `.shipd/completed/` change has none to
    surface, its deltas already merged.
-10. **Check the PR description against the diff when one is available —
-    given inline, or via `gh pr view --json title,body`.** Check both
-    directions: each title/body claim against the diff, and the diff's
-    substantial content against what the description never mentions — an
-    unmentioned feature has no claim to check, so only the second direction
-    finds it. Either mismatch is its own finding, category
-    `description-drift`, severity by the normal rubric. Anchor a
-    description-level finding at one location only; a further location
-    follows the same permission as step 11, never a separate rule.
+10. **Check the PR description against the diff when one is available — given
+   inline, or via `gh pr view --json title,body`.** Check both directions: each
+   title/body claim against the diff, and the diff's substantial content
+   against what the description never mentions — an unmentioned feature has no
+   claim to check, so only the second direction finds it. Either mismatch is
+   its own finding, category `description-drift`, severity by the normal
+   rubric. Anchor a description-level finding at one location only; a further
+   location follows the same permission as step 11, never a separate rule.
 11. **Report by cohort, most severe first.** Give each finding a location (fix
     site, not symptom; a further site where the defect is visible — wrong the
     same way, showing the mismatch on its own terms, or — for a defect that

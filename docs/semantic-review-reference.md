@@ -4,8 +4,8 @@
 
 [The semantic review](semantic-review.md) is the main page: what the review
 reads, what it looks for, and how it blocks a merge. This page lists the
-engine's subcommands, the `--json` payload, the `lint` configuration key, and
-the `prior` verb's output.
+engine's subcommands, the `--json` payload, the `lint` configuration key, the
+`prior` verb's output, and the `linked` verb's output.
 
 ## The engine's subcommands
 
@@ -181,4 +181,49 @@ than the review has open findings, because one finding's history now spans
 two `thread_id`s.
 
 Source: the `prior` docstring in
+`plugins/s/skills/review/scripts/review_gate.py`.
+
+## The linked verb
+
+`review_gate.py linked` lists the pull requests linked to a pull request. The
+review reads a consumer in another repository at each listed head. The verb
+mutates nothing on GitHub.
+
+```
+review_gate.py linked <pr> [--repo <owner>/<repo>] [--search <terms>]
+```
+
+`--repo` keeps only pull requests in that repository, and adds its open pull
+requests that match `--search`. `--search` needs `--repo`.
+
+The verb prints one JSON array. Each entry carries:
+
+| field | holds |
+|---|---|
+| `repo` | the pull request's repository, as `<owner>/<repo>` |
+| `number` | the pull request's number |
+| `url` | the pull request's URL |
+| `state` | `open`, `closed`, `merged`, or `unknown` |
+| `head_sha` | the head commit, or `null` when the read failed |
+| `source` | one of the three sources below |
+| `error` | only on a failed read: the first line of the error |
+
+The verb reads the sources in this order. A pull request from two sources
+lists once, under the earlier one.
+
+| source | where the pull request came from |
+|---|---|
+| `cross-reference` | a `cross-referenced` event on the reviewed pull request's timeline |
+| `body` | a pull request URL in the reviewed pull request's body |
+| `search` | an open pull request in `--repo` that matches `--search` |
+
+The reviewed pull request itself never appears in the list.
+
+| exit | meaning |
+|---|---|
+| `0` | the array printed, even when it is empty or an entry carries `error` |
+| `1` | a read the verb depends on failed, such as the timeline; stdout stays empty |
+| `2` | a usage error, such as `--search` without `--repo` |
+
+Source: the `linked` docstring in
 `plugins/s/skills/review/scripts/review_gate.py`.

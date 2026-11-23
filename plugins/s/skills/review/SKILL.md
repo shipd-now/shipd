@@ -114,6 +114,7 @@ references. Use `--lang` / `--path` to cut noise on common names. Read
 - **`--lang` misses extensionless scripts** — retry without it before concluding.
 - **Changed constants are contract changes** — chase every consumer of the constant.
 - **Uneven sibling sites** — compare parallel implementations against each other.
+- **Consumers in another repository** — read each at a named ref, linked pull request heads first.
 
 ### 3b. Read the linter output
 Run `lint <base> [<head>]` over the same endpoints as the diff. Read
