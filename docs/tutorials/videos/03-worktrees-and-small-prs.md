@@ -59,7 +59,7 @@ Large pull requests stall in review, and parallel work collides in one checkout.
 
 ## Sources
 
-- [Getting started](../../getting-started.md)
+- [Your first change](../../getting-started.md)
 - [What is shipd](../../what-is-shipd.md)
 - [Command cheatsheet](../../cheatsheet.md)
 - [Customising shipd](../../customise.md)

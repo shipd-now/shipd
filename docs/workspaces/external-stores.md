@@ -134,6 +134,11 @@ push, a pull, or a fetch. Outside a work tree the commit is a silent no-op. A
 failed commit prints one warning line, and never fails the verb.
 
 Push and pull the store repo yourself, exactly as you do the workspace repo.
+Two paths run networked git on a store while `store_sync` is `true`. Autopilot
+fetches the store's `origin main` before it checks a dependency. The
+session-boundary hook also fetches, fast-forward merges, and pushes a store
+that lives in the workspace repository; see
+[Sharing a workspace with a team](teams.md#concurrency-expectations).
 Writes to an **in-repo** `.shipd/` never auto-commit — those stay the change's
 own pull request.
 

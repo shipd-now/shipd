@@ -33,4 +33,4 @@ I published the tools as shipd, at shipd.now. The shipd repository dates its fir
 ## Where to go next
 
 - [What is shipd?](what-is-shipd.md) explains what shipd does today.
-- [Getting started](getting-started.md) walks you through the install.
+- [Your first change](getting-started.md) walks you through the install.

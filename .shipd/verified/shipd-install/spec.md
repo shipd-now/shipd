@@ -99,7 +99,12 @@ with the raw GitHub `install.sh` URL and the two `claude plugin` commands
 documented as equivalents, and the launcher's PATH location. The section
 SHALL give `shipd doctor` as the check and SHALL link `docs/install.md` for
 everything else. The README SHALL NOT restate auto-update, `shipd update`,
-per-repo mode, or dev mode, and SHALL carry no `shipd` CLI verb listing.
+per-repo mode, or dev mode, with exactly three exceptions it MAY keep: the
+sentence that a repository vendoring shipd holds a directly runnable
+`.shipd/plugin/s/bin/shipd`; the in-session `/plugin marketplace add
+<path-to-your-checkout>` and `/plugin install s@shipd` steps; and the
+sentence that the plugin is the engine's distribution vehicle for every
+harness. The README SHALL carry no `shipd` CLI verb listing.
 
 The install page `docs/install.md` SHALL document enabling Claude Code's
 marketplace auto-update for `shipd` (the `/plugin` toggle and the
@@ -158,6 +163,13 @@ or upgrade instructions.
   `shipd vendor`, and `ln -s`
 - **THEN** no line matches, and its `## Install` section links
   `docs/install.md` and shows `shipd doctor`
+
+#### Scenario: The README keeps only the three permitted facts
+- **WHEN** `README.md` is read outside its `## Install` section
+- **THEN** it may name the runnable `.shipd/plugin/s/bin/shipd`, the two
+  in-session `/plugin` steps, and the distribution-vehicle sentence, and it
+  names no `shipd vendor` command, no `shipd update` command, no auto-update
+  setting, and no symlink instruction
 
 ### Requirement: Installer brand mark
 id: installer-brand-mark

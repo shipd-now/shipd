@@ -597,8 +597,9 @@ the review uses — `files`, `diff`, `context`, `change`, `lint`, and
 `doctor` — with one line stating what each returns.
 
 The payload section SHALL list every field of a finding — `id`, `severity`,
-`category`, `location`, `what`, `why`, `fix`, `status`, `note` and the optional
-`suggestion` — and SHALL name every `category` value the two payload
+`category`, `locations`, `what`, `why`, `fix`, `status`, `note` and the optional
+`suggestion` — SHALL describe `locations` as a non-empty array of
+`path:LINE` strings whose first entry is the primary site, and SHALL name every `category` value the two payload
 surfaces accept, those surfaces being the enumeration's source and
 `semantic-review`'s `review-taxonomy-parity` requirement being what holds
 them in agreement. This requirement SHALL NOT restate the enumeration or fix
@@ -664,6 +665,12 @@ as null, and that a null hash matches nothing.
 - **WHEN** `docs/semantic-review.md` is inspected
 - **THEN** it carries a link resolving to `semantic-review-reference.md`
 
+#### Scenario: The payload names the locations array
+- **WHEN** the field table of the payload section is inspected
+- **THEN** it holds a `locations` row describing a non-empty array, it holds
+  no row for a field named `location`, and the suggestion conditions anchor
+  on `locations[0]`
+
 ### Requirement: Multi-agent PR entry links
 id: multi-agent-pr-entry-links
 
@@ -717,7 +724,7 @@ define and link:
   validator (`build.md`); and the room (`multi-agent-pr.md`);
 - an epic and its members (`epics.md`), autopilot (`autopilot.md`), and the
   initiative and PRD above an epic (`prd.md`);
-- the memory, oracle, human ladder (`oracle.md`), the wiki (`wiki.md`), and
+- the read, oracle, human ladder (`oracle.md`), the wiki (`wiki.md`), and
   personal memory (`memory.md`);
 - a workspace (`workspaces.md`) and the layered configuration
   (`customise.md`).
@@ -740,6 +747,11 @@ table, and no shell command. It SHALL NOT take the feature main-page shape.
 - **WHEN** `docs/core-ideas.md` is read
 - **THEN** its level-2 headings are the seven this requirement names, in
   order, and it holds no mermaid fence, no table row, and no code fence
+
+#### Scenario: The ladder is named as the pages name it
+- **WHEN** the `## Knowledge` section of `docs/core-ideas.md` is read
+- **THEN** it names the three rungs as read, then oracle, then human, the
+  order `docs/oracle.md` gives
 
 ### Requirement: First-change guide defers to the owner pages
 id: first-change-guide-owners
@@ -862,6 +874,11 @@ The level-2 headings of `README.md` SHALL be exactly `## Install`,
 `## Adding a skill`, and `## After editing`, in that order. The file SHALL
 total 150 lines or fewer and SHALL hold no table.
 
+Every relative link in `README.md` SHALL resolve to an existing file. The
+test file `plugins/s/skills/build/tests/test_readme_docs_links.py` SHALL
+guard the line cap, the six level-2 headings, the nine group links, and the
+relative links, so a later edit that breaks one fails `ci`.
+
 #### Scenario: Each group line links its page
 - **WHEN** the list items of the README's `## Documentation` section are read
 - **THEN** there are nine, their bold names are the nine groups in the order
@@ -877,3 +894,131 @@ total 150 lines or fewer and SHALL hold no table.
 #### Scenario: README fits its cap
 - **WHEN** `wc -l README.md` runs
 - **THEN** the count is 150 or fewer
+
+#### Scenario: Relative links resolve
+- **WHEN** every markdown link in `README.md` that is not an `http` link or
+  a `#` anchor is collected
+- **THEN** each target, with any `#` fragment removed, is an existing file
+
+#### Scenario: A test guards the README
+- **WHEN** `python3 -m unittest plugins/s/skills/build/tests/test_readme_docs_links.py`
+  runs from the repository root
+- **THEN** it exits 0, and it fails when a heading is renamed, a group link
+  is retargeted to a missing file, or the file grows past 150 lines
+
+### Requirement: Docs pages state what the engine does
+id: docs-sweep-page-facts
+
+Each page below SHALL state the named fact as the shipped engine has it, and
+SHALL stay inside its doc type's line cap and pass `docs_lint.py`:
+
+- `docs/pr.md` SHALL present the default merge rules it names as a partial
+  list, and SHALL link `customise.md` from that same sentence as the full
+  list. It SHALL NOT name the default approval count.
+- `docs/semantic-review.md` SHALL describe a `low` finding as a real but
+  minor defect and SHALL NOT give style or naming as an example of one.
+- `docs/install.md` SHALL show the line the installer prints when the
+  launcher directory is off the PATH: `export PATH="$HOME/.local/bin:$PATH"`.
+- `docs/what-is-shipd.md` SHALL say the orchestrator runs on the session's
+  model, as `docs/build.md` and `docs/core-ideas.md` do.
+- `docs/cheatsheet.md` SHALL call the files `shipd harness add` writes
+  generated command files, with no `/s:` label.
+- `docs/plan.md` SHALL scope the gate-only exit from `rejected` to the
+  `/s:plan` skill, and SHALL state that a person can also return a rejected
+  plan to `draft` or `ready` through `/s:status`.
+- `docs/oracle.md` SHALL state that a wiki page outranks a raw queue entry
+  on the ladder.
+- `docs/workspaces/external-stores.md` SHALL name the two paths that run
+  networked git on a store while `store_sync` is `true`: autopilot's fetch of
+  the store's `origin main`, and the session-boundary hook's push of a store
+  that lives in the workspace repository, linking `teams.md` for the hook.
+- `docs/room-run.md` SHALL give the by-hand hand-back flags
+  `--state input-required --to <asker>`.
+- `docs/room-wake-reference.md` SHALL state that an author run checks the
+  head after each turn, that an unreadable head warns once and opens no
+  re-review task, and that a rerun opens no task a head already has.
+
+Where a page has no free line, the room for a fact SHALL come from rewrapping
+existing paragraphs at the page's own width, never from removing a fact and
+never from a new page.
+
+#### Scenario: The merge rule list is partial and linked
+- **WHEN** `### Merge it` of `docs/pr.md` is read
+- **THEN** the sentence naming `ci`, `semantic-review`, and the conversation
+  rule presents them as some of the default rules and links `customise.md`,
+  and the page names no approval count
+
+#### Scenario: Low severity names no style finding
+- **WHEN** the severity table of `docs/semantic-review.md` is read
+- **THEN** the `low` row describes a minor defect and gives neither style
+  nor naming as an example
+
+#### Scenario: The install page shows the PATH line
+- **WHEN** `docs/install.md` is searched for `export PATH="$HOME/.local/bin:$PATH"`
+- **THEN** one line matches, and the file is 150 lines or fewer
+
+#### Scenario: The orchestrator's model is the session's model
+- **WHEN** `docs/what-is-shipd.md` is searched for `strongest model`
+- **THEN** no line matches, and the page says the orchestrator runs on the
+  session's model
+
+#### Scenario: The harness row carries no skill label
+- **WHEN** the `harness` row of the `shipd` table in `docs/cheatsheet.md` is
+  read
+- **THEN** it says `generated command files` and holds no `/s:`
+
+#### Scenario: A rejected plan has two exits
+- **WHEN** `docs/plan.md` is read
+- **THEN** its enrichment step says the skill itself reaches `ready` only
+  through a gate pass, and its `### Statuses` section says a person can
+  return the plan to `draft` or `ready` through `/s:status`
+
+#### Scenario: The page outranks the queue entry
+- **WHEN** `### Correcting an answer` of `docs/oracle.md` is read
+- **THEN** it states that a wiki page outranks a raw queue entry on the
+  ladder, and the file is 250 lines or fewer
+
+#### Scenario: The store page names the networked paths
+- **WHEN** `### Auto-commit` of `docs/workspaces/external-stores.md` is read
+- **THEN** it names `store_sync`, autopilot's fetch of `origin main`, and
+  the session-boundary hook, and it links `teams.md`
+
+#### Scenario: The room pages keep their caps with the facts restored
+- **WHEN** `docs_lint.py` runs over `docs/room-run.md` and
+  `docs/room-wake-reference.md`
+- **THEN** it exits 0, the first is 150 lines or fewer and names
+  `--state input-required --to <asker>`, and the second is 250 lines or
+  fewer and states the after-turn head check, the unreadable-head warning,
+  and the rerun rule
+
+### Requirement: Link text names a page by its current title
+id: docs-link-text-current-titles
+
+Where a docs page links another docs page by that page's title, the link
+text SHALL be the target's current level-1 title. This requirement covers
+these links: `docs/history.md` to `getting-started.md` ("Your first
+change"); `docs/guardrails.md` to `copilot-review.md` ("Review gate");
+`docs/room-wake-reference.md` to `copilot-review-reference.md` ("Review gate
+reference"); `docs/copilot-review-reference.md` to `room-wake-reference.md`
+("Room reference"); and the `## Sources` lists of the video scripts
+`01-install-and-build.md`, `02-plan-and-specs.md`,
+`03-worktrees-and-small-prs.md`, and `09-ci-and-copilot-review.md` under
+`docs/tutorials/videos/`.
+
+The script `docs/tutorials/videos/09-ci-and-copilot-review.md` SHALL NOT say
+that `protection`, `automerge`, and `copilot-secret` are the last three
+lines of `shipd doctor`, because more lines print after them.
+
+#### Scenario: No link carries a retired title
+- **WHEN** `docs/` outside `docs/retros/` is searched for the link texts
+  `[Install the Copilot review gate](`, `[Copilot review reference](`,
+  `[Room wake reference](`, and `[Getting started](`
+- **THEN** the first three match no line, and the last matches only links
+  to `workspaces/getting-started.md`, the page that still carries that
+  title
+
+#### Scenario: The doctor claim matches the output
+- **WHEN** `docs/tutorials/videos/09-ci-and-copilot-review.md` is searched
+  for `last three lines`
+- **THEN** no line matches, and the script still names the `protection`,
+  `automerge`, and `copilot-secret` lines

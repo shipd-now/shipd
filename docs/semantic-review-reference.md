@@ -35,7 +35,7 @@ Each entry in `findings` carries these fields:
 | `id` | a short label, unique within the payload |
 | `severity` | `high`, `medium`, or `low` |
 | `category` | one of the eleven values below |
-| `location` | `path/to/file.ext:LINE` |
+| `locations` | a non-empty array of `path/to/file.ext:LINE`; the first is the primary site |
 | `what` | a one-line statement of the defect |
 | `why` | why it matters |
 | `fix` | a concrete fix |
@@ -58,7 +58,7 @@ prose, never an error:
 - `start_line` and `end_line` are integers, with `start_line <= end_line`.
 - `lines` is a non-empty list of whole replacement lines, with no
   `start_column` or `end_column`.
-- `location` anchors to a right-side line of the diff, and every line in
+- `locations[0]` anchors to a right-side line of the diff, and every line in
   `start_line..end_line` is in that diff too.
 
 Source: `plugins/s/skills/review/references/json-output.md`.

@@ -360,7 +360,7 @@ level-3 headings `### Register the statusline`, `### Read the build report`,
 and `### Read the delivery metrics`.
 
 For the statusline the page SHALL state: the rendered line
-`☕ <name> · <status> · <done>/<total>`; that it reads the root's planned
+`☕ <name> · <status> · <done>/<total> tasks`; that it reads the root's planned
 changes plus one level of worktrees; that an `active` change owns the line;
 the position bracket when more than one change is live; the
 `☕ no active specs` line; that `shipd statusline install` writes the
@@ -372,8 +372,8 @@ sets the segments on each line.
 For the build report the page SHALL state: that `/s:build` prints the report
 at the end of a build; what the report holds (a summary line, the change and
 its task counts, any merge warnings, and a table of per-model and total
-elapsed time); and that each build appends one record to `builds.jsonl` and
-writes one file under the configured `log_dir`.
+elapsed time); and that each build writes one file under the configured `log_dir` and
+appends one record to `builds.jsonl` in that same directory.
 
 For the delivery metrics the page SHALL state what `shipd metrics` prints and
 SHALL name the four subverbs `summary`, `record-flow`, `forecast`, and
@@ -397,13 +397,14 @@ the page SHALL name no engine script path.
 
 #### Scenario: Page covers the statusline
 - **WHEN** `docs/statusline-and-telemetry.md` is inspected
-- **THEN** it shows the rendered line, names `shipd statusline install` and
+- **THEN** it shows the rendered line ending in `tasks`, names `shipd statusline install` and
   `shipd statusline layout`, and states that the bare verb changes nothing
 
 #### Scenario: Page covers the build report and the metrics
 - **WHEN** `docs/statusline-and-telemetry.md` is inspected
-- **THEN** it names the parts of the build report, `builds.jsonl`, and the
-  four `shipd metrics` subverbs
+- **THEN** it names the parts of the build report, states that
+  `builds.jsonl` sits in the configured `log_dir`, and names the four
+  `shipd metrics` subverbs
 
 #### Scenario: Reference tables carry the segments and the defaults
 - **WHEN** the `## Reference` section is read

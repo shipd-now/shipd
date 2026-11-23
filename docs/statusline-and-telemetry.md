@@ -76,8 +76,8 @@ check of [`shipd doctor`](doctor.md) reports the registration.
 - any merge warnings;
 - a table of per-model and total elapsed time.
 
-Each build appends one record to `builds.jsonl`, and writes one file under
-the configured `log_dir`.
+Each build writes one file under the configured `log_dir`, and appends one
+record to `builds.jsonl` in that directory.
 
 ### Read the delivery metrics
 
@@ -120,7 +120,7 @@ The `build` config key holds the report settings. Every setting is optional.
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `logging_enabled` | `true` | Appends a record for each build. |
-| `log_dir` | `~/.shipd/builds` | Names the directory for the per-build files. |
+| `log_dir` | `~/.shipd/builds` | Names the directory for the per-build files and `builds.jsonl`. |
 | `number_format` | `short` | Sets how the report renders counts. |
 | `parallelism` | `3` | Sets the default fan-out of execution sub-agents. |
 

@@ -55,10 +55,10 @@ shipd room message 412 "The cap applies per task" --task 7 --state completed
 shipd room close 412 "Fixed in a1b2c3d" --task 9 --state completed
 ```
 
-Give the `watch` tool call its own timeout above 540 seconds (on Claude Code, a Bash `timeout`
-of `600000` ms). Run `watch` again with the last line's `cursor` as the `--since` value. Run
-`watch` in the foreground only. A wait in the background answers a turn after the agent stops
-listening.
+Give the `watch` tool call its own timeout above 540 seconds (on Claude Code, a Bash `timeout` of
+`600000` ms). Run `watch` again with the last line's `cursor` as the `--since` value. Run `watch`
+in the foreground only. A wait in the background answers a turn after the agent stops listening.
+To hand a task back to its asker, reply with `--state input-required --to <asker>`.
 
 ### 3. Start the reviewer listener
 
@@ -132,9 +132,8 @@ from opened to merged in under 20 minutes. Each step below gives the #40 instanc
 
 ### 6. Merge from a clear room
 
-Before `gh pr merge`, a `reviewer` agent runs `shipd room list 412 --open --json`. It merges
-only when `tasks` is empty. Otherwise it keeps watching (`stay`), or reports the open tasks and
-stops.
+Before `gh pr merge`, a `reviewer` agent runs `shipd room list 412 --open --json`. It merges only
+when `tasks` is empty. Otherwise it keeps watching (`stay`), or reports the open tasks and stops.
 
 A reviewer runner claims each head, so one review posts per head, and sets the
 `room-review/<agent>` status; see [Review claims](room-review-claims.md).

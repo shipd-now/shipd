@@ -4,7 +4,7 @@
 
 This page lists the `shipd room` verbs and the Actions wake. [Run agents in a pull request's
 room](room-run.md) walks the task, and [Multi-agent PR](multi-agent-pr.md) explains the model.
-[Copilot review reference](copilot-review-reference.md) covers the review gate, which
+[Review gate reference](copilot-review-reference.md) covers the review gate, which
 `shipd copilot` manages through the same verb.
 
 The room wake lets a PR-room task wake a repository's CI agent. No developer session needs to
@@ -110,8 +110,8 @@ The `reason` value says why the run stopped:
 - `preflight-failed` — repo mode: a turn failed, then the harness check failed.
 - `interrupted` — repo mode: you pressed Ctrl-C.
 
-The run exits `0` for `closed`, `turn-cap`, and `budget`. It exits `1` with one `Error:` line
-for a failure. It never retries a failed turn. In repo mode, a failed turn parks only its pull
+The run exits `0` for `closed`, `turn-cap`, and `budget`. It exits `1` with one `Error:` line for
+a failure. It never retries a failed turn. In repo mode, a failed turn parks only its pull
 request.
 
 ### The CI reviewer's review
@@ -129,9 +129,10 @@ counts toward `--max-turns`.
   re-runs the CI reviewer, and a person decides otherwise.
 
 An author run waits in slices of four `--interval` periods and checks the reviews and the head
-between slices. `--ci-reviewer ""` turns off only the reviews check; the run still waits in
-slices and checks the head. Reviewer and `ci` runs ignore the flag and wait once over the whole
-budget.
+between slices. `--ci-reviewer ""` turns off only the reviews check; the run still waits in slices
+and checks the head. Reviewer and `ci` runs ignore the flag and wait once over the whole budget.
+The run also checks the head after each turn. If it cannot read the head, it warns once and opens
+no re-review task. A rerun opens no task a head already has.
 
 ### What a turn may do
 
@@ -238,13 +239,12 @@ or empty run closes the task with reason `wake-runner-failed`.
 - **The bundle cannot run `run`.** `run` drives a local harness session, so the bundle leaves
   out its modules; use `shipd room run` from a developer machine.
 - **Replies wake no other workflow.** The reply job posts with the workflow token, and GitHub
-  starts no workflow run from that token's events. Two CI agents in one repository therefore
-  never wake each other. A live session's `shipd room watch` still sees the reply.
-  `shipd room run` keeps two local agents talking without the wake; see [Run agents in a pull
-  request's room](room-run.md).
-- **Fork review comments get no wake.** A review comment on a fork's pull request gets a
-  read-only token and cannot write the room. A conversation comment runs with the base
-  repository's token and secrets. The guard therefore accepts only owner, member, and
-  collaborator comments.
+  starts no workflow run from that token's events. Two CI agents in one repository therefore never
+  wake each other. A live session's `shipd room watch` still sees the reply. `shipd room run`
+  keeps two local agents talking without the wake; see [Run agents in a pull request's
+  room](room-run.md).
+- **Fork review comments get no wake.** A review comment on a fork's pull request gets a read-only
+  token and cannot write the room. A conversation comment runs with the base repository's token
+  and secrets. The guard therefore accepts only owner, member, and collaborator comments.
 - **Only addressed tasks wake the agent.** A task without a `to` stays with the live sessions
   that run `shipd room watch`.

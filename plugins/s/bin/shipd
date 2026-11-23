@@ -15,7 +15,7 @@ the user's own Claude Code settings file, ``copilot add`` / ``copilot remove``
 maintain the shipd Copilot code-review skill's four files inside a target
 repository, ``vendor add`` / ``vendor remove`` maintain a vendored per-repo
 shipd install there, ``harness add`` / ``harness remove`` maintain the
-generated ``/s:`` command files inside a repository or the user's own harness
+generated command files inside a repository or the user's own harness
 directories, ``install`` asks which harnesses the user works in and
 installs the chosen ones' commands into their home directory, ``init``
 creates the content directory's empty layout directories, ``workspace init``
@@ -33,8 +33,10 @@ installs the interactive doctor skill otherwise guards behind consent, never
 a GitHub-side mutation — never a spec artifact, and never modifying anything
 already there. The mutating
 verbs over the spec library (``set-status``,
-``merge``, ``emit``, ``autopilot``, ``worktree remove``) stay behind their
-guarded scripts and skills. One more verb writes outside the repository:
+``merge``, ``emit``, ``autopilot``) stay behind their
+guarded scripts and skills. ``worktree`` passes through to the guarded
+``worktree.py``, so ``worktree remove`` runs here under that script's guards.
+One more verb writes outside the repository:
 ``gate rules apply`` creates or updates the one GitHub ruleset named
 ``shipd merge rules`` from the ``merge`` configuration (bare ``gate rules``
 only reports), served by ``merge_rules.py``.
@@ -216,7 +218,7 @@ verbs:
   gate rules [apply]         report, or apply, the repo's merge-rules ruleset
   vendor [add|remove]        maintain a vendored per-repo shipd install
   harness [list|show|add|remove|status]
-                             the harness registry, and the generated /s:
+                             the harness registry, and the generated
                              command files in a repo or in your home
   install                    pick your harnesses and install their commands
   update [--check]           report or install a newer published plugin version
@@ -3084,7 +3086,7 @@ def _harness_status_report(root, mode, report):
 
 
 def cmd_harness(args):
-    """Report the harness-adapter registry, or maintain the generated ``/s:``
+    """Report the harness-adapter registry, or maintain the generated
     command files it describes.
 
     ``list``, ``show`` and ``status`` are read-only; only the explicit words

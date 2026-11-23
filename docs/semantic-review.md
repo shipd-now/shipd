@@ -38,7 +38,7 @@ mechanical:
 |---|---|---|
 | high | a correctness bug, a broken contract, an unmet criterion | yes |
 | medium | an unhandled edge case, a caller at genuine risk | yes |
-| low | style, naming, minor redundancy | no |
+| low | a real but minor defect, such as a swallowed error or dead code; never pure style or naming | no |
 
 Two findings always rate `high`, whatever the reviewer's confidence: an
 exposed secret, and an authorization boundary reached without a scope check. A

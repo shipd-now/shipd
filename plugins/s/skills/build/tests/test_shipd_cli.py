@@ -461,6 +461,22 @@ class DispatchTest(ShipdCliTestBase):
         self.assertEqual(len(rows), 1, r.stdout)
         self.assertIn("[init|sync|team]", rows[0])
 
+    def test_the_banner_calls_harness_files_generated_command_files(self):
+        r = self.cli("--help")
+        self.assertEqual(r.returncode, 0)
+        banner = " ".join(r.stdout.split())
+        self.assertIn(
+            "the harness registry, and the generated command files in a "
+            "repo or in your home", banner)
+        self.assertNotIn("generated /s:", banner)
+
+    def test_the_docstring_serves_worktree_remove(self):
+        with open(BIN, encoding="utf-8") as fh:
+            source = " ".join(fh.read().split())
+        self.assertNotIn("``autopilot``, ``worktree remove``) stay", source)
+        self.assertIn("``worktree remove`` runs here", source)
+        self.assertNotIn("generated ``/s:`` command files", source)
+
     def test_related_is_a_curated_verb_mapped_to_the_status_script(self):
         """The `related` row delegates to ``spec_status.py related``
         (shipd-cli cli-dispatch)."""
