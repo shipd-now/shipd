@@ -915,20 +915,45 @@ def _default_branch(gh):
     return json.loads(out)["defaultBranchRef"]["name"]
 
 
+# GitHub's largest page. A listing is complete once a page comes back short.
+_PAGE_SIZE = 100
+# A stop for a listing that never comes back short (GitHub caps a pull
+# request's file listing at 3000 entries).
+_MAX_PAGES = 50
+
+
+def _paged(gh, path):
+    """Every item of a GitHub list endpoint, read page by page. Returns
+    ``(items, error)``; ``error`` is the failing page's stderr, else ``None``.
+    One page holds at most ``_PAGE_SIZE`` items, so reading only the first
+    silently drops the rest of a long listing."""
+    items = []
+    for page in range(1, _MAX_PAGES + 1):
+        rc, out, err = gh(["api", "%s?per_page=%d&page=%d"
+                           % (path, _PAGE_SIZE, page)])
+        if rc != 0:
+            return items, err.strip() or "gh api failed"
+        batch = json.loads(out or "[]")
+        items.extend(batch)
+        if len(batch) < _PAGE_SIZE:
+            break
+    return items, None
+
+
 def _pr_files(gh, repo, number):
-    rc, out, err = gh(["api",
-                       "repos/%s/pulls/%d/files?per_page=100" % (repo, number)])
-    if rc != 0:
-        _fail("fetching PR files failed: %s" % err.strip())
-    return json.loads(out or "[]")
+    """Every file of the pull request. A pull request over one page of files
+    must not lose the rest: a finding on a file the poster cannot see is
+    filed as outside the diff, which can turn a failing verdict green."""
+    files, err = _paged(gh, "repos/%s/pulls/%d/files" % (repo, number))
+    if err:
+        _fail("fetching PR files failed: %s" % err)
+    return files
 
 
 def _find_summary(gh, repo, number):
     """The existing summary comment dict (current or legacy marker), or
     ``None`` when the pull request has none."""
-    rc, out, err = gh(["api",
-                       "repos/%s/issues/%d/comments?per_page=100" % (repo, number)])
-    comments = json.loads(out or "[]") if rc == 0 else []
+    comments, _ = _paged(gh, "repos/%s/issues/%d/comments" % (repo, number))
     return next((c for c in comments if has_gate_marker(c.get("body"))), None)
 
 
