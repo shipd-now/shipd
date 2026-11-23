@@ -24,7 +24,7 @@ Record the risks and trade-offs: what could go wrong, and how the plan guards ag
 
 ## Requirements
 
-Each requirement states one behaviour with a SHALL or MUST statement. Each carries a kebab-case id that is unique within the change.
+Each requirement states one behaviour with a SHALL or MUST statement. Each carries an id that is unique within the change.
 
 Phrase the statement in one of the five EARS shapes:
 
@@ -36,7 +36,7 @@ Phrase the statement in one of the five EARS shapes:
 
 EARS is authoring guidance.
 
-A statement needs only the SHALL or MUST token, never a matching template. Split a requirement that bundles two behaviours into two.
+A statement needs only the SHALL or MUST token, never a matching template.
 
 ## Scenarios
 
@@ -57,7 +57,7 @@ A lower-tier agent executes the tasks and does no architectural thinking. Write 
 
 The readiness gate scans the whole plan for placeholder markers, outside its own insufficiency section.
 
-The markers are the words TBD, TODO, FIXME, and XXX. They also include a bare run of question marks and the two-word phrase the gate matches for an unresolved question. Write every part in settled prose that carries none of them. When you record a consultation, paraphrase it into the decision, the options, and the answer. Never paste a transcript that still carries a marker.
+The markers are the words TBD, TODO, FIXME, and XXX. They also include three question marks in a row, `???`, and the two-word phrase the gate matches for an unresolved question. Write every part in settled prose that carries none of them. When you record a consultation, paraphrase it into the decision, the options, and the answer. Never paste a transcript that still carries a marker.
 
 Settle a decision before you write the plan. Do not mark it open.
 

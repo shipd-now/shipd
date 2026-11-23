@@ -54,6 +54,14 @@ class ExternalLoaderManifestTest(unittest.TestCase):
             ["Motivation", "Non-goals", "Implementation decisions",
              "Requirements", "Scenarios", "Tasks", "Placeholders", "Size"])
 
+    def test_authoring_reference_has_exactly_its_headings_in_order(self):
+        path = os.path.join(PLUGIN, "skills", "plan", "references",
+                            "authoring.md")
+        self.assertEqual(
+            _h2_headings(path),
+            ["Motivation", "Non-goals", "Implementation decisions",
+             "Requirements", "Scenarios", "Tasks", "Placeholders", "Size"])
+
     def test_authoring_reference_is_engine_neutral(self):
         path = os.path.join(PLUGIN, "skills", "plan", "references",
                             "authoring.md")
