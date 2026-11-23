@@ -98,7 +98,7 @@ gh secret set COPILOT_GITHUB_TOKEN --repo <owner>/<repo>
 
 ### 5. Verify
 
-`shipd doctor` reports the three GitHub-side settings, read-only, as its last three lines.
+`shipd doctor` reports the three GitHub-side settings, read-only, on these three lines.
 
 | Check | `ok` when |
 | --- | --- |
