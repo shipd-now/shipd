@@ -8,9 +8,6 @@ the **discover phase**, and shipd captures it as an artifact. A **PRD** — a
 Product Requirements Document — follows a template, passes the engine's
 validation, and lands where every workspace project reads it.
 
-The header keys, the statuses, the tiers, and the command surfaces live in
-[PRD reference](prd-reference.md). This page covers the concept.
-
 ## The hierarchy
 
 A PRD sits above epics. The full hierarchy is
@@ -59,24 +56,21 @@ stops at that refusal rather than inventing a home. Run
 
 **A PRD is standalone.** It needs no initiative and no epic, ever. Epics cite
 the PRD rather than the other way round, so a PRD holds no list of its epics.
+One PRD decomposes into several epics or into none, and deleting an epic
+leaves the PRD untouched.
 You can write, approve, and read a PRD on its own, and decompose it later or
 never.
 
-## Lifecycle and tiers
+## When to use it
 
-A PRD carries its own three-value status vocabulary. A PRD reads `draft` while
-someone writes it, `approved` once the problem statement settles, and
-`superseded` once a later PRD replaces it. Advancing that status is a
-**re-install of the edited document**, never a hand edit of the store.
-Validation and restore-on-failure live only on the install path.
+Write a PRD while nobody has yet settled the problem, its users, or the
+success measure, before anyone decomposes the feature. The PRD records that
+thinking so every project in the workspace reads the same answer.
 
-Every PRD declares one of three template tiers in its header. `basic` covers a
-small, self-contained idea; `standard` is the default; `comprehensive` covers
-blast radius, risk weight, a phased rollout, or several user classes. The tiers
-nest additively, so escalating mid-interview only adds sections to cover.
-[PRD reference](prd-reference.md) lists each tier's exact sections.
+Skip the PRD once the team has settled those three answers. Go straight to
+`/s:epic` to decompose a feature, or to `/s:plan` for a single change.
 
-## Writing one
+## How to run it
 
 `/s:prd` writes PRDs. It is an interrogation, not a form. It investigates the
 workspace and the repo first, then grills you section by section, and ends at
@@ -94,7 +88,9 @@ Because the PRD lands in the workspace, outside the repository, none of this
 touches the repo's worktree-and-branch workflow. A PRD has no branch and no
 pull request.
 
-## See also
+## Reference
 
-- [PRD reference](prd-reference.md) — header keys, statuses, tiers, commands.
-- [Workspaces](workspaces.md) — the workspace that stores every PRD.
+[PRD reference](prd-reference.md) lists the header keys, the statuses, the
+tiers, and the command surfaces. A PRD moves through the statuses `draft`,
+`approved`, and `superseded`. Every PRD declares one template tier: `basic`,
+`standard` (the default), or `comprehensive`.
