@@ -16,9 +16,9 @@ harness once they ship. Connectors will let the factory run by itself. shipd is
 building a Slack connector and plans more for Teams and other tools. One example
 would be a shipd Slack app you install that reacts to Grafana errors in a channel.
 
-Each job runs in a gVisor sandbox on a self-hosted factory host. A job runs
-shipd's `/s:plan` then `/s:build`, pushes a `change/<slug>` branch, and opens a
-pull request as `shipd-factory[bot]`.
+Each job runs in a gVisor sandbox on a self-hosted factory host running Google's
+ax agent runtime. A job runs shipd's `/s:plan` then `/s:build`, pushes a
+`change/<slug>` branch, and opens a pull request as `shipd-factory[bot]`.
 
 ```mermaid
 flowchart TD
@@ -59,17 +59,17 @@ The App holds no organization or account permissions, no webhook, no events and
 no user authorization. It asks for three repository permissions only: Contents
 read and write, Pull requests read and write, and Metadata read.
 
-The orchestrator mints a fresh token when a job starts, and every 40 minutes
-after. Each token covers one repo and expires within an hour. The private key
-stays on the host in `~/.config/shipd-factory/`, mode 0600. Minting on a repo
-without the App fails with `ghcreds: shipd-factory is not installed on <repo>`.
-The orchestrator applies the egress policy, then writes the tokens into the
-sandbox over `ax ssh`.
+The orchestrator mints a fresh token when a job starts, and every 40 minutes after.
+Each token covers one repo and expires within an hour. The private key stays on the
+host in `~/.config/shipd-factory/`, mode 0600. Minting on a repo without the App
+fails with `ghcreds: shipd-factory is not installed on <repo>`. The orchestrator
+applies the egress policy, then writes the tokens into the sandbox over `ax ssh`.
 
 ## Set up and remove
 
 `/shipd-factory onboard <owner/repo>` prepares an existing repo, and
-`/shipd-factory new <name>` creates a private repo first.
+`/shipd-factory new <name>` creates a private repo first. When a step needs your
+consent, the skill prints the exact command and waits.
 
 1. The default branch needs a check named `ci`; onboarding stops without one.
 2. You [install the App](https://github.com/apps/shipd-factory) on the repo, the

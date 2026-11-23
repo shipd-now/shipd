@@ -42,7 +42,7 @@ worktree at `.worktrees/<change>`:
   change touches
 - `tasks.md` — the task checklist
 
-The planner writes no code. Read the three files now: this is the cheapest
+The planner writes no code. Read them now: this is the cheapest
 moment to correct course. [`.shipd/README.md`](../.shipd/README.md) defines
 their grammar. [Plan a change](plan.md) covers the full flow.
 

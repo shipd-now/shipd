@@ -1403,6 +1403,161 @@ class StatuslineVerbTest(unittest.TestCase):
             command = json.load(fh)["statusLine"]["command"]
         self.assertEqual(command, self.command([["spec"], ["directory"]]))
 
+    # -- a literal ``~`` in a file flag ------------------------------------
+
+    def in_scratch_cwd(self):
+        """Run from an empty directory under the temp home, so a path the
+        verb fails to expand lands there and nowhere else."""
+        cwd = os.path.join(self.tmp, "cwd")
+        os.makedirs(cwd)
+        before = os.getcwd()
+        os.chdir(cwd)
+        self.addCleanup(os.chdir, before)
+        return cwd
+
+    def test_a_literal_tilde_config_is_saved_under_home(self):
+        cwd = self.in_scratch_cwd()
+        out, _err, code = self.run_verb(
+            "layout", "--settings", self.settings,
+            "--config", "~/custom-config.json", "context,spec")
+        self.assertEqual(code, 0)
+        expanded = os.path.join(self.tmp, "custom-config.json")
+        with open(expanded, encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["statusline"]["lines"],
+                             [["context", "spec"]])
+        self.assertEqual(os.listdir(cwd), [])
+        self.assertIn("statusline layout saved in %s" % expanded, out)
+
+    def test_a_literal_tilde_default_config_writes_the_default_file(self):
+        # The path the comparison sees is the path the verb writes: a literal
+        # `~/.shipd-config.json` is the default file, and is saved there.
+        cwd = self.in_scratch_cwd()
+        default = self.default_settings_registered()
+        out, _err, code = self.run_verb(
+            "layout", "--config", "~/.shipd-config.json", "spec", "directory")
+        self.assertEqual(code, 0)
+        with open(os.path.join(self.tmp, ".shipd-config.json"),
+                  encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["statusline"]["lines"],
+                             [["spec"], ["directory"]])
+        self.assertEqual(os.listdir(cwd), [])
+        with open(default, encoding="utf-8") as fh:
+            command = json.load(fh)["statusLine"]["command"]
+        self.assertIn("--line spec --line directory", command)
+        self.assertNotIn("left unchanged", out)
+
+    def test_a_literal_tilde_settings_is_written_under_home(self):
+        cwd = self.in_scratch_cwd()
+        _out, _err, code = self.run_verb(
+            "install", "--settings", "~/named/settings.json",
+            "--config", self.config)
+        self.assertEqual(code, 0)
+        with open(os.path.join(self.tmp, "named", "settings.json"),
+                  encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["statusLine"]["command"],
+                             self.command())
+        self.assertEqual(os.listdir(cwd), [])
+
+    def test_an_unknown_user_prefix_is_a_usage_error(self):
+        cwd = self.in_scratch_cwd()
+        bad = "~shipd-no-such-user/config.json"
+        for flag, other, value in (("--config", "--settings", self.settings),
+                                   ("--settings", "--config", self.config)):
+            out, err, code = self.run_verb(
+                "layout", flag, bad, other, value, "spec")
+            self.assertEqual(code, 2, flag)
+            self.assertEqual(out, "")
+            self.assertIn("cannot expand %s %s: no such user" % (flag, bad),
+                          err)
+        self.assertEqual(os.listdir(cwd), [])
+        self.assertFalse(os.path.exists(self.config))
+        self.assertFalse(os.path.exists(self.settings))
+
+    # -- one named file never writes the other default file ----------------
+
+    def default_files(self):
+        """The default settings and config paths, both under the temp home
+        and both absent."""
+        settings = os.path.join(self.tmp, ".claude", "settings.json")
+        config = os.path.join(self.tmp, ".shipd-config.json")
+        self.assertFalse(os.path.exists(settings))
+        self.assertFalse(os.path.exists(config))
+        return settings, config
+
+    def test_layout_with_settings_only_refuses_to_save_the_default_config(self):
+        settings, config = self.default_files()
+        self.install()
+        before = self.read_settings()
+        out, err, code = self.run_verb(
+            "layout", "--settings", self.settings, "spec", "directory")
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "")
+        self.assertIn(
+            "--settings names %s but the layout would be saved in the "
+            "default config file %s — pass --config to name the config "
+            "file" % (self.settings, config), err)
+        self.assertFalse(os.path.exists(config))
+        self.assertFalse(os.path.exists(settings))
+        self.assertEqual(self.read_settings(), before)
+
+    def test_install_show_with_settings_only_refuses_the_same_way(self):
+        settings, config = self.default_files()
+        _out, err, code = self.run_verb(
+            "install", "--settings", self.settings, "--show", "directory")
+        self.assertEqual(code, 2)
+        self.assertIn("pass --config to name the config file", err)
+        self.assertFalse(os.path.exists(config))
+        self.assertFalse(os.path.exists(self.settings))
+
+    def test_install_with_config_only_refuses_to_write_default_settings(self):
+        settings, config = self.default_files()
+        with open(self.config, "w", encoding="utf-8") as fh:
+            json.dump({"statusline": {"lines": [["spec"]]}}, fh)
+        with open(self.config, encoding="utf-8") as fh:
+            before = fh.read()
+        for extra in ((), ("--show", "directory")):
+            out, err, code = self.run_verb(
+                "install", "--config", self.config, *extra)
+            self.assertEqual(code, 2, extra)
+            self.assertEqual(out, "")
+            self.assertIn(
+                "--config names %s but the registration would be written to "
+                "the default settings file %s — pass --settings to name "
+                "the settings file" % (self.config, settings), err)
+        self.assertFalse(os.path.exists(settings))
+        self.assertFalse(os.path.exists(config))
+        with open(self.config, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), before)
+
+    def test_install_with_settings_only_still_registers(self):
+        # It reads the default config file and writes only the named file.
+        settings, config = self.default_files()
+        _out, _err, code = self.run_verb(
+            "install", "--settings", self.settings)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.registration()["command"], self.command())
+        self.assertFalse(os.path.exists(config))
+        self.assertFalse(os.path.exists(settings))
+
+    def test_bare_layout_with_settings_only_still_prints(self):
+        _settings, config = self.default_files()
+        out, _err, code = self.run_verb("layout", "--settings", self.settings)
+        self.assertEqual(code, 0)
+        self.assertIn("line 1: spec · context", out)
+        self.assertFalse(os.path.exists(config))
+
+    def test_naming_a_default_file_alone_is_the_same_as_no_flag(self):
+        settings, config = self.default_files()
+        _out, _err, code = self.run_verb("install", "--config", config)
+        self.assertEqual(code, 0)
+        self.assertTrue(os.path.isfile(settings))
+        _out, _err, code = self.run_verb(
+            "layout", "--settings", settings, "spec", "directory")
+        self.assertEqual(code, 0)
+        with open(config, encoding="utf-8") as fh:
+            self.assertEqual(json.load(fh)["statusline"]["lines"],
+                             [["spec"], ["directory"]])
+
     def test_layout_keeps_other_config_keys(self):
         with open(self.config, "w", encoding="utf-8") as fh:
             json.dump({"dir": ".custom"}, fh)

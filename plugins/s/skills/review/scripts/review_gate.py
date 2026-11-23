@@ -971,7 +971,8 @@ def _upsert_summary(gh, repo, number, body, known=None):
     is the summary's id, or ``None`` when the run's one listing found none.
     Each upsert records the id it wrote, so a later one edits that comment
     without listing the comments again: a listing that fails after the status
-    is set would otherwise stop the post part-way."""
+    is set would otherwise stop the post part-way. A write that answers with
+    no id drops the key, so the next upsert lists the comments again."""
     if known is not None and "id" in known:
         comment_id = known["id"]  # None: the listing found no summary yet
     else:
@@ -989,8 +990,14 @@ def _upsert_summary(gh, repo, number, body, known=None):
     if rc != 0:
         _fail("posting summary comment failed: %s" % err.strip())
     comment = json.loads(out or "{}")
-    if known is not None and comment.get("id") is not None:
-        known["id"] = comment["id"]
+    if known is not None:
+        if comment.get("id") is not None:
+            known["id"] = comment["id"]
+        elif comment_id is None:
+            # A create answered without an id: forget that none was found, so
+            # the next upsert lists the comments instead of creating a second
+            # one. An edit keeps the id it edited, which is still correct.
+            known.pop("id", None)
     return comment.get("html_url")
 
 
