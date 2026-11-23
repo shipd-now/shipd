@@ -212,8 +212,9 @@ cycle, not for any dependency it carries.
 
 Loaders outside this repo read some shipd files by path and `##` heading — for
 example shipd-factory's shipd-run reads
-`plugins/s/skills/ask/references/headless.md`. `plugins/s/external-loaders.json`
-lists those files and headings, and
+`plugins/s/skills/ask/references/headless.md` and the review skill.
+`plugins/s/external-loaders.json` lists those files and headings, where an
+empty list means the whole file, and
 `plugins/s/skills/build/tests/test_external_loaders.py` fails when a listed file
 or heading disappears. Renaming a listed heading, or moving a listed file, breaks
 an external loader. Do it only on purpose: change the manifest in the same

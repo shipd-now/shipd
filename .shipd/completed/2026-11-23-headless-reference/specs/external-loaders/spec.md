@@ -7,8 +7,10 @@ id: external-loader-manifest
 
 `plugins/s/external-loaders.json` SHALL list the shipd files, as paths
 relative to `plugins/s/`, and the `##` headings of each, that loaders outside
-the repository read by name, starting with
-`skills/ask/references/headless.md` and its four headings. A unit test in the
+the repository read by name: `skills/ask/references/headless.md` and its
+four headings, and the review skill's `SKILL.md` and six references that
+shipd-run loads. An empty headings list SHALL mean the loader reads the whole
+file. A unit test in the
 engine's test suite SHALL fail when a listed file or a listed heading
 disappears, and its message SHALL say that the loss breaks an external loader.
 `AGENTS.md` SHALL document the manifest in one place.

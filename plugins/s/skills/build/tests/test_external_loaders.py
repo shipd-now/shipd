@@ -41,10 +41,16 @@ class ExternalLoaderManifestTest(unittest.TestCase):
         paths = [f["path"] for f in _load()["files"]]
         self.assertIn("skills/ask/references/headless.md", paths)
 
+    def test_manifest_lists_the_review_skill(self):
+        paths = [f["path"] for f in _load()["files"]]
+        self.assertIn("skills/review/SKILL.md", paths)
+        self.assertIn("skills/review/references/linters.md", paths)
+
     def test_every_entry_is_well_formed(self):
         for entry in _load()["files"]:
             self.assertIsInstance(entry.get("path"), str)
-            self.assertTrue(entry.get("headings"), entry)
+            # An empty list means the loader reads the whole file.
+            self.assertIsInstance(entry.get("headings"), list, entry)
             self.assertFalse(os.path.isabs(entry["path"]), entry["path"])
 
     def test_every_listed_file_exists(self):
