@@ -3,7 +3,7 @@
 # Review gate reference
 
 [Review gate](copilot-review.md) is the main page. This page lists what the gate installs and how
-it decides; [Room wake reference](room-wake-reference.md) covers `--room`.
+it decides; [Room reference](room-wake-reference.md) covers `--room`.
 
 ## The managed files
 

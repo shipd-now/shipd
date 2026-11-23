@@ -807,7 +807,7 @@ phase or fail the build — `build_report.py` degrades gracefully on its own.
      --tasks-done <done> --tasks-total <total> --status <status> \
      --commit "$COMMIT_HASH" --merge-warnings - --log
    ```
-   This reads (and, on first run, creates) `~/.shipd-config.json` — the place to
+   This only reads `~/.shipd-config.json`, and never creates it — the place to
    configure logging (`logging_enabled`, `log_dir`, `number_format`; see
    `references/shipd.config.example.json`) — and appends a record to
    `~/.shipd/builds/builds.jsonl` plus a per-build file under `~/.shipd/builds/`.

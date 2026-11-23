@@ -112,6 +112,6 @@ venn-beta
 | `copilot [add\|update\|remove] [--force]` | Maintain the Copilot code-review skill — the `/s:gate` merge gate — in a repo. See [Review gate](copilot-review.md). | `shipd copilot` |
 | `gate rules [apply]` | Report, or apply, the repository's merge-rules ruleset. See [Pull requests](pr.md). | `shipd gate rules` |
 | `vendor [add\|remove] [--force]` | Maintain a vendored per-repo shipd install. See [Install](install.md). | `shipd vendor` |
-| `harness [list\|show\|add\|remove\|status] [ids...] [--all] [--user] [--force]` | The harness registry, and the generated `/s:` command files in a repo or in your home; `--all` acts on every harness in it. See [Harnesses](harnesses.md). | `shipd harness list` |
+| `harness [list\|show\|add\|remove\|status] [ids...] [--all] [--user] [--force]` | The harness registry, and the generated command files in a repo or in your home; `--all` acts on every harness in it. See [Harnesses](harnesses.md). | `shipd harness list` |
 | `install` | Pick your harnesses and install their commands. See [Install](install.md). | `shipd install` |
 | `update [--check]` | Report or install a newer published plugin version. See [Install](install.md). | `shipd update --check` |

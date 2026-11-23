@@ -235,7 +235,8 @@ that already carries an answer, so nothing silently overwrites what a human
 said.
 
 Corrections go through **`/s:teach`**; [the wiki](wiki.md#correct-an-answer)
-gives the steps.
+gives the steps. A wiki page outranks a raw queue entry on the ladder, so later
+lookups cite the corrected page.
 
 A typed answer always supersedes the oracle. You are the final authority, and
 the wiki merely caches your standing answer.

@@ -43,7 +43,7 @@ A merge needs a check that a person cannot skip, and a spec library needs a chec
 
 ### 4:00–5:00 The token and the check
 
-**On screen:** The terminal runs `gh secret set COPILOT_GITHUB_TOKEN`, then `shipd doctor`. The last three lines show `protection`, `automerge`, and `copilot-secret`.
+**On screen:** The terminal runs `gh secret set COPILOT_GITHUB_TOKEN`, then `shipd doctor`. Its output includes the `protection`, `automerge`, and `copilot-secret` lines.
 
 **Narration:** Give the reviewer token one permission, Copilot Requests, and no repository access. Store it as a repository secret. An expired token never greens a check, because the status stays pending. Run `shipd doctor` to verify the three GitHub settings.
 
@@ -59,7 +59,7 @@ A merge needs a check that a person cannot skip, and a spec library needs a chec
 
 ## Sources
 
-- [Install the Copilot review gate](../../copilot-review.md)
+- [Review gate](../../copilot-review.md)
 - [The semantic review](../../semantic-review.md)
-- [Copilot review reference](../../copilot-review-reference.md)
+- [Review gate reference](../../copilot-review-reference.md)
 - [The ci-action spec](../../../.shipd/verified/ci-action/spec.md)

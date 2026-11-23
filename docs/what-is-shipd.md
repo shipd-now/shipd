@@ -17,7 +17,7 @@ same document, checked into your repository.
 first change, and [Core ideas](core-ideas.md) defines the terms.
 
 Around that core loop, shipd runs the whole delivery lifecycle. An
-orchestrator on the strongest model plans and designs the change. Execution
+orchestrator on the session's model plans and designs the change. Execution
 agents one tier down claim tasks atomically and implement them. An
 independent validator then tries to refute every scenario in the spec
 against the real, running code before anything merges. Each change lives in
@@ -51,7 +51,7 @@ flowchart TD
     end
 
     subgraph build [Build]
-        orch["Orchestrator<br/>(strongest model)"]
+        orch["Orchestrator<br/>(session's model)"]
         agents["Execution agents<br/>(one tier down)"]
         validator["Adversarial validator<br/>refutes every scenario"]
     end
