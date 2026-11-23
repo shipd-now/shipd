@@ -21,9 +21,13 @@ grammar would ship unnoticed until a person read a plan.
 ### Details
 
 - Add `oracle-default` to the recognized graders, selected by `expect.json`.
-- Grade an `oracle-default` run on four points: the plan lints clean, the gate
+- Grade an `oracle-default` run on five points: the plan lints clean, the gate
   passes, at least one `## Questions and answers` entry carries an oracle
-  `**Verdict:**`, and every `INSUFFICIENT` entry records an adopted answer.
+  `**Verdict:**`, every `INSUFFICIENT` entry records an adopted answer, and at
+  least one entry is `INSUFFICIENT`, so a ledger the oracle answered in full
+  fails.
+- Fix `main()` to pass `args.claude_bin`; it read `args.binary`, which the
+  parser never defines, so every eval run crashed before its first session.
 - Make the judgement a pure function of the plan text and the lint and gate
   outcomes, and unit-test it against hand-written `plan.md` fixtures.
 - Drive the case with the structural gate and the plan-specific go-ahead
@@ -43,9 +47,6 @@ Stdlib only, nothing under `plugins/s/`, so no plugin version bump.
 - No change to the `structural`, `behavior`, or `handoff` graders.
 - No assertion on the `**Queued:**` field. A repository with no wiki store
   queues nothing, and the ledger grammar allows that.
-- No assertion that a verdict is `INSUFFICIENT`. The four points are the
-  contract; the fixture is built so that `INSUFFICIENT` is the correct verdict.
-- No fix to `main()` reading `args.binary`; that is a separate change.
 
 ## Implementation
 
@@ -127,5 +128,5 @@ Every decision is settled by the request and by investigation.
 
 Evidence:
 
-- The four graded points are fixed by the request.
+- The five graded points are fixed by the request and its review.
 - `emission.md` fixes the ledger grammar the grader reads.

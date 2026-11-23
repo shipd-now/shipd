@@ -1247,12 +1247,26 @@ class JudgeOracleDefaultTests(unittest.TestCase):
         self.assertIn("Q1", result.failure)
         self.assertIn("PLANNER", result.failure)
 
-    def test_answer_verdict_alone_passes(self):
+    def test_answer_entry_beside_an_adopted_default_passes(self):
+        answered = (_LEDGER_PASS.split("\n\n", 1)[1]
+                    .replace("### Q1:", "### Q2:")
+                    .replace("**Verdict:** INSUFFICIENT", "**Verdict:** ANSWER")
+                    .replace("**Answered by:** USER", "**Answered by:** ORACLE"))
+        result = run.judge_oracle_default(
+            _plan(_LEDGER_PASS + "\n" + answered), 0, 0)
+        self.assertTrue(result.passed, result.failure)
+
+    def test_all_answer_ledger_fails_naming_the_fallback(self):
+        """The case exists to prove the fallback: a ledger the oracle
+        answered in full passes points 1-4 and fails the fifth."""
         ledger = (_LEDGER_PASS
                   .replace("**Verdict:** INSUFFICIENT", "**Verdict:** ANSWER")
                   .replace("**Answered by:** USER", "**Answered by:** ORACLE"))
         result = run.judge_oracle_default(_plan(ledger), 0, 0)
-        self.assertTrue(result.passed, result.failure)
+        self.assertFalse(result.passed)
+        self.assertTrue(result.failure.startswith("fallback:"),
+                        result.failure)
+        self.assertIn("INSUFFICIENT", result.failure)
 
     def test_backticked_fields_are_read(self):
         ledger = (_LEDGER_PASS
@@ -1380,6 +1394,33 @@ class OracleDefaultSelectionTests(TmpPathTestCase):
         self.assertEqual(calls[1][0], run.GOAHEAD_REPLY)
         self.assertFalse(
             run.grade_oracle_default(scratch, host_repo=REPO_ROOT).passed)
+
+
+
+class MainArgumentPathTests(TmpPathTestCase):
+    """``main()`` parses its arguments and hands them to ``execute_case``.
+    The conversation is faked, so no ``claude`` process is spawned; the
+    scratch repo is still assembled and cleaned up for real."""
+
+    def test_main_passes_the_claude_bin_to_the_conversation(self):
+        seen = []
+
+        def fake_conversation(case, scratch, binary="claude", **kwargs):
+            seen.append((case.name, binary, kwargs.get("max_resumes")))
+            return False, "faked conversation"
+
+        out = io.StringIO()
+        with mock.patch.object(run, "run_conversation",
+                               side_effect=fake_conversation), \
+                mock.patch.object(run.session_driver, "drive",
+                                  side_effect=AssertionError("no session")), \
+                contextlib.redirect_stdout(out):
+            exit_code = run.main([
+                "--case", "plan-oracle-default",
+                "--claude-bin", "/opt/fake/claude", "--max-resumes", "2"])
+        self.assertEqual(seen, [("plan-oracle-default", "/opt/fake/claude", 2)])
+        self.assertEqual(exit_code, 1)
+        self.assertIn("faked conversation", out.getvalue())
 
 
 if __name__ == "__main__":

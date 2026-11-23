@@ -23,8 +23,9 @@ grader then judges the result is selected per case by an optional
   is that nothing changes and the session names the documented requirement.
 - ``"oracle-default"`` (:func:`grade_oracle_default`) — grades a headless
   ``/s:plan`` run on a decision nothing on disk settles: the plan lints
-  clean, the gate passes, the ledger records an oracle verdict, and every
-  ``INSUFFICIENT`` entry records an adopted answer. The judgement itself,
+  clean, the gate passes, the ledger records an oracle verdict, every
+  ``INSUFFICIENT`` entry records an adopted answer, and at least one entry
+  is ``INSUFFICIENT``. The judgement itself,
   :func:`judge_oracle_default`, is a pure function of the plan text and the
   lint and gate outcomes.
 
@@ -632,7 +633,7 @@ def judge_oracle_default(plan_text, lint_exit, gate_exit,
     ``plan_text`` is the change's ``plan.md``; ``lint_exit`` and
     ``gate_exit`` are the exit codes of ``spec_lint.py <change>`` and
     ``spec_gate.py <change> --check``, with their output for the failure
-    message. The four points, checked in order, the first failing one named:
+    message. The five points, checked in order, the first failing one named:
 
     1. **Lint-clean** — ``lint_exit`` is 0.
     2. **Gate passes** — the plan reads ``Status: ready`` (only the gate's
@@ -643,6 +644,9 @@ def judge_oracle_default(plan_text, lint_exit, gate_exit,
     4. **Default adopted** — every ``INSUFFICIENT`` entry carries an
        ``**Answered by:**`` of ``USER`` or ``ORACLE`` and a non-empty
        ``**Answer:**``.
+    5. **Fallback proven** — at least one entry's verdict is
+       ``INSUFFICIENT``. The case exists to prove the oracle-then-default
+       path, so a ledger the oracle answered in full fails.
     """
     if lint_exit != 0:
         return RunResult(
@@ -684,6 +688,12 @@ def judge_oracle_default(plan_text, lint_exit, gate_exit,
             return RunResult(
                 False, "adopted answer: ledger entry %s is INSUFFICIENT and "
                        "records no **Answer:**" % label)
+
+    if not any(v == "INSUFFICIENT" for _, v, _f in verdicts):
+        return RunResult(
+            False, "fallback: no ledger entry carries **Verdict:** "
+                   "INSUFFICIENT, so no default was adopted after the oracle "
+                   "(%d entries, all answered by the oracle)" % len(entries))
 
     return RunResult(True, None)
 
@@ -1305,7 +1315,7 @@ def main(argv=None):
         plural = "" if args.runs == 1 else "s"
         print("== case: %s (%d run%s) ==" % (case.name, args.runs, plural))
         results[case.name] = execute_case(
-            case, args.runs, args.binary, args.keep_scratch,
+            case, args.runs, args.claude_bin, args.keep_scratch,
             max_resumes=args.max_resumes)
     print()
     print("Summary:")

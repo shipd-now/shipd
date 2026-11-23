@@ -254,12 +254,14 @@ tree copied into a scratch git repo before the session runs). An optional
   `/s:plan` run whose request carries a decision nothing on disk settles, so
   a correct run consults the oracle and then adopts the planner's own
   recommended default. Exactly one change must exist, as for structural, and
-  the run passes only when all four hold, checked in order: `spec_lint.py`
+  the run passes only when all five hold, checked in order: `spec_lint.py`
   exits 0 for the change; the gate passes — `plan.md` reads `Status: ready`
   and `spec_gate.py <change> --check` (read-only) exits 0; at least one
   `## Questions and answers` entry carries a `**Verdict:**` of `ANSWER` or
-  `INSUFFICIENT`; and every `INSUFFICIENT` entry carries a non-empty
-  `**Answer:**` under an `**Answered by:**` of `USER` or `ORACLE`. The
+  `INSUFFICIENT`; every `INSUFFICIENT` entry carries a non-empty
+  `**Answer:**` under an `**Answered by:**` of `USER` or `ORACLE`; and at
+  least one entry is `INSUFFICIENT`, so a run whose ledger the oracle
+  answered in full fails — the case exists to prove the fallback. The
   judgement is `judge_oracle_default`, a pure function of the plan text and
   the lint and gate exit codes, unit-tested against literal `plan.md` text
   with no process spawned; `grade_oracle_default` only collects its inputs.
@@ -328,6 +330,5 @@ then uses. An `oracle-lookup` on that decision surfaces only snippets that
 take no position on it, so the contract's verdict is `INSUFFICIENT`; the
 session stops at its typed round, the harness's go-ahead reply accepts the
 planner's recommendation, and the plan records it as `**Answered by:** USER`.
-The grade does not require the verdict to be `INSUFFICIENT`, and does not
-read `**Queued:**`: the fixture's repo-local store takes the queued question,
+The grade does not read `**Queued:**`: the fixture's repo-local store takes the queued question,
 but a case without one queues nothing, and the ledger grammar allows both.
