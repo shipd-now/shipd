@@ -19,6 +19,15 @@ grader then judges the result is selected per case by an optional
   the shipped ``fixture/tests/`` tree restored over any session edit.
   :func:`check_behavior_fixture` sanity-checks that oracle before a session
   is even spawned.
+- ``"handoff"`` (:func:`grade_handoff`) — grades a case whose correct outcome
+  is that nothing changes and the session names the documented requirement.
+- ``"oracle-default"`` (:func:`grade_oracle_default`) — grades a headless
+  ``/s:plan`` run on a decision nothing on disk settles: the plan lints
+  clean, the gate passes, the ledger records an oracle verdict, every
+  ``INSUFFICIENT`` entry records an adopted answer, and at least one entry
+  is ``INSUFFICIENT``. The judgement itself,
+  :func:`judge_oracle_default`, is a pure function of the plan text and the
+  lint and gate outcomes.
 
 The runner is Python 3 standard library only (no third-party imports, no
 network beyond the ``claude`` subprocess it spawns), matching the repo's
@@ -81,7 +90,7 @@ class RunResult:
 # Case discovery
 # ---------------------------------------------------------------------------
 
-RECOGNIZED_GRADERS = ("structural", "behavior", "handoff")
+RECOGNIZED_GRADERS = ("structural", "behavior", "handoff", "oracle-default")
 
 
 def read_expect(case_dir):
@@ -259,6 +268,10 @@ BEHAVIOR_GOAHEAD_REPLY = (
     "Proceed. For any open question or decision, now or in later rounds, "
     "take the option you yourself recommend.")
 
+# The graders driven with the structural gate and :data:`GOAHEAD_REPLY`.
+# ``"oracle-default"`` shares them, so a finished plan is never resumed.
+STRUCTURALLY_DRIVEN_GRADERS = ("structural", "oracle-default")
+
 # How many resumed turns a run may spend answering stops before the grade
 # decides the outcome.
 MAX_RESUMES_DEFAULT = 4
@@ -347,6 +360,11 @@ def run_conversation(case, scratch, binary="claude", host_repo=HOST_REPO,
       answers a genuine typed decision round (an OPEN QUESTIONS ending, a
       depth-path grill round, or a fast-path question round) by accepting
       the session's own recommendations.
+    - ``"oracle-default"``: driven exactly like ``"structural"`` — the
+      structural gate and :data:`GOAHEAD_REPLY` — so resuming stops once a
+      lint-clean ``ready`` change exists; :func:`grade_oracle_default` then
+      decides the run. Gating on the oracle grade instead would resume a
+      finished plan, inviting the session to rewrite its own ledger.
     - ``"behavior"``: gates on :func:`_behavior_gate_passed` (the behavior
       grade evaluated against a throwaway copy of ``scratch``, never
       ``scratch`` itself) and resumes with :data:`BEHAVIOR_GOAHEAD_REPLY`,
@@ -363,7 +381,7 @@ def run_conversation(case, scratch, binary="claude", host_repo=HOST_REPO,
     failed (timeout / non-zero exit) or ``case.grader`` has no gate/reply
     defined; grading verdicts otherwise are the caller's job.
     """
-    if case.grader not in ("structural", "behavior", "handoff"):
+    if case.grader not in RECOGNIZED_GRADERS:
         return False, (
             "no resume gate/reply defined for grader %r" % case.grader)
 
@@ -389,9 +407,15 @@ def run_conversation(case, scratch, binary="claude", host_repo=HOST_REPO,
     if case.grader == "behavior":
         gate = lambda: _behavior_gate_passed(case, scratch)
         reply = BEHAVIOR_GOAHEAD_REPLY
-    else:
+    elif case.grader in STRUCTURALLY_DRIVEN_GRADERS:
         gate = lambda: grade(scratch, host_repo=host_repo).passed
         reply = GOAHEAD_REPLY
+    else:
+        # A recognized grader added without its own gate and reply fails
+        # loudly, before any turn is sent, rather than falling through to
+        # another grader's driving.
+        return False, (
+            "no resume gate/reply defined for grader %r" % case.grader)
 
     ok, _session_id, failure = session_driver.drive(
         prompt, scratch, gate, reply, max_resumes=max_resumes, timeout=timeout,
@@ -423,6 +447,12 @@ def _plan_status(plan_path):
             text = fh.read()
     except OSError:
         return None
+    return _status_in_text(text)
+
+
+def _status_in_text(text):
+    """Return the ``Status:`` value from plan.md text (the first match among
+    the first five non-blank lines), or ``None`` if absent. Pure."""
     non_blank = [ln.strip() for ln in text.splitlines() if ln.strip()][:5]
     for line in non_blank:
         m = _STATUS_RE.match(line)
@@ -474,6 +504,37 @@ def _collect_candidates(scratch_dir):
     return candidates
 
 
+def _single_candidate(scratch_dir):
+    """Return ``(candidate, None)`` for the one change the session left, or
+    ``(None, RunResult)`` naming why there is not exactly one, across both
+    sanctioned storage locations (:func:`_collect_candidates`)."""
+    candidates = _collect_candidates(scratch_dir)
+    if not candidates:
+        return None, RunResult(
+            False, "no change directory under .shipd/planned/ "
+                   "(scratch root or worktrees)")
+    if len(candidates) != 1:
+        paths = ", ".join(
+            os.path.relpath(c.change_dir, scratch_dir) for c in candidates)
+        return None, RunResult(
+            False, "expected exactly one change under .shipd/planned/ (scratch "
+                   "root or worktrees), found %d (%s)"
+                   % (len(candidates), paths))
+    return candidates[0], None
+
+
+def _run_engine_script(host_repo, script, candidate, *extra):
+    """Run the host repo's engine ``script`` for ``candidate`` against the
+    tree it lives in, returning the completed process (stdout and stderr
+    merged into ``stdout``)."""
+    path = os.path.join(host_repo, "plugins", "s", "skills", "build",
+                        "scripts", script)
+    return subprocess.run(
+        [sys.executable, path, candidate.name, "--root", candidate.root,
+         *extra],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+
 def grade(scratch_dir, host_repo=HOST_REPO):
     """Grade a completed session's scratch repo with three structural
     assertions and return a :class:`RunResult`.
@@ -486,27 +547,12 @@ def grade(scratch_dir, host_repo=HOST_REPO):
     ``plan.md`` carries ``Status: ready``. The first failing assertion is named
     in ``RunResult.failure``, which names the inspected locations.
     """
-    candidates = _collect_candidates(scratch_dir)
-
-    if not candidates:
-        return RunResult(
-            False, "no change directory under .shipd/planned/ "
-                   "(scratch root or worktrees)")
-    if len(candidates) != 1:
-        paths = ", ".join(
-            os.path.relpath(c.change_dir, scratch_dir) for c in candidates)
-        return RunResult(
-            False, "expected exactly one change under .shipd/planned/ (scratch "
-                   "root or worktrees), found %d (%s)"
-                   % (len(candidates), paths))
-    candidate = candidates[0]
+    candidate, failure = _single_candidate(scratch_dir)
+    if failure is not None:
+        return failure
     location = os.path.relpath(candidate.change_dir, scratch_dir)
 
-    lint = os.path.join(host_repo, "plugins", "s", "skills", "build",
-                        "scripts", "spec_lint.py")
-    proc = subprocess.run(
-        [sys.executable, lint, candidate.name, "--root", candidate.root],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    proc = _run_engine_script(host_repo, "spec_lint.py", candidate)
     if proc.returncode != 0:
         return RunResult(
             False, "spec_lint failed for change '%s' at %s:\n%s"
@@ -520,6 +566,171 @@ def grade(scratch_dir, host_repo=HOST_REPO):
                    % (location, status))
 
     return RunResult(True, None)
+
+
+# ---------------------------------------------------------------------------
+# Oracle-default grading
+# ---------------------------------------------------------------------------
+
+# The plan's oracle ledger (``plan/references/emission.md``). The section and
+# entry boundaries match the ones ``spec_lint.py`` and the gate's provisional
+# check read: the section runs to the next ``## `` heading, and entries split
+# at ``### `` headings.
+QA_SECTION = "## Questions and answers"
+_QA_ENTRY_RE = re.compile(r"^###\s+Q(\d+):\s*\S")
+_QA_FIELD_RE = re.compile(r"^\s*-\s*\*\*([A-Za-z][A-Za-z ]*):\*\*\s*(.*)$")
+
+# The two verdicts the oracle contract allows as a first line.
+ORACLE_VERDICTS = ("ANSWER", "INSUFFICIENT")
+
+# Who may hold the adopted answer on an ``INSUFFICIENT`` entry. Only
+# ``USER``: the oracle gave no answer there, so ``ORACLE`` is incoherent, and
+# ``PLANNER`` is the provisional value the gate rejects. A headless go-ahead
+# records the planner's default as ``USER``.
+ADOPTING_ANSWERERS = ("USER",)
+
+
+def _ledger_entries(plan_text):
+    """Parse the ``## Questions and answers`` section of ``plan_text``.
+
+    Returns ``None`` when the section is absent, else a list of
+    ``(label, fields)`` pairs in document order: ``label`` is ``Q<n>`` (or
+    the raw heading text for a malformed header) and ``fields`` maps each
+    ``- **Field:**`` name to its value, joined across wrapped continuation
+    lines. Pure.
+    """
+    lines = plan_text.splitlines()
+    start = next((i for i, ln in enumerate(lines)
+                  if ln.rstrip() == QA_SECTION), None)
+    if start is None:
+        return None
+    entries = []
+    field = None
+    for line in lines[start + 1:]:
+        if line.startswith("## "):
+            break
+        if line.startswith("### "):
+            m = _QA_ENTRY_RE.match(line.rstrip())
+            label = "Q%s" % m.group(1) if m else line[4:].strip()
+            entries.append((label, {}))
+            field = None
+            continue
+        if not entries:
+            continue
+        fields = entries[-1][1]
+        m = _QA_FIELD_RE.match(line)
+        if m:
+            field = m.group(1).strip()
+            fields[field] = m.group(2).strip()
+        elif field is not None and line.strip():
+            fields[field] = (fields[field] + " " + line.strip()).strip()
+    return entries
+
+
+def _field_word(value):
+    """Return the first word of a ledger field value, upper-cased, with
+    backticks and trailing punctuation dropped (``"`USER`."`` → ``"USER"``).
+    Pure."""
+    words = (value or "").replace("`", " ").split()
+    return words[0].strip(".,;:").upper() if words else ""
+
+
+def judge_oracle_default(plan_text, lint_exit, gate_exit,
+                         lint_output="", gate_output=""):
+    """Judge an oracle-default run from its inputs alone and return a
+    :class:`RunResult`. Pure: reads no file and runs no process.
+
+    ``plan_text`` is the change's ``plan.md``; ``lint_exit`` and
+    ``gate_exit`` are the exit codes of ``spec_lint.py <change>`` and
+    ``spec_gate.py <change> --check``, with their output for the failure
+    message. The five points, checked in order, the first failing one named:
+
+    1. **Lint-clean** — ``lint_exit`` is 0.
+    2. **Gate passes** — the plan reads ``Status: ready`` (only the gate's
+       pass writes it) and ``gate_exit`` is 0 (the plan still passes now,
+       including the gated-hash check on a stamped plan).
+    3. **Oracle consulted** — at least one ledger entry carries a
+       ``**Verdict:**`` of ``ANSWER`` or ``INSUFFICIENT``.
+    4. **Default adopted** — every ``INSUFFICIENT`` entry carries an
+       ``**Answered by:**`` of ``USER`` (the oracle gave no answer, so
+       ``ORACLE`` is refused) and a non-empty ``**Answer:**``.
+    5. **Fallback proven** — at least one entry's verdict is
+       ``INSUFFICIENT``. The case exists to prove the oracle-then-default
+       path, so a ledger the oracle answered in full fails.
+    """
+    if lint_exit != 0:
+        return RunResult(
+            False, "lint: spec_lint exited %d:\n%s"
+                   % (lint_exit, (lint_output or "").strip()))
+
+    status = _status_in_text(plan_text)
+    if status != "ready":
+        return RunResult(
+            False, "gate: plan.md Status is %r, expected 'ready' (the gate "
+                   "never passed)" % status)
+    if gate_exit != 0:
+        return RunResult(
+            False, "gate: spec_gate --check exited %d:\n%s"
+                   % (gate_exit, (gate_output or "").strip()))
+
+    entries = _ledger_entries(plan_text)
+    if not entries:
+        return RunResult(
+            False, "verdict: plan.md has no `%s` entries, so no entry "
+                   "carries an oracle **Verdict:**" % QA_SECTION)
+    verdicts = [(label, _field_word(fields.get("Verdict")), fields)
+                for label, fields in entries]
+    if not any(v in ORACLE_VERDICTS for _, v, _f in verdicts):
+        return RunResult(
+            False, "verdict: no ledger entry carries an oracle **Verdict:** "
+                   "of ANSWER or INSUFFICIENT (%d entries)" % len(entries))
+
+    for label, verdict, fields in verdicts:
+        if verdict != "INSUFFICIENT":
+            continue
+        answerer = _field_word(fields.get("Answered by"))
+        if answerer not in ADOPTING_ANSWERERS:
+            return RunResult(
+                False, "adopted answer: ledger entry %s is INSUFFICIENT and "
+                       "its **Answered by:** is %r, expected USER"
+                       % (label, answerer or None))
+        if not (fields.get("Answer") or "").strip():
+            return RunResult(
+                False, "adopted answer: ledger entry %s is INSUFFICIENT and "
+                       "records no **Answer:**" % label)
+
+    if not any(v == "INSUFFICIENT" for _, v, _f in verdicts):
+        return RunResult(
+            False, "fallback: no ledger entry carries **Verdict:** "
+                   "INSUFFICIENT, so no default was adopted after the oracle "
+                   "(%d entries, all answered by the oracle)" % len(entries))
+
+    return RunResult(True, None)
+
+
+def grade_oracle_default(scratch_dir, host_repo=HOST_REPO):
+    """Grade an oracle-default run's scratch repo and return a
+    :class:`RunResult`.
+
+    Finds the one change the session left (:func:`_single_candidate`), runs
+    the host repo's ``spec_lint.py`` and the read-only ``spec_gate.py
+    --check`` against the tree it lives in, reads its ``plan.md``, and hands
+    all of it to :func:`judge_oracle_default`, which decides.
+    """
+    candidate, failure = _single_candidate(scratch_dir)
+    if failure is not None:
+        return failure
+    lint = _run_engine_script(host_repo, "spec_lint.py", candidate)
+    gate = _run_engine_script(host_repo, "spec_gate.py", candidate, "--check")
+    try:
+        with open(os.path.join(candidate.change_dir, "plan.md"),
+                  encoding="utf-8") as fh:
+            plan_text = fh.read()
+    except OSError:
+        plan_text = ""
+    return judge_oracle_default(
+        plan_text, lint.returncode, gate.returncode,
+        lint_output=lint.stdout, gate_output=gate.stdout)
 
 
 # ---------------------------------------------------------------------------
@@ -1008,7 +1219,8 @@ def execute_case(case, runs, binary, keep_scratch,
 
     Grading dispatches on ``case.grader``: ``"structural"`` calls :func:`grade`,
     ``"behavior"`` calls :func:`grade_behavior`, ``"handoff"`` calls
-    :func:`grade_handoff`. A ``case.grader`` outside those three values —
+    :func:`grade_handoff`, ``"oracle-default"`` calls
+    :func:`grade_oracle_default`. A ``case.grader`` outside those values —
     set by :func:`discover_cases` to the offending ``expect.json``'s error
     message when it is unreadable, names an unrecognized grader, or omits a
     ``handoff`` case's required ``handoff_requirement`` — fails every run
@@ -1019,7 +1231,7 @@ def execute_case(case, runs, binary, keep_scratch,
     ``run_conversation`` is invoked, so a mis-seeded fixture never spawns a
     session.
     """
-    if case.grader not in ("structural", "behavior", "handoff"):
+    if case.grader not in RECOGNIZED_GRADERS:
         results = []
         for i in range(1, runs + 1):
             result = RunResult(False, case.grader)
@@ -1052,6 +1264,8 @@ def execute_case(case, runs, binary, keep_scratch,
                         result = grade_behavior(case, scratch)
                     elif case.grader == "handoff":
                         result = grade_handoff(case, scratch)
+                    elif case.grader == "oracle-default":
+                        result = grade_oracle_default(scratch)
                     else:
                         result = grade(scratch)
             except Exception as exc:  # noqa: BLE001 — one bad run must not
@@ -1111,7 +1325,7 @@ def main(argv=None):
         plural = "" if args.runs == 1 else "s"
         print("== case: %s (%d run%s) ==" % (case.name, args.runs, plural))
         results[case.name] = execute_case(
-            case, args.runs, args.binary, args.keep_scratch,
+            case, args.runs, args.claude_bin, args.keep_scratch,
             max_resumes=args.max_resumes)
     print()
     print("Summary:")
