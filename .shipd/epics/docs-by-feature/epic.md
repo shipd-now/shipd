@@ -1,5 +1,5 @@
 # docs-by-feature
-Status: draft
+Status: ready
 Theme: developer-experience
 
 ## Introduction
