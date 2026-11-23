@@ -8,22 +8,46 @@ scripts are files. The oracle's knowledge is a wiki. This page maps every
 surface, and links to the authority that defines each one's grammar in
 full.
 
-## The configuration file and its layering
+## When to use it
 
-`.shipd-config.json` is the only file the engine reads for configuration.
-Layers resolve by **upward search** — from the working directory
-parent-by-parent to the filesystem root, then `~/.shipd-config.json`, then
-the built-in defaults. Layers merge **nearest-wins-wholesale**: the closest
-layer declaring a key supplies that key's whole value, never a per-field
-blend with a farther layer.
+- **Change where files live.** Move the content directory, or relocate it
+  into an external store.
+- **Change which steps a delivery runs.** Pick a pipeline preset, or declare
+  your own entry list.
+- **Change how a change ships.** Set the pull request mode and the title
+  template.
+
+## How to run it
+
+### The setup wizard
+
+Run `/s:init` to set up shipd in a project. The wizard shows every key on one
+settings sheet, takes one typed reply, and writes each answer through
+`shipd config set`.
+
+An argument runs one section alone: `layout`, `config`, `workspace`, `wiki`,
+`memory`, `hooks`, or `gate`. With no argument, the full wizard runs.
+
+```
+/s:init               # the full wizard
+/s:init workspace     # one section alone
+```
+
+### The layout
+
+`shipd init` creates the content directory layout, and is safe to re-run.
+`shipd init status` reports `first-run`, `layout-missing`, or `ready`.
+
+```bash
+shipd init
+shipd init status
+```
+
+### The configuration
 
 ```bash
 shipd config              # resolved keys, values, and which layer supplied each
 ```
-
-`shipd config` is `spec_status.py config-show` under the hood. A workspace
-root's config governs every member repo beneath it for a key that repo
-leaves undeclared.
 
 Change the file through the binary instead of editing it by hand:
 
@@ -41,7 +65,21 @@ that key with `config set` or `config unset` first. A key outside the
 recognized list that is already in a file only warns, and `config set`
 refuses a new one with a did-you-mean hint.
 
-## The recognized keys
+## Reference
+
+### The configuration file and its layering
+
+`.shipd-config.json` is the only file the engine reads for configuration.
+Layers resolve by **upward search** — from the working directory
+parent-by-parent to the filesystem root, then `~/.shipd-config.json`, then
+the built-in defaults. Layers merge **nearest-wins-wholesale**: the closest
+layer declaring a key supplies that key's whole value, never a per-field
+blend with a farther layer.
+
+A workspace root's config governs every member repo beneath it for a key
+that repo leaves undeclared.
+
+### The recognized keys
 
 One row per key the engine recognizes.
 `plugins/s/skills/build/references/shipd.config.example.json` is the
@@ -64,7 +102,7 @@ repo's own `.shipd/` copy may be behind it.
 | `room` | The PR room verbs: `agent`, the name posted under when `--agent` and `SHIPD_ROOM_AGENT` are unset (no default), and `max_rounds`, the turn cap per task. Default 6. |
 | `merge` | The merge rules `shipd gate rules apply` writes to the `shipd merge rules` ruleset: `approvals` (0 to 10, default 2), `dismiss_stale` (default true), `last_push_approval` (default true), `required_checks` (default `["ci", "semantic-review"]`), `thread_resolution` (default true), and `strict` (default false). An unknown member is an error. |
 | `guardrails` | The guardrail hook's kill-switches. See [docs/guardrails.md](guardrails.md). |
-| `statusline` | The statusline layout: an object whose `lines` lists the segments (`spec`, `directory`, `context`) on each line. Save it with `shipd statusline layout`. |
+| `statusline` | The statusline layout: an object whose `lines` lists the segments (`spec`, `directory`, `context`) on each line. Save it with `shipd statusline layout`. See [Statusline and telemetry](statusline-and-telemetry.md). |
 | `voice` | Gates the session-start voice digest hook. Default `true`. |
 | `sandbox` | What `sandbox-run.sh` applies for the validator: `fake_bin` (a repo-relative directory prepended to `PATH`) and `env` (variable names mapped to paths under the sandbox root). Undeclared means generic redirection only. |
 | `workspace` | Marks the declaring directory as a workspace root; holds its `projects` and `focus` registry. |
@@ -77,9 +115,9 @@ repo's own `.shipd/` copy may be behind it.
 | `worktree_stale_days` | The window, in days, beyond which a sweep reports an unmerged branch stale. Default 7. |
 | `store_autocommit` | Gates whether an engine write into a workspace or external store auto-commits locally. Default `true`. |
 | `store_sync` | Gates whether the session-boundary hook runs its networked git (fetch, fast-forward merge, push). Default `true`. |
-| `build` | Settings for a `/s:build` run: `logging_enabled`, `log_dir`, `number_format`, `parallelism`, and the design/video roots (`design_dir`, `video_dir`, `video_asr`, `video_vocabulary`, `video_max_frames`, `video_scene_floor`, `video_cursor`). |
+| `build` | Settings for a `/s:build` run: `logging_enabled`, `log_dir`, `number_format`, `parallelism`, and the design/video roots (`design_dir`, `video_dir`, `video_asr`, `video_vocabulary`, `video_max_frames`, `video_scene_floor`, `video_cursor`). [Statusline and telemetry](statusline-and-telemetry.md) covers the report settings and their defaults. |
 
-## The delivery steps
+### The delivery steps
 
 `autonomous-pipeline` is the key that chooses which steps a delivery runs.
 The stage registry, in canonical relative order, is `research → epic → plan →
@@ -102,11 +140,11 @@ delivery), and `basic` (cheaper still).
 /s:status pipeline eco            # a preset's entry list, to start a custom one
 ```
 
-The content directory's `README.md` ("The autonomous pipeline" section)
-carries the full entry grammar, the per-stage options, and each preset's
-exact shape.
+[The content directory's `README.md`](../.shipd/README.md) ("The autonomous
+pipeline" section) carries the full entry grammar, the per-stage options,
+and each preset's exact shape.
 
-## The file-authored surfaces
+### The file-authored surfaces
 
 Some surfaces are files, not config keys:
 
@@ -124,27 +162,12 @@ Some surfaces are files, not config keys:
   the workspace `wiki/` store, and each user's own pages under
   `memory_dir`.
 
-## The harness
+### The harness
 
-A **harness registry** decides which agent surfaces receive the `/s:`
-commands — Claude Code, Cursor, GitHub Copilot, Windsurf, Codex, and the
-rest. `shipd harness` lists the registry and inspects one entry; `shipd
-install` and `shipd harness add <name>` generate a harness's command
-surface into a repository.
+A harness registry decides which agent surfaces receive the `/s:` commands;
+[Harnesses](harnesses.md) owns every other harness fact.
 
-With the `s@shipd` plugin installed at user scope and enabled, `shipd
-install` and `shipd harness add claude-code --user` write no Claude Code
-command or agent files. The plugin already provides `/s:*`, so both verbs
-retire the copies shipd wrote earlier.
-
-A harness that declares the `subagents` feature also receives its agent
-files beside its commands. The files are `shipd-sub-agent`,
-`shipd-validator`, and `shipd-teacher`, in the location that harness reads
-them from.
-[Harness agents reference](harness-agents-reference.md) records each
-harness's agent locations, its frontmatter, and the steps to add a harness.
-
-## The environment overrides
+### The environment overrides
 
 Three environment variables override a config value for one session,
 without editing a file:
@@ -155,7 +178,7 @@ without editing a file:
 | `SHIPD_WORKTREE_IDLE_MINUTES` | Overrides `worktree_idle_minutes`, the `remove` verb's activity-guard window. |
 | `SHIPD_WORKTREE_STALE_DAYS` | Overrides `worktree_stale_days`, the sweep's staleness window. |
 
-## The limits
+### The limits
 
 Three things stay fixed today, regardless of configuration:
 
@@ -167,12 +190,3 @@ Three things stay fixed today, regardless of configuration:
   the registry, and never reorders its stages.
 - **The guardrail modes stay fixed.** A rule picks one of exactly two
   built-in modes, `deny` or `remind`; there is no third mode.
-
-## See also
-
-- [The content directory's `README.md`](../.shipd/README.md) — the format
-  authority for the pipeline entry grammar, the `pr-mode` key, and the
-  `guardrails` key.
-- [Guardrails](guardrails.md) — the rule file format and both hook modes.
-- [Cheatsheet](cheatsheet.md) — every `/s:` command and `shipd` verb.
-- [Getting started](getting-started.md) — the first-run walkthrough.
