@@ -28,7 +28,7 @@ import harness_bodies as hb  # noqa: E402
 SKILL_PATH = os.path.join(PLUGIN_ROOT, "skills", "room", "SKILL.md")
 DOCS_LINT = os.path.join(PLUGIN_ROOT, "skills", "document", "scripts",
                          "docs_lint.py")
-DOC_PATH = os.path.join(REPO_ROOT, "docs", "pr-room.md")
+DOC_PATH = os.path.join(REPO_ROOT, "docs", "room-run.md")
 IDENTITY_DOC_PATH = os.path.join(REPO_ROOT, "docs", "agent-identity.md")
 REFS = "R"
 
