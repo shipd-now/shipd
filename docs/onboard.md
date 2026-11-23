@@ -62,8 +62,8 @@ The last step offers to delete or keep `~/.shipd/onboarding/`.
 | 8 | The real build of the example, and how to try the result. |
 | 9 | A small enhancement to plan next, with the exact command. |
 
-`back` works on steps 1 to 7. Step 8 never builds twice: a second visit
-shows the summary of the finished build.
+`back` returns to the step before, from step 2 onward. Step 8 never builds
+twice: a second visit shows the summary of the finished build.
 
 ### Related pages
 

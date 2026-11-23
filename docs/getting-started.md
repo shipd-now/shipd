@@ -34,7 +34,8 @@ in plain words:
 ```
 
 The planner reads your code first. It asks only what the code cannot answer.
-It writes three files into a worktree at `.worktrees/<change>`:
+It writes three kinds of file into `.shipd/planned/<change>/`, inside a
+worktree at `.worktrees/<change>`:
 
 - `plan.md` — the idea and the decisions the build must follow
 - `specs/<capability>/spec.md` — the testable delta for each capability the
@@ -61,7 +62,9 @@ the scenarios in the spec. A finished build leaves three things behind:
 - the deltas merged into `.shipd/verified/`
 - the change archived under `.shipd/completed/`
 
-[Build a change](build.md) covers the build in full.
+By default the build then pushes the branch and opens a pull request that
+merges itself once its checks pass. [Build a change](build.md) covers the
+build in full.
 
 ## 4. Turn on the statusline
 
