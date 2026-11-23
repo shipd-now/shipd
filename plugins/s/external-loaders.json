@@ -51,6 +51,20 @@
       "headings": [
         "The `lint` configuration key"
       ]
+    },
+    {
+      "path": "skills/plan/references/authoring.md",
+      "loader": "shipd-factory shipd-run",
+      "headings": [
+        "Motivation",
+        "Non-goals",
+        "Implementation decisions",
+        "Requirements",
+        "Scenarios",
+        "Tasks",
+        "Placeholders",
+        "Size"
+      ]
     }
   ]
 }

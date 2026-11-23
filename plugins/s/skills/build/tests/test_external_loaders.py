@@ -46,6 +46,23 @@ class ExternalLoaderManifestTest(unittest.TestCase):
         self.assertIn("skills/review/SKILL.md", paths)
         self.assertIn("skills/review/references/linters.md", paths)
 
+    def test_manifest_lists_the_plan_authoring_reference(self):
+        entries = {f["path"]: f for f in _load()["files"]}
+        entry = entries["skills/plan/references/authoring.md"]
+        self.assertEqual(
+            entry["headings"],
+            ["Motivation", "Non-goals", "Implementation decisions",
+             "Requirements", "Scenarios", "Tasks", "Placeholders", "Size"])
+
+    def test_authoring_reference_is_engine_neutral(self):
+        path = os.path.join(PLUGIN, "skills", "plan", "references",
+                            "authoring.md")
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertNotIn("```", text)
+        self.assertNotIn("~~~", text)
+        self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", text)
+
     def test_every_entry_is_well_formed(self):
         for entry in _load()["files"]:
             self.assertIsInstance(entry.get("path"), str)
