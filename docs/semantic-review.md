@@ -9,21 +9,8 @@ act on. It never reads whole files when the structural diff will do.
 `/s:review` runs it. On a pull request, the `semantic-review` check carries its
 verdict. A reviewer approves only from [its own account](agent-identity.md).
 
-## What it reads
-
-`semdiff` performs the mechanical work and emits compact JSON. Six subcommands
-serve the review:
-
-| subcommand | what it returns |
-|---|---|
-| `files` | changed paths, grouped into architectural cohorts |
-| `diff` | syntax-aware hunks, with formatting noise stripped |
-| `context` | the references to a changed symbol |
-| `change` | a planned change's deltas, tasks, and lint findings |
-| `lint` | findings from the repository's own linters |
-| `doctor` | the tools available on this machine |
-
-The engine supplies the facts. The reviewer supplies the judgement.
+`semdiff` performs the mechanical work and emits compact JSON. The engine
+supplies the facts. The reviewer supplies the judgement.
 
 ## What it looks for
 
@@ -57,10 +44,17 @@ Two findings always rate `high`, whatever the reviewer's confidence: an
 exposed secret, and an authorization boundary reached without a scope check. A
 leaked credential does not wait for confirmation.
 
-## Where it runs
+## When to use it
 
-The review takes one of two paths. A local run ends at the report, while a
-pull-request run posts to it by default and loops on later pushes.
+- Run `/s:review` on your local changes before you push them.
+- Run `/s:review` against a pull request to post its findings there.
+- Install the [review gate](copilot-review.md) to review every pull request.
+
+## How to run it
+
+Invoke `/s:review` with a base ref, or name a pull request. The review takes
+one of two paths. A local run ends at the report, while a pull-request run
+posts to it by default and loops on later pushes.
 
 ```mermaid
 flowchart TD
@@ -83,18 +77,16 @@ owner; implementing and resolving them is opt-in the invoker asks for. Each
 finding carries a hidden identity, hashed from its path and text, with line
 numbers excluded so a moved line still matches.
 
-## When a tool is missing
+### When a tool is missing
 
 Without `difft` the review stops before any analysis. Difftastic is a hard
 requirement, not a fallback engine, because a review whose engine varies
 silently produces a verdict nobody can reproduce. A linter that crashes or
 times out reports as failed, and the review still completes.
 
-## See also
+## Reference
 
-- [Install the Copilot review gate](copilot-review.md) — run this review on
-  every pull request
-- [Copilot review reference](copilot-review-reference.md) — the managed files
-  and the contract for the check
-- [Semantic review reference](semantic-review-reference.md) — the `--json`
-  fields, the `lint` key, and `prior`'s output
+- [Semantic review reference](semantic-review-reference.md) — the engine's
+  subcommands, the `--json` payload, the review event, the room-reviewer
+  flags, the `lint` key, and `prior`'s output
+- [Review gate](copilot-review.md) — run this review on every pull request

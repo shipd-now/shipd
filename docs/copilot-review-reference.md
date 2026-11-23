@@ -1,14 +1,14 @@
 <!-- doc-type: reference -->
 
-# Copilot review reference
+# Review gate reference
 
-[Install the Copilot review gate](copilot-review.md) is the how-to. This page
-lists what the gate installs and how it decides; [Room wake reference](room-wake-reference.md) covers `--room`.
+[Review gate](copilot-review.md) is the main page. This page lists what the gate installs and how
+it decides; [Room wake reference](room-wake-reference.md) covers `--room`.
 
 ## The managed files
 
-`shipd copilot add` writes these four files and touches nothing else — no
-network call, no `gh`, no other path.
+`shipd copilot add` writes these four files and touches nothing else — no network call, no `gh`, no
+other path.
 
 | File | Role |
 | --- | --- |
@@ -19,9 +19,8 @@ network call, no `gh`, no other path.
 
 ## The two reviewer modes
 
-The gate posts the `semantic-review` commit status — the same context
-`/s:review`'s poster (`review_gate.py post`) sets. One repository secret
-decides which mode a run takes.
+The gate posts the `semantic-review` commit status — the same context `/s:review`'s poster
+(`review_gate.py post`) sets. One repository secret decides which mode a run takes.
 
 | | CLI reviewer | Poll fallback |
 | --- | --- | --- |
@@ -33,9 +32,9 @@ decides which mode a run takes.
 | Private repositories | works | the skill never loads |
 | What it costs | Copilot AI credits per review | runner minutes spent waiting |
 
-Whichever mode runs, the gate posts `semantic-review` = `pending` on the head
-commit **first**, before it checks anything out. So an older commit's review
-never counts for a newer one, and a later failure leaves the check `pending`.
+Whichever mode runs, the gate posts `semantic-review` = `pending` on the head commit **first**,
+before it checks anything out. So an older commit's review never counts for a newer one, and a later
+failure leaves the check `pending`.
 
 ### The CLI reviewer mode
 
@@ -44,61 +43,58 @@ On every pull request opened, updated, or reopened, the gate's job:
 1. Posts `semantic-review` = `pending` on the head commit.
 2. Checks that commit out with the full history the engine's diff needs.
 3. Installs `difft`, `ripgrep`, and `@github/copilot` at a pinned version.
-4. Materializes the reviewer's instructions from the base ref, with
-   `git show origin/<base>:.github/skills/code-review/SKILL.md`.
-5. Runs the base ref's copy of the engine, base first and head second. It
-   saves the `files` and `diff` output for the reviewer.
-6. Runs the CLI under a 10-minute timeout, in a step holding the reviewer
-   secret and no other credential.
-7. Cuts the output down to the report, then classifies it in a separate step.
-   The scan runs backwards for the last marker line. The step then posts the
-   status.
+4. Materializes the reviewer's instructions from the base ref, with `git show
+   origin/<base>:.github/skills/code-review/SKILL.md`.
+5. Runs the base ref's copy of the engine, base first and head second. It saves the `files` and
+   `diff` output for the reviewer.
+6. Runs the CLI under a 10-minute timeout, in a step holding the reviewer secret and no other
+   credential.
+7. Cuts the output down to the report, then classifies it in a separate step. The scan runs
+   backwards for the last marker line. The step then posts the status.
 8. Posts the report as a pull-request review, whatever the verdict.
 
 - **The version pin is deliberate.** An unpinned install would let the CLI vendor change what the gate runs. Upgrading bumps that line in the template.
 - **The base-ref pin has one fallback.** Where the base tree carries no `SKILL.md`, the job uses the reviewed commit's copy and logs that. Any other read failure fails the step, so `pending` stands.
 - **A failed or timed-out run leaves `pending`.** The job discards the partial output and posts nothing; `review_gate.py post` is the manual out.
-- **A review that covered nothing fails closed.** The engine may fail. It may
-  also see 0 files on a pull request that changes at least one. Either way the
-  gate posts `pending` with a "Review not grounded" description. It submits no
-  `APPROVE` or `REQUEST_CHANGES`, arms no fast-pass, and ignores
-  `SHIPD_GATE_FAIL_OPEN`. Any captured text goes out as a `COMMENT` that opens
-  with the brand line and a "Not a verdict" notice, in that order. The job
-  then fails.
+- **A review that covered nothing fails closed.** The engine may fail. It may also see 0 files on a
+  pull request that changes at least one. Either way the gate posts `pending` with a "Review not
+  grounded" description. It submits no `APPROVE` or `REQUEST_CHANGES`, arms no fast-pass, and
+  ignores `SHIPD_GATE_FAIL_OPEN`. Any captured text goes out as a `COMMENT` that opens with the
+  brand line and a "Not a verdict" notice, in that order. The job then fails.
 - **The posted body is the report.** The CLI runs with `-s`. The gate keeps the text from the last `## Findings` header through the verdict marker. It opens the body with the `**☕ shipd** semantic review` brand line and a blank line, and never adds the line twice. It closes the body with a `Reviewed N files, +A -D lines.` stat line and a `Model:` line.
 - **The model is a repository variable.** The gate passes `SHIPD_REVIEW_MODEL` to the CLI as `--model`. Unset, the CLI runs its own default, and the `Model:` line reads "Copilot CLI default".
 - **A new decision resolves the gate's old threads.** After GitHub accepts an `APPROVE` or `REQUEST_CHANGES`, the `resolve-threads` job resolves the gate's earlier-commit threads. The new review has already re-anchored any finding still present. A refused decision resolves nothing. The job never resolves another author's thread, and a failed resolve only logs a warning.
 
 ### The poll fallback mode
 
-With no secret, the gate waits for GitHub's own Copilot code review of the head
-commit, then classifies what that review's body says.
+With no secret, the gate waits for GitHub's own Copilot code review of the head commit, then
+classifies what that review's body says.
 
-- **Why it polls.** Copilot submits its review with a workflow-scoped token,
-  and GitHub starts no workflow run from an event such a token raises. So a
-  Copilot-authored review triggers no `pull_request_review` run at all. The
-  `pull_request` run reliably exists, so that run polls the reviews API. The
-  gate keeps the review-event path too, for any submission GitHub routes.
-- **The guarantee today is fail-open.** GitHub's review runs with its bash tool
-  disabled. The shipd engine never executes there, and the reviewer never
-  writes the verdict marker. A poll-mode `success` therefore means *"Copilot
-  reviewed this commit; no verdict marker was parsed"*. The mode costs nothing
-  and surfaces Copilot's findings, but it gates nothing semantically.
-- **The poll's bounds.** The poll runs every 20 seconds for at most 15
-  minutes. Each cycle re-reads the pull request's head. Once a new push moves
-  it, the poll exits and that push's own run owns the gate.
-- **A timeout invents nothing.** Where the window elapses with no Copilot
-  review of that commit, the gate leaves the status `pending` and posts nothing
-  further. The same holds when a new push cancels the poll.
+- **Why it polls.** Copilot submits its review with a workflow-scoped token, and GitHub starts no
+  workflow run from an event such a token raises. So a Copilot-authored review triggers no
+  `pull_request_review` run at all. The `pull_request` run reliably exists, so that run polls the
+  reviews API. The gate keeps the review-event path too, for any submission GitHub routes.
+- **The guarantee today is fail-open.** GitHub's review runs with its bash tool disabled. The shipd
+  engine never executes there, and the reviewer never writes the verdict marker. A poll-mode
+  `success` therefore means *"Copilot reviewed this commit; no verdict marker was parsed"*. The mode
+  costs nothing and surfaces Copilot's findings, but it gates nothing semantically.
+- **The poll's bounds.** The poll runs every 20 seconds for at most 15 minutes. Each cycle re-reads
+  the pull request's head. Once a new push moves it, the poll exits and that push's own run owns the
+  gate.
+- **A timeout invents nothing.** Where the window elapses with no Copilot review of that commit, the
+  gate leaves the status `pending` and posts nothing further. The same holds when a new push cancels
+  the poll.
+- **A changed skill reviews its own pull request.** On the poll surface, the changed skill reviews
+  the pull request that changes it. The CLI reviewer pins its instructions to the base ref.
 - **Other reviewers never cancel the gate.** A review from anyone but Copilot runs in its own concurrency group. An agent approving first leaves the running review intact.
-- **What it costs.** Waiting occupies a runner — up to 15 runner-minutes per
-  update, typically two or three. A private repository pays for those minutes.
+- **What it costs.** Waiting occupies a runner — up to 15 runner-minutes per update, typically two
+  or three. A private repository pays for those minutes.
 
 ### The verdict, in both modes
 
-The skill instructs the reviewer to write a machine-readable marker as its last
-line. The gate scans the text backwards over at most 200 lines for the last
-line equal to a marker, tolerating surrounding whitespace.
+The skill instructs the reviewer to write a machine-readable marker as its last line. The gate scans
+the text backwards over at most 200 lines for the last line equal to a marker, tolerating
+surrounding whitespace.
 
 | The last line equal to a marker | Status posted |
 | --- | --- |
@@ -106,18 +102,16 @@ line equal to a marker, tolerating surrounding whitespace.
 | `<!-- shipd-verdict: ship-it -->` | `success`, never turned into `failure`. |
 | *anything else* | `success`, described as *no verdict marker was parsed* — unless the repository turned [strictness](#strictness-shipd_gate_fail_open) on, which leaves the check `pending`. |
 
-**Only a whole line decides.** A quoted marker never equals a line. A bare
-marker alone on its own line in trailing narration still counts.
+**Only a whole line decides.** A quoted marker never equals a line. A bare marker alone on its own
+line in trailing narration still counts.
 
-In poll mode the gate acts only on a review by
-`copilot-pull-request-reviewer[bot]` whose `commit_id` is the current head.
-That holds on the poll and on the review event alike.
+In poll mode the gate acts only on a review by `copilot-pull-request-reviewer[bot]` whose
+`commit_id` is the current head. That holds on the poll and on the review event alike.
 
 ### Strictness: `SHIPD_GATE_FAIL_OPEN`
 
-Some repositories rule the opposite: a review that produced no verdict must
-never green the required check. That is one repository Actions variable, which
-the gate reads at classification time.
+Some repositories rule the opposite: a review that produced no verdict must never green the required
+check. That is one repository Actions variable, which the gate reads at classification time.
 
 ```bash
 gh variable set SHIPD_GATE_FAIL_OPEN --body false
@@ -128,16 +122,16 @@ gh variable set SHIPD_GATE_FAIL_OPEN --body false
 | unset (**the default**), or any value but `false` | `success`, described as *no verdict marker was parsed* — fail-open. |
 | `false` | The gate posts nothing. The `pending` from the run's first step stands, and the run logs that it parsed no verdict. |
 
-Strict mode changes only that case, on every classify path: the CLI reviewer's
-output, a polled review, a review event. A real verdict still decides.
+Strict mode changes only that case, on every classify path: the CLI reviewer's output, a polled
+review, a review event. A real verdict still decides.
 
-- **The manual out.** A strict repository merges a `pending` pull request from
-  a session: `/s:review`, then `review_gate.py post` by hand.
-- **Pair the knob with the reviewer token.** On the poll fallback no reviewer
-  writes the marker, so `false` stalls every reviewed pull request. Configure
-  the reviewer token first, then turn the knob.
-- **Set a variable, never the workflow.** `shipd copilot add` reinstalls that
-  file from the template and reverts a local edit.
+- **The manual out.** A strict repository merges a `pending` pull request from a session:
+  `/s:review`, then `review_gate.py post` by hand.
+- **Pair the knob with the reviewer token.** On the poll fallback no reviewer writes the marker, so
+  `false` stalls every reviewed pull request. Configure the reviewer token first, then turn the
+  knob.
+- **Set a variable, never the workflow.** `shipd copilot add` reinstalls that file from the template
+  and reverts a local edit.
 
 ### The trust boundary
 
@@ -179,7 +173,8 @@ status, `pull-requests: write` to poll and review. The only secret it ever reads
 `COPILOT_GITHUB_TOKEN`, whose value reaches nothing but the Copilot CLI's environment.
 
 - **Resolving threads needs `contents: write`.** GitHub refuses `resolveReviewThread` without it.
-  Only the `resolve-threads` job gets it. That job runs no pull request code, and the `gate` job keeps `contents: read`.
+  Only the `resolve-threads` job gets it. That job runs no pull request code, and the `gate` job
+  keeps `contents: read`.
 
 - **The review event.** On the CLI path, ship-it submits `APPROVE` and fix-required submits
   `REQUEST_CHANGES`, as `github-actions[bot]`. No marker, or a bot or unreadable author, gives
@@ -211,8 +206,8 @@ confirm its checkout succeeded.
 
 ## Report states and `--force`
 
-`shipd copilot`, run bare, reports and changes nothing. Each managed file
-reports one of four states.
+`shipd copilot`, run bare, reports and changes nothing. Each managed file reports one of four
+states.
 
 | State | Meaning |
 | --- | --- |
@@ -221,30 +216,35 @@ reports one of four states.
 | `foreign` | The file exists and carries no `shipd-copilot` ownership marker. |
 | `absent` | Not installed. |
 
-A marker line decides ownership: `<!-- shipd-copilot v… -->` in `SKILL.md`, and
-`# shipd-copilot v…` in each workflow. The installed `semdiff.py` carries no
-marker, and counts as owned exactly when the `SKILL.md` beside it does.
+A marker line decides ownership: `<!-- shipd-copilot v… -->` in `SKILL.md`, and `# shipd-copilot v…`
+in each workflow. The installed `semdiff.py` carries no marker, and counts as owned exactly when the
+`SKILL.md` beside it does.
 
-Where a managed path is `foreign`, both `add` and `remove` refuse, name the
-file, and change nothing. Once you accept losing a file your team wrote by
-hand, `--force` overrides:
+Where a managed path is `foreign`, both `add` and `remove` refuse, name the file, and change
+nothing. Once you accept losing a file your team wrote by hand, `--force` overrides:
 
 ```bash
 shipd copilot add --force        # replace the foreign file with the template
 shipd copilot remove --force     # delete it along with the managed files
 ```
 
+## The spec lint action
+
+- **`path`** — the directory the root `action.yml` lints, defaulting to `.`. Name a subdirectory as
+  `with: { path: services/api }`. It resolves the content directory from `.shipd-config.json`.
+- **Runner requirement: `python3` on `PATH`** — the only one, and GitHub-hosted runners ship it. The
+  action installs, downloads, and caches nothing.
+
 ## Scope and limits
 
-- **The gate is the workflow's, not Copilot's.** Nothing in Copilot code review
-  sets a third-party commit status; a review only posts a review. Drop
-  `copilot-review-gate.yml` and the Copilot run is advisory again.
+- **The gate is the workflow's, not Copilot's.** Nothing in Copilot code review sets a third-party
+  commit status; a review only posts a review. Drop `copilot-review-gate.yml` and the Copilot run is
+  advisory again.
 - **No model selection on the poll fallback.** GitHub's Copilot code-review surface exposes no option to pin its model. Only the CLI reviewer reads `SHIPD_REVIEW_MODEL`.
-- **Skill pickup is relevance-driven.** GitHub loads skills under
-  `.github/skills` when they are relevant to the review. The `code-review` name
-  is GitHub's recommendation. Expect a good hit rate, not determinism.
-- **The review requires `difft`; `ripgrep` stays optional.** Without `difft`
-  the review stops rather than running on a fallback engine. Without
-  `ripgrep`, symbol lookup falls back to `git grep`.
-- **The review never writes.** The engine is read-only by construction, and the
-  skill instructs the reviewer not to edit the repository.
+- **Skill pickup is relevance-driven.** GitHub loads skills under `.github/skills` when they are
+  relevant to the review. The `code-review` name is GitHub's recommendation. Expect a good hit rate,
+  not determinism.
+- **The review requires `difft`; `ripgrep` stays optional.** Without `difft` the review stops rather
+  than running on a fallback engine. Without `ripgrep`, symbol lookup falls back to `git grep`.
+- **The review never writes.** The engine is read-only by construction, and the skill instructs the
+  reviewer not to edit the repository.
