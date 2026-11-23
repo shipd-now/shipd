@@ -59,7 +59,7 @@ Episode 2 slows the loop down and shows the planning step: [Plan a change and re
 
 ## Sources
 
-- [Getting started](../../getting-started.md)
+- [Your first change](../../getting-started.md)
 - [What is shipd?](../../what-is-shipd.md)
 - [Cheatsheet](../../cheatsheet.md)
 - [The onboard kanban demo](../../../plugins/s/skills/onboard/assets/solutions/add-board/kanban.py)

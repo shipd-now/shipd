@@ -59,6 +59,6 @@ Episode 3 shows how each change gets its own worktree and pull request: [Git wor
 
 ## Sources
 
-- [Getting started](../../getting-started.md)
+- [Your first change](../../getting-started.md)
 - [What is shipd?](../../what-is-shipd.md)
 - [Spec library guide](../../../.shipd/README.md)

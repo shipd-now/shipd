@@ -219,7 +219,7 @@ No retry, no blocked call. That asymmetry is the authoring rule in
 ### Related pages
 
 - [What is shipd?](what-is-shipd.md) — where guardrails sit in the workflow.
-- [Install the Copilot review gate](copilot-review.md) — the semantic review
+- [Review gate](copilot-review.md) — the semantic review
   that catches what a regex cannot.
 - The content directory's `README.md` (`.shipd/README.md`) — the format
   authority for the rule file format and the `guardrails` config key.

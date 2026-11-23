@@ -772,6 +772,21 @@ class BuildConfigTest(unittest.TestCase):
                if f.endswith(".json") and "my-change" in f]
         self.assertTrue(per)
 
+    def test_the_report_never_creates_the_config_file(self):
+        cfg = br.build_config(self.proj)
+        br.write_log_entry({"change": "my-change", "status": "ok"}, cfg)
+        self.assertFalse(
+            os.path.exists(os.path.join(self.home, ".shipd-config.json")))
+        self.assertFalse(
+            os.path.exists(os.path.join(self.proj, ".shipd-config.json")))
+
+    def test_the_build_skill_says_the_report_only_reads_the_config(self):
+        with open(os.path.join(HERE, "..", "SKILL.md"),
+                  encoding="utf-8") as fh:
+            skill = fh.read()
+        self.assertNotIn("on first run, creates", skill)
+        self.assertIn("never creates it", skill)
+
     def test_no_am_path_read_or_written(self):
         cfg = br.build_config(self.proj)
         br.write_log_entry({"change": "c"}, cfg)

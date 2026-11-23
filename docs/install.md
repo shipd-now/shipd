@@ -35,8 +35,9 @@ claude plugin marketplace add shipd-now/shipd
 claude plugin install s@shipd
 ```
 
-The installer then writes the launcher to `~/.local/bin/shipd`. It prints a
-hint when that directory is not on your PATH. A re-run is safe: an existing
+The installer then writes the launcher to `~/.local/bin/shipd`. When that
+directory is not on your PATH, it prints the line to add to your shell profile:
+`export PATH="$HOME/.local/bin:$PATH"`. A re-run is safe: an existing
 marketplace or plugin counts as success.
 
 ### Pick your harnesses

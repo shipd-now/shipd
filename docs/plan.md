@@ -75,7 +75,8 @@ Re-run the skill on the change's name:
 
 The skill edits the installed artifacts in place. It resolves every finding
 the repository answers, and asks you only the true gaps. It then runs the
-context gate again, which is the only exit to `ready`.
+context gate again. The skill never forces the status: a gate pass is its only
+exit to `ready`.
 
 ### Walk a risky plan
 
@@ -109,7 +110,8 @@ and prints [`/s:autopilot <epic>`](autopilot.md) only when the preflight passes.
 | `rejected` | the context gate parked the plan for enrichment |
 
 The main line runs `draft → ready → active → complete → verified`. The gate
-enters `rejected` from `draft` or `ready`.
+enters `rejected` from `draft` or `ready`. After enrichment, a person can also
+return the plan to `draft` or `ready` through `/s:status`.
 
 ### Transition guards
 
