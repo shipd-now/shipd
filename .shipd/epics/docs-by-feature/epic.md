@@ -1,5 +1,5 @@
 # docs-by-feature
-Status: ready
+Status: active
 Theme: developer-experience
 
 ## Introduction
@@ -157,3 +157,19 @@ job:
 | docs-configure-group | Reshape `customise.md`; write the harnesses, statusline-and-telemetry, and doctor pages, nesting `harness-agents-reference.md` | medium | medium | low | low | |
 | docs-start-here | Write the install and core ideas pages, retitle `getting-started.md`, refresh `cheatsheet.md` and the `what-is-shipd.md` diagram against the new pages | medium | medium | low | low | docs-plan-group, docs-build-group, docs-epics-group, docs-review-group, docs-room-group, docs-knowledge-group, docs-workspaces-group, docs-configure-group |
 | docs-readme-slim | Cut `README.md` to install, pitch, and one link per group; fix every remaining inbound link | low | medium | low | medium | docs-start-here |
+
+## Token usage breakdown
+
+| Tool | Calls | Output tokens |
+| --- | --- | --- |
+| Bash | 263 | 97.3k |
+| Write | 30 | 45.4k |
+| SubagentHandback | 11 | 23.3k |
+| Agent | 17 | 8.2k |
+| Read | 62 | 7.4k |
+| Edit | 16 | 4.2k |
+| Monitor | 4 | 1.9k |
+| ToolSearch | 6 | 1.3k |
+| (no tool) | 0 | 1.2k |
+| Skill | 1 | 51 |
+| **Total** | 410 | 190.2k |
