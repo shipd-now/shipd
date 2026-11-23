@@ -29,63 +29,39 @@ rebuilds everything marked `(ignored)` per machine. It prefers worktrees or
 reference-clones of repos you already have locally, and clones in full only on
 a fresh machine.
 
-## The guide
+## When to use it
 
-**Getting started** — machine setup, creating a job workspace, checking it
-into git, loading it on another machine, and the day-to-day verbs.
+Use a workspace when one job touches several repos, and its knowledge must travel with it.
 
-```sh
-shipd workspace init myapp --git
-```
+## How to run it
 
-[Details →](workspaces/getting-started.md)
+- `shipd workspace init myapp --git` creates a job workspace.
+- `/s:workspace clone <url> <dir>` loads an existing workspace on this machine.
+- `/s:workspace sync` materializes the members.
+- `shipd workspace` prints the roster.
 
-**The member map and discovery** — mapping a member to a checkout you already
-have, and resolving the workspace from outside it.
+[Getting started](workspaces/getting-started.md) walks through each step.
 
-```sh
-shipd workspace   # repo: shipd [mapped -> /Users/you/projects/shipd]
-```
+## Reference
 
-[Details →](workspaces/member-map.md)
+| part | what it covers | example |
+|---|---|---|
+| [Getting started](workspaces/getting-started.md) | Machine setup, creating a job workspace, checking it into git, loading it elsewhere, and the day-to-day verbs. | `shipd workspace init myapp --git` |
+| [The member map and workspace discovery](workspaces/member-map.md) | Mapping a member to a checkout you already have, and resolving the workspace from outside it. | `shipd workspace` |
+| [Nesting job workspaces](workspaces/nesting.md) | Filing a job workspace beneath a base one, so it inherits the base's knowledge. | `shipd workspace init ~/workspaces/acme-base/myapp --nested --git` |
+| [External stores](workspaces/external-stores.md) | Relocating a repo's shipd artifacts into an external store with `store_root`. | `shipd config` |
+| [Sharing a workspace with a team](workspaces/teams.md) | Several engineers on one workspace repo, the nested team layout, the hooks consent gate, and conflict surfaces. | `shipd doctor` |
+| [Headless consumers](workspaces/headless.md) | The minimal footprint a CI job, bot, or cloud agent needs to read a workspace. | `python3 <plugin>/skills/build/scripts/spec_status.py --root /tmp/ws workspace-show` |
 
-**Nesting and external stores** — filing a job workspace beneath a base one so
-it inherits the base's knowledge, and relocating artifacts with `store_root`.
-
-```sh
-shipd workspace init ~/workspaces/acme-base/myapp --nested --git
-```
-
-[Details →](workspaces/nesting-and-stores.md)
-
-**Sharing a workspace with a team** — several engineers on one workspace
-repo, what travels between them, the hooks consent gate, and conflict
-surfaces. The blessed enterprise layout nests one team workspace per team
-under one base.
-
-```sh
-shipd doctor   # store-sync — how far your clone has drifted
-```
-
-[Details →](workspaces/teams.md)
-
-**Headless consumers** — the minimal footprint a CI job, bot, or cloud agent
-needs to read a workspace without members, git, or machine config.
-
-```sh
-python3 <plugin>/skills/build/scripts/spec_status.py --root /tmp/ws workspace-show
-```
-
-[Details →](workspaces/headless.md)
-
-**Practical examples: multi-workspace repos** — the blessed shape for
-carrying several team workspaces in one repo. A base workspace holds a
-`--nested` team workspace per team, shown with a layout tree and a storage
-table.
-
-```sh
-git clone git@github.com:acme/workspaces.git ~/workspaces/acme-base
-cd ~/workspaces/acme-base/myapp && shipd workspace sync
-```
-
-[Details →](workspaces/multi-workspace-repos.md)
+| verb | what it does |
+|---|---|
+| `/s:workspace init` | Creates a workspace through the guided `workspace-init` flow. |
+| `/s:workspace show` | Reports the workspace roster, read-only. |
+| `/s:workspace clone <url> [dest]` | Clones the workspace repo with git, then runs the `sync` flow inside it. |
+| `/s:workspace sync` | Materializes the members by running the `workspace-sync` plan. |
+| `/s:workspace map` | Points unmapped members at checkouts this machine already has. |
+| `/s:workspace team` | Builds a nested team workspace through the `workspace-team` wizard. |
+| `shipd workspace` | Prints the workspace root, its projects, and initiatives. |
+| `shipd workspace init` | Creates a workspace. |
+| `shipd workspace sync` | Prints the plan to materialize the members, and touches no network. |
+| `shipd workspace team` | Builds a nested team workspace interactively. |

@@ -8,16 +8,30 @@ its approval never counts. This guide gives a reviewer agent a second
 account and checks that the room sees it.
 
 The `gh` CLI picks the account from the environment. shipd adds no key, flag,
-or file for it. [Run an agent's turn in a multi-agent PR](pr-room.md) covers
-the room itself.
+or file for it. [Run agents in a pull request's room](room-run.md) covers the
+room itself.
 
-## Before you start
+## When to use it
+
+- Before a reviewer agent approves a pull request.
+- Before a `shipd room run` with role `reviewer` or `ci`.
+
+The reviewer role needs an account other than the author's. A reviewer or
+`ci` run on the author's own account exits `1` with one `Error:` line and
+posts nothing. An author on any other account only gets a warning.
+
+## How to run it
+
+### Before you start
 
 - You own, or can create, a second GitHub account.
 - The second account has write access to the repository.
 - You have installed `gh` and run a session that reaches the repository.
 
-## Set up the second account
+A reviewer account that claims reviews needs push permission on the
+repository; see [Review claims](room-review-claims.md).
+
+### 1. Set up the second account
 
 1. Sign in to GitHub as the second account.
 2. Choose one credential for it:
@@ -28,7 +42,7 @@ the room itself.
 3. Keep the credential outside the repository, in your shell profile or a
    secret manager.
 
-## Start the reviewer session
+### 2. Start the reviewer session
 
 1. Set the credential in the environment of the reviewer session only. Use a
    token:
@@ -46,7 +60,7 @@ the room itself.
 2. Start the author's session without these variables. It keeps the shared
    `gh` login.
 
-## Verify the account
+### 3. Verify the account
 
 1. Run `whoami` from the reviewer session:
 
@@ -76,7 +90,7 @@ The `/s:room` skill runs `whoami` before every approving review and stops on
 the error. `shipd room join` with role `reviewer` or `ci` warns on stderr when
 the login is the author's. It still joins.
 
-## Verify an author bot
+### Verify an author bot
 
 An author session that runs on a GitHub App installation token (`GH_TOKEN`)
 checks that it owns the pull request before it fixes a finding:
@@ -89,14 +103,15 @@ GitHub refuses `gh api user` for an installation token, so `whoami` reads the
 login from the GraphQL viewer instead. The verb exits `0` with `is_author`
 true on the bot's own pull request and `1` with one `Error:` line otherwise.
 
-## Keep the token out of the repository
+### Keep the token out of the repository
 
 - Never write a token into a tracked file.
 - Never write a token into `.shipd-config.json`.
 - Never pass a token as a command-line argument.
 
-## See also
+## Reference
 
-- [Run an agent's turn in a multi-agent PR](pr-room.md) — the room verbs.
+- [Run agents in a pull request's room](room-run.md) — the room verbs and the
+  listeners.
 - [Multi-agent PR](multi-agent-pr.md) — the model.
 - [Semantic review](semantic-review.md) — the gate that posts reviews.
