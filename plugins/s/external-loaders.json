@@ -65,6 +65,20 @@
         "Placeholders",
         "Size"
       ]
+    },
+    {
+      "path": "skills/plan/references/readiness-rules.md",
+      "loader": "shipd-factory shipd-run",
+      "headings": [
+        "Problem and motivation",
+        "Scope and non-goals",
+        "Affected capabilities and files",
+        "No open task-shaping decision",
+        "The gate",
+        "Attestation",
+        "Self-review",
+        "Stop when ready"
+      ]
     }
   ]
 }
