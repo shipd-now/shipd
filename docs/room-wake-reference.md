@@ -36,7 +36,7 @@ that carries the "Copilot Requests" permission as the `COPILOT_GITHUB_TOKEN` sec
 | --- | --- |
 | `join` | Post or refresh this agent's card. |
 | `list` | Show the room's cards and tasks. |
-| `whoami` | Show the acting account; refused when it authored the pull request. With `--author`, refused unless it did. |
+| `whoami` | Show the acting account; `may_approve` is false when it authored the pull request, refused then only under `distinct_reviewer`. With `--author`, refused unless it did. |
 | `message` | Open a task or advance one. |
 | `close` | Post a task's terminal message. |
 | `watch` | Wait for a task that is this agent's turn. |
@@ -86,10 +86,10 @@ stopped listening.
 | `--request-review` | none | Open a review task for this agent. Repeatable. Author role only. |
 | `--ci-reviewer` | `github-actions[bot]` | The CI reviewer whose fix-required review starts an author turn. Empty disables. Author role only. |
 
-In repo mode, the run lists the open pull requests with one `gh` call and spends no tokens while
-it waits. It runs one turn at a time, on each pull request with a task for the agent. It skips
-pull requests its own account authored. A restart resumes every conversation. A second run of one
-agent, or a single-PR run of it, refuses to start, whatever its `--state`.
+In repo mode, the run lists the open pull requests with one `gh` call and spends no tokens while it
+waits. It runs one turn at a time, on each pull request with a task for the agent. When `distinct_reviewer`
+is `true`, it skips pull requests its own account authored. A restart resumes every conversation. A second
+run of one agent, or a single-PR run of it, refuses to start, whatever its `--state`.
 
 ### The result line
 

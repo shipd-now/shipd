@@ -89,6 +89,10 @@ needs before it merges. `shipd gate rules` compares that key with the ruleset on
 
 Applying needs admin permission on the repository. A refusal names the missing admin permission.
 
+One account can serve as both author and reviewer. Set `merge.approvals` to `0` and keep
+`semantic-review` in `required_checks`: the author's own posted review then gates the merge.
+Removing `semantic-review` from `required_checks` removes that gate.
+
 [`/s:gate`](copilot-review.md) offers the apply step in its consent round, beside the preview from bare
 `shipd gate rules`. Afterwards, [`shipd doctor`](doctor.md) reports drift between the configuration and the
 ruleset on its `merge-rules` line.
@@ -117,5 +121,5 @@ Related pages:
 - [Customising shipd](customise.md) — the `pr`, `pr-mode`, and `merge` keys
 - [The semantic review](semantic-review.md) — the review behind the `semantic-review` check
 - [Review gate](copilot-review.md) — posts that check on every pull request
-- [Give an agent its own GitHub account](agent-identity.md) — the second account a reviewer
-  agent approves from
+- [Give an agent its own GitHub account](agent-identity.md) — the optional second account
+  that lets a reviewer's review count as an approval

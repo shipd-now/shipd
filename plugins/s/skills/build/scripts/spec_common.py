@@ -410,6 +410,7 @@ RECOGNIZED_CONFIG_KEYS = (
     "clone_sources",
     "completed_retention_days",
     "dir",
+    "distinct_reviewer",
     "guardrails",
     "lint",
     "memory_dir",
@@ -1251,6 +1252,40 @@ def pr_mode_from_config(config, prov):
             "`%s` must be one of %s (from %s), got %r"
             % (PR_MODE_KEY, " or ".join(PR_MODES),
                prov.get(PR_MODE_KEY, "default"), raw))
+    return raw
+
+
+# ---------------------------------------------------------------------------
+# Distinct reviewer (shipd-config distinct-reviewer-key)
+# ---------------------------------------------------------------------------
+
+# The config key requiring a room reviewer to act from an account other than
+# the pull request author's.
+DISTINCT_REVIEWER_KEY = "distinct_reviewer"
+
+
+def resolve_distinct_reviewer(root):
+    """Resolve the ``distinct_reviewer`` key for ``root`` (shipd-config
+    distinct-reviewer-key) over :func:`resolve_config`, so a workspace root
+    declaring it governs every member repo beneath it. Returns ``False`` when
+    no layer declares the key. A declared value that is not ``true`` or
+    ``false`` raises :class:`ConfigError` naming the key, the offending value
+    and the config file that supplied it. Stdlib-only."""
+    config, prov = resolve_config(root)
+    return distinct_reviewer_from_config(config, prov)
+
+
+def distinct_reviewer_from_config(config, prov):
+    """The validating core of :func:`resolve_distinct_reviewer`, over an
+    already resolved ``config`` and its provenance map."""
+    if DISTINCT_REVIEWER_KEY not in config:
+        return False
+    raw = config[DISTINCT_REVIEWER_KEY]
+    if not isinstance(raw, bool):
+        raise ConfigError(
+            "config `%s` must be true or false (from %s), got %r"
+            % (DISTINCT_REVIEWER_KEY,
+               prov.get(DISTINCT_REVIEWER_KEY, "default"), raw))
     return raw
 
 

@@ -302,7 +302,9 @@ class World:
             if who == "reviewer":
                 return (0, json.dumps({"login": REVIEWER, "author": AUTHOR,
                                        "source": "token", "may_approve": True}), "")
-            return (1, "", "Error: acting as @%s, who authored it" % AUTHOR)
+            return (0, json.dumps({"login": AUTHOR, "author": AUTHOR,
+                                   "source": "token", "is_author": True,
+                                   "may_approve": False}), "")
         if "graphql" in argv:
             return (0, json.dumps({"data": {"repository": {"pullRequest": {
                 "reviewThreads": {"nodes": [{"isResolved": True}]}}}}}), "")

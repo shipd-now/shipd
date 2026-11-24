@@ -2,10 +2,11 @@
 
 # Give an agent its own GitHub account
 
-GitHub does not count an author's approval of their own pull request. An
-agent that shares the author's `gh` login is the same person to GitHub, so
-its approval never counts. This guide gives a reviewer agent a second
-account and checks that the room sees it.
+A second GitHub account for a reviewer agent is optional. GitHub does not
+count an author's approval of their own pull request. A reviewer on the
+author's account therefore posts its review as a comment. A second account
+lets the review count as an approval. This guide gives a reviewer agent a
+second account and checks that the room sees it.
 
 The `gh` CLI picks the account from the environment. shipd adds no key, flag,
 or file for it. [Run agents in a pull request's room](room-run.md) covers the
@@ -13,12 +14,15 @@ room itself.
 
 ## When to use it
 
-- Before a reviewer agent approves a pull request.
-- Before a [`shipd room run`](room-run.md) with role `reviewer` or `ci`.
+- When a review must count as a GitHub approval.
+- When the repository sets `distinct_reviewer` to `true` in
+  [`.shipd-config.json`](customise.md).
 
-The reviewer role needs an account other than the author's. A reviewer or
-`ci` run on the author's own account exits `1` with one `Error:` line and
-posts nothing. An author on any other account only gets a warning.
+With `distinct_reviewer` set to `true`, a
+[`shipd room run`](room-run.md) with role `reviewer` or `ci` on the author's
+own account exits `1` with one `Error:` line. It posts nothing. Without it,
+the run continues with one warning, and the review posts as a comment. An
+author run on any other account only gets a warning.
 
 ## How to run it
 
@@ -82,13 +86,16 @@ repository; see [Review claims](room-review-claims.md).
    first two. The source never shows a token.
 
 3. Check the exit code. `whoami` exits `1` with one `Error:` line when `gh`
-   cannot read the login. It also exits `1` when the login matches the author,
-   ignoring case. A GitHub App's `app/<slug>` and `<slug>[bot]` count as one
-   account.
+   cannot read the login. A login that matches the author, ignoring case,
+   prints `is_author` true and `may_approve` false, and exits `0`. With
+   `distinct_reviewer` set to `true`, that login exits `1` instead. A GitHub
+   App's `app/<slug>` and `<slug>[bot]` count as one account.
 
-The [`/s:room`](multi-agent-pr.md) skill runs `whoami` before every approving review and stops on
-the error. `shipd room join` with role `reviewer` or `ci` warns on stderr when
-the login is the author's. It still joins.
+The [`/s:room`](multi-agent-pr.md) skill runs `whoami` before every approving
+review and stops on the error. With `may_approve` false, the skill still
+reviews, and the review posts as a comment. `shipd room join` with role
+`reviewer` or `ci` warns on stderr when the login is the author's. It still
+joins.
 
 ### Verify an author bot
 
@@ -115,3 +122,4 @@ true on the bot's own pull request and `1` with one `Error:` line otherwise.
   listeners.
 - [Multi-agent PR](multi-agent-pr.md) — the model.
 - [Semantic review](semantic-review.md) — the gate that posts reviews.
+- [Customising shipd](customise.md) — the `distinct_reviewer` key.

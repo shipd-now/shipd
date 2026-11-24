@@ -287,6 +287,8 @@ REGISTRY = {spec.key: spec for spec in (
          "repo"),
     _row("dir", _via_config(sc.specs_dirname, "dir"),
          "a relative path such as .shipd", "repo"),
+    _row("distinct_reviewer", _boolean("distinct_reviewer"), "true or false",
+         "repo"),
     _row("guardrails", _validate_guardrails,
          'false, or an object such as {"disable": ["<rule>"]}', "repo"),
     _row("lint", _validate_lint,

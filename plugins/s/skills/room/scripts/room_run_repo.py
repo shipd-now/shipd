@@ -207,6 +207,7 @@ def cmd_run_repo(opts, parser, gh, runner, sleep, clock, preflight=None):
             "GraphQL viewer failed); an approval needs a readable account")
     root = room._root(opts)
     agent = room._agent_name(opts, parser, root)
+    distinct_reviewer = room._distinct_reviewer(root)
     model_base = None
     if runner is None or preflight is None:
         model_base = room_run._model_base(root)
@@ -238,14 +239,14 @@ def cmd_run_repo(opts, parser, gh, runner, sleep, clock, preflight=None):
             locks.append(hold_lock(state_lock,
                                    "another room run holds %s" % path))
         return _run_loop(opts, parser, gh, runner, sleep, clock, preflight,
-                         login, root, agent, path)
+                         login, root, agent, path, distinct_reviewer)
     finally:
         for lock in locks:
             lock.close()
 
 
 def _run_loop(opts, parser, gh, runner, sleep, clock, preflight, login,
-              root, agent, path):
+              root, agent, path, distinct_reviewer):
     state = load_state(path, opts.repo, agent)
     prs = state["prs"]
     skills = tuple(opts.skill) or room_run.DEFAULT_SKILLS
@@ -305,8 +306,8 @@ def _run_loop(opts, parser, gh, runner, sleep, clock, preflight, login,
                     continue
                 who = (pr.get("author") or {}).get("login") \
                     if isinstance(pr.get("author"), dict) else None
-                if not isinstance(who, str) or not who or \
-                        room.same_account(who, login):
+                if not isinstance(who, str) or not who or (
+                        distinct_reviewer and room.same_account(who, login)):
                     if number not in warned:
                         warned.add(number)
                         sys.stderr.write(

@@ -103,7 +103,13 @@ class RunTestBase(RoomTestBase):
 
 
 class RunStartTest(RunTestBase):
+    def _require_distinct_reviewer(self):
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"distinct_reviewer": True}, fh)
+
     def test_reviewer_on_the_authors_account_is_refused(self):
+        self._require_distinct_reviewer()
         gh = FakeGh(comments=[waiting(to="rev-b")], login="Mikkel",
                     pr_author="mikkel")
         runner = FakeRunner()
@@ -113,10 +119,27 @@ class RunStartTest(RunTestBase):
         self.assertEqual(code, 1, err)
         self.assertEqual(out, "")
         self.assertEqual(err.count("Error:"), 1, err)
+        self.assertIn("distinct_reviewer", err)
         self.assertEqual(gh.posts(), [])
         self.assertEqual(runner.calls, [])
 
+    def test_reviewer_on_the_authors_account_runs_by_default(self):
+        gh = FakeGh(login="Mikkel", pr_author="mikkel", state="MERGED")
+        code, out, err = self.run_verb(
+            gh, "7", "--role", "reviewer", "--agent", "rev-b")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("Error:", err)
+        warnings = [ln for ln in err.splitlines()
+                    if ln.startswith("warning:")]
+        self.assertEqual(len(warnings), 1, err)
+        self.assertIn("the review posts as a comment, not an approval",
+                      warnings[0])
+        posts = gh.posts()
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(first_marker(posts[0]).role, "reviewer")
+
     def test_bot_reviewer_on_the_bots_pr_is_refused(self):
+        self._require_distinct_reviewer()
         gh = FakeGh(comments=[waiting(to="rev-b")],
                     login="shipd-factory[bot]",
                     pr_author="app/shipd-factory")

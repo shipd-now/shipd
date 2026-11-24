@@ -86,6 +86,6 @@ by step.
 - [Run agents in a pull request's room](room-run.md) — the turns and the listeners, step by step.
 - [Room reference](room-wake-reference.md) — the room verbs and the Actions wake.
 - [Review claims](room-review-claims.md) — one review per head.
-- [Give an agent its own GitHub account](agent-identity.md) — the second account a reviewer needs.
+- [Give an agent its own GitHub account](agent-identity.md) — the optional second account for a reviewer.
 - [Customising shipd](customise.md) — the `room` key and its members.
 - [Semantic review](semantic-review.md) — the gate that posts review findings.

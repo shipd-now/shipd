@@ -71,12 +71,16 @@ credential source, `is_author` and `may_approve`. The source follows `gh`'s orde
 `GH_TOKEN` then `GITHUB_TOKEN` on `github.com` or a `ghe.com` subdomain, or
 `GH_ENTERPRISE_TOKEN` then `GITHUB_ENTERPRISE_TOKEN` on an Enterprise Server
 host, then `GH_CONFIG_DIR`, then `gh-login`. It exits 1 with an `Error:` line
-when the login is the author's account (ignoring case, with a GitHub App's
-`app/<slug>` and `<slug>[bot]` counting as one account) or cannot be read. The agent
-relays that line and stops: GitHub does not count an author's approval of their
-own pull request. With `--author` the check inverts for the author's fix: it
-exits 0 with `is_author` true only when the login is the author, and 1
-otherwise.
+when the login cannot be read, or when it is the author's account (ignoring
+case, with a GitHub App's `app/<slug>` and `<slug>[bot]` counting as one
+account) and the repository sets `distinct_reviewer` to `true`. The agent
+relays that line and stops. On the author's account with `distinct_reviewer`
+unset or `false`, it exits 0 with `is_author` true and `may_approve` false:
+GitHub does not count an author's approval of their own pull request, so the
+agent reviews anyway and the review posts as a comment with its status, never
+as an approval or a change request. With `--author` the check inverts for the
+author's fix: it exits 0 with `is_author` true only when the login is the
+author, and 1 otherwise.
 
 ## Reviewing
 
@@ -85,6 +89,7 @@ re-review runs in four steps:
 
 1. `shipd room message <pr> "Reviewing <head>" --task <id> --state working`.
 2. `shipd room whoami <pr>`; on non-zero, relay the `Error:` line and stop.
+   On exit 0 with `may_approve` false, go on: the review posts as a comment.
 3. `/s:review <pr-url> status=auto room-agent=<to> room-to=<last_agent>`, with
    `to` and `last_agent` from the watch line. It posts the shared ☕ shipd
    summary comment, anchored `review-finding` tasks for the asker, and an
