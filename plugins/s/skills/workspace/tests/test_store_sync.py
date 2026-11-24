@@ -139,7 +139,7 @@ class TestSessionEnd(StoreSyncTestCase):
 
 class TestDivergentUpstream(StoreSyncTestCase):
     def diverge(self, local_body="local\n", upstream_body="up\n",
-                same_file=False):
+                same_file=False, upstream_name=None):
         """A clone with one unpushed local commit and an upstream that moved
         on with one commit of its own. Returns ``(remote, ws)``."""
         remote = self.make_remote()
@@ -150,7 +150,8 @@ class TestDivergentUpstream(StoreSyncTestCase):
         _git("-C", ws, "commit", "-q", "-m", "local change")
 
         other = self.make_clone(remote, name="other")
-        up_name = "index.md" if same_file else "upstream.md"
+        up_name = upstream_name or (
+            "index.md" if same_file else "upstream.md")
         self.write(os.path.join(other, ".shipd", "wiki", up_name),
                    upstream_body)
         _git("-C", other, "add", "-A")
@@ -209,6 +210,41 @@ class TestDivergentUpstream(StoreSyncTestCase):
             ["git", "-C", ws, "status", "--porcelain"], capture_output=True,
             text=True, check=True).stdout
         self.assertIn(".shipd/wiki/index.md", status)
+
+    def test_uncommitted_work_conflicting_with_upstream_undoes_the_rebase(
+            self):
+        """An uncommitted edit to a line the upstream commit also changed:
+        git reports the rebase as a success although the autostash would not
+        re-apply. The hook undoes the rebase — the branch at its prior
+        commit, the edit back in the tree and uncommitted, no conflict
+        marker, no stash entry left — pushes nothing, and warns once."""
+        remote, ws = self.diverge(
+            upstream_body="upstream line\n", upstream_name="index.md")
+        index = os.path.join(ws, ".shipd", "wiki", "index.md")
+        self.write(index, "edited but not committed\n")
+        before = subprocess.run(
+            ["git", "-C", ws, "rev-parse", "HEAD"], capture_output=True,
+            text=True, check=True).stdout.strip()
+
+        rc, out, err = self.run_hook("SessionStart", ws)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "")
+        self.assertEqual(len(err.strip().splitlines()), 1, err)
+        after = subprocess.run(
+            ["git", "-C", ws, "rev-parse", "HEAD"], capture_output=True,
+            text=True, check=True).stdout.strip()
+        self.assertEqual(after, before)
+        with open(index, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "edited but not committed\n")
+        status = subprocess.run(
+            ["git", "-C", ws, "status", "--porcelain"], capture_output=True,
+            text=True, check=True).stdout
+        self.assertEqual(status.strip(), "M .shipd/wiki/index.md")
+        stash = subprocess.run(
+            ["git", "-C", ws, "stash", "list"], capture_output=True,
+            text=True, check=True).stdout
+        self.assertEqual(stash, "")
+        self.assertNotIn("local change", self.remote_log(remote))
 
 
 class DelayedTestCase(StoreSyncTestCase):

@@ -187,6 +187,34 @@ def _upstream_remote(store):
     return remote
 
 
+def _stash_tip(store):
+    """The commit ``refs/stash`` names, or ``None`` when the stash is empty."""
+    try:
+        return _run(["git", "-C", store, "rev-parse", "--quiet", "--verify",
+                     "refs/stash"]).stdout.strip() or None
+    except RuntimeError:
+        return None
+
+
+def _unmerged_paths(store):
+    """The index's unmerged entries, as ``git ls-files --unmerged`` prints
+    them; empty when the index carries no conflict."""
+    return _run(
+        ["git", "-C", store, "ls-files", "--unmerged"]).stdout.strip()
+
+
+def _restore_after_autostash_conflict(store, before, stash_before):
+    """Put the branch and working tree back as they were before a rebase
+    whose autostash would not re-apply: reset to ``before`` — the conflicted
+    tree holds nothing the stash entry does not — then, where the rebase left
+    a new stash entry, apply it with its index state onto the commit it was
+    made from and drop it. Raises ``RuntimeError`` when a step fails, leaving
+    the work in the stash entry."""
+    _run(["git", "-C", store, "reset", "--hard", before])
+    if _stash_tip(store) not in (None, stash_before):
+        _run(["git", "-C", store, "stash", "pop", "--index"])
+
+
 def integrate(store):
     """Bring the store's upstream into its current branch (shipd-wiki
     store-sync-hook).
@@ -200,7 +228,10 @@ def integrate(store):
     survives. The merge or rebase runs under the engine's store commit lock,
     so it never races an engine auto-commit. A failed rebase is aborted —
     restoring the branch and working tree — and raises ``RuntimeError``, so
-    the caller pushes nothing."""
+    the caller pushes nothing. So does a rebase that succeeds but whose
+    autostashed work no longer applies: git reports that one as success, so
+    it is detected by its unmerged paths and undone
+    (:func:`_restore_after_autostash_conflict`)."""
     _run(["git", "-C", store, "fetch", _upstream_remote(store)])
     if _is_ancestor(store, "@{u}", "HEAD"):
         return
@@ -209,6 +240,8 @@ def integrate(store):
         if _is_ancestor(store, "HEAD", "@{u}"):
             _run(["git", "-C", store, "merge", "--ff-only", "@{u}"])
             return
+        before = _run(["git", "-C", store, "rev-parse", "HEAD"]).stdout.strip()
+        stash_before = _stash_tip(store)
         try:
             _run(["git", "-C", store, "rebase", "--autostash", "@{u}"])
         except RuntimeError as exc:
@@ -218,6 +251,15 @@ def integrate(store):
                 pass
             raise RuntimeError("rebase onto upstream failed, aborted: %s"
                                % exc)
+        if _unmerged_paths(store):
+            # The rebase itself succeeded, but git could not re-apply the
+            # autostashed work on top of it: it exits 0 all the same, leaving
+            # conflict markers in the tree and the work in a stash entry.
+            # Undo the rebase and put the work back where it was.
+            _restore_after_autostash_conflict(store, before, stash_before)
+            raise RuntimeError(
+                "rebase onto upstream conflicts with uncommitted work, "
+                "undone")
 
 
 def sync_session_start(store):
@@ -234,8 +276,9 @@ def sync_session_end(store):
 
 def _token_path(store):
     """The debounce token file for ``store``: in the system temp directory,
-    named by the same 16-hex digest of the store's absolute path that the
-    engine's store commit lock uses."""
+    named by a 16-hex digest of the store's absolute path. The engine passes
+    the store's repository root, so every write into one repository shares
+    the token."""
     digest = hashlib.sha256(
         os.path.abspath(store).encode("utf-8")).hexdigest()[:16]
     return os.path.join(

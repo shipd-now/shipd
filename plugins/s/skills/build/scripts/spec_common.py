@@ -1770,6 +1770,27 @@ def inside_git_work_tree(target):
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
+def store_repo_key(store_dir):
+    """Return the path that identifies the git repository ``store_dir`` sits
+    in: the work tree's root from a local ``git rev-parse --show-toplevel``,
+    or ``store_dir``'s own absolute path outside git or when git fails.
+
+    The store commit lock and the debounced push are keyed by this, never by
+    the directory a caller happened to pass: a wiki write names
+    ``<ws>/.shipd/wiki`` and a PRD emit names ``<ws>``, yet both commit into —
+    and a rebase rewrites — the one repository."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", store_dir, "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True)
+    except OSError:
+        return os.path.abspath(store_dir)
+    top = result.stdout.strip()
+    if result.returncode != 0 or not top:
+        return os.path.abspath(store_dir)
+    return os.path.abspath(top)
+
+
 @contextlib.contextmanager
 def store_commit_lock(store_dir):
     """Hold an exclusive lock scoped to ``store_dir`` across a stage-and-commit
@@ -1777,9 +1798,11 @@ def store_commit_lock(store_dir):
     racing git's index lock (shipd-wiki wiki-autocommit).
 
     The lock file lives in the system temp directory, never inside the store,
-    named ``shipd-store-<first 16 hex of sha256 of the store's absolute
-    path>.lock`` so every writer targeting the same store contends on the same
-    file. That name is predictable, so the file is opened ``O_NOFOLLOW`` and
+    named ``shipd-store-<first 16 hex of sha256 of the store's repository
+    key>.lock`` — :func:`store_repo_key`, the git work tree's root — so every
+    writer into one repository contends on the same file whichever of its
+    directories (the wiki store, the workspace root, an external content
+    directory) it was handed. That name is predictable, so the file is opened ``O_NOFOLLOW`` and
     without truncation: a symlink planted at it by another local user is
     refused rather than followed. Yields a no-op lock — never raising — when ``fcntl`` is unavailable
     (an unsupported platform) or the lock cannot be acquired, so locking is
@@ -1788,7 +1811,7 @@ def store_commit_lock(store_dir):
         yield
         return
     digest = hashlib.sha256(
-        os.path.abspath(store_dir).encode("utf-8")).hexdigest()[:16]
+        store_repo_key(store_dir).encode("utf-8")).hexdigest()[:16]
     lock_path = os.path.join(
         tempfile.gettempdir(), "shipd-store-%s.lock" % digest)
     fh = None
@@ -1832,7 +1855,9 @@ def schedule_store_push(store_dir, config):
     store carries no ``origin`` remote (a local ``git remote get-url`` probe).
     Otherwise starts ``store_sync.py --delayed <store> --delay <n>`` detached
     — every standard stream on ``DEVNULL``, in a new session — with ``<n>``
-    the resolved ``store_push_delay``, and returns at once. The helper, not
+    the resolved ``store_push_delay``, and returns at once. ``<store>`` is the
+    store's repository root (:func:`store_repo_key`), so every write into one
+    repository debounces against the same token whichever directory it named. The helper, not
     this process, does the networked git, so the engine keeps its no-network
     rule. Every failure is swallowed: the write that triggered it already
     succeeded."""
@@ -1849,7 +1874,8 @@ def schedule_store_push(store_dir, config):
             return False
         subprocess.Popen(
             [sys.executable or "python3", script, "--delayed",
-             store_dir, "--delay", str(store_push_delay(config))],
+             store_repo_key(store_dir), "--delay",
+             str(store_push_delay(config))],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, start_new_session=True)
     except Exception:  # never fail the write over a push

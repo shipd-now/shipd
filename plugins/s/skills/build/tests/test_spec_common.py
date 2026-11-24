@@ -5026,12 +5026,48 @@ class ScheduleStorePushTest(unittest.TestCase):
         self.assertTrue(sc.wiki_autocommit(store, [page], "shipd: test"))
         self.assertEqual(len(self.helpers), 1)
         argv, kw = self.helpers[0]
-        self.assertEqual(argv[-4:], ["--delayed", store, "--delay", "60"])
+        # The helper is handed the repository root, not the wiki directory
+        # the write named, so every write into one repo shares one token.
+        ws = os.path.dirname(os.path.dirname(store))
+        self.assertEqual(argv[-4:], ["--delayed", ws, "--delay", "60"])
         self.assertTrue(argv[-5].endswith(
             os.path.join("workspace", "scripts", "store_sync.py")))
         self.assertTrue(kw.get("start_new_session"))
         for stream in ("stdin", "stdout", "stderr"):
             self.assertIs(kw.get(stream), subprocess.DEVNULL, stream)
+
+    def test_every_directory_of_one_repo_shares_the_key(self):
+        """The lock and the push are keyed by the repository: the wiki
+        directory, the workspace root, and a directory outside git each
+        resolve as expected."""
+        store, _page = self._store()
+        ws = os.path.dirname(os.path.dirname(store))
+        self.assertEqual(sc.store_repo_key(store), ws)
+        self.assertEqual(sc.store_repo_key(ws), ws)
+        plain = os.path.join(self.tmp, "plain")
+        os.makedirs(plain)
+        self.assertEqual(sc.store_repo_key(plain), plain)
+
+    def test_lock_is_shared_across_directories_of_one_repo(self):
+        """A holder of the lock taken through the workspace root excludes a
+        taker naming the wiki directory of the same repository."""
+        if sc.fcntl is None:
+            self.skipTest("platform without fcntl")
+        store, _page = self._store()
+        ws = os.path.dirname(os.path.dirname(store))
+        digest = hashlib.sha256(ws.encode("utf-8")).hexdigest()[:16]
+        lock_path = os.path.join(
+            tempfile.gettempdir(), "shipd-store-%s.lock" % digest)
+        with sc.store_commit_lock(store):
+            with open(lock_path, "r+") as fh:
+                with self.assertRaises(OSError):
+                    sc.fcntl.flock(
+                        fh, sc.fcntl.LOCK_EX | sc.fcntl.LOCK_NB)
+        with sc.store_commit_lock(ws):
+            with open(lock_path, "r+") as fh:
+                with self.assertRaises(OSError):
+                    sc.fcntl.flock(
+                        fh, sc.fcntl.LOCK_EX | sc.fcntl.LOCK_NB)
 
     def test_declared_delay_is_passed(self):
         store, page = self._store({"workspace": {}, "store_push_delay": 5})
