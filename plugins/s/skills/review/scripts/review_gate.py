@@ -40,9 +40,10 @@ Subcommands:
                               mutates nothing
   linked <pr>                 list the pull requests linked to the PR (JSON):
        [--repo <owner>/<repo>] repo, number, url, state, head_sha, source —
-       [--search <terms>]     timeline cross-references, body links, then
-                              --repo's open PRs matching --search (which
-                              needs --repo); mutates nothing
+       [--search <terms>]     timeline cross-references, body URLs and
+                              <owner>/<repo>#<n> shorthand, then --repo's
+                              open PRs, up to 200, narrowed by --search where
+                              given (which needs --repo); mutates nothing
 
 The `gh` runner has signature ``gh(args, input=None) -> (rc, stdout, stderr)``
 where ``args`` is everything after the ``gh`` executable.
@@ -1756,9 +1757,19 @@ def prior(pr, gh, findings=None):
     return entries
 
 
+# The most open pull requests `linked`'s search source asks `gh pr list`
+# for. A listing that comes back this full may have stopped short, so the verb
+# warns on stderr.
+LINKED_SEARCH_LIMIT = 200
+
 # A pull request URL in a body: owner, repository, number.
 _PR_URL_RE = re.compile(
     r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/(\d+)")
+
+# A pull request shorthand in a body: <owner>/<repo>#<number>. The lookbehind
+# keeps it from matching inside a URL or a file path.
+_PR_SHORTHAND_RE = re.compile(
+    r"(?<![\w./-])([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#(\d+)\b")
 
 
 def _json_values(text):
@@ -1802,13 +1813,22 @@ def linked(pr, gh, repo=None, search=None):
 
     Three sources, in order, the first winning a duplicate:
     ``cross-reference`` (the reviewed pull request's issue timeline),
-    ``body`` (pull request URLs in its body), and, only with ``repo``,
-    ``search`` (that repository's open pull requests matching ``search``).
-    The reviewed pull request is never listed; with ``repo``, entries in
-    other repositories are dropped. A failed timeline read fails the verb;
-    a failed head read keeps its entry with an ``error`` field."""
-    number, _base_sha, _sha, _url = _resolve_pr(gh, pr)
-    self_repo = _resolve_repo(gh)
+    ``body`` (pull request URLs and ``<owner>/<repo>#<number>`` shorthand
+    in its body), and, only with ``repo``, ``search`` (that repository's
+    open pull requests, up to ``LINKED_SEARCH_LIMIT``, narrowed by
+    ``search`` where given; a full listing warns on stderr). The reviewed
+    pull request's repository comes from its URL, never the checkout. The
+    reviewed pull request is never listed; with ``repo``, entries in other
+    repositories are dropped. A failed timeline read fails the verb; a
+    failed head read keeps its entry with an ``error`` field."""
+    number, _base_sha, _sha, url = _resolve_pr(gh, pr)
+    # The reviewed pull request's own repository, from its URL — never the
+    # checkout's, which differs when <pr> is a URL into another repository.
+    match = _PR_URL_RE.match(url or "")
+    if not match:
+        _fail("cannot read the repository from the pull request URL %r"
+              % (url,))
+    self_repo = "%s/%s" % (match.group(1), match.group(2))
     want = repo.lower() if repo else None
     entries, seen = [], {(self_repo.lower(), int(number))}
 
@@ -1850,7 +1870,8 @@ def linked(pr, gh, repo=None, search=None):
     if rc != 0:
         _fail("gh pr view %s failed: %s" % (pr, err.strip()))
     body = json.loads(out).get("body") or ""
-    for owner, name, num in _PR_URL_RE.findall(body):
+    for owner, name, num in (_PR_URL_RE.findall(body)
+                             + _PR_SHORTHAND_RE.findall(body)):
         entry = add("%s/%s" % (owner, name), int(num), "body")
         if entry is not None:
             to_read.append(entry)
@@ -1862,11 +1883,18 @@ def linked(pr, gh, repo=None, search=None):
         args = ["pr", "list", "--repo", repo, "--state", "open"]
         if search:
             args += ["--search", search]
-        args += ["--json", "number,url,headRefOid"]
+        args += ["--limit", str(LINKED_SEARCH_LIMIT),
+                 "--json", "number,url,headRefOid"]
         rc, out, err = gh(args)
         if rc != 0:
             _fail("gh pr list --repo %s failed: %s" % (repo, err.strip()))
-        for found in json.loads(out or "[]"):
+        listing = json.loads(out or "[]")
+        if len(listing) >= LINKED_SEARCH_LIMIT:
+            sys.stderr.write(
+                "%s: warning: the search listing reached the limit of %d open "
+                "pull requests in %s; narrow it with --search\n"
+                % (PROG, LINKED_SEARCH_LIMIT, repo))
+        for found in listing:
             fields = {"state": "open", "head_sha": found.get("headRefOid")}
             if found.get("url"):
                 fields["url"] = found["url"]
@@ -2007,16 +2035,19 @@ def main(argv=None, gh=None):
     pv.set_defaults(func=_cmd_prior)
 
     lk = sub.add_parser(
-        "linked", help="list the pull requests linked to a PR, each with its "
-                       "repository, state and head commit (JSON); mutates "
-                       "nothing")
+        "linked", help="list the pull requests linked to a PR (timeline "
+                       "cross-references, body URLs and shorthand, and "
+                       "--repo's open pull requests, up to 200, narrowed by "
+                       "--search where given), each with its repository, "
+                       "state and head commit (JSON); mutates nothing")
     lk.add_argument("pr", help="PR number, URL, or branch")
     lk.add_argument("--repo", default=None,
                     help="<owner>/<repo>: list only pull requests in this "
-                         "repository, and search its open pull requests")
+                         "repository, and list its open pull requests, up "
+                         "to 200")
     lk.add_argument("--search", default=None,
-                    help="search terms for --repo's open pull requests "
-                         "(needs --repo)")
+                    help="search terms narrowing --repo's open pull "
+                         "requests (needs --repo)")
     lk.set_defaults(func=_cmd_linked)
 
     args = parser.parse_args(argv)
