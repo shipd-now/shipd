@@ -224,7 +224,9 @@ emission as usual.
 `${CLAUDE_PLUGIN_ROOT}/skills/ask/references/headless.md`; read it and follow it.
 Here it means: put no question to the user, in a typed round or an
 AskUserQuestion, about anything the repository or the request settles. Read
-capabilities through `spec_status.py cat verified <capability>`.
+capabilities through `spec_status.py cat verified <capability>` or under the
+resolved content directory's `verified/`, and in-flight changes under its
+`planned/`.
 
 ## Flow
 

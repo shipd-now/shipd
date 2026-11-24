@@ -22,29 +22,30 @@ change directory (`<root>/<dir>`), never re-emitting through staging.
    agenda: **each of its dot-points is one finding to resolve.**
 
 2. **Resolve every codebase-answerable finding yourself, without asking.** The
-   Codebase-first rule in `SKILL.md` holds in enrichment too — anything discoverable from the
-   repository you resolve by editing the installed artifacts directly:
+   Codebase-first rule in `SKILL.md` holds in enrichment too. Resolve anything
+   discoverable from the repository by editing the installed artifacts directly:
    - **Stale `base:` hash** — re-read the current master requirement (via
-     `spec_status.py cat verified <capability>`), update the delta's `base:`
-     hash to the master's current hash, and reconcile the delta's content
+     `spec_status.py cat verified <capability>`). Update the delta's `base:`
+     hash to the master's current hash. Reconcile the delta's content
      against what the master now says.
    - **Dangling task file references** — correct the `tasks.md` path or symbol
      to the real location in the tree.
    - **Placeholder markers** (`TBD`, `???`, an undecided name) — replace them
      with a decision grounded in the repository's existing patterns.
 
-3. **Put only the true gaps to the user.** A finding the repository genuinely
-   cannot answer — an undecided product choice encoded as a placeholder — is the
-   only thing you ask about. First route each true gap through the oracle rung
-   (see "The oracle rung" in `SKILL.md`); only the gaps it leaves open — `INSUFFICIENT`
-   verdicts and `Authority: advisory` answers — reach the typed round. Batch those under the **fast-path question contract** (a visible
-   context brief first, then a plain-text numbered typed round), and fold the
-   answers back into the artifacts. **Do not ask about anything discoverable
-   from the repository.** An enrichment-time consultation is ledgered like any
-   other: **append** its entry to the installed `plan.md`'s
-   `## Questions and answers` section — in place, like every other enrichment
-   edit — **continuing the existing numbering** from the highest `Q<n>` already
-   there (creating the section when the plan carries none yet).
+3. **Put only the true gaps to the user.** Ask only about a finding the
+   repository genuinely cannot answer. An example is an undecided product
+   choice encoded as a placeholder. First route each true gap through
+   the oracle rung (see "The oracle rung" in `SKILL.md`). Only the gaps it
+   leaves open reach the typed round: `INSUFFICIENT` verdicts and
+   `Authority: advisory` answers. Batch those under the **fast-path question
+   contract**: a visible context brief first, then a plain-text numbered typed
+   round. Fold the answers back into the artifacts. **Do not ask about anything
+   discoverable from the repository.** An enrichment-time consultation is
+   ledgered like any other. **Append** its entry to the installed `plan.md`'s
+   `## Questions and answers` section, in place, like every other enrichment
+   edit. **Continue the existing numbering** from the highest `Q<n>` already
+   there. Create the section when the plan carries none yet.
 
 ## Exit enrichment through the re-gate
 
@@ -56,11 +57,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_gate.py" <change> --roo
 ```
 
 - **Exit 0** — the gate stripped the `## Context insufficient` section and
-  promoted the change to `ready`. Confirm the change now sits at `ready` and
-  hand off with the **motivation-led summary** (lead with the plan's
-  `### Motivation`, then a brief sense of the `## Implementation`), closing with
-  the `## Summary` heading and its one sentence, then a colon-terminated
-  sentence, a blank line, then `/s:build` alone on its own line — never inline
+  promoted the change to `ready`. Confirm the change now sits at `ready`. Hand
+  off with the **motivation-led summary**. Lead with the plan's
+  `### Motivation`, then a brief sense of the `## Implementation`. Close with
+  the `## Summary` heading and its one sentence. Then write a colon-terminated
+  sentence and a blank line. Put `/s:build` alone on its own line, never inline
   mid-sentence.
 - **Exit 2** — the gate re-wrote a new `## Context insufficient` section and
   parked the change back at `rejected`. Present the remaining findings and
