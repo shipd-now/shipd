@@ -3337,7 +3337,10 @@ def cmd_config_show(root):
     ``worktree-idle-minutes:``, and ``worktree-stale-days:`` lines carrying the
     resolved worktree housekeeping settings, whether a layer declared them or
     they fell back to their built-in defaults, so the bash worktree helper can
-    read them through this seam (shipd-config worktree-sweep-keys). Does not
+    read them through this seam (shipd-config worktree-sweep-keys). Also prints
+    ``store-autocommit:`` and ``store-sync:`` lines carrying the effective
+    values, each marked ``(environment SHIPD_STORE_…)`` when the environment
+    override decided it. Does not
     require a workspace; exits zero on a default-only resolution (spec-status
     config-show-verb)."""
     try:
@@ -3373,6 +3376,14 @@ def cmd_config_show(root):
         anchor, is_fallback = wiki_resolution
         print("wiki: %s%s" % (sc.wiki_dir(anchor),
                               " (repo-local fallback)" if is_fallback else ""))
+    for label, enabled, env_name in (
+            ("store-autocommit", sc.store_autocommit_enabled,
+             sc.STORE_AUTOCOMMIT_ENV),
+            ("store-sync", sc.store_sync_enabled, sc.STORE_SYNC_ENV)):
+        forced = sc.store_env_override(env_name)
+        print("%s: %s%s" % (
+            label, "true" if enabled(config) else "false",
+            "" if forced is None else " (environment %s)" % env_name))
     print("worktree-sweep: %s"
           % ("true" if sc.worktree_sweep(config) else "false"))
     print("worktree-idle-minutes: %s"

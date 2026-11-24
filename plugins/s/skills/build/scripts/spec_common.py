@@ -464,6 +464,13 @@ STORE_AUTOCOMMIT_KEY = "store_autocommit"
 DEFAULT_STORE_AUTOCOMMIT = True
 STORE_SYNC_KEY = "store_sync"
 DEFAULT_STORE_SYNC = True
+# Environment overrides for the two store keys: they beat every config layer
+# (shipd-config store-sync-keys), so a harness owning its own commits and
+# pushes can switch the engine's off without replacing HOME.
+STORE_AUTOCOMMIT_ENV = "SHIPD_STORE_AUTOCOMMIT"
+STORE_SYNC_ENV = "SHIPD_STORE_SYNC"
+_ENV_FALSE = frozenset(("0", "false", "no", "off"))
+_ENV_TRUE = frozenset(("1", "true", "yes", "on"))
 
 # The seconds the delayed store push waits after the last store commit
 # (shipd-config store-push-delay-key).
@@ -613,14 +620,35 @@ def worktree_sweep(config):
     return value
 
 
+def store_env_override(name, env=None):
+    """Return True or False when the environment variable ``name`` forces a
+    store key (``0``/``false``/``no``/``off`` force false, ``1``/``true``/
+    ``yes``/``on`` force true, case-insensitive, surrounding whitespace
+    ignored), or None when it is unset or any other value — the config then
+    decides (shipd-config store-sync-keys)."""
+    raw = (os.environ if env is None else env).get(name)
+    if raw is None:
+        return None
+    word = raw.strip().lower()
+    if word in _ENV_FALSE:
+        return False
+    if word in _ENV_TRUE:
+        return True
+    return None
+
+
 def store_autocommit_enabled(config):
     """Return whether an engine write into a workspace or external store
-    auto-commits, from a resolved config's ``store_autocommit`` key
-    (shipd-config store-sync-keys).
+    auto-commits (shipd-config store-sync-keys).
 
-    A boolean is used as declared; anything else — a string, a number, an
-    absent key — is treated as undeclared and yields the built-in default
-    rather than raising, mirroring ``worktree_sweep``'s tolerance."""
+    ``SHIPD_STORE_AUTOCOMMIT`` (see :func:`store_env_override`) beats every
+    config layer. Otherwise a resolved config's ``store_autocommit`` boolean
+    is used as declared; anything else — a string, a number, an absent key —
+    is treated as undeclared and yields the built-in default rather than
+    raising, mirroring ``worktree_sweep``'s tolerance."""
+    forced = store_env_override(STORE_AUTOCOMMIT_ENV)
+    if forced is not None:
+        return forced
     value = config.get(STORE_AUTOCOMMIT_KEY, DEFAULT_STORE_AUTOCOMMIT)
     if not isinstance(value, bool):
         return DEFAULT_STORE_AUTOCOMMIT
@@ -628,13 +656,17 @@ def store_autocommit_enabled(config):
 
 
 def store_sync_enabled(config):
-    """Return whether the session-boundary store sync hook runs its
-    networked git, from a resolved config's ``store_sync`` key (shipd-config
+    """Return whether the store's networked git runs — the session-boundary
+    sync hook, the delayed push, and autopilot's fetch (shipd-config
     store-sync-keys).
 
-    A boolean is used as declared; anything else — a string, a number, an
-    absent key — is treated as undeclared and yields the built-in default
-    rather than raising, mirroring ``worktree_sweep``'s tolerance."""
+    ``SHIPD_STORE_SYNC`` (see :func:`store_env_override`) beats every config
+    layer. Otherwise a resolved config's ``store_sync`` boolean is used as
+    declared; anything else yields the built-in default rather than
+    raising."""
+    forced = store_env_override(STORE_SYNC_ENV)
+    if forced is not None:
+        return forced
     value = config.get(STORE_SYNC_KEY, DEFAULT_STORE_SYNC)
     if not isinstance(value, bool):
         return DEFAULT_STORE_SYNC

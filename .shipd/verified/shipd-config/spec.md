@@ -1194,6 +1194,18 @@ each carrying a built-in default:
 - `store_sync` — a boolean gating whether the plugin's session-boundary store
   sync hook runs its networked git. Default `true`.
 
+Two environment variables override both keys over every config layer:
+`SHIPD_STORE_AUTOCOMMIT` for `store_autocommit` and `SHIPD_STORE_SYNC` for
+`store_sync`. The values `0`, `false`, `no`, and `off`, in any letter case,
+SHALL force the key false, and `1`, `true`, `yes`, and `on` SHALL force it
+true. If the variable is unset or holds any other value, then the engine
+SHALL resolve the key from the configuration as before. The override applies
+wherever the engine reads the key, the personal memory store included: the
+environment belongs to the process owner, not to a repository, so it is not
+what that store's own-tree resolution guards against. The `config-show` verb
+SHALL print the effective value of each key and mark it as coming from the
+environment when an override decided it.
+
 If a declared value is not a boolean, then the engine SHALL treat the key as
 undeclared and fall back to the built-in default rather than raising,
 mirroring the `worktree_sweep` key's tolerance. Both keys SHALL appear in the
@@ -1245,6 +1257,27 @@ auto-commit whatever `store_autocommit` resolves to.
   `store_root`, and no declared `store_autocommit`
 - **WHEN** a queue block is appended to the repo-local fallback store
 - **THEN** the write exits zero and no commit is made
+
+#### Scenario: The environment forces a key off
+- **GIVEN** a repo layer declaring `store_autocommit` and `store_sync` true
+- **WHEN** the keys are resolved with `SHIPD_STORE_AUTOCOMMIT` and
+  `SHIPD_STORE_SYNC` set to `0`
+- **THEN** both resolve false and no commit or push is scheduled
+
+#### Scenario: The environment forces a key on
+- **GIVEN** a repo layer declaring `store_sync` false
+- **WHEN** the key is resolved with `SHIPD_STORE_SYNC` set to `Yes`
+- **THEN** the effective value is true
+
+#### Scenario: An unrecognised environment value falls back to the config
+- **GIVEN** a repo layer declaring `store_autocommit` false
+- **WHEN** the key is resolved with `SHIPD_STORE_AUTOCOMMIT` set to `maybe`
+  or to an empty string
+- **THEN** the effective value is false, from the configuration
+
+#### Scenario: Config-show marks an environment override
+- **WHEN** `config-show` runs with `SHIPD_STORE_SYNC` set to `off`
+- **THEN** it prints `store-sync: false (environment SHIPD_STORE_SYNC)`
 
 ### Requirement: Room configuration key
 id: room-config-key

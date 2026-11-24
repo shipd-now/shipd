@@ -239,5 +239,7 @@ Git — not shipd — reconciles whatever stays unsynced:
 
 `store_autocommit` turns off the local auto-commit. `store_sync` turns off
 the delayed push and the session-boundary hook's fetch, rebase, and push.
-Both default `true`, and branching the workspace repo, or not, remains
+Both default `true`. The environment variables `SHIPD_STORE_AUTOCOMMIT` and
+`SHIPD_STORE_SYNC` override every config layer, so a harness that owns its
+own commits and pushes can set them to `0`. Branching the workspace repo, or not, remains
 entirely your team's call.

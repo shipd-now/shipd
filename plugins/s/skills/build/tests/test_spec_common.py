@@ -2695,6 +2695,61 @@ class StoreSyncConfigKeysTest(unittest.TestCase):
     def test_store_sync_enabled_malformed_value_falls_back_to_default(self):
         self.assertIs(sc.store_sync_enabled({"store_sync": "yes"}), True)
 
+    def _with_env(self, **env):
+        from unittest import mock
+        cleared = {k: v for k, v in os.environ.items()
+                   if k not in ("SHIPD_STORE_AUTOCOMMIT", "SHIPD_STORE_SYNC")}
+        cleared.update(env)
+        return mock.patch.dict(os.environ, cleared, clear=True)
+
+    def test_env_override_value_forms(self):
+        """store-sync-keys: the environment forces each key."""
+        for word in ("0", "false", "no", "off", "FALSE", "Off", " no "):
+            with self._with_env(SHIPD_STORE_AUTOCOMMIT=word,
+                                SHIPD_STORE_SYNC=word):
+                self.assertIs(sc.store_autocommit_enabled(
+                    {"store_autocommit": True}), False, word)
+                self.assertIs(sc.store_sync_enabled(
+                    {"store_sync": True}), False, word)
+        for word in ("1", "true", "yes", "on", "TRUE", "Yes", "ON"):
+            with self._with_env(SHIPD_STORE_AUTOCOMMIT=word,
+                                SHIPD_STORE_SYNC=word):
+                self.assertIs(sc.store_autocommit_enabled(
+                    {"store_autocommit": False}), True, word)
+                self.assertIs(sc.store_sync_enabled(
+                    {"store_sync": False}), True, word)
+
+    def test_env_unset_uses_the_config(self):
+        with self._with_env():
+            self.assertIs(sc.store_autocommit_enabled(
+                {"store_autocommit": False}), False)
+            self.assertIs(sc.store_sync_enabled({"store_sync": False}), False)
+            self.assertIs(sc.store_sync_enabled({}), True)
+
+    def test_env_invalid_value_falls_back_to_the_config(self):
+        for word in ("maybe", "", "2", "enabled"):
+            with self._with_env(SHIPD_STORE_AUTOCOMMIT=word,
+                                SHIPD_STORE_SYNC=word):
+                self.assertIs(sc.store_autocommit_enabled(
+                    {"store_autocommit": False}), False, word)
+                self.assertIs(sc.store_sync_enabled(
+                    {"store_sync": False}), False, word)
+                self.assertIs(sc.store_sync_enabled({}), True, word)
+
+    def test_env_zero_beats_a_repo_layer_declaring_true(self):
+        root = tempfile.mkdtemp(prefix="store-env-")
+        self.addCleanup(shutil.rmtree, root, True)
+        with open(os.path.join(root, ".shipd-config.json"), "w") as fh:
+            json.dump({"store_autocommit": True, "store_sync": True}, fh)
+        with self._with_env():
+            config, _ = sc.resolve_config(root)
+            self.assertIs(sc.store_autocommit_enabled(config), True)
+            self.assertIs(sc.store_sync_enabled(config), True)
+        with self._with_env(SHIPD_STORE_AUTOCOMMIT="0", SHIPD_STORE_SYNC="0"):
+            config, _ = sc.resolve_config(root)
+            self.assertIs(sc.store_autocommit_enabled(config), False)
+            self.assertIs(sc.store_sync_enabled(config), False)
+
     def test_store_push_delay_defaults_to_60(self):
         """store-push-delay-key: `The delay defaults to 60`."""
         self.assertEqual(sc.store_push_delay({}), 60)
