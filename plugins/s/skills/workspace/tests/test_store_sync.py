@@ -9,6 +9,7 @@ actual git plumbing rather than a mock of it. ``HOME`` is overridden per test
 so a developer's own ``~/.shipd-config.json`` never colours a result.
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -331,50 +332,118 @@ class TestDelayedPush(DelayedTestCase):
 
 
 class TestDelayedDebounce(DelayedTestCase):
-    def wait_for_token(self, timeout=10):
-        """Return the one token file's content once the first helper has
-        written it."""
+    def lock_files(self):
+        """The names of the waiter lock files in the isolated temp
+        directory."""
+        return [n for n in os.listdir(self.tokens) if n.endswith(".lock")]
+
+    def wait_for_lock(self, timeout=10):
+        """Block until a helper has claimed the waiter lock."""
         deadline = time.time() + timeout
         while time.time() < deadline:
-            names = [n for n in os.listdir(self.tokens)
-                     if n.startswith("shipd-store-push-")
-                     and n.endswith(".token")]
-            if names:
-                with open(os.path.join(self.tokens, names[0]),
-                          encoding="utf-8") as fh:
-                    body = fh.read().strip()
-                if body:
-                    return os.path.join(self.tokens, names[0]), body
+            if self.lock_files():
+                return
             time.sleep(0.05)
-        self.fail("the first helper never wrote its token")
+        self.fail("the first helper never claimed the waiter lock")
 
-    def test_a_burst_of_writes_ends_in_one_push(self):
-        """store-push-debounce: `A burst of writes ends in one push`.
+    def start_helper(self, store, delay):
+        proc = subprocess.Popen(
+            self.delayed_argv(store, delay), stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=self.delayed_env())
+        self.addCleanup(proc.wait, 30)
+        self.addCleanup(proc.kill)
+        return proc
 
-        The first helper (delay 2) is superseded by a second (delay 0),
-        which pushes. A commit made after the second helper finishes must
-        not reach the remote: the first helper, on waking, finds another
-        helper's token and exits having run no git."""
+    def test_a_second_helper_exits_while_the_first_waits(self):
+        """store-push-debounce: `A second helper exits while the first
+        waits`."""
         remote = self.make_remote()
         ws = self.make_clone(remote)
         self.commit(ws, "page.md", "one\n", "first write")
 
-        first = subprocess.Popen(
-            self.delayed_argv(ws, 2), stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            env=self.delayed_env())
-        self.addCleanup(first.kill)
-        token_path, first_token = self.wait_for_token()
+        first = self.start_helper(ws, 3)
+        self.wait_for_lock()
+
+        started = time.time()
+        rc, _out, err = self.run_delayed(ws, 3)
+        elapsed = time.time() - started
+        self.assertEqual(rc, 0, err)
+        self.assertLess(elapsed, 2)
+        self.assertNotIn("first write", self.remote_log(remote))
+        self.assertEqual(len(self.lock_files()), 1)
+
+        self.assertEqual(first.wait(timeout=30), 0)
+        self.assertIn("first write", self.remote_log(remote))
+
+    def test_a_later_write_extends_the_wait(self):
+        """store-push-debounce: `A later write extends the wait`."""
+        remote = self.make_remote()
+        ws = self.make_clone(remote)
+        self.commit(ws, "page.md", "one\n", "first write")
+
+        first_started = time.time()
+        first = self.start_helper(ws, 3)
+        self.wait_for_lock()
+        pause = first_started + 1.5 - time.time()
+        if pause > 0:
+            time.sleep(pause)
+
+        self.commit(ws, "second.md", "two\n", "second write")
+        second_started = time.time()
+        second = self.start_helper(ws, 3)
+        self.assertEqual(first.wait(timeout=30), 0)
+        first_done = time.time()
+        self.assertEqual(second.wait(timeout=30), 0)
+
+        self.assertGreaterEqual(first_done - second_started, 3)
+        log = self.remote_log(remote)
+        self.assertIn("first write", log)
+        self.assertIn("second write", log)
+        self.assertEqual(self.lock_files(), [])
+
+    def test_an_abandoned_lock_is_taken_over(self):
+        """store-push-debounce: `An abandoned lock is taken over`."""
+        remote = self.make_remote()
+        ws = self.make_clone(remote)
+        self.commit(ws, "page.md", "one\n", "first write")
+
+        digest = hashlib.sha256(
+            os.path.abspath(ws).encode("utf-8")).hexdigest()[:16]
+        lock = os.path.join(self.tokens, "shipd-store-push-%s.lock" % digest)
+        with open(lock, "w", encoding="utf-8") as fh:
+            fh.write("abandoned")
+        old = time.time() - 120
+        os.utime(lock, (old, old))
 
         rc, _out, err = self.run_delayed(ws, 0)
         self.assertEqual(rc, 0, err)
-        with open(token_path, encoding="utf-8") as fh:
-            self.assertNotEqual(fh.read().strip(), first_token)
         self.assertIn("first write", self.remote_log(remote))
+        self.assertEqual(self.lock_files(), [])
 
-        self.commit(ws, "late.md", "late\n", "late write")
+    def test_a_holder_that_loses_its_lock_exits_without_pushing(self):
+        """A waiting helper whose lock file now carries another helper's id
+        exits 0 having run no git, and leaves that lock in place."""
+        remote = self.make_remote()
+        ws = self.make_clone(remote)
+        self.commit(ws, "page.md", "one\n", "first write")
+
+        first = self.start_helper(ws, 3)
+        self.wait_for_lock()
+        lock = os.path.join(self.tokens, self.lock_files()[0])
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            with open(lock, encoding="utf-8") as fh:
+                if fh.read().strip():
+                    break
+            time.sleep(0.05)
+        with open(lock, "w", encoding="utf-8") as fh:
+            fh.write("another-helper")
+
         self.assertEqual(first.wait(timeout=30), 0)
-        self.assertNotIn("late write", self.remote_log(remote))
+        self.assertNotIn("first write", self.remote_log(remote))
+        with open(lock, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "another-helper")
 
 
 class TestStoreSyncDisabled(StoreSyncTestCase):

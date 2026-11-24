@@ -369,7 +369,7 @@ id: store-push-debounce
 When a store auto-commit lands in a workspace or external store, the resolved
 `store_sync` key is true, and the store carries an `origin` remote, the
 engine SHALL start the plugin's `store_sync.py` in its delayed mode as a
-detached process, passing the store directory and the resolved
+detached process, passing the store's git repository root and the resolved
 `store_push_delay`, and SHALL return without waiting for it. The engine
 process itself SHALL run no network call. If the helper cannot be started,
 then the engine SHALL swallow the failure and leave the write's exit code and
@@ -377,11 +377,21 @@ output unchanged. The engine SHALL NOT schedule a push for the personal
 memory store, for a write that made no commit, or while `store_sync` resolves
 false.
 
-When started in delayed mode, the helper SHALL record a unique token in a
-file in the system temp directory keyed by the store's absolute path, then
-wait the delay. If the file then holds another helper's token, then the
-helper SHALL exit 0 having run no git, so a burst of writes ends in one push
-after the last write. Otherwise the helper SHALL integrate the upstream as
+When started in delayed mode, the helper SHALL record a unique token and a
+push deadline, the current time plus the delay, in a token file in the system
+temp directory keyed by the repository root's absolute path. The helper SHALL
+then claim a waiter lock file beside the token file. If another helper holds
+a lock refreshed within the last 60 seconds, then the helper SHALL exit 0
+having run no git, so at most one helper waits per repository. If the lock
+was last refreshed more than 60 seconds ago, then the helper SHALL take the
+lock over.
+
+The lock holder SHALL wait until the deadline in the token file has passed,
+re-reading the file so a later write extends the wait, and SHALL refresh the
+lock at least every ten seconds while it waits. The holder SHALL then release
+the lock. If the token file changed after the holder's last read, then the
+holder SHALL claim the lock again and keep waiting, or exit 0 when another
+helper now holds it. Otherwise the helper SHALL integrate the upstream as
 the `store-sync-hook` requirement specifies and push the local commits. Every
 git invocation SHALL carry a timeout and SHALL run with
 `GIT_TERMINAL_PROMPT=0`. If any step fails, then the helper SHALL exit 0 and
@@ -393,11 +403,24 @@ leave the store's commits in place for the next attempt.
 - **WHEN** `wiki-queue-add` appends a block and exits
 - **THEN** within ten seconds the remote's branch contains the queue commit
 
-#### Scenario: A burst of writes ends in one push
-- **GIVEN** two delayed helpers started for one store, the second while the
-  first still waits
-- **WHEN** both delays elapse
-- **THEN** the first helper exits having run no git and the second pushes
+#### Scenario: A second helper exits while the first waits
+- **GIVEN** a delayed helper waiting on a store with a delay of 3 seconds
+- **WHEN** a second delayed helper starts for the same store
+- **THEN** the second helper exits 0 within two seconds, the remote does not
+  yet contain the store's commit, and one lock file exists
+
+#### Scenario: A later write extends the wait
+- **GIVEN** a delayed helper waiting with a delay of 3 seconds
+- **WHEN** a second helper with a delay of 3 seconds starts 1.5 seconds later
+- **THEN** the first helper exits no sooner than 3 seconds after the second
+  started, the remote then contains the store's commits, and no lock file
+  remains
+
+#### Scenario: An abandoned lock is taken over
+- **GIVEN** a lock file for the store whose modification time is 120 seconds
+  old and no helper running
+- **WHEN** a delayed helper starts with a delay of 0
+- **THEN** the remote contains the store's commit and no lock file remains
 
 #### Scenario: The write never waits for the push
 - **GIVEN** a workspace store with `store_push_delay` declared as 60
