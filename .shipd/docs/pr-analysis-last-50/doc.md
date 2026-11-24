@@ -93,7 +93,7 @@
 | #407 | feature | +732/-89 | 3 | 1 | 1 | 0 | 5.4 | ☕ Room acts as a GitHub App bot for the author's fix |
 | #406 | docs | +323/-39 | 1 | 1 | 0 | 0 | 0.3 | ☕ Trim the Multi-agent PR page and drop the Mermaid note |
 | #405 | feature | +419/-25 | 1 | 0 | 0 | 0 | 0.1 | ☕ Review refuses a head that adds nothing over its base |
-| #404 | docs | +252/-0 | 7 | 3 | 1 | 0 | 56.6 | ☕ Add a public page for the shipd-axel GitHub App |
+| #404 | docs | +252/-0 | 7 | 3 | 1 | 0 | 56.6 | ☕ Add a public page for the factory GitHub App |
 | #403 | docs | +260/-3 | 1 | 0 | 0 | 0 | 0.2 | ☕ Skip the doctor pipeline check on an unloadable config |
 | #402 | docs | +260/-2 | 1 | 0 | 0 | 0 | 0.2 | ☕ Document doctor skips on an unresolvable content dir |
 | #401 | docs | +41/-4 | 1 | 0 | 0 | 0 | 0.1 | ☕ Keep shipd doctor running when dir is invalid |
