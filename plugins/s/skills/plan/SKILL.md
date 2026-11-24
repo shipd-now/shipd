@@ -77,6 +77,8 @@ one PR. Under harness plan mode, skip the worktree ("Harness plan mode" below).
 Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 - Readiness checklist: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/readiness.md`
 - Emission guide: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/emission.md`
+- Authoring rules: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/authoring.md`
+  (the plan-prose rules emission.md points at)
 - Depth-path dialogue: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/dialogue.md`
   (loaded only when the depth gate selects the depth path)
 - Visualization idioms: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/visualization.md`
@@ -402,7 +404,8 @@ answered by reading is a failure of this skill.
 6. **Emit** the lean shipd artifacts (`plan.md`, delta specs, `tasks.md`) into a
    **staging directory**, then install them through `spec_emit.py change` —
    silently, following
-   `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/emission.md`. Never write into
+   `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/emission.md` and
+   `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/authoring.md`. Never write into
    the spec tree directly or construct its path.
 7. **Self-review** before installing: re-read the staged `plan.md`, delta specs,
    and `tasks.md` for placeholders, internal contradictions, and decisions left

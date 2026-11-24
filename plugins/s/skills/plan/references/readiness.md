@@ -137,10 +137,8 @@ exactly like an item left unaddressed — go back to investigate, consult the
 oracle, or ask the user, per "How to use the gate" above, and do not install
 the change until every item is discharged.
 
-**Phrasing rule.** The context-sufficiency gate scans all of `plan.md` outside
-its own `## Context insufficient` section, so write the section in settled
-prose that carries none of the gate's placeholder markers — the same caution
-the oracle ledger already carries (`emission.md`, "the oracle ledger").
+**Phrasing rule.** Write the section in settled prose per `authoring.md`,
+`## Placeholders`.
 
 Print the four plain statements and the path line before authoring any
 artifact.
