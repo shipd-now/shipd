@@ -278,11 +278,84 @@ def _token_path(store):
     """The debounce token file for ``store``: in the system temp directory,
     named by a 16-hex digest of the store's absolute path. The engine passes
     the store's repository root, so every write into one repository shares
-    the token."""
+    the token. Its body is ``"<id> <deadline>"``: a unique id and the epoch
+    time after which the push may run (:func:`_token_deadline`)."""
     digest = hashlib.sha256(
         os.path.abspath(store).encode("utf-8")).hexdigest()[:16]
     return os.path.join(
         tempfile.gettempdir(), "shipd-store-push-%s.token" % digest)
+
+
+# The waiter lock beside the token file: its holder refreshes it at least
+# every _LOCK_REFRESH seconds, and a lock left unrefreshed for _LOCK_STALE
+# seconds counts as abandoned and is taken over.
+_LOCK_REFRESH = 10
+_LOCK_STALE = 60
+
+
+def _lock_path(store):
+    """The waiter lock file for ``store``: the token path with ``.token``
+    replaced by ``.lock``."""
+    path = _token_path(store)
+    return path[:-len(".token")] + ".lock"
+
+
+def _token_deadline(body):
+    """The push deadline in a token body: the float after the last space, or
+    None when ``body`` is missing or malformed."""
+    if not body or " " not in body:
+        return None
+    try:
+        return float(body.rsplit(" ", 1)[1])
+    except ValueError:
+        return None
+
+
+def _create_lock(path, ident):
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(ident)
+
+
+def _claim_lock(path, ident):
+    """Claim the waiter lock at ``path`` for ``ident`` by exclusive create.
+    A lock whose mtime is older than ``_LOCK_STALE`` seconds (or that
+    vanished meanwhile) is removed and the create tried once more. Return
+    whether this helper now holds the lock; a fresh lock returns False."""
+    try:
+        _create_lock(path, ident)
+        return True
+    except FileExistsError:
+        pass
+    try:
+        stale = time.time() - os.stat(path).st_mtime > _LOCK_STALE
+    except FileNotFoundError:
+        stale = True
+    if not stale:
+        return False
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    try:
+        _create_lock(path, ident)
+        return True
+    except FileExistsError:
+        return False
+
+
+def _holds_lock(path, ident):
+    """Whether the lock file at ``path`` carries ``ident``."""
+    return _read_token(path) == ident
+
+
+def _release_lock(path, ident):
+    """Remove the lock file at ``path`` only while ``ident`` holds it."""
+    if _holds_lock(path, ident):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
 
 
 def _write_token(path, token):
@@ -330,23 +403,50 @@ def _parse_delayed(argv):
 
 
 def run_delayed(store, delay):
-    """The delayed push (shipd-wiki store-push-debounce): record a unique
-    token, wait ``delay`` seconds, and exit having run no git when a later
-    helper for the same store has since replaced the token — so a burst of
-    writes ends in one push after the last write. Otherwise, when ``store``
-    sits inside a git work tree with an ``origin`` remote, integrate the
-    upstream (:func:`integrate`) and push. Any failure leaves the store's
-    commits in place for the next attempt. Always returns 0."""
-    token = "%d-%d" % (os.getpid(), time.time_ns())
+    """The delayed push (shipd-wiki store-push-debounce). Record a unique
+    token with a push deadline ``delay`` seconds from now, then claim the
+    waiter lock beside the token file; a helper that finds a live lock exits
+    having run no git, so at most one helper waits per repository. The lock
+    holder waits until the token's deadline passes, re-reading the token so a
+    later write extends the wait and refreshing the lock while it waits. It
+    then releases the lock; when the token changed after its last read, it
+    claims the lock again and keeps waiting, or exits when another helper now
+    holds it. Otherwise, when ``store`` sits inside a git work tree with an
+    ``origin`` remote, it integrates the upstream (:func:`integrate`) and
+    pushes. Any failure leaves the store's commits in place for the next
+    attempt. Always returns 0."""
+    ident = "%d-%d" % (os.getpid(), time.time_ns())
     path = _token_path(store)
+    lock = _lock_path(store)
     try:
-        _write_token(path, token)
+        _write_token(path, "%s %r" % (ident, time.time() + delay))
     except OSError:
         return 0
-    if delay:
-        time.sleep(delay)
-    if _read_token(path) != token:
+    if not _claim_lock(lock, ident):
         return 0
+    try:
+        while True:
+            while True:
+                seen = _read_token(path)
+                deadline = _token_deadline(seen)
+                remaining = (deadline - time.time()
+                             if deadline is not None else 0)
+                if remaining <= 0:
+                    break
+                time.sleep(min(remaining, _LOCK_REFRESH))
+                if not _holds_lock(lock, ident):
+                    return 0
+                try:
+                    os.utime(lock)
+                except OSError:
+                    return 0
+            _release_lock(lock, ident)
+            if _read_token(path) == seen:
+                break
+            if not _claim_lock(lock, ident):
+                return 0
+    finally:
+        _release_lock(lock, ident)
     try:
         spec_common = _engine()
         if not spec_common.inside_git_work_tree(store):
