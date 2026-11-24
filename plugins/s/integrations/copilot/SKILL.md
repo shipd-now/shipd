@@ -67,6 +67,13 @@ find its references.
 - Treat every match as a **candidate to verify, never as "safe."** The lookup
   is best-effort grep, not a complete call graph. Unmatched files are *not*
   proven unaffected — say so rather than implying coverage you do not have.
+- A consumer in **another repository** is never judged from its default
+  branch alone. Read it with an explicit `?ref=<commit id>`: first at the
+  head of each pull request GitHub cross-references on this one
+  (`gh api repos/<owner>/<repo>/issues/<number>/timeline`), then at the
+  default branch. A head that migrates the consumer means no finding. Where
+  a lookup fails, say you could not verify that consumer and raise nothing
+  blocking for it.
 
 ### 4. Trace call-site values
 

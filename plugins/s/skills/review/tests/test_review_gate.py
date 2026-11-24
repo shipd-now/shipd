@@ -112,8 +112,24 @@ class FakeGh:
                  user_login="mikkel", user_fail=False,
                  variable_get_enabled=False, merge_call_fails=False,
                  pr_author="pr-author", author_fail=False,
-                 reject_decisions=0):
+                 reject_decisions=0, pr_body="", timeline=None,
+                 linked_pulls=None, timeline_fail=False,
+                 search_results=None, timeline_raw=None):
         self.pr_author = pr_author
+        # `linked` verb state: the reviewed pull request's body, its issue
+        # timeline events, the per-pull-request reads keyed
+        # ``"<owner>/<repo>#<n>"`` (a pull dict, or a ``(rc, stdout, stderr)``
+        # triple for a failed read), a failing timeline read, the open
+        # pull requests ``gh pr list --repo`` answers (returned unchanged,
+        # the call itself recorded in ``calls``), and ``timeline_raw``: when
+        # set, the timeline read's stdout verbatim, so a test can hand back
+        # the back-to-back arrays ``gh api --paginate`` prints.
+        self.pr_body = pr_body
+        self.timeline = list(timeline or [])
+        self.timeline_raw = timeline_raw
+        self.linked_pulls = dict(linked_pulls or {})
+        self.timeline_fail = timeline_fail
+        self.search_results = list(search_results or [])
         self.author_fail = author_fail
         # Count of APPROVE/REQUEST_CHANGES review POSTs answered with a 422.
         self._reject_decisions = reject_decisions
@@ -183,6 +199,8 @@ class FakeGh:
             if self.author_fail:
                 return 1, "", "gh: could not read author"
             return 0, json.dumps({"author": {"login": self.pr_author}}), ""
+        if args[:2] == ["pr", "view"] and "body" in args:
+            return 0, json.dumps({"body": self.pr_body}), ""
         if args[:2] == ["pr", "view"]:
             return 0, json.dumps({"number": self.number,
                                   "baseRefOid": self.base_sha,
@@ -197,6 +215,8 @@ class FakeGh:
             return (0, "true", "") if self.variable_get_enabled else (1, "", "variable not set")
         if args[:3] == ["pr", "merge", str(self.number)] and "--auto" in args:
             return (1, "", "merge failed") if self.merge_call_fails else (0, "", "")
+        if args[:2] == ["pr", "list"] and "--repo" in args:
+            return 0, json.dumps(self.search_results), ""
         if args[0] == "api":
             return self._api(args, input)
         return 1, "", "unexpected gh call: %r" % (args,)
@@ -269,6 +289,22 @@ class FakeGh:
             start = (int(query.get("page", 1)) - 1) * size
             return items[start:start + size]
         method = self._method(args)
+
+        if path.endswith("/timeline"):
+            if self.timeline_fail:
+                return 1, "", "HTTP 404: Not Found"
+            if self.timeline_raw is not None:
+                return 0, self.timeline_raw, ""
+            return 0, json.dumps(self.timeline), ""
+        pull = re.match(r"^repos/([^/]+/[^/]+)/pulls/(\d+)$", path)
+        if pull and method == "GET":
+            key = "%s#%s" % (pull.group(1), pull.group(2))
+            answer = self.linked_pulls.get(key)
+            if answer is None:
+                return 1, "", "HTTP 404: Not Found"
+            if isinstance(answer, tuple):
+                return answer
+            return 0, json.dumps(answer), ""
 
         # A threaded reply — POST repos/.../pulls/<n>/comments with in_reply_to.
         # Distinct from the issue-comment summary path (repos/.../issues/...).
@@ -3459,6 +3495,260 @@ class EarlierReviewsTest(unittest.TestCase):
 
     def test_no_previous_summary_yields_nothing(self):
         self.assertEqual(review_gate.earlier_reviews(None), [])
+
+
+# --- the `linked` verb ------------------------------------------------------
+# Fixture names are invented: acme/consumer is the consumer repository and
+# pull request 406 its migration. The reviewed pull request is FakeGh's own
+# o/r#7.
+
+CONSUMER = "acme/consumer"
+MIGRATION_SHA = "1111111111111111111111111111111111111111"
+
+
+def _xref(repo, number):
+    """A timeline ``cross-referenced`` event from a pull request."""
+    return {"event": "cross-referenced",
+            "source": {"type": "issue", "issue": {
+                "number": number,
+                "html_url": "https://github.com/%s/pull/%d" % (repo, number),
+                "state": "open",
+                "pull_request": {"url": "https://api.github.com/repos/%s/"
+                                        "pulls/%d" % (repo, number)},
+                "repository": {"full_name": repo}}}}
+
+
+def _pull(repo, number, sha, state="open", merged=False):
+    return {"head": {"sha": sha}, "state": state, "merged": merged,
+            "html_url": "https://github.com/%s/pull/%d" % (repo, number)}
+
+
+class LinkedTest(unittest.TestCase):
+    def _run(self, argv, fake):
+        import contextlib
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, out = _run_main(["linked"] + argv, fake)
+        return code, out, err.getvalue()
+
+    def test_cross_referenced_migration_listed_with_head(self):
+        fake = FakeGh(timeline=[_xref(CONSUMER, 406)],
+                      linked_pulls={"acme/consumer#406": _pull(
+                          CONSUMER, 406, MIGRATION_SHA)})
+        code, out, _ = self._run(["7", "--repo", CONSUMER], fake)
+        self.assertEqual(code, 0)
+        entries = json.loads(out)
+        self.assertEqual(len(entries), 1)
+        e = entries[0]
+        self.assertEqual(e["repo"], CONSUMER)
+        self.assertEqual(e["number"], 406)
+        self.assertEqual(e["state"], "open")
+        self.assertEqual(e["source"], "cross-reference")
+        self.assertEqual(e["head_sha"], MIGRATION_SHA)
+        self.assertEqual(e["url"], "https://github.com/acme/consumer/pull/406")
+
+    def test_body_link_listed(self):
+        # The body also links the reviewed pull request itself, which the
+        # verb never lists.
+        body = ("Migration: https://github.com/acme/consumer/pull/406\n"
+                "Self: https://github.com/o/r/pull/7\n")
+        fake = FakeGh(pr_body=body, linked_pulls={
+            "acme/consumer#406": _pull(CONSUMER, 406, MIGRATION_SHA)})
+        code, out, _ = self._run(["7"], fake)
+        self.assertEqual(code, 0)
+        entries = json.loads(out)
+        self.assertEqual([(e["repo"], e["number"], e["source"])
+                          for e in entries],
+                         [(CONSUMER, 406, "body")])
+        self.assertEqual(entries[0]["head_sha"], MIGRATION_SHA)
+
+    def test_duplicate_listed_once_under_cross_reference(self):
+        fake = FakeGh(
+            timeline=[_xref(CONSUMER, 406)],
+            pr_body="See https://github.com/acme/consumer/pull/406",
+            linked_pulls={"acme/consumer#406": _pull(
+                CONSUMER, 406, MIGRATION_SHA)})
+        code, out, _ = self._run(["7"], fake)
+        self.assertEqual(code, 0)
+        entries = json.loads(out)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["source"], "cross-reference")
+
+    def test_repo_filter_drops_other_repositories(self):
+        fake = FakeGh(
+            timeline=[_xref(CONSUMER, 406), _xref("acme/other", 12)],
+            linked_pulls={
+                "acme/consumer#406": _pull(CONSUMER, 406, MIGRATION_SHA),
+                "acme/other#12": _pull("acme/other", 12, "2" * 40)})
+        code, out, _ = self._run(["7", "--repo", CONSUMER], fake)
+        self.assertEqual(code, 0)
+        entries = json.loads(out)
+        self.assertEqual([(e["repo"], e["number"]) for e in entries],
+                         [(CONSUMER, 406)])
+
+    def test_open_pull_request_found_by_search(self):
+        fake = FakeGh(search_results=[{
+            "number": 410,
+            "url": "https://github.com/acme/consumer/pull/410",
+            "headRefOid": "3" * 40}])
+        code, out, _ = self._run(
+            ["7", "--repo", CONSUMER, "--search", "expectedRevision"], fake)
+        self.assertEqual(code, 0)
+        entries = json.loads(out)
+        self.assertEqual(len(entries), 1)
+        e = entries[0]
+        self.assertEqual((e["repo"], e["number"], e["source"], e["state"]),
+                         (CONSUMER, 410, "search", "open"))
+        self.assertEqual(e["head_sha"], "3" * 40)
+        lists = [a for a, _ in fake.calls if a[:2] == ["pr", "list"]]
+        self.assertEqual(len(lists), 1)
+        self.assertIn("expectedRevision", lists[0])
+
+    def test_unreadable_linked_pull_request_stays_visible(self):
+        fake = FakeGh(timeline=[_xref(CONSUMER, 406)], linked_pulls={
+            "acme/consumer#406": (1, "", "HTTP 403: Forbidden\nmore\n")})
+        code, out, _ = self._run(["7"], fake)
+        self.assertEqual(code, 0)
+        entries = json.loads(out)
+        self.assertEqual(len(entries), 1)
+        e = entries[0]
+        self.assertIsNone(e["head_sha"])
+        self.assertEqual(e["state"], "unknown")
+        self.assertEqual(e["error"], "HTTP 403: Forbidden")
+
+    def test_failed_timeline_read_fails_the_verb(self):
+        fake = FakeGh(timeline_fail=True)
+        code, out, err = self._run(["7"], fake)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertTrue(err.strip())
+
+    def test_nothing_linked_prints_empty_array(self):
+        fake = FakeGh()
+        code, out, _ = self._run(["7"], fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), [])
+
+    def _listing_call(self, fake):
+        lists = [a for a, _ in fake.calls if a[:2] == ["pr", "list"]]
+        self.assertEqual(len(lists), 1)
+        return lists[0]
+
+    def _search_results(self, count):
+        return [{"number": 1000 + i,
+                 "url": "https://github.com/acme/consumer/pull/%d" % (1000 + i),
+                 "headRefOid": "%040d" % i} for i in range(count)]
+
+    def test_body_shorthand_reference_listed(self):
+        fake = FakeGh(pr_body="Migration lives in acme/consumer#407.\n",
+                      linked_pulls={"acme/consumer#407": _pull(
+                          CONSUMER, 407, MIGRATION_SHA)})
+        code, out, _ = self._run(["7"], fake)
+        self.assertEqual(code, 0)
+        entries = json.loads(out)
+        self.assertEqual([(e["repo"], e["number"], e["source"])
+                          for e in entries],
+                         [(CONSUMER, 407, "body")])
+        self.assertEqual(entries[0]["head_sha"], MIGRATION_SHA)
+
+    def test_listing_call_carries_search_and_limit(self):
+        fake = FakeGh(search_results=self._search_results(1))
+        code, _out, _ = self._run(
+            ["7", "--repo", CONSUMER, "--search", "expectedRevision"], fake)
+        self.assertEqual(code, 0)
+        call = self._listing_call(fake)
+        self.assertEqual(call[call.index("--search") + 1], "expectedRevision")
+        self.assertEqual(call[call.index("--limit") + 1], "200")
+
+    def test_repo_without_search_lists_open_pull_requests(self):
+        fake = FakeGh(search_results=self._search_results(3))
+        code, out, _ = self._run(["7", "--repo", CONSUMER], fake)
+        self.assertEqual(code, 0)
+        call = self._listing_call(fake)
+        self.assertNotIn("--search", call)
+        self.assertEqual(call[call.index("--limit") + 1], "200")
+        entries = json.loads(out)
+        self.assertEqual([(e["number"], e["source"]) for e in entries],
+                         [(1000, "search"), (1001, "search"),
+                          (1002, "search")])
+
+    def test_full_listing_warns(self):
+        fake = FakeGh(search_results=self._search_results(200))
+        code, out, err = self._run(["7", "--repo", CONSUMER], fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(json.loads(out)), 200)
+        lines = err.splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("warning", lines[0])
+        self.assertIn("200", lines[0])
+        self.assertIn(CONSUMER, lines[0])
+
+    def test_short_listing_stays_silent(self):
+        fake = FakeGh(search_results=self._search_results(199))
+        code, out, err = self._run(["7", "--repo", CONSUMER], fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(json.loads(out)), 199)
+        self.assertEqual(err, "")
+
+    def test_url_in_another_repository_reads_that_repository(self):
+        # The checkout's repository is FakeGh's default o/r; the reviewed
+        # pull request lives in other/repo.
+        fake = FakeGh(pr_url="https://github.com/other/repo/pull/7",
+                      timeline=[_xref(CONSUMER, 406)],
+                      linked_pulls={"acme/consumer#406": _pull(
+                          CONSUMER, 406, MIGRATION_SHA)})
+        code, out, _ = self._run(["7"], fake)
+        self.assertEqual(code, 0)
+        self.assertEqual([e["number"] for e in json.loads(out)], [406])
+        apis = [a[1] for a, _ in fake.calls if a and a[0] == "api"]
+        self.assertIn("repos/other/repo/issues/7/timeline", apis)
+        self.assertFalse(any(a[:2] == ["repo", "view"]
+                             for a, _ in fake.calls))
+
+    def test_enterprise_host_url_reads_that_repository(self):
+        fake = FakeGh(pr_url="https://ghe.corp.example/corp/app/pull/7")
+        code, _out, _ = self._run(["7"], fake)
+        self.assertEqual(code, 0)
+        apis = [a[1] for a, _ in fake.calls if a and a[0] == "api"]
+        self.assertIn("repos/corp/app/issues/7/timeline", apis)
+        self.assertFalse(any(a[:2] == ["repo", "view"]
+                             for a, _ in fake.calls))
+
+    def test_unparseable_url_fails_the_verb(self):
+        fake = FakeGh(pr_url="not-a-url")
+        code, out, err = self._run(["7"], fake)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertTrue(any("not-a-url" in ln for ln in err.splitlines()))
+
+    def test_timeline_spanning_two_pages_read_whole(self):
+        raw = (json.dumps([_xref(CONSUMER, 406)]) + "\n"
+               + json.dumps([_xref(CONSUMER, 408)]) + "\n")
+        fake = FakeGh(timeline_raw=raw, linked_pulls={
+            "acme/consumer#406": _pull(CONSUMER, 406, MIGRATION_SHA),
+            "acme/consumer#408": _pull(CONSUMER, 408, "4" * 40)})
+        code, out, _ = self._run(["7"], fake)
+        self.assertEqual(code, 0)
+        self.assertEqual([(e["number"], e["source"])
+                          for e in json.loads(out)],
+                         [(406, "cross-reference"), (408, "cross-reference")])
+
+    def test_merged_pull_request_reads_as_merged(self):
+        fake = FakeGh(timeline=[_xref(CONSUMER, 406)], linked_pulls={
+            "acme/consumer#406": _pull(CONSUMER, 406, MIGRATION_SHA,
+                                       state="closed", merged=True)})
+        code, out, _ = self._run(["7"], fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)[0]["state"], "merged")
+
+    def test_search_without_repo_is_refused(self):
+        import contextlib
+        fake = FakeGh()
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                review_gate.main(["linked", "7", "--search", "foo"], gh=fake)
+        self.assertNotEqual(ctx.exception.code, 0)
+        self.assertEqual(fake.calls, [])
 
 
 if __name__ == "__main__":

@@ -109,6 +109,7 @@ DOWNSTREAM_CHECKS = (
     "misses extensionless scripts",
     "changed constants are contract changes",
     "uneven sibling sites",
+    "consumers in another repository",
 )
 
 CALL_SITE_VALUE_CHECKS = (
@@ -1826,6 +1827,41 @@ class SeverityDotParityTest(unittest.TestCase):
                     expected_bracket, joined,
                     "workflow folded finding is missing %r: %r"
                     % (expected_bracket, joined))
+
+
+class ExternalConsumerRuleTest(unittest.TestCase):
+    """A consumer in another repository is read at a named ref
+    (external-consumer-refs, copilot-external-consumer-refs).
+
+    A reviewer once read such a consumer at its default branch and blocked a
+    pull request whose migration was already open in the consumer
+    repository. The procedure lives in `call-site-tracing.md`, the posting
+    flow names the `linked` verb, and the two reference-free rubric surfaces
+    carry the rule with the raw timeline call, since neither ships
+    `review_gate.py`.
+    """
+
+    def _assert_holds(self, path, needles):
+        text = _read(path).lower()
+        for needle in needles:
+            with self.subTest(path=os.path.basename(path), needle=needle):
+                self.assertIn(needle.lower(), text,
+                              "%s does not hold %r" % (path, needle))
+
+    def test_call_site_tracing_carries_the_procedure(self):
+        self._assert_holds(
+            os.path.join(REFERENCES_DIR, "call-site-tracing.md"),
+            ("## Consumers in another repository",
+             'review_gate.py" linked', "?ref=", "could-not-verify"))
+
+    def test_posting_flow_names_the_verb(self):
+        self._assert_holds(os.path.join(REFERENCES_DIR, "posting.md"),
+                           ("review_gate.py linked",))
+
+    def test_reference_free_surfaces_carry_the_rule(self):
+        for path in (COPILOT_SKILL_MD, HARNESS_REVIEW_BODY):
+            self._assert_holds(path,
+                               ("another repository", "?ref=", "/timeline"))
 
 
 if __name__ == "__main__":
