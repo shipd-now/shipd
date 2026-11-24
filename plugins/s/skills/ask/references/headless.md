@@ -9,8 +9,14 @@ external harnesses load this file and follow it. Each part below has a stable
 
 ## Codebase first
 
-Answer what the repository settles. Read the code, the specs, and the epic
-before you treat anything as open. Ask nothing about a decision they answer.
+This part binds interactive sessions too, and `/s:plan` loads it.
+
+Answer what the repository and the request settle. Before you treat anything
+as open, read the existing capabilities in the verified specs. Read the
+in-flight changes, the epic, the relevant code, and the request too. The affected
+module, the existing patterns, the current behaviour, and the naming
+conventions are facts to find, never to ask about. A question that reading
+could have answered is a failure.
 
 ## Oracle next
 
