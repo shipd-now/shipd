@@ -55,7 +55,7 @@ The skill also offers to back the store with git, one typed round per step.
 None of these steps runs without your consent:
 
 - **`git init`** — on the first run, the skill offers to initialize
-  `<memory_dir>` as a git repository. Each capture then commits locally.
+  `<memory_dir>` as a git repository. Each capture then commits locally, unless `SHIPD_STORE_AUTOCOMMIT=0` is set in the environment.
 - **The remote** — the skill offers to create a private `shipd-memory`
   repository through `gh` and wire it as `origin`.
 - **The push** — the skill offers a confirmed push, separately from the

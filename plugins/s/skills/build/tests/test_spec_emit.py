@@ -13,6 +13,11 @@ import subprocess
 import tempfile
 import unittest
 
+# The harness exports these to switch the engine's store git off; the suite
+# asserts the default behaviour, so run it (and its subprocesses) without them.
+for _name in ("SHIPD_STORE_AUTOCOMMIT", "SHIPD_STORE_SYNC"):
+    os.environ.pop(_name, None)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.normpath(os.path.join(HERE, "..", "scripts", "spec_emit.py"))
 

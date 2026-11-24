@@ -81,7 +81,8 @@ Branch on the outcome:
 - **Store present** — proceed to the flow.
 
 Commits ride the engine's existing `wiki_autocommit`, a silent no-op until the
-personal store is a git repo. This skill adds a **git-backing flow** (step 6)
+personal store is a git repo, and while `SHIPD_STORE_AUTOCOMMIT=0` is set in the
+environment. This skill adds a **git-backing flow** (step 6)
 that — in typed rounds, never through the engine — offers to `git init` the store,
 wire a private `shipd-memory` remote via `gh`, and push, so the local commits become
 a synced, portable history. The engine itself still never pushes, pulls, or
@@ -215,7 +216,8 @@ skipped as duplicates, and the personal store the run wrote to.
 ## 6. Git-backing flow (typed rounds, skill-driven)
 
 The personal store's local commits ride the engine's `wiki_autocommit`, but only
-once `<memory_dir>` is a git repo — and nothing turns those local commits into a
+once `<memory_dir>` is a git repo (and never while `SHIPD_STORE_AUTOCOMMIT=0`
+is set) — and nothing turns those local commits into a
 synced, portable history. This flow, driven by the skill (never the engine) and
 confirmed in **typed rounds** (plain-text prompts, **no AskUserQuestion**), sets
 up and syncs that git backing around the capture install.
