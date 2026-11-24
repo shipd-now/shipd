@@ -1,5 +1,5 @@
 # store-push-debounce
-Status: ready
+Status: verified
 Planned-at: fbc93cb9181732db33c970d689ee6672580dcb5a
 Gated-hash: f84df337ccc5
 

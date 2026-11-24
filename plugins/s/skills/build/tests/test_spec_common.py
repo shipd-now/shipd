@@ -10,7 +10,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
 
 
 @contextlib.contextmanager
@@ -2693,6 +2695,22 @@ class StoreSyncConfigKeysTest(unittest.TestCase):
     def test_store_sync_enabled_malformed_value_falls_back_to_default(self):
         self.assertIs(sc.store_sync_enabled({"store_sync": "yes"}), True)
 
+    def test_store_push_delay_defaults_to_60(self):
+        """store-push-delay-key: `The delay defaults to 60`."""
+        self.assertEqual(sc.store_push_delay({}), 60)
+
+    def test_store_push_delay_reads_declared_value(self):
+        """store-push-delay-key: `A declared value is used`."""
+        self.assertEqual(sc.store_push_delay({"store_push_delay": 5}), 5)
+        self.assertEqual(sc.store_push_delay({"store_push_delay": 0}), 0)
+
+    def test_store_push_delay_malformed_value_falls_back_to_default(self):
+        """store-push-delay-key: `A malformed value falls back to the
+        default`."""
+        for value in ("soon", -1, True):
+            self.assertEqual(
+                sc.store_push_delay({"store_push_delay": value}), 60, value)
+
     def test_workspace_store_gate_resolves_from_the_repo(self):
         """store-sync-keys: `A declared false disables the auto-commit`.
 
@@ -2765,7 +2783,7 @@ class StoreSyncConfigKeysTest(unittest.TestCase):
                 os.unlink(lock_path)
             os.symlink(victim, lock_path)
             try:
-                with sc._store_commit_lock(store):
+                with sc.store_commit_lock(store):
                     pass
             finally:
                 os.unlink(lock_path)
@@ -4946,6 +4964,163 @@ class WikiAutocommitTest(unittest.TestCase):
             self.assertTrue(made_first)
             self.assertTrue(made_second)
             self.assertEqual(self._commit_count(ws), before + 2)
+
+
+class ScheduleStorePushTest(unittest.TestCase):
+    """wiki_autocommit schedules the debounced store push — a detached
+    ``store_sync.py --delayed`` helper — after a commit lands in a store with
+    an ``origin`` remote (shipd-wiki store-push-debounce).
+
+    ``subprocess.Popen`` is patched with a wrapper that records (and does not
+    start) any ``--delayed`` helper, delegating every other call — the
+    engine's own local git — to the real ``Popen``."""
+
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="push-sched-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.helpers = []
+        self.helper_error = None
+        real_popen = subprocess.Popen
+
+        def fake_popen(args, *a, **kw):
+            if isinstance(args, (list, tuple)) and "--delayed" in args:
+                self.helpers.append((list(args), kw))
+                if self.helper_error is not None:
+                    raise self.helper_error
+                return mock.Mock()
+            return real_popen(args, *a, **kw)
+
+        patcher = mock.patch("subprocess.Popen", side_effect=fake_popen)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _write(self, path, body):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(body)
+
+    def _store(self, config=None, origin=True):
+        """A git workspace whose wiki store has one seed commit; returns the
+        store directory and its first page path."""
+        ws = os.path.join(self.tmp, "ws")
+        os.makedirs(ws)
+        _git("init", "-q", ws)
+        _git("-C", ws, "config", "user.email", "test@example.com")
+        _git("-C", ws, "config", "user.name", "Test")
+        self._write(os.path.join(ws, ".shipd-config.json"),
+                    json.dumps(config if config is not None
+                               else {"workspace": {}}))
+        store = os.path.join(ws, ".shipd", "wiki")
+        page = os.path.join(store, "page.md")
+        self._write(page, "v1\n")
+        _git("-C", ws, "add", "-A")
+        _git("-C", ws, "commit", "-q", "-m", "seed")
+        if origin:
+            _git("-C", ws, "remote", "add", "origin",
+                 os.path.join(self.tmp, "nowhere.git"))
+        return store, page
+
+    def test_commit_starts_one_detached_helper(self):
+        store, page = self._store()
+        self._write(page, "v2\n")
+        self.assertTrue(sc.wiki_autocommit(store, [page], "shipd: test"))
+        self.assertEqual(len(self.helpers), 1)
+        argv, kw = self.helpers[0]
+        self.assertEqual(argv[-4:], ["--delayed", store, "--delay", "60"])
+        self.assertTrue(argv[-5].endswith(
+            os.path.join("workspace", "scripts", "store_sync.py")))
+        self.assertTrue(kw.get("start_new_session"))
+        for stream in ("stdin", "stdout", "stderr"):
+            self.assertIs(kw.get(stream), subprocess.DEVNULL, stream)
+
+    def test_declared_delay_is_passed(self):
+        store, page = self._store({"workspace": {}, "store_push_delay": 5})
+        self._write(page, "v2\n")
+        sc.wiki_autocommit(store, [page], "shipd: test")
+        self.assertEqual(self.helpers[0][0][-2:], ["--delay", "5"])
+
+    def test_no_origin_remote_starts_no_helper(self):
+        """store-push-debounce: `A store without a remote schedules
+        nothing`."""
+        store, page = self._store(origin=False)
+        self._write(page, "v2\n")
+        self.assertTrue(sc.wiki_autocommit(store, [page], "shipd: test"))
+        self.assertEqual(self.helpers, [])
+
+    def test_store_sync_false_starts_no_helper(self):
+        """store-push-debounce: `The key false schedules nothing`."""
+        store, page = self._store({"workspace": {}, "store_sync": False})
+        self._write(page, "v2\n")
+        self.assertTrue(sc.wiki_autocommit(store, [page], "shipd: test"))
+        self.assertEqual(self.helpers, [])
+
+    def test_schedule_push_false_starts_no_helper(self):
+        """store-push-debounce: the personal-store call sites pass
+        ``schedule_push=False``."""
+        store, page = self._store()
+        self._write(page, "v2\n")
+        self.assertTrue(sc.wiki_autocommit(
+            store, [page], "shipd: test", schedule_push=False))
+        self.assertEqual(self.helpers, [])
+
+    def test_no_commit_starts_no_helper(self):
+        store, page = self._store()
+        self.assertFalse(sc.wiki_autocommit(store, [page], "shipd: test"))
+        self.assertEqual(self.helpers, [])
+
+    def test_helper_start_failure_still_returns_true(self):
+        """store-push-debounce: `A helper that cannot start never fails the
+        write`."""
+        store, page = self._store()
+        self.helper_error = OSError("no such file")
+        self._write(page, "v2\n")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertTrue(sc.wiki_autocommit(store, [page], "shipd: test"))
+        self.assertEqual(len(self.helpers), 1)
+        self.assertEqual(stderr.getvalue(), "")
+
+
+class ScheduleStorePushEndToEndTest(unittest.TestCase):
+    """store-push-debounce: `A store commit reaches the remote after the
+    delay` — a real helper, a bare remote in a temp directory, and
+    ``store_push_delay`` 0 so no helper is left sleeping."""
+
+    def test_commit_reaches_the_remote(self):
+        tmp = os.path.realpath(tempfile.mkdtemp(prefix="push-e2e-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        remote = os.path.join(tmp, "remote.git")
+        _git("init", "-q", "--bare", "-b", "main", remote)
+        ws = os.path.join(tmp, "ws")
+        _git("clone", "-q", remote, ws)
+        _git("-C", ws, "config", "user.email", "test@example.com")
+        _git("-C", ws, "config", "user.name", "Test")
+        with open(os.path.join(ws, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"workspace": {}, "store_push_delay": 0}, fh)
+        store = os.path.join(ws, ".shipd", "wiki")
+        os.makedirs(store)
+        page = os.path.join(store, "page.md")
+        with open(page, "w", encoding="utf-8") as fh:
+            fh.write("v1\n")
+        _git("-C", ws, "add", "-A")
+        _git("-C", ws, "commit", "-q", "-m", "seed")
+        _git("-C", ws, "push", "-q", "-u", "origin", "main")
+
+        with open(page, "w", encoding="utf-8") as fh:
+            fh.write("v2\n")
+        self.assertTrue(sc.wiki_autocommit(store, [page], "shipd: e2e"))
+
+        deadline = time.time() + 10
+        subjects = ""
+        while time.time() < deadline:
+            subjects = subprocess.run(
+                ["git", "-C", remote, "log", "--format=%s", "main"],
+                capture_output=True, text=True).stdout
+            if "shipd: e2e" in subjects:
+                break
+            time.sleep(0.2)
+        self.assertIn("shipd: e2e", subjects)
 
 
 class LocalStateTest(unittest.TestCase):

@@ -201,6 +201,11 @@ def _validate_idle(value, path):
         _bad("worktree_idle_minutes", path, "a non-negative integer", value)
 
 
+def _validate_push_delay(value, path):
+    if not _is_int(value) or value < 0:
+        _bad("store_push_delay", path, "a non-negative integer", value)
+
+
 def _validate_stale(value, path):
     if not _is_int(value) or value < 1:
         _bad("worktree_stale_days", path, "a positive integer", value)
@@ -315,6 +320,8 @@ REGISTRY = {spec.key: spec for spec in (
          'spec, directory, context', "user", "shipd statusline layout"),
     _row("store_autocommit", _boolean("store_autocommit"), "true or false",
          "repo"),
+    _row("store_push_delay", _validate_push_delay,
+         "a non-negative integer of seconds; 0 pushes at once", "repo"),
     _row("store_root", _non_empty_string("store_root"),
          "a path to the external store root", "repo"),
     _row("store_sync", _boolean("store_sync"), "true or false", "repo"),

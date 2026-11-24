@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -137,26 +138,207 @@ class TestSessionEnd(StoreSyncTestCase):
 
 
 class TestDivergentUpstream(StoreSyncTestCase):
-    def test_divergent_upstream_warns_and_changes_nothing(self):
+    def diverge(self, local_body="local\n", upstream_body="up\n",
+                same_file=False):
+        """A clone with one unpushed local commit and an upstream that moved
+        on with one commit of its own. Returns ``(remote, ws)``."""
         remote = self.make_remote()
         ws = self.make_clone(remote)
-        self.write(os.path.join(ws, ".shipd", "wiki", "page.md"), "local\n")
+        local_name = "index.md" if same_file else "page.md"
+        self.write(os.path.join(ws, ".shipd", "wiki", local_name), local_body)
         _git("-C", ws, "add", "-A")
         _git("-C", ws, "commit", "-q", "-m", "local change")
-        before_local = self.local_log(ws)
 
         other = self.make_clone(remote, name="other")
-        self.write(os.path.join(other, ".shipd", "wiki", "upstream.md"), "up\n")
+        up_name = "index.md" if same_file else "upstream.md"
+        self.write(os.path.join(other, ".shipd", "wiki", up_name),
+                   upstream_body)
         _git("-C", other, "add", "-A")
         _git("-C", other, "commit", "-q", "-m", "upstream change")
         _git("-C", other, "push", "-q", "origin", "main")
+        return remote, ws
+
+    def test_divergent_upstream_is_rebased_and_pushed(self):
+        """store-sync-hook: `A divergent upstream is rebased and pushed`."""
+        remote, ws = self.diverge()
+
+        rc, out, err = self.run_hook("SessionStart", ws)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(out, "")
+        self.assertEqual(self.local_log(ws)[:2],
+                         ["local change", "upstream change"])
+        remote_log = self.remote_log(remote)
+        self.assertIn("local change", remote_log)
+        self.assertIn("upstream change", remote_log)
+
+    def test_conflicting_rebase_aborts_and_warns(self):
+        """store-sync-hook: `A conflicting rebase aborts and warns`."""
+        remote, ws = self.diverge(
+            local_body="local line\n", upstream_body="upstream line\n",
+            same_file=True)
+        before = subprocess.run(
+            ["git", "-C", ws, "rev-parse", "HEAD"], capture_output=True,
+            text=True, check=True).stdout.strip()
 
         rc, out, err = self.run_hook("SessionStart", ws)
         self.assertEqual(rc, 0)
         self.assertEqual(out, "")
-        self.assertTrue(err.strip())
-        self.assertEqual(self.local_log(ws), before_local)
+        self.assertEqual(len(err.strip().splitlines()), 1, err)
+        after = subprocess.run(
+            ["git", "-C", ws, "rev-parse", "HEAD"], capture_output=True,
+            text=True, check=True).stdout.strip()
+        self.assertEqual(after, before)
+        git_dir = os.path.join(ws, ".git")
+        self.assertFalse(os.path.exists(os.path.join(git_dir, "rebase-merge")))
+        self.assertFalse(os.path.exists(os.path.join(git_dir, "rebase-apply")))
         self.assertNotIn("local change", self.remote_log(remote))
+
+    def test_uncommitted_work_survives_the_rebase(self):
+        """store-sync-hook: `Uncommitted work survives the rebase`."""
+        remote, ws = self.diverge()
+        index = os.path.join(ws, ".shipd", "wiki", "index.md")
+        self.write(index, "edited but not committed\n")
+
+        rc, _out, err = self.run_hook("SessionStart", ws)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("local change", self.remote_log(remote))
+        self.assertIn("upstream change", self.local_log(ws))
+        with open(index, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "edited but not committed\n")
+        status = subprocess.run(
+            ["git", "-C", ws, "status", "--porcelain"], capture_output=True,
+            text=True, check=True).stdout
+        self.assertIn(".shipd/wiki/index.md", status)
+
+
+class DelayedTestCase(StoreSyncTestCase):
+    """The helper's delayed mode (shipd-wiki store-push-debounce). ``TMPDIR``
+    points into the test's own temp tree, so the token file each helper
+    writes is isolated and inspectable."""
+
+    def setUp(self):
+        super().setUp()
+        self.tokens = os.path.join(self.tmp, "tokens")
+        os.makedirs(self.tokens)
+
+    def delayed_env(self):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        env["TMPDIR"] = self.tokens
+        env.pop("USERPROFILE", None)
+        return env
+
+    def delayed_argv(self, store, delay):
+        return [sys.executable, SCRIPT, "--delayed", store,
+                "--delay", str(delay)]
+
+    def run_delayed(self, store, delay=0):
+        proc = subprocess.run(
+            self.delayed_argv(store, delay), stdin=subprocess.DEVNULL,
+            env=self.delayed_env(), stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, timeout=30)
+        return proc.returncode, proc.stdout, proc.stderr
+
+    def commit(self, ws, name, body, subject):
+        self.write(os.path.join(ws, ".shipd", "wiki", name), body)
+        _git("-C", ws, "add", "-A")
+        _git("-C", ws, "commit", "-q", "-m", subject)
+
+
+class TestDelayedPush(DelayedTestCase):
+    def test_unpushed_commit_reaches_the_remote(self):
+        """store-push-debounce: the delayed helper pushes a local commit."""
+        remote = self.make_remote()
+        ws = self.make_clone(remote)
+        self.commit(ws, "page.md", "local\n", "local change")
+
+        rc, _out, err = self.run_delayed(ws)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("local change", self.remote_log(remote))
+
+    def test_diverged_store_is_rebased_and_pushed(self):
+        """store-push-debounce: the helper integrates as store-sync-hook
+        specifies — a diverged store is rebased, then pushed."""
+        remote = self.make_remote()
+        ws = self.make_clone(remote)
+        self.commit(ws, "page.md", "local\n", "local change")
+        other = self.make_clone(remote, name="other")
+        self.commit(other, "upstream.md", "up\n", "upstream change")
+        _git("-C", other, "push", "-q", "origin", "main")
+
+        rc, _out, err = self.run_delayed(ws)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.local_log(ws)[:2],
+                         ["local change", "upstream change"])
+        self.assertIn("local change", self.remote_log(remote))
+
+    def test_store_without_origin_exits_zero(self):
+        """store-push-debounce: a store with no `origin` is skipped."""
+        repo = os.path.join(self.tmp, "solo")
+        os.makedirs(repo)
+        _git("init", "-q", repo)
+        _git("-C", repo, "config", "user.email", "test@example.com")
+        _git("-C", repo, "config", "user.name", "Test")
+        self.commit(repo, "index.md", "v1\n", "seed")
+
+        rc, out, err = self.run_delayed(repo)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "")
+        self.assertEqual(err, "")
+
+    def test_non_git_store_exits_zero(self):
+        plain = os.path.join(self.tmp, "plain")
+        os.makedirs(plain)
+        rc, out, err = self.run_delayed(plain)
+        self.assertEqual(rc, 0)
+        self.assertEqual(err, "")
+
+
+class TestDelayedDebounce(DelayedTestCase):
+    def wait_for_token(self, timeout=10):
+        """Return the one token file's content once the first helper has
+        written it."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            names = [n for n in os.listdir(self.tokens)
+                     if n.startswith("shipd-store-push-")
+                     and n.endswith(".token")]
+            if names:
+                with open(os.path.join(self.tokens, names[0]),
+                          encoding="utf-8") as fh:
+                    body = fh.read().strip()
+                if body:
+                    return os.path.join(self.tokens, names[0]), body
+            time.sleep(0.05)
+        self.fail("the first helper never wrote its token")
+
+    def test_a_burst_of_writes_ends_in_one_push(self):
+        """store-push-debounce: `A burst of writes ends in one push`.
+
+        The first helper (delay 2) is superseded by a second (delay 0),
+        which pushes. A commit made after the second helper finishes must
+        not reach the remote: the first helper, on waking, finds another
+        helper's token and exits having run no git."""
+        remote = self.make_remote()
+        ws = self.make_clone(remote)
+        self.commit(ws, "page.md", "one\n", "first write")
+
+        first = subprocess.Popen(
+            self.delayed_argv(ws, 2), stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=self.delayed_env())
+        self.addCleanup(first.kill)
+        token_path, first_token = self.wait_for_token()
+
+        rc, _out, err = self.run_delayed(ws, 0)
+        self.assertEqual(rc, 0, err)
+        with open(token_path, encoding="utf-8") as fh:
+            self.assertNotEqual(fh.read().strip(), first_token)
+        self.assertIn("first write", self.remote_log(remote))
+
+        self.commit(ws, "late.md", "late\n", "late write")
+        self.assertEqual(first.wait(timeout=30), 0)
+        self.assertNotIn("late write", self.remote_log(remote))
 
 
 class TestStoreSyncDisabled(StoreSyncTestCase):

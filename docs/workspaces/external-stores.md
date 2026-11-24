@@ -129,15 +129,15 @@ locally, scoped to exactly the files written. Four writers commit: change
 installs, gate plan rewrites, `set-status`, and merge or archive.
 
 This mirrors the wiki convention (see
-[getting started](getting-started.md)). The commits stay purely local: never a
-push, a pull, or a fetch. Outside a work tree the commit is a silent no-op. A
-failed commit prints one warning line, and never fails the verb.
+[getting started](getting-started.md)). The engine itself runs no network
+call. Outside a work tree the commit is a silent no-op. A failed commit prints
+one warning line, and never fails the verb.
 
-Push and pull the store repo yourself, exactly as you do the workspace repo.
-Two paths run networked git on a store while `store_sync` is `true`. Autopilot
-fetches the store's `origin main` before it checks a dependency. The
-session-boundary hook also fetches, fast-forward merges, and pushes a store
-that lives in the workspace repository; see
+Three paths run networked git on a store while `store_sync` is `true`. Each
+commit starts a background push that waits `store_push_delay` seconds, then
+rebases onto the upstream and pushes. Autopilot fetches the store's
+`origin main` before it checks a dependency. The session-boundary hook also
+syncs a store that lives in the workspace repository; see
 [Sharing a workspace with a team](teams.md#concurrency-expectations).
 Writes to an **in-repo** `.shipd/` never auto-commit — those stay the change's
 own pull request.
@@ -147,8 +147,10 @@ own pull request.
 Autopilot reads an `After` dependency from the base branch of the store
 repository: the remote-tracking `origin/main`, else the local `main`. A
 dependent member releases once that branch carries the dependency's
-`completed/` entry. Push the store to release the dependents. A store outside
-any git work tree makes the check fail with an error.
+`completed/` entry. The engine's delayed push publishes that entry about a
+minute after the merge, which releases the dependents. While `store_sync` is
+false, nothing pushes the store automatically. A store outside any git work
+tree makes the check fail with an error.
 
 ### Known limitations
 

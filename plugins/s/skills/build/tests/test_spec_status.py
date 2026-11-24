@@ -2351,6 +2351,52 @@ class InitiativeVerbTest(SpecStatusTestBase):
         self.assertIn("Error:", r.stderr)
         self.assertEqual(self.read_brief("mvp-readiness"), before)
 
+    def _git(self, *args):
+        return subprocess.run(
+            ["git", "-C", self.root, *args], capture_output=True, text=True,
+            check=True).stdout
+
+    def _git_workspace_with_brief(self, requirements=None):
+        """A git-initialized workspace whose brief is installed and
+        committed; the repo carries no `origin`, so no push is scheduled."""
+        self.make_workspace()
+        self.write_brief("mvp-readiness", status="open",
+                         requirements=requirements)
+        self._git("init", "-q")
+        self._git("config", "user.email", "test@example.com")
+        self._git("config", "user.name", "Test")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "seed")
+
+    def _head(self):
+        subject = self._git("log", "-1", "--format=%s").strip()
+        files = sorted(p for p in self._git(
+            "show", "--name-only", "--format=", "HEAD").split("\n")
+            if p.strip())
+        return subject, files
+
+    def test_initiative_set_status_commits_the_brief(self):
+        """shipd-workspace workspace-artifact-autocommit: `A status change
+        commits the brief`."""
+        self._git_workspace_with_brief()
+        r = self.cli("initiative-set-status", "achieved", "mvp-readiness")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        subject, files = self._head()
+        self.assertTrue(subject.endswith(
+            "shipd: initiative mvp-readiness status achieved"), subject)
+        self.assertEqual(files, [".shipd/initiatives/mvp-readiness/brief.md"])
+
+    def test_initiative_sync_commits_the_rewritten_brief(self):
+        """shipd-workspace workspace-artifact-autocommit: an
+        `initiative-sync` rewrite commits the brief."""
+        self._git_workspace_with_brief(requirements=["- [x] a"])
+        r = self.cli("initiative-sync", "mvp-readiness")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        subject, files = self._head()
+        self.assertTrue(subject.endswith(
+            "shipd: initiative mvp-readiness status achieved"), subject)
+        self.assertEqual(files, [".shipd/initiatives/mvp-readiness/brief.md"])
+
     # -- no workspace ------------------------------------------------------
 
     def test_verbs_require_a_workspace(self):

@@ -20,9 +20,9 @@ clone. The manifest records only *where a member comes from* (`url`), never
   teammate answers,
 - the **initiatives and project context** (`.shipd/initiatives/`, `.shipd/projects/`).
 
-Ordinary git carries them. `git pull` brings a teammate's pages, answers, and
-briefs into your clone; `git push` publishes yours. There is no shipd server,
-no sync service, and no workspace-level daemon.
+Ordinary git carries them. The engine commits and pushes your writes, and
+`git pull` brings a teammate's pages, answers, and briefs into your clone.
+There is no shipd server, no sync service, and no workspace-level daemon.
 
 **The ignore block does not churn**. The engine derives the managed members
 block in `.gitignore` from the manifest's member paths, between
@@ -203,10 +203,22 @@ shared list per machine, and one after every change to it.
 ### Concurrency expectations
 
 Every wiki write (`/s:teach`, a queued question, an answer, a discard)
-auto-commits **locally** under an exclusive lock. Concurrent writers land
-their own commits, never racing git's index lock. A session-boundary hook
-fetches, fast-forward merges, and pushes at session start, then pushes again
-at session end. Git — not shipd — reconciles whatever stays unsynced:
+auto-commits **locally** under an exclusive lock. A PRD emit, an initiative
+emit, and an initiative status change commit the same way. Concurrent writers
+land their own commits, never racing git's index lock.
+
+**The engine pushes the store about a minute after the last engine write**.
+Each commit starts a background push that waits `store_push_delay` seconds,
+default 60. A newer write replaces the waiting push, so a burst of writes ends
+in one push. A session-boundary hook also syncs at session start, then pushes
+again at session end.
+
+**The push rebases a diverged store onto its upstream first**. The push and
+the session-start hook replay your unpushed commits on top of the upstream.
+They abort a conflicting rebase, so the store keeps its commits for a person to
+resolve. Do not commit or push the store by hand after an engine write.
+
+Git — not shipd — reconciles whatever stays unsynced:
 
 - **Per-page files merge cleanly**. Concurrent edits to distinct `wiki/*.md`
   pages never conflict.
@@ -225,6 +237,7 @@ at session end. Git — not shipd — reconciles whatever stays unsynced:
   a concatenation of the two: the block holds a single `Answer:` value. Pick
   the answer the team stands behind, and say so in the resolving commit.
 
-`store_autocommit` turns off the local auto-commit; `store_sync` turns off
-the session-boundary hook's fetch, merge, and push. Both default `true`, and
-branching the workspace repo, or not, remains entirely your team's call.
+`store_autocommit` turns off the local auto-commit. `store_sync` turns off
+the delayed push and the session-boundary hook's fetch, rebase, and push.
+Both default `true`, and branching the workspace repo, or not, remains
+entirely your team's call.

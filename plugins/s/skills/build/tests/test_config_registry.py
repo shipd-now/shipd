@@ -61,6 +61,8 @@ ROWS = {
                    '"context"]]}; segments: spec, directory, context',
                    "shipd statusline layout"),
     "store_autocommit": ("repo", "true or false", None),
+    "store_push_delay": ("repo", "a non-negative integer of seconds; 0 "
+                         "pushes at once", None),
     "store_root": ("repo", "a path to the external store root", None),
     "store_sync": ("repo", "true or false", None),
     "valid_themes": ("repo", "a list of theme slugs", None),
@@ -150,6 +152,17 @@ class RegistryTest(unittest.TestCase):
         self.assertTrue(cr.validate_value("worktree_stale_days", 0, "/x"))
         self.assertEqual(cr.validate_value("worktree_idle_minutes", 0, "/x"),
                          [])
+
+    def test_store_push_delay_rejects_a_non_integer(self):
+        """store-push-delay-key: `The config verb rejects a bad value`."""
+        findings = cr.validate_value("store_push_delay", "soon", "/x")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("a non-negative integer", findings[0].message)
+        for bad in (-1, True):
+            self.assertTrue(cr.validate_value("store_push_delay", bad, "/x"))
+        for good in (0, 60):
+            self.assertEqual(
+                cr.validate_value("store_push_delay", good, "/x"), [])
 
     def test_statusline_rejects_repeated_segment(self):
         findings = cr.validate_value(
