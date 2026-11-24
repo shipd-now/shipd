@@ -235,6 +235,49 @@ class EmitPersonalTest(unittest.TestCase):
         # The workspace store is byte-for-byte unchanged.
         self.assertEqual(self.snapshot(ws_store), ws_before)
 
+    def test_emit_personal_never_schedules_a_store_push(self):
+        """shipd-wiki store-push-debounce: `The personal store is never
+        scheduled` — a git-backed personal store with an `origin` remote
+        commits a --personal emit but starts no delayed push helper."""
+        import io
+        from unittest import mock
+        import spec_emit
+
+        self.assertEqual(self.status("wiki-init", "--personal").returncode, 0)
+        for args in (["init", "-q", self.mem],
+                     ["-C", self.mem, "config", "user.email", "t@example.com"],
+                     ["-C", self.mem, "config", "user.name", "Test"],
+                     ["-C", self.mem, "remote", "add", "origin",
+                      os.path.join(self.home, "nowhere.git")]):
+            subprocess.run(["git", *args], capture_output=True, check=True)
+        os.makedirs(os.path.join(self.staging, "wiki"))
+        with open(os.path.join(self.staging, "wiki", "note.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("# Note\n\nA staged note.\n")
+        with open(os.path.join(self.staging, "index.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("# Index\n\n- [[note]] — A staged note.\n")
+
+        helpers = []
+        real_popen = subprocess.Popen
+
+        def fake_popen(args, *a, **kw):
+            if isinstance(args, (list, tuple)) and "--delayed" in args:
+                helpers.append(args)
+                return mock.Mock()
+            return real_popen(args, *a, **kw)
+
+        with home_set_to(self.home), \
+                mock.patch("subprocess.Popen", side_effect=fake_popen), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rc = spec_emit.emit_wiki(self.root, self.staging, personal=True)
+        self.assertEqual(rc, 0)
+        log = subprocess.run(
+            ["git", "-C", self.mem, "log", "-1", "--format=%s"],
+            capture_output=True, text=True).stdout
+        self.assertIn("shipd-wiki: emit", log)
+        self.assertEqual(helpers, [])
+
 
 if __name__ == "__main__":
     unittest.main()

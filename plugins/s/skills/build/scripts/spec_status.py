@@ -3870,7 +3870,7 @@ def _wiki_store(root, personal):
 
 
 def _wiki_write_autocommit(anchor, is_fallback, wiki, paths, subject,
-                           config_anchor=None):
+                           config_anchor=None, schedule_push=True):
     """Auto-commit a successful wiki write, returning True only when a commit
     was made (shipd-wiki wiki-autocommit).
 
@@ -3887,11 +3887,17 @@ def _wiki_write_autocommit(anchor, is_fallback, wiki, paths, subject,
     directory resolves in-repo — committing in-repo artifacts stays the
     skill/PR workflow's job, never the engine's — and a commit exactly as a
     workspace store's when ``store_root`` redirects the content directory into
-    an external store."""
+    an external store.
+
+    ``schedule_push`` is passed through to
+    :func:`spec_common.wiki_autocommit`; a ``--personal`` caller sets it
+    False, so the personal memory store never gets a debounced push
+    (shipd-wiki store-push-debounce)."""
     if is_fallback:
         return sc.store_autocommit(anchor, paths, subject)
     return sc.wiki_autocommit(wiki, paths, subject,
-                              config_anchor=config_anchor)
+                              config_anchor=config_anchor,
+                              schedule_push=schedule_push)
 
 
 def read_initiative_status(path):
@@ -3963,6 +3969,17 @@ def cmd_initiative_show(root, slug):
     return 0
 
 
+def _initiative_autocommit(root, slug, path, status):
+    """Commit a brief's status rewrite in the workspace repo, scoped to the
+    brief alone and gated by ``store_autocommit`` resolved from the invoking
+    repo; a no-op when no bytes changed or outside git, and a commit failure
+    never fails the verb (shipd-workspace workspace-artifact-autocommit)."""
+    sc.wiki_autocommit(
+        _resolve_workspace(root), [path],
+        "shipd: initiative %s status %s" % (slug, status),
+        config_anchor=root)
+
+
 def cmd_initiative_sync(root, slug):
     path = _brief_path(root, slug)
     current = read_initiative_status(path)
@@ -3975,6 +3992,7 @@ def cmd_initiative_sync(root, slug):
     done, total = count_brief_requirements(text)
     derived = "achieved" if total > 0 and done == total else "open"
     write_initiative_status(path, derived)
+    _initiative_autocommit(root, slug, path, derived)
     print(derived)
     return 0
 
@@ -3986,6 +4004,7 @@ def cmd_initiative_set_status(root, status, slug):
             % (status, ", ".join(sc.INITIATIVE_STATUSES)))
     path = _brief_path(root, slug)
     write_initiative_status(path, status)
+    _initiative_autocommit(root, slug, path, status)
     print(status)
     return 0
 
@@ -5401,7 +5420,8 @@ def cmd_wiki_remove(root, slug, personal=False):
     _wiki_write_autocommit(
         anchor, is_fallback, wiki, [page_path, index_path, log_path],
         "shipd-wiki: remove %s" % slug,
-        config_anchor=None if personal else root)
+        config_anchor=None if personal else root,
+        schedule_push=not personal)
     print(slug)
     return 0
 

@@ -175,6 +175,12 @@ def emit_initiative(root, slug, src, replace):
         return errors
 
     _install_dir(root, False, src, dest_dir, replace, validate, copy)
+    # A workspace artifact commits like a wiki write: scoped to the installed
+    # tree, gated by `store_autocommit` resolved from the invoking repo, and
+    # followed by the debounced store push (shipd-workspace
+    # workspace-artifact-autocommit). A commit failure never fails the emit.
+    sc.wiki_autocommit(ws_root, [dest_dir],
+                       "shipd: emit initiative %s" % slug, config_anchor=root)
     print("installed initiative %s at %s" % (slug, brief_path))
     return 0
 
@@ -200,6 +206,10 @@ def emit_prd(root, slug, src, replace):
         return errors
 
     _install_dir(root, False, src, dest_dir, replace, validate, copy)
+    # Committed exactly as an initiative emit is (shipd-workspace
+    # workspace-artifact-autocommit).
+    sc.wiki_autocommit(ws_root, [dest_dir], "shipd: emit prd %s" % slug,
+                       config_anchor=root)
     print("installed prd %s at %s" % (slug, prd_path))
     return 0
 
@@ -430,8 +440,11 @@ def emit_wiki(root, src, personal=False, expect=None):
         # repo layer declaring `store_autocommit` governs writes into the
         # shared store. The personal store keeps its own tree as the anchor —
         # a repo must not silence a user's memory commits.
+        # The personal store's push stays skill-confirmed, so it never
+        # schedules the debounced store push (shipd-wiki store-push-debounce).
         sc.wiki_autocommit(wiki, dest_paths, subject,
-                           config_anchor=None if personal else root)
+                           config_anchor=None if personal else root,
+                           schedule_push=not personal)
 
     print("installed wiki content into %s (%d file(s))" % (wiki, len(ops)))
     return 0

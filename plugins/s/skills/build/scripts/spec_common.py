@@ -423,6 +423,7 @@ RECOGNIZED_CONFIG_KEYS = (
     "sandbox",
     "statusline",
     "store_autocommit",
+    "store_push_delay",
     "store_root",
     "store_sync",
     "valid_themes",
@@ -463,6 +464,11 @@ STORE_AUTOCOMMIT_KEY = "store_autocommit"
 DEFAULT_STORE_AUTOCOMMIT = True
 STORE_SYNC_KEY = "store_sync"
 DEFAULT_STORE_SYNC = True
+
+# The seconds the delayed store push waits after the last store commit
+# (shipd-config store-push-delay-key).
+STORE_PUSH_DELAY_KEY = "store_push_delay"
+DEFAULT_STORE_PUSH_DELAY = 60
 
 
 def _load_config_file(path):
@@ -632,6 +638,21 @@ def store_sync_enabled(config):
     value = config.get(STORE_SYNC_KEY, DEFAULT_STORE_SYNC)
     if not isinstance(value, bool):
         return DEFAULT_STORE_SYNC
+    return value
+
+
+def store_push_delay(config):
+    """Return the seconds the delayed store push waits after the last store
+    commit, from a resolved config's ``store_push_delay`` key (shipd-config
+    store-push-delay-key).
+
+    A non-negative, non-boolean integer is used as declared (``0`` pushes
+    with no wait); anything else — a string, a negative number, a boolean, an
+    absent key — is treated as undeclared and yields the built-in default of
+    60 rather than raising."""
+    value = config.get(STORE_PUSH_DELAY_KEY, DEFAULT_STORE_PUSH_DELAY)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return DEFAULT_STORE_PUSH_DELAY
     return value
 
 
@@ -1749,16 +1770,39 @@ def inside_git_work_tree(target):
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
+def store_repo_key(store_dir):
+    """Return the path that identifies the git repository ``store_dir`` sits
+    in: the work tree's root from a local ``git rev-parse --show-toplevel``,
+    or ``store_dir``'s own absolute path outside git or when git fails.
+
+    The store commit lock and the debounced push are keyed by this, never by
+    the directory a caller happened to pass: a wiki write names
+    ``<ws>/.shipd/wiki`` and a PRD emit names ``<ws>``, yet both commit into —
+    and a rebase rewrites — the one repository."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", store_dir, "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True)
+    except OSError:
+        return os.path.abspath(store_dir)
+    top = result.stdout.strip()
+    if result.returncode != 0 or not top:
+        return os.path.abspath(store_dir)
+    return os.path.abspath(top)
+
+
 @contextlib.contextmanager
-def _store_commit_lock(store_dir):
+def store_commit_lock(store_dir):
     """Hold an exclusive lock scoped to ``store_dir`` across a stage-and-commit
     pair, so two concurrent engine writes to one store serialize instead of
     racing git's index lock (shipd-wiki wiki-autocommit).
 
     The lock file lives in the system temp directory, never inside the store,
-    named ``shipd-store-<first 16 hex of sha256 of the store's absolute
-    path>.lock`` so every writer targeting the same store contends on the same
-    file. That name is predictable, so the file is opened ``O_NOFOLLOW`` and
+    named ``shipd-store-<first 16 hex of sha256 of the store's repository
+    key>.lock`` — :func:`store_repo_key`, the git work tree's root — so every
+    writer into one repository contends on the same file whichever of its
+    directories (the wiki store, the workspace root, an external content
+    directory) it was handed. That name is predictable, so the file is opened ``O_NOFOLLOW`` and
     without truncation: a symlink planted at it by another local user is
     refused rather than followed. Yields a no-op lock — never raising — when ``fcntl`` is unavailable
     (an unsupported platform) or the lock cannot be acquired, so locking is
@@ -1767,7 +1811,7 @@ def _store_commit_lock(store_dir):
         yield
         return
     digest = hashlib.sha256(
-        os.path.abspath(store_dir).encode("utf-8")).hexdigest()[:16]
+        store_repo_key(store_dir).encode("utf-8")).hexdigest()[:16]
     lock_path = os.path.join(
         tempfile.gettempdir(), "shipd-store-%s.lock" % digest)
     fh = None
@@ -1795,7 +1839,52 @@ def _store_commit_lock(store_dir):
         fh.close()
 
 
-def wiki_autocommit(store_dir, paths, subject, config_anchor=None):
+def _store_sync_script():
+    """Absolute path of the plugin's ``store_sync.py`` helper, which lives
+    outside this engine folder because it reaches the network."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.normpath(os.path.join(
+        here, "..", "..", "workspace", "scripts", "store_sync.py"))
+
+
+def schedule_store_push(store_dir, config):
+    """Start the debounced store push for ``store_dir`` (shipd-wiki
+    store-push-debounce), returning True only when a helper was started.
+
+    Schedules nothing while the resolved ``store_sync`` key is false or the
+    store carries no ``origin`` remote (a local ``git remote get-url`` probe).
+    Otherwise starts ``store_sync.py --delayed <store> --delay <n>`` detached
+    — every standard stream on ``DEVNULL``, in a new session — with ``<n>``
+    the resolved ``store_push_delay``, and returns at once. ``<store>`` is the
+    store's repository root (:func:`store_repo_key`), so every write into one
+    repository debounces against the same token whichever directory it named. The helper, not
+    this process, does the networked git, so the engine keeps its no-network
+    rule. Every failure is swallowed: the write that triggered it already
+    succeeded."""
+    try:
+        if not store_sync_enabled(config):
+            return False
+        remote = subprocess.run(
+            ["git", "-C", store_dir, "remote", "get-url", "origin"],
+            capture_output=True, text=True)
+        if remote.returncode != 0 or not remote.stdout.strip():
+            return False
+        script = _store_sync_script()
+        if not os.path.isfile(script):
+            return False
+        subprocess.Popen(
+            [sys.executable or "python3", script, "--delayed",
+             store_repo_key(store_dir), "--delay",
+             str(store_push_delay(config))],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True)
+    except Exception:  # never fail the write over a push
+        return False
+    return True
+
+
+def wiki_autocommit(store_dir, paths, subject, config_anchor=None,
+                    schedule_push=True):
     """Make a local git commit scoped to exactly ``paths`` after a successful
     wiki write, returning True only when a commit was made (shipd-wiki
     wiki-autocommit).
@@ -1813,14 +1902,19 @@ def wiki_autocommit(store_dir, paths, subject, config_anchor=None):
     probe ``git status --porcelain -- <paths>``: empty output means the write
     changed no bytes, so skip the commit quietly (returns False). Otherwise
     stage and commit the paths under an exclusive lock
-    (:func:`_store_commit_lock`) so two concurrent writes to one store
+    (:func:`store_commit_lock`) so two concurrent writes to one store
     serialize instead of racing git's index lock — ``git add`` then
     ``git commit``, the pathspec scoping the commit to exactly the written
     files so unrelated staged index state is never swept in. Any git failure
     (missing identity, hook failure) prints one
     ``warning: wiki auto-commit skipped: …`` line to stderr and returns False —
     the write already succeeded, so its exit code stays zero. Local git only
-    (``status``, ``add``, ``commit``) — never the network."""
+    (``status``, ``add``, ``commit``) — never the network.
+
+    After a commit lands, and outside the lock, schedule the debounced store
+    push (:func:`schedule_store_push`) unless ``schedule_push`` is False —
+    the personal memory store's call sites pass False, since its push stays
+    skill-confirmed."""
     if not inside_git_work_tree(store_dir):
         return False
     config, _prov = resolve_config(
@@ -1836,7 +1930,7 @@ def wiki_autocommit(store_dir, paths, subject, config_anchor=None):
             raise RuntimeError(status.stderr.strip() or "git status failed")
         if not status.stdout.strip():
             return False
-        with _store_commit_lock(store_dir):
+        with store_commit_lock(store_dir):
             add = subprocess.run(
                 ["git", "-C", store_dir, "add", "--", *paths],
                 capture_output=True, text=True)
@@ -1851,6 +1945,8 @@ def wiki_autocommit(store_dir, paths, subject, config_anchor=None):
     except (OSError, RuntimeError) as exc:
         sys.stderr.write("warning: wiki auto-commit skipped: %s\n" % exc)
         return False
+    if schedule_push:
+        schedule_store_push(store_dir, config)
     return True
 
 

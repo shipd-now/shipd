@@ -335,6 +335,99 @@ class InitiativeEmitTest(SpecEmitTestBase):
         self.assertFalse(os.path.exists(outer_brief))
 
 
+class WorkspaceArtifactAutocommitTest(SpecEmitTestBase):
+    """PRD and initiative emits into a git-initialized workspace make a
+    local commit scoped to exactly the installed file (shipd-workspace
+    workspace-artifact-autocommit). The workspaces carry no ``origin``
+    remote, so no delayed push helper is ever started."""
+
+    def git(self, *args):
+        return subprocess.run(
+            ["git", "-C", self.root, *args], capture_output=True, text=True,
+            check=True).stdout
+
+    def init_git(self, config=None):
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump(config if config is not None else {"workspace": {}}, fh)
+        self.git("init", "-q")
+        self.git("config", "user.email", "test@example.com")
+        self.git("config", "user.name", "Test")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "seed")
+
+    def head_subject(self):
+        return self.git("log", "-1", "--format=%s").strip()
+
+    def head_files(self):
+        return sorted(p for p in self.git(
+            "show", "--name-only", "--format=", "HEAD").split("\n")
+            if p.strip())
+
+    def commit_count(self):
+        return int(self.git("rev-list", "--count", "HEAD").strip())
+
+    def test_prd_emit_commits_its_file(self):
+        """`A PRD emit commits its file`."""
+        self.init_git()
+        r = self.cli("prd", "mobile-push", "--from",
+                     self.stage_file(CLEAN_PRD))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(
+            self.head_subject().endswith("shipd: emit prd mobile-push"))
+        self.assertEqual(self.head_files(),
+                         [".shipd/prds/mobile-push/prd.md"])
+
+    def test_initiative_emit_commits_its_brief(self):
+        """`An initiative emit commits its brief`."""
+        self.init_git()
+        brief = CLEAN_BRIEF.replace("# my-goal\n", "# q3-growth\n")
+        r = self.cli("initiative", "q3-growth", "--from",
+                     self.stage_file(brief))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(self.head_subject().endswith(
+            "shipd: emit initiative q3-growth"))
+        self.assertEqual(self.head_files(),
+                         [".shipd/initiatives/q3-growth/brief.md"])
+
+    def test_unrelated_staged_state_is_not_swept(self):
+        """`Unrelated staged state is not swept`."""
+        self.init_git()
+        with open(os.path.join(self.root, "unrelated.txt"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("not mine\n")
+        self.git("add", "unrelated.txt")
+        r = self.cli("prd", "mobile-push", "--from",
+                     self.stage_file(CLEAN_PRD))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.head_files(),
+                         [".shipd/prds/mobile-push/prd.md"])
+        self.assertEqual(
+            self.git("status", "--porcelain", "--", "unrelated.txt").strip(),
+            "A  unrelated.txt")
+
+    def test_store_autocommit_false_leaves_the_write_uncommitted(self):
+        """`The key false leaves the write uncommitted`."""
+        self.init_git({"workspace": {}, "store_autocommit": False})
+        before = self.commit_count()
+        r = self.cli("prd", "mobile-push", "--from",
+                     self.stage_file(CLEAN_PRD))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.root, ".shipd", "prds", "mobile-push", "prd.md")))
+        self.assertEqual(self.commit_count(), before)
+
+    def test_non_git_workspace_installs_without_committing(self):
+        """`A non-git workspace installs without committing`."""
+        self.declare_workspace()
+        r = self.cli("prd", "mobile-push", "--from",
+                     self.stage_file(CLEAN_PRD))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.root, ".shipd", "prds", "mobile-push", "prd.md")))
+        self.assertEqual(r.stderr, "")
+
+
 class PrdEmitTest(SpecEmitTestBase):
     """The staged ``prd`` emit subcommand (spec-io staged-emission),
     installing a PRD at the workspace's ``<content-dir>/prds/<slug>/prd.md``
