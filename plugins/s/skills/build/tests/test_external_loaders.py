@@ -15,6 +15,11 @@ MANIFEST = os.path.join(PLUGIN, "external-loaders.json")
 
 H2_RE = re.compile(r"^## (.+?)\s*$")
 
+READINESS_HEADINGS = [
+    "Problem and motivation", "Scope and non-goals",
+    "Affected capabilities and files", "No open task-shaping decision",
+    "The gate", "Attestation", "Self-review", "Stop when ready"]
+
 
 def _load():
     with open(MANIFEST, encoding="utf-8") as fh:
@@ -65,6 +70,25 @@ class ExternalLoaderManifestTest(unittest.TestCase):
     def test_authoring_reference_is_engine_neutral(self):
         path = os.path.join(PLUGIN, "skills", "plan", "references",
                             "authoring.md")
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertNotIn("```", text)
+        self.assertNotIn("~~~", text)
+        self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", text)
+
+    def test_manifest_lists_the_plan_readiness_reference(self):
+        entries = {f["path"]: f for f in _load()["files"]}
+        entry = entries["skills/plan/references/readiness-rules.md"]
+        self.assertEqual(entry["headings"], READINESS_HEADINGS)
+
+    def test_readiness_reference_has_exactly_its_headings_in_order(self):
+        path = os.path.join(PLUGIN, "skills", "plan", "references",
+                            "readiness-rules.md")
+        self.assertEqual(_h2_headings(path), READINESS_HEADINGS)
+
+    def test_readiness_reference_is_engine_neutral(self):
+        path = os.path.join(PLUGIN, "skills", "plan", "references",
+                            "readiness-rules.md")
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
         self.assertNotIn("```", text)

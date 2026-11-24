@@ -76,6 +76,8 @@ one PR. Under harness plan mode, skip the worktree ("Harness plan mode" below).
 
 Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 - Readiness checklist: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/readiness.md`
+- Readiness rules: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/readiness-rules.md`
+  (the readiness rules readiness.md points at)
 - Emission guide: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/emission.md`
 - Authoring rules: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/authoring.md`
   (the plan-prose rules emission.md points at)
@@ -297,7 +299,8 @@ answered by reading is a failure of this skill.
    task will depend on it, run it now and observe the result rather than
    reading its implementation — two individually reasonable decisions can be
    jointly broken, and only running the command reveals it (the
-   runnable-premise rule, `references/readiness.md`). **Supplied documents:**
+   runnable-premise rule, `references/readiness-rules.md`, `## Affected
+   capabilities and files`). **Supplied documents:**
    when the user supplies a context document for the change that is not
    already under the content dir's `research/`, `video/`, or `docs/` folder,
    install it through the emit engine before treating it as investigation
@@ -409,12 +412,12 @@ answered by reading is a failure of this skill.
    the spec tree directly or construct its path.
 7. **Self-review** before installing: re-read the staged `plan.md`, delta specs,
    and `tasks.md` for placeholders, internal contradictions, and decisions left
-   unresolved for the executor, and fix what you find before installing. Check
-   the staged `plan.md`'s `## Readiness attestation` section item by item: each
-   of the four subsections must carry evidence dot-points. An item without them
-   is **unmet** — go back to investigate, consult the oracle, or ask the user,
-   and do not install until it is discharged. The emit engine's lint checks
-   structure; this pass checks sense.
+   unresolved for the executor, and fix what you find before installing, per
+   `references/readiness-rules.md`, `## Self-review` (including the attestation,
+   item by item). An item without evidence is **unmet** — go back to
+   investigate, consult the oracle, or ask the user, and do not install until it
+   is discharged. The emit engine's lint checks structure; this pass checks
+   sense.
 8. **Install** the staged change via `spec_emit.py change` and fix findings
    until it installs clean (see the emission gate below).
 
@@ -493,8 +496,8 @@ shared-understanding summary (the problem, the chosen approach, each decision
 with a one-line rationale, and known risks) and waits for the user's `emit`
 confirmation before step 5 continues.
 
-The moment the readiness checklist is satisfied, stop investigating and emit —
-do not open new threads of exploration.
+The moment the readiness checklist is satisfied, stop investigating and emit,
+per `references/readiness-rules.md`, `## Stop when ready`.
 
 ## The personal-memory consultation — read the user's captured preferences
 
