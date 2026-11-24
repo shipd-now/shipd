@@ -22,11 +22,11 @@ Readiness item 3. You know which capabilities in the master spec library the cha
 
 Citation standard. Cite each affected capability by name and each affected file by file and line. A vague area is not a citation and leaves the item unmet.
 
-Runnable premises are evidence under this item, not a fifth item. The rule applies when the plan asserts how an existing command, script, or flag behaves, and a task depends on that assertion.
+Runnable premises are evidence under this item, not a fifth item. The rule applies when the plan asserts how an existing command, script, or flag behaves, and a task or requirement depends on that assertion.
 
-Observe the behaviour: run the command and record the invocation and its output or exit code. Where you can run it, citing the implementation does not satisfy this.
+Observe the behaviour: run the command and record the invocation and its output or exit code. Citing the implementation never satisfies this on its own.
 
-Where your engine cannot run commands while planning, cite the implementing lines and state that the premise is unrun. Then make the first task that depends on it run the command.
+Only where your engine cannot run commands while planning, cite the implementing lines and state that the premise is unrun. Then make the first task that depends on it run the command.
 
 Two exemptions apply. An assertion about behaviour this change will create needs no run, because there is nothing to run yet. An assertion that no task or requirement depends on needs no run, because it shapes nothing the plan hands the executor.
 

@@ -95,6 +95,23 @@ class ExternalLoaderManifestTest(unittest.TestCase):
         self.assertNotIn("~~~", text)
         self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", text)
 
+    def test_readiness_reference_pins_the_runnable_premise_rule(self):
+        path = os.path.join(PLUGIN, "skills", "plan", "references",
+                            "readiness-rules.md")
+        with open(path, encoding="utf-8") as fh:
+            text = " ".join(fh.read().split())
+        self.assertIn("a task or requirement depends on that assertion", text)
+        self.assertIn("An assertion about behaviour this change will create "
+                      "needs no run", text)
+        self.assertIn("An assertion that no task or requirement depends on "
+                      "needs no run", text)
+        self.assertIn("Only where your engine cannot run commands while "
+                      "planning, cite the implementing lines and state that "
+                      "the premise is unrun", text)
+        self.assertIn("make the first task that depends on it run the "
+                      "command", text)
+        self.assertNotIn("Where you can run it", text)
+
     def test_every_entry_is_well_formed(self):
         for entry in _load()["files"]:
             self.assertIsInstance(entry.get("path"), str)

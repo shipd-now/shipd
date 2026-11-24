@@ -25,7 +25,7 @@ item's citation standard, live in `readiness-rules.md`, one heading per item:
 ## How to use the gate
 
 The gate itself is `readiness-rules.md`, `## The gate`; stop once it is met per
-`## Stop when ready`. When an item is unmet, climb the ladder in order:
+`## Stop when ready`. Once it is met, stop asking as well as investigating. When an item is unmet, climb the ladder in order:
 **prefer investigation** — read the repo for anything discoverable, and as part
 of that read rung **consult the personal memory store** (per `SKILL.md`'s "The
 personal-memory consultation" section) and apply any relevant captured
