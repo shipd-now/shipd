@@ -16,7 +16,9 @@ as open, read the existing capabilities in the verified specs. Read the
 in-flight changes, the epic, the relevant code, and the request too. The affected
 module, the existing patterns, the current behaviour, and the naming
 conventions are facts to find, never to ask about. A question that reading
-could have answered is a failure.
+could have answered is a failure. Reading the code does not observe how it
+behaves: a behaviour you have not run stays unrun, so follow the readiness rule
+for runnable premises.
 
 ## Oracle next
 

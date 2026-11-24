@@ -133,6 +133,7 @@ class ExternalLoaderManifestTest(unittest.TestCase):
         self.assertIn("are facts to find, never to ask about", text)
         self.assertIn("A question that reading could have answered is a "
                       "failure", text)
+        self.assertIn("a behaviour you have not run stays unrun", text)
 
     def test_plan_enrichment_reference_exists_and_skill_points_at_it(self):
         ref = os.path.join(PLUGIN, "skills", "plan", "references",

@@ -389,7 +389,8 @@ as its single source, beside `oracle-contract.md`, with one stable `##`
 heading per part: `Codebase first` (answer what the repository and the request
 settle, read the verified capabilities, in-flight changes, epic, code and
 request before treating anything as open, and ask nothing a read could have
-answered; it binds interactive sessions too and `/s:plan` loads it), `Oracle
+answered; a behaviour not observed by running stays unrun under the readiness
+premise rule; it binds interactive sessions too and `/s:plan` loads it), `Oracle
 next` (run `oracle-lookup` judged per
 `oracle-contract.md`, adopt an authoritative `ANSWER` as given, and record it
 `**Answered by:** ORACLE`), `Default last` (on `INSUFFICIENT`, an advisory
@@ -426,3 +427,7 @@ last`, because its final round asks a human. The file SHALL pass the docs lint.
 - **WHEN** the epic-grill planner instruction is read
 - **THEN** it points at `headless.md` and states that it records `PLANNER`
   instead of `ASSUMPTION`
+
+#### Scenario: Reading code does not observe a behaviour
+- **WHEN** a session reads `headless.md`'s `Codebase first`
+- **THEN** it says a behaviour you have not run stays unrun and points at the readiness rule for runnable premises
