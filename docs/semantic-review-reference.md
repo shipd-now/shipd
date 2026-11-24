@@ -194,7 +194,18 @@ review_gate.py linked <pr> [--repo <owner>/<repo>] [--search <terms>]
 ```
 
 `--repo` keeps only pull requests in that repository, and adds its open pull
-requests that match `--search`. `--search` needs `--repo`.
+requests. `--repo` alone lists every open pull request in that repository.
+`--search` narrows that listing to the pull requests that match its terms.
+`--search` needs `--repo`.
+
+The listing stops at 200 open pull requests. When it returns 200, the verb
+writes one warning line to stderr and still prints the array. Narrow
+`--search` to bring the listing under the limit.
+
+The verb reads the timeline of the repository in the reviewed pull request's
+URL, never the current checkout's repository. Without `--repo`, it reads the
+head of each cross-referenced or body-named pull request, in any repository.
+`--repo` bounds those head reads to one repository.
 
 The verb prints one JSON array. Each entry carries:
 
@@ -214,8 +225,8 @@ lists once, under the earlier one.
 | source | where the pull request came from |
 |---|---|
 | `cross-reference` | a `cross-referenced` event on the reviewed pull request's timeline |
-| `body` | a pull request URL in the reviewed pull request's body |
-| `search` | an open pull request in `--repo` that matches `--search` |
+| `body` | a pull request URL or `<owner>/<repo>#<number>` shorthand in the reviewed pull request's body |
+| `search` | an open pull request in `--repo`, narrowed by `--search` where given |
 
 The reviewed pull request itself never appears in the list.
 
