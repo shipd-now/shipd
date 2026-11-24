@@ -1766,6 +1766,10 @@ LINKED_SEARCH_LIMIT = 200
 _PR_URL_RE = re.compile(
     r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/(\d+)")
 
+# The reviewed pull request's resolved URL: owner and repository, on any host
+# (github.com or an Enterprise host).
+_RESOLVED_PR_URL_RE = re.compile(r"^https?://[^/]+/([^/]+)/([^/]+)/pull/\d+")
+
 # A pull request shorthand in a body: <owner>/<repo>#<number>. The lookbehind
 # keeps it from matching inside a URL or a file path.
 _PR_SHORTHAND_RE = re.compile(
@@ -1824,7 +1828,7 @@ def linked(pr, gh, repo=None, search=None):
     number, _base_sha, _sha, url = _resolve_pr(gh, pr)
     # The reviewed pull request's own repository, from its URL — never the
     # checkout's, which differs when <pr> is a URL into another repository.
-    match = _PR_URL_RE.match(url or "")
+    match = _RESOLVED_PR_URL_RE.match(url or "")
     if not match:
         _fail("cannot read the repository from the pull request URL %r"
               % (url,))

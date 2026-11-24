@@ -3705,6 +3705,22 @@ class LinkedTest(unittest.TestCase):
         self.assertFalse(any(a[:2] == ["repo", "view"]
                              for a, _ in fake.calls))
 
+    def test_enterprise_host_url_reads_that_repository(self):
+        fake = FakeGh(pr_url="https://ghe.corp.example/corp/app/pull/7")
+        code, _out, _ = self._run(["7"], fake)
+        self.assertEqual(code, 0)
+        apis = [a[1] for a, _ in fake.calls if a and a[0] == "api"]
+        self.assertIn("repos/corp/app/issues/7/timeline", apis)
+        self.assertFalse(any(a[:2] == ["repo", "view"]
+                             for a, _ in fake.calls))
+
+    def test_unparseable_url_fails_the_verb(self):
+        fake = FakeGh(pr_url="not-a-url")
+        code, out, err = self._run(["7"], fake)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertTrue(any("not-a-url" in ln for ln in err.splitlines()))
+
     def test_timeline_spanning_two_pages_read_whole(self):
         raw = (json.dumps([_xref(CONSUMER, 406)]) + "\n"
                + json.dumps([_xref(CONSUMER, 408)]) + "\n")
