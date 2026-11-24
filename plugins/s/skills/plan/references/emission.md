@@ -37,10 +37,8 @@ example and the plan-specific rules for filling each artifact.
 emitting and treat its rules as binding constraints on the plan, the delta
 specs, and the tasks. Do not author a design or a task that violates it.
 
-**Context economy.** Keep each document lean — `plan.md` and every single delta
-spec should stay under ~2,000 tokens (roughly 8,000 characters). The linter
-warns above that budget. A document pushing the limit is a signal to decompose
-the change, not to write a monolith.
+**Context economy.** Keep each document within the size budget in
+`authoring.md`, `## Size`.
 
 ## Pick the change name
 
@@ -118,40 +116,26 @@ it never checks their order or length). Additional sections MAY follow.
 - `## Idea` — fill it in a fixed element order:
   1. **One-sentence summary.** Open with a single sentence naming what the
      change does — the whole Idea in one line, before the subsections.
-  2. **`### Motivation`.** A required level-3 subsection of **at most two
-     sentences** stating **why** the change is being made — naming who is
-     blocked and what they cannot do. It MUST be grounded in the request and
-     repository context, never a guess: if you cannot state it precisely from
-     what you have, ask the user rather than invent one. Repository state may
-     be cited as evidence for that claim, but is never the claim itself — a
-     file being a placeholder, absent, or holding particular content is not
-     on its own a reason.
+  2. **`### Motivation`.** A required level-3 subsection. Write it per
+     `authoring.md`, `## Motivation`; where you cannot state it precisely,
+     ask the user rather than invent one.
   3. **`### Details`.** A required level-3 subsection stating the concrete
      **what** — the changes (typically a short list) plus the affected
      capabilities and the impact (files/areas touched, dependencies, anything
      transitional).
-  4. **`### Non-goals`.** A required level-3 subsection last, listing what is
-     explicitly out of scope. At least one exclusion.
+  4. **`### Non-goals`.** A required level-3 subsection last. Write it per
+     `authoring.md`, `## Non-goals`.
 
   The linter enforces the presence of all three subsections; the order above
-  and the length limits are authoring guidance. There is **no Goals section**
-  anywhere — not here, not elsewhere. The Idea *is* the goals; stating them
-  twice invites drift. The how-level negative space (the approaches you
-  considered and dropped) lives in `## Implementation` as per-decision rejected
-  alternatives, not in a Goals list here.
+  and the length limits are authoring guidance.
 
 - `## Implementation` — where the **judgment** lives: the binding decisions an
   executor must not re-make. When drafting it, look for these decision kinds:
   - **Files and components touched** — the concrete surface the change lands on.
   - **Interfaces and data shapes** — function signatures, schemas, message
     formats, wire/on-disk layouts, when the change introduces or alters them.
-  - **Each decision, ADR-style** — the choice made, a short rationale, and the
-    rejected alternative where it clarifies why. An executor reading a decision
-    should never need to reconstruct why it was made.
-  - **Risks and trade-offs** — what could go wrong and how the plan guards it.
-
-  If the change is genuinely trivial, this section may be brief — but it must
-  still record why the approach is sound.
+  - **Each decision, ADR-style, and the risks and trade-offs** — write them per
+    `authoring.md`, `## Implementation decisions`.
 
   Where an ADR-style decision rests on how an **existing** command, script, or
   flag behaves, that premise falls under the runnable-premise rule in
@@ -247,14 +231,10 @@ is not `### Q<n>: <summary>`, on numbering that does not run sequentially from
 `Q1`, and on an entry missing its `**Question:**`, `**Answered by:**`, or
 `**Answer:**` field.
 
-**Phrasing rule — stay clear of the gate's marker scans.** The
-context-sufficiency gate scans *all* of `plan.md` outside its own
-`## Context insufficient` section, so a ledger entry must never contain a
-placeholder marker (`TBD`, `TODO`, `FIXME`, `XXX`, the two-word phrase the gate
-matches for an unresolved question, or a bare `???`). Paraphrase the
-consultation into settled prose; never paste a transcript that still carries
-those markers. Trim to the decision, the options, and the answer — the plan's
-~8,000-character budget covers this section too.
+**Phrasing rule — stay clear of the gate's marker scans.** A ledger entry
+follows `authoring.md`, `## Placeholders`: paraphrase the consultation into
+settled prose and never paste a transcript. Trim to the decision, the
+options, and the answer — the plan's size budget covers this section too.
 
 ```markdown
 ## Questions and answers
@@ -317,9 +297,8 @@ discharged.
 
 **Phrasing rule — stay clear of the gate's marker scans.** The
 context-sufficiency gate scans this section like the rest of `plan.md`, so
-write settled prose carrying none of the placeholder markers listed under the
-oracle ledger's phrasing rule above. An unresolved item is not written down as
-a placeholder; it is resolved before emission or it blocks it.
+write settled prose per `authoring.md`, `## Placeholders`. An unresolved item
+is not written down as a placeholder; it is resolved before emission or it blocks it.
 
 ```markdown
 ## Readiness attestation
@@ -376,14 +355,10 @@ Use only the four operation headers (`## ADDED`, `## MODIFIED`, `## REMOVED`,
 requirement block needs an `id:` slug, at least one **SHALL**/**MUST** statement,
 and at least one `#### Scenario:` (exactly four hashtags).
 
-**Phrase SHALL/MUST statements in EARS.** The five EARS patterns — ubiquitous
-("The system SHALL ..."), event-driven ("When <trigger>, the system SHALL ..."),
-state-driven ("While <state>, the system SHALL ..."), unwanted-behavior
-("If <condition>, then the system SHALL ..."), and optional-feature
-("Where <feature>, the system SHALL ...") — are the recommended shape for
-normative statements; see `.shipd/README.md` for the templates. This is
-authoring guidance, not a lint rule: the linter requires only a SHALL/MUST
-token, never a matching template.
+**Requirements and scenarios.** Write each requirement per `authoring.md`,
+`## Requirements` (SHALL/MUST, EARS, one behaviour, a kebab-case id), and each
+scenario per `## Scenarios`. See `.shipd/README.md` for the EARS templates; the
+linter requires only a SHALL/MUST token, never a matching template.
 
 ### Worked example — `specs/reporting/spec.md`
 
@@ -490,25 +465,9 @@ execution agents, so write them accordingly (see the discipline below).
 
 ### Task discipline (mandatory)
 
-Tasks are executed by a lower-tier agent that does **no architectural thinking**
-— it follows the spec and the plan you wrote. Write every task to that standard:
+Write every task per `authoring.md`, `## Tasks`: small, ordered, naming its
+file, judgment-free, test-first, and tied to the requirement ids it serves.
 
-- **Small and single-purpose.** One concrete change per task; if a task hides two
-  changes, split it.
-- **Independently executable and ordered.** A task can be picked up and finished
-  on its own; where order matters, sequence the list so top-to-bottom works.
-- **Names its target file(s)/area.** Every task points at the concrete file or
-  location it changes (e.g. `src/cli/report.py`), never "somewhere in the CLI."
-- **Judgment-free.** No task may require a decision. Every "which approach?",
-  "what should the interface be?", or trade-off belongs in the `## Implementation`
-  section and the delta specs — resolved *before* emission — not left in the
-  executor's head. If a task would force the executor to choose, the plan wasn't
-  ready; resolve it and rewrite the task as a mechanical instruction.
-- **Test-first ordering.** Where a task has a testable surface, sequence the
-  failing-test task *before* the implementation task that makes it pass — the
-  test encodes the contract the implementation then satisfies. Docs-only or
-  otherwise untestable tasks are exempt; do not invent a test where there is no
-  runtime surface to observe.
 - **Traceability tag (mandatory).** Every task MUST carry exactly one
   `[req: ...]` tag naming the delta requirement id(s) it implements or verifies:
   `[req: <id>[, <id>...]]` for the ids the task satisfies, or the lone wildcard
