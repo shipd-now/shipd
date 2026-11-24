@@ -91,11 +91,18 @@ this change`. That finding never blocks.
 A decision review is always submitted, with
 a body only when no finding anchors.
 
+The review body opens with the speaker heading. The next line is the verdict
+line: the verdict in bold, the finding counts, and the reviewed commit. For
+example, ``**❌ Fix required** — 1 high, 1 low · commit `064b2ee` ``. A
+sentence pointing at the summary comment follows. Each review states its own
+verdict, so a later review never changes what an earlier one says.
+
 GitHub rejects an author approving their own pull request. When the acting
 login (`gh api user`) equals the pull request author (`gh pr view --json
 author`), compared case-insensitively, or either login cannot be read, the
-poster submits no decision. It submits a `COMMENT` review only when findings
-anchor, and prints one line naming the login.
+poster submits no decision. It submits one `COMMENT` review on every post,
+with a body only when no finding anchors. When the login is the author's, it
+prints one line naming the login.
 
 If GitHub rejects a decision review, the poster retries it once with no inline
 comments and the same event. If that is rejected too, it submits a body-only

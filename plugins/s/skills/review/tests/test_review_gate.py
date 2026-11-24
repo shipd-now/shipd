@@ -665,7 +665,10 @@ class PostTest(unittest.TestCase):
             "### \u2615 shipd \u00b7 semantic-review \u00b7 reviewer "
             "(for @mikkel)")
         self.assertEqual(
-            lines[1], "Semantic review: 2 inline comments. Full report in "
+            lines[1], "**❌ Fix required** — 1 high, 1 medium "
+            "· commit `abc123`")
+        self.assertEqual(
+            lines[2], "Semantic review: 2 inline comments. Full report in "
             "the summary comment.")
         self.assertNotIn("see the summary comment for the full report",
                          gh.review_posts[0]["body"])
@@ -690,6 +693,58 @@ class PostTest(unittest.TestCase):
         self.assertEqual(len(gh.review_posts), 1)
         self.assertEqual(gh.review_posts[0]["event"], "APPROVE")
         self.assertEqual(gh.review_posts[0]["comments"], [])
+
+
+class ReviewBodyVerdictTest(unittest.TestCase):
+    """gate-review-submission-body: the body's second line states the
+    verdict, the counts and the reviewed commit; the pointer follows it."""
+
+    POINTER = "Semantic review posted. Full report in the summary comment."
+
+    def test_a_failing_review_states_its_verdict(self):
+        gh = FakeGh(head_sha="064b2ee1c0ffee",
+                    files=[{"filename": "a.py", "patch": PATCH_A}])
+        findings = [
+            _finding(locations=["b.py:99"]),
+            dict(_finding(locations=["b.py:98"], severity="low",
+                          what="minor"), id="f2")]
+        review_gate.post(
+            "7", _review(verdict="changes-requested", findings=findings), gh)
+        lines = gh.review_posts[0]["body"].split("\n")
+        self.assertEqual(
+            lines[1],
+            "**❌ Fix required** — 1 high, 1 low · commit "
+            "`064b2ee`")
+        self.assertEqual(lines[2], self.POINTER)
+        self.assertEqual(len(lines), 3)
+
+    def test_a_passing_review_states_its_verdict(self):
+        gh = FakeGh(head_sha="dbc5a97a171186")
+        review_gate.post("7", _review(verdict="pass"), gh)
+        lines = gh.review_posts[0]["body"].split("\n")
+        self.assertEqual(
+            lines[1],
+            "**✅ Ship it** — no findings · commit `dbc5a97`")
+        self.assertEqual(lines[2], self.POINTER)
+
+    def test_a_room_reviewer_keeps_the_full_summary(self):
+        gh = FakeGh(head_sha="dbc5a97a171186")
+        review_gate.post("7", _review(verdict="pass"), gh,
+                         room_agent="reviewer-b")
+        body = gh.review_posts[0]["body"]
+        self.assertIn("## Findings:", body)
+        self.assertNotIn("· commit `dbc5a97`", body)
+        self.assertNotIn(self.POINTER, body)
+
+    def test_the_authors_clean_pass_still_posts_a_review(self):
+        gh = FakeGh(pr_author="mikkel")
+        result = review_gate.post("7", _review(verdict="pass"), gh,
+                                  out=lambda _line: None)
+        self.assertEqual(len(gh.review_posts), 1)
+        self.assertEqual(gh.review_posts[0]["event"], "COMMENT")
+        self.assertEqual(gh.review_posts[0]["comments"], [])
+        self.assertTrue(gh.review_posts[0]["body"])
+        self.assertEqual(result["review_event"], "COMMENT")
 
 
 class PostBaseGuardTest(unittest.TestCase):
@@ -1120,12 +1175,19 @@ class ReviewEventTest(unittest.TestCase):
             self.assertEqual(len(said), 1)
             self.assertIn("mikkel", said[0])
 
-    def test_author_clean_pass_submits_nothing(self):
+    def test_author_clean_pass_submits_a_body_only_comment(self):
         gh = self._gh(pr_author="mikkel")
         result, lines = self._post(gh, _review(verdict="pass"))
-        self.assertEqual(gh.review_posts, [])
-        self.assertIsNone(result["review_event"])
+        self.assertEqual(self._events(gh), ["COMMENT"])
+        self.assertEqual(gh.review_posts[0]["comments"], [])
+        self.assertEqual(result["review_event"], "COMMENT")
         self.assertEqual(len([l for l in lines if "self-approval" in l]), 1)
+
+    def test_rejected_body_only_comment_is_not_retried(self):
+        gh = self._gh(pr_author="mikkel", review_fail_times=3)
+        result, _ = self._post(gh, _review(verdict="pass"))
+        self.assertEqual(self._events(gh), ["COMMENT", "COMMENT"])
+        self.assertIsNone(result["review_event"])
 
     def test_unreadable_login_falls_back_to_comment(self):
         gh = self._gh(user_fail=True)
@@ -1134,8 +1196,9 @@ class ReviewEventTest(unittest.TestCase):
         self.assertEqual(self._events(gh), ["COMMENT"])
         gh = self._gh(user_fail=True)
         result, _ = self._post(gh, _review(verdict="pass"))
-        self.assertEqual(gh.review_posts, [])
-        self.assertIsNone(result["review_event"])
+        self.assertEqual(self._events(gh), ["COMMENT"])
+        self.assertEqual(gh.review_posts[0]["comments"], [])
+        self.assertEqual(result["review_event"], "COMMENT")
 
     def test_unreadable_author_falls_back_to_comment(self):
         gh = self._gh(author_fail=True)
@@ -3367,7 +3430,10 @@ class PosterClaimFenceTest(unittest.TestCase):
                 mock.patch.object(review_gate, "_pr_author",
                                   return_value="author-x"):
             result, _lines = self._post()
-        self.assertEqual(self.gate.review_posts, [])
+        self.assertEqual([p["event"] for p in self.gate.review_posts],
+                         ["COMMENT"])
+        self.assertEqual(self.gate.review_posts[0]["comments"], [])
+        self.assertEqual(result["review_event"], "COMMENT")
         self.assertIn(claim.prefix + "/done", self.store.refs)
         self.assertEqual(self.store.statuses[-1][1]["state"], "success")
 

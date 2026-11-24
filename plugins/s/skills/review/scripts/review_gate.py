@@ -1078,8 +1078,18 @@ def _review_event(state, login, author):
     return DECISION_EVENTS[state]
 
 
+def _verdict_line(review, sha, disposition="all"):
+    """The review body's verdict line: the summary header's verdict words in
+    bold, the counts the commit status description carries after its first
+    ``: ``, and the reviewed commit, e.g. ``**✅ Ship it** — no findings ·
+    commit `dbc5a97` ``."""
+    words = _verdict_header(review.get("verdict"))[len("## Findings: "):]
+    counts = _status_description(review, disposition).split(": ", 1)[-1]
+    return "**%s** \u2014 %s \u00b7 commit `%s`" % (words, counts, sha[:7])
+
+
 def _post_review(gh, repo, number, sha, anchored, event, login,
-                 commentable=None, room=None, summary=None):
+                 commentable=None, room=None, summary=None, verdict=None):
     """Post one review of ``event`` with the ``anchored`` inline comments, each
     carrying its finding's committable suggestion where ``commentable`` — the
     per-path RIGHT-side line sets ``post`` already computed — admits one.
@@ -1088,7 +1098,8 @@ def _post_review(gh, repo, number, sha, anchored, event, login,
     rejection (e.g. a 422 from an un-anchorable line). The heading speaks as
     the room's agent; given ``summary`` (the rendered full summary, minus its
     hidden marker line) the body is the heading, a blank line, then that
-    summary, in place of the pointer."""
+    summary, in place of the pointer; otherwise it is the heading, the
+    ``verdict`` line (`_verdict_line`), then the pointer."""
     comments = [
         _review_comment(f, p, ln,
                         None if commentable is None
@@ -1102,7 +1113,7 @@ def _post_review(gh, repo, number, sha, anchored, event, login,
                "summary comment." % len(comments) if comments else
                "Semantic review posted. Full report in the summary comment.")
     body = ("%s\n\n%s" % (heading, summary) if summary
-            else "%s\n%s" % (heading, pointer))
+            else "\n".join(l for l in (heading, verdict, pointer) if l))
     payload = json.dumps({"commit_id": sha, "event": event,
                           "body": body, "comments": comments})
     rc, _out, _err = gh(["api", "repos/%s/pulls/%d/reviews" % (repo, number),
@@ -1257,51 +1268,54 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
             "rejects self-approval" % login)
     submitted = None
     fenced = False
-    # A decision always submits (a required approval needs a review object);
-    # a neutral COMMENT submits only when something anchors.
-    if event != NEUTRAL_EVENT or anchored:
-        # ``commentable`` travels with the anchored findings: `_split_findings`
-        # above stays the one decision on inline-vs-fold — an unanchorable
-        # finding is already folded here, suggestion or not — and the same
-        # sets it consulted then decide whether a suggestion's range is
-        # committable, rather than a second anchoring pass over the diff.
-        body_summary = (
-            _review_body_summary(render_summary(
-                review, unanchored, disposition, model, files))
-            if room_agent else None)
-        _room_claim_fence(gh, claim, posted=True)
-        fenced = True
-        if _post_review(gh, repo, number, sha, anchored, event, login,
-                        commentable, room=review_room, summary=body_summary):
+    # Every post submits one review, so each run leaves its own entry stating
+    # its verdict: a decision because a required approval needs a review
+    # object, and a neutral COMMENT body-only when nothing anchors.
+    # ``commentable`` travels with the anchored findings: `_split_findings`
+    # above stays the one decision on inline-vs-fold — an unanchorable
+    # finding is already folded here, suggestion or not — and the same
+    # sets it consulted then decide whether a suggestion's range is
+    # committable, rather than a second anchoring pass over the diff.
+    body_summary = (
+        _review_body_summary(render_summary(
+            review, unanchored, disposition, model, files))
+        if room_agent else None)
+    verdict = _verdict_line(review, sha, disposition)
+    _room_claim_fence(gh, claim, posted=True)
+    fenced = True
+    if _post_review(gh, repo, number, sha, anchored, event, login,
+                    commentable, room=review_room, summary=body_summary,
+                    verdict=verdict):
+        submitted = event
+    else:
+        # An inline review was rejected: fold every finding into the
+        # summary so nothing is lost, then retry with no inline comments
+        # and the same event. A body-only review has nothing to fold.
+        if anchored:
+            out("inline review rejected; folding findings into the "
+                "summary")
+            _upsert_summary(
+                gh, repo, number,
+                render_summary(review, findings, disposition, model,
+                               files, room=room, head=sha,
+                               earlier=earlier), known=known)
+        if room_agent and anchored:
+            body_summary = _review_body_summary(render_summary(
+                review, findings, disposition, model, files))
+        if _post_review(gh, repo, number, sha, [], event, login,
+                        room=review_room, summary=body_summary,
+                        verdict=verdict):
             submitted = event
-        else:
-            # An inline review was rejected: fold every finding into the
-            # summary so nothing is lost, then retry with no inline comments
-            # and the same event. A body-only review has nothing to fold.
-            if anchored:
-                out("inline review rejected; folding findings into the "
-                    "summary")
-                _upsert_summary(
-                    gh, repo, number,
-                    render_summary(review, findings, disposition, model,
-                                   files, room=room, head=sha,
-                                   earlier=earlier), known=known)
-            if room_agent and anchored:
-                body_summary = _review_body_summary(render_summary(
-                    review, findings, disposition, model, files))
-            if _post_review(gh, repo, number, sha, [], event, login,
-                            room=review_room, summary=body_summary):
-                submitted = event
-            elif event != NEUTRAL_EVENT:
-                if _post_review(gh, repo, number, sha, [], NEUTRAL_EVENT,
-                                login, room=review_room,
-                                summary=body_summary):
-                    submitted = NEUTRAL_EVENT
-                    out("review decision %s was not recorded; submitted a "
-                        "comment review instead" % event)
-                else:
-                    out("review decision %s was not recorded; the fallback "
-                        "comment review was also rejected" % event)
+        elif event != NEUTRAL_EVENT:
+            if _post_review(gh, repo, number, sha, [], NEUTRAL_EVENT,
+                            login, room=review_room,
+                            summary=body_summary, verdict=verdict):
+                submitted = NEUTRAL_EVENT
+                out("review decision %s was not recorded; submitted a "
+                    "comment review instead" % event)
+            else:
+                out("review decision %s was not recorded; the fallback "
+                    "comment review was also rejected" % event)
 
     if claim is not None:
         if not fenced:
