@@ -139,10 +139,10 @@ it never checks their order or length). Additional sections MAY follow.
 
   Where an ADR-style decision rests on how an **existing** command, script, or
   flag behaves, that premise falls under the runnable-premise rule in
-  `readiness.md`'s Attestation section — verify it by running the command and
-  cite the observed invocation and output/exit code, not a pointer to the
-  implementation's source. See `readiness.md` for the full rule and its
-  exemptions.
+  `readiness-rules.md`, `## Affected capabilities and files` — verify it by
+  running the command and cite the observed invocation and output/exit code,
+  not a pointer to the implementation's source. That heading holds the full
+  rule and its exemptions.
 
 ```markdown
 # dark-mode-toggle
@@ -281,7 +281,7 @@ for the item and nothing else:
 
 Each subsection opens with the item's plain statement — the same one or two
 sentences printed in the terminal — then a line reading `Evidence:` and a dash
-list of citations to the standards in `readiness.md`. Statement above
+list of citations to the standards in `readiness-rules.md`. Statement above
 evidence, always: the reader who wants the summary stops at the first
 paragraph, and the reader who wants the proof keeps going. Verified runnable
 premises live under `### Affected capabilities and files`, each named with its
@@ -356,7 +356,7 @@ requirement block needs an `id:` slug, at least one **SHALL**/**MUST** statement
 and at least one `#### Scenario:` (exactly four hashtags).
 
 **Requirements and scenarios.** Write each requirement per `authoring.md`,
-`## Requirements` (SHALL/MUST, EARS, one behaviour, a kebab-case id), and each
+`## Requirements` (SHALL/MUST, EARS, one behaviour, an id unique within the change), and each
 scenario per `## Scenarios`. See `.shipd/README.md` for the EARS templates; the
 linter requires only a SHALL/MUST token, never a matching template.
 
