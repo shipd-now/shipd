@@ -130,7 +130,7 @@ class RunStartTest(RunTestBase):
         self.assertEqual(code, 0, err)
         self.assertNotIn("Error:", err)
         warnings = [ln for ln in err.splitlines()
-                    if ln.startswith("warning:") and "comment" in ln]
+                    if ln.startswith("warning:")]
         self.assertEqual(len(warnings), 1, err)
         self.assertIn("the review posts as a comment, not an approval",
                       warnings[0])

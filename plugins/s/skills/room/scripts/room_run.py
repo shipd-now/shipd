@@ -335,7 +335,8 @@ def _run_pr(opts, parser, gh, runner, sleep, clock, root, agent, repo,
     join_ns = argparse.Namespace(
         pr=opts.pr, agent=agent, root=opts.root, repo=opts.repo,
         skill=list(skills), description=opts.description,
-        harness=opts.harness, role=opts.role, max_rounds=opts.max_rounds)
+        harness=opts.harness, role=opts.role, max_rounds=opts.max_rounds,
+        quiet_same_account=True)
     with contextlib.redirect_stdout(io.StringIO()):
         room.cmd_join(join_ns, parser, gh)
 

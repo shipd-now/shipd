@@ -687,7 +687,10 @@ def cmd_join(opts, parser, gh):
     else:
         resp = _post(gh, repo, number, body)
     resp = resp or {}
-    if opts.role in ("reviewer", "ci"):
+    # ``room run`` prints its own same-account warning at start, so it sets
+    # ``quiet_same_account`` to keep this one from repeating it.
+    if opts.role in ("reviewer", "ci") and not getattr(
+            opts, "quiet_same_account", False):
         login = _login(gh, {})
         author = _pr_author(gh, number, repo) if login else ""
         if login and author and same_account(login, author):

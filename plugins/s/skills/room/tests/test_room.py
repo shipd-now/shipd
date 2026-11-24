@@ -727,6 +727,10 @@ class JoinIdentityTest(RoomTestBase):
             self.assertEqual(len(gh.posts()), 1)
             self.assertIn("warning: acting as @Mikkel, who authored this "
                           "pull request; a %s cannot approve it" % role, err)
+            self.assertEqual(
+                [ln for ln in err.splitlines() if ln.startswith("warning:")],
+                ["warning: acting as @Mikkel, who authored this pull "
+                 "request; a %s cannot approve it" % role], err)
 
     def test_second_account_reviewer_does_not_warn(self):
         gh = FakeGh(login="reviewer-b", pr_author="mikkel")

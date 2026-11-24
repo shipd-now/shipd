@@ -81,8 +81,9 @@ Do not paste the credential into a file, a chat, or a command argument.
    - (a) One approval, from the CI bot, leaves the merge call refused with
      HTTP 405 and the state `BLOCKED`.
    - (c) GitHub refuses the author's own approval, and `shipd room whoami` as the
-     author exits 1. The reviewer's `whoami` exits 0 and the second approval
-     makes the state `CLEAN`.
+     author exits 0 and reports `may_approve` false. The reviewer's `whoami`
+     reports `may_approve` true, and the second approval makes the state
+     `CLEAN`.
    - (b) A push by the author that changes the diff dismisses the reviewer's
      review. The merge call stays refused while the bot alone re-approves.
      GitHub keeps approvals across an empty commit, so the driver pushes a

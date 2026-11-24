@@ -424,8 +424,12 @@ class Proof:
                    code != 0 and "own pull request" in text.lower())
         code, out, err = self.gh.exec([str(SHIPD), "room", "whoami", str(self.number),
                                        "--repo", self.repo], cwd=self.root)
-        self.check("c-whoami-author-exit-1", "`shipd room whoami` as the author exits 1",
-                   "exit %d: %s" % (code, (err or out).strip()), code == 1)
+        info = _json(out)
+        may = info.get("may_approve") if isinstance(info, dict) else None
+        self.check("c-whoami-author-may-not-approve",
+                   "`shipd room whoami` as the author reports `may_approve` false",
+                   "exit %d: may_approve=%s %s" % (code, may, (err or "").strip()),
+                   code == 0 and isinstance(info, dict) and may is False)
 
     def step_reviewer_approves(self):
         code, out, err = self.gh.exec([str(SHIPD), "room", "whoami", str(self.number),

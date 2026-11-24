@@ -86,10 +86,10 @@ stopped listening.
 | `--request-review` | none | Open a review task for this agent. Repeatable. Author role only. |
 | `--ci-reviewer` | `github-actions[bot]` | The CI reviewer whose fix-required review starts an author turn. Empty disables. Author role only. |
 
-In repo mode, the run lists the open pull requests with one `gh` call and spends no tokens while
-it waits. It runs one turn at a time, on each pull request with a task for the agent. It skips
-pull requests its own account authored. A restart resumes every conversation. A second run of one
-agent, or a single-PR run of it, refuses to start, whatever its `--state`.
+In repo mode, the run lists the open pull requests with one `gh` call and spends no tokens while it
+waits. It runs one turn at a time, on each pull request with a task for the agent. When `distinct_reviewer`
+is `true`, it skips pull requests its own account authored. A restart resumes every conversation. A second
+run of one agent, or a single-PR run of it, refuses to start, whatever its `--state`.
 
 ### The result line
 
