@@ -15,6 +15,11 @@ import sys
 import tempfile
 import unittest
 
+# The harness exports these to switch the engine's store git off; the suite
+# asserts the default behaviour, so run it (and its subprocesses) without them.
+for _name in ("SHIPD_STORE_AUTOCOMMIT", "SHIPD_STORE_SYNC"):
+    os.environ.pop(_name, None)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.normpath(os.path.join(HERE, "..", "scripts", "spec_status.py"))
 
@@ -3240,6 +3245,24 @@ class ConfigShowTest(SpecStatusTestBase):
         # Content directory prints as the default `.shipd`; keys show `default`.
         self.assertIn(".shipd", r.stdout)
         self.assertIn("default", r.stdout)
+
+    def test_store_lines_show_the_environment_override(self):
+        self._write_config(self.root, {"store_sync": True})
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("SHIPD_STORE_AUTOCOMMIT", "SHIPD_STORE_SYNC")}
+        env["HOME"] = self.home
+
+        def run(**extra):
+            return subprocess.run(
+                ["python3", SCRIPT, "--root", self.root, "config-show"],
+                capture_output=True, text=True, env=dict(env, **extra))
+        plain = run().stdout.splitlines()
+        self.assertIn("store-sync: true", plain)
+        self.assertIn("store-autocommit: true", plain)
+        forced = run(SHIPD_STORE_SYNC="off").stdout.splitlines()
+        self.assertIn("store-sync: false (environment SHIPD_STORE_SYNC)",
+                      forced)
+        self.assertIn("store-autocommit: true", forced)
 
     def test_completed_retention_key_shown_with_default_provenance(self):
         # The built-in retention default is seeded into resolution, so an

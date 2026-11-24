@@ -113,8 +113,8 @@ repo's own `.shipd/` copy may be behind it.
 | `worktree_sweep` | Gates whether worktree creation runs `worktree.sh sweep` afterward. Default `true`. |
 | `worktree_idle_minutes` | The idle window, in minutes, before the `remove` verb's activity guard stops treating a dirty worktree as fresh. Default 30. |
 | `worktree_stale_days` | The window, in days, beyond which a sweep reports an unmerged branch stale. Default 7. |
-| `store_autocommit` | Gates whether an engine write into a workspace or external store auto-commits locally. Default `true`. |
-| `store_sync` | Gates the networked git on a store: the delayed push after each store commit, and the session-boundary hook's fetch, rebase, and push. Default `true`. |
+| `store_autocommit` | Gates whether an engine write into a workspace or external store auto-commits locally. Default `true`. The environment variable `SHIPD_STORE_AUTOCOMMIT` (`0`, `false`, `no`, or `off` to disable; `1`, `true`, `yes`, or `on` to enable) overrides every layer. |
+| `store_sync` | Gates the networked git on a store: the delayed push after each store commit, and the session-boundary hook's fetch, rebase, and push. Default `true`. The environment variable `SHIPD_STORE_SYNC` takes the same values and overrides every layer. |
 | `store_push_delay` | The seconds the delayed push waits after the last store commit. `0` pushes at once. Default 60. |
 | `build` | Settings for a [`/s:build`](build.md) run: `logging_enabled`, `log_dir`, `number_format`, `parallelism`, and the design/video roots (`design_dir`, `video_dir`, `video_asr`, `video_vocabulary`, `video_max_frames`, `video_scene_floor`, `video_cursor`). [Statusline and telemetry](statusline-and-telemetry.md) covers the report settings and their defaults. |
 

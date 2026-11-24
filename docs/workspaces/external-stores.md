@@ -139,6 +139,11 @@ rebases onto the upstream and pushes. Autopilot fetches the store's
 `origin main` before it checks a dependency. The session-boundary hook also
 syncs a store that lives in the workspace repository; see
 [Sharing a workspace with a team](teams.md#concurrency-expectations).
+
+Set `SHIPD_STORE_SYNC=0` or `SHIPD_STORE_AUTOCOMMIT=0` in the environment to
+turn the networked git or the auto-commit off. This beats every config layer.
+`shipd config-show` marks a value that came from the environment.
+
 Writes to an **in-repo** `.shipd/` never auto-commit — those stay the change's
 own pull request.
 
