@@ -421,6 +421,30 @@ class TestDelayedDebounce(DelayedTestCase):
         self.assertIn("first write", self.remote_log(remote))
         self.assertEqual(self.lock_files(), [])
 
+    def test_a_holder_that_loses_its_lock_exits_without_pushing(self):
+        """A waiting helper whose lock file now carries another helper's id
+        exits 0 having run no git, and leaves that lock in place."""
+        remote = self.make_remote()
+        ws = self.make_clone(remote)
+        self.commit(ws, "page.md", "one\n", "first write")
+
+        first = self.start_helper(ws, 3)
+        self.wait_for_lock()
+        lock = os.path.join(self.tokens, self.lock_files()[0])
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            with open(lock, encoding="utf-8") as fh:
+                if fh.read().strip():
+                    break
+            time.sleep(0.05)
+        with open(lock, "w", encoding="utf-8") as fh:
+            fh.write("another-helper")
+
+        self.assertEqual(first.wait(timeout=30), 0)
+        self.assertNotIn("first write", self.remote_log(remote))
+        with open(lock, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "another-helper")
+
 
 class TestStoreSyncDisabled(StoreSyncTestCase):
     def test_store_sync_false_runs_no_git(self):

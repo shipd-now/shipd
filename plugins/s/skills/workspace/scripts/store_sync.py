@@ -15,9 +15,11 @@ resolved ``store_sync`` key (shipd-config store-sync-keys) is true.
 Run as ``store_sync.py --delayed <store> --delay <n>`` it is instead the
 delayed push the engine starts, detached, after every store auto-commit
 (shipd-wiki store-push-debounce): it reads no stdin, records a unique token
-in ``<tempdir>/shipd-store-push-<digest>.token``, sleeps ``<n>`` seconds, and
-exits having run no git when a later helper has replaced the token — so a
-burst of writes ends in one push. Otherwise it integrates the upstream and
+and a push deadline ``<n>`` seconds ahead in
+``<tempdir>/shipd-store-push-<digest>.token``, and claims the waiter lock
+beside it. It exits having run no git when another helper holds that lock —
+so one helper waits per repository. The lock holder waits until the token's
+deadline passes, which a later write moves, then integrates the upstream and
 pushes. The engine already applied the ``store_sync`` gate before starting it.
 
 This script lives outside ``plugins/s/skills/build/scripts/`` (the engine's
