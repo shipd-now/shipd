@@ -37,6 +37,7 @@ ROWS = {
         "repo", "a non-negative number of days; 0 or null disables "
         "retention", None),
     "dir": ("repo", "a relative path such as .shipd", None),
+    "distinct_reviewer": ("repo", "true or false", None),
     "sandbox": (
         "repo", "an object with fake_bin (a relative path) and env (a map "
         "of variable names to relative paths)", None),
@@ -410,6 +411,52 @@ class SetUnsetKeyTest(_Env):
         _p, removed, _w = cr.unset_key(self.repo, "vioce", "repo")
         self.assertTrue(removed)
         self.assertEqual(self.load(self.repo_cfg), {"voice": True})
+
+
+class DistinctReviewerTest(_Env):
+    """The ``distinct_reviewer`` key: its accessor and ``config-set``
+    (shipd-config distinct-reviewer-key)."""
+
+    SPEC_STATUS = os.path.join(SCRIPTS, "spec_status.py")
+
+    def cli(self, *args):
+        env = dict(os.environ)
+        env["HOME"] = self.home
+        return subprocess.run(
+            [sys.executable, "-B", self.SPEC_STATUS, "--root", self.repo,
+             *args], capture_output=True, text=True, env=env)
+
+    def test_defaults_to_false(self):
+        self.assertIs(sc.resolve_distinct_reviewer(self.repo), False)
+
+    def test_workspace_root_governs_a_member(self):
+        member = os.path.join(self.repo, "member")
+        os.makedirs(member)
+        self.put(self.repo_cfg, {"workspace": {}, "distinct_reviewer": True})
+        self.assertIs(sc.resolve_distinct_reviewer(member), True)
+
+    def test_bad_value_names_key_value_and_file(self):
+        self.put(self.repo_cfg, {"distinct_reviewer": "yes"})
+        with self.assertRaises(sc.ConfigError) as ctx:
+            sc.resolve_distinct_reviewer(self.repo)
+        msg = str(ctx.exception)
+        self.assertIn("distinct_reviewer", msg)
+        self.assertIn("'yes'", msg)
+        self.assertIn(self.repo_cfg, msg)
+
+    def test_config_set_writes_the_key(self):
+        subprocess.run(["git", "init", "-q", self.repo], check=True)
+        r = self.cli("config-set", "distinct_reviewer", "true")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.load(self.repo_cfg), {"distinct_reviewer": True})
+
+    def test_config_set_refuses_a_non_boolean(self):
+        subprocess.run(["git", "init", "-q", self.repo], check=True)
+        r = self.cli("config-set", "distinct_reviewer", "maybe")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("distinct_reviewer", r.stderr)
+        self.assertIn("hint: true or false", r.stderr)
+        self.assertFalse(os.path.exists(self.repo_cfg))
 
 
 class CheckTest(_Env):

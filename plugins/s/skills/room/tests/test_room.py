@@ -947,7 +947,13 @@ class WhoamiTest(RoomTestBase):
         self.assertIs(data["is_author"], False)
         self.assertEqual(data["source"], "gh-login")
 
+    def _require_distinct_reviewer(self):
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"distinct_reviewer": True}, fh)
+
     def test_author_in_another_case_is_refused(self):
+        self._require_distinct_reviewer()
         gh = FakeGh(login="Mikkel", pr_author="mikkel")
         code, out, err = self._whoami(gh)
         self.assertEqual(code, 1)
@@ -956,7 +962,29 @@ class WhoamiTest(RoomTestBase):
         self.assertEqual(len(lines), 1, err)
         self.assertIn("Error:", lines[0])
         self.assertIn("Mikkel", lines[0])
-        self.assertIn("cannot approve their own pull request", lines[0])
+        self.assertIn("distinct_reviewer", lines[0])
+        self.assertIn("other than the author's", lines[0])
+
+    def test_author_account_is_allowed_by_default(self):
+        gh = FakeGh(login="Mikkel", pr_author="mikkel")
+        code, out, err = self._whoami(gh)
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertIs(data["is_author"], True)
+        self.assertIs(data["may_approve"], False)
+        self.assertEqual(data["login"], "Mikkel")
+        self.assertEqual(data["author"], "mikkel")
+
+    def test_bad_distinct_reviewer_is_one_error(self):
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"distinct_reviewer": "yes"}, fh)
+        gh = FakeGh(login="Mikkel", pr_author="mikkel")
+        code, out, err = self._whoami(gh)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("Error:", err)
+        self.assertIn("distinct_reviewer", err)
 
     def test_unreadable_login_is_refused(self):
         gh = FakeGh(user_fail=True, viewer_fail=True, pr_author="mikkel")
@@ -966,6 +994,7 @@ class WhoamiTest(RoomTestBase):
         self.assertIn("Error:", err)
 
     def test_bot_reviewer_on_its_own_pr_is_refused(self):
+        self._require_distinct_reviewer()
         gh = FakeGh(login="shipd-factory[bot]", pr_author="app/shipd-factory")
         code, out, err = self._whoami(gh)
         self.assertEqual(code, 1)

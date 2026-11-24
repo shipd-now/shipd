@@ -64,9 +64,11 @@ def _default_runner(opts, root, model_base):
     return runner
 
 
-def _check_identity(gh, number, repo, role):
-    """Read the acting login and the PR author; refuse a reviewer or ci on
-    the author's own account. Returns the login."""
+def _check_identity(gh, number, repo, role, distinct_reviewer):
+    """Read the acting login and the PR author. A reviewer or ci on the
+    author's own account is refused when ``distinct_reviewer`` is true, and
+    otherwise warned that its review posts as a comment. Returns the
+    login."""
     login = room._login(gh, {})
     author = room._pr_author(gh, number, repo)
     if not login:
@@ -79,9 +81,13 @@ def _check_identity(gh, number, repo, role):
                 "could not read the author of %s#%d; an approval needs a "
                 "known author" % (repo, number))
         if room.same_account(login, author):
-            raise room.RoomError(
-                "acting as @%s, who authored %s#%d; an author cannot "
-                "approve their own pull request" % (login, repo, number))
+            if distinct_reviewer:
+                raise room.RoomError(
+                    room.distinct_reviewer_refusal(login, repo, number))
+            sys.stderr.write(
+                "warning: acting as @%s, who authored %s#%d; the review "
+                "posts as a comment, not an approval\n"
+                % (login, repo, number))
     elif author and not room.same_account(login, author):
         sys.stderr.write(
             "warning: acting as @%s, but %s#%d was authored by @%s\n"
@@ -286,7 +292,8 @@ def cmd_run(opts, parser, gh, runner, sleep, clock, preflight=None):
     if agent in opts.request_review:
         parser.error("--request-review cannot name this run's own agent")
     repo, number, context = room._resolve_room(gh, opts.pr, opts.repo)
-    login = _check_identity(gh, number, repo, opts.role)
+    login = _check_identity(gh, number, repo, opts.role,
+                            room._distinct_reviewer(root))
     sys.stderr.write("room run: acting as @%s (%s)\n" % (
         login, room._credential_source(
             os.environ, room._room_host(opts.pr, os.environ))))

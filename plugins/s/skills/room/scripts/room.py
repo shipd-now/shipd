@@ -12,8 +12,9 @@ agent drives to take part in one:
                  the acting login, the author, and the credential source
                  (gh's order: GH_TOKEN, GITHUB_TOKEN, or the enterprise pair
                  on a GHES host, then GH_CONFIG_DIR, then gh-login);
-                 exits 1 when the login authored the pull request, or
-                 with ``[--author]`` when it did not
+                 may_approve is false when the login authored the pull
+                 request, which exits 1 only when distinct_reviewer is
+                 true; with ``[--author]``, exits 1 when it did not
   message <pr>   open a task (``--new``) or advance one (``--task ID``)
   close <pr>     post a task's terminal message
   watch <pr>     wait for a task that is this agent's turn (NDJSON)
@@ -329,6 +330,23 @@ def _room_config(root):
         return spec_common.resolve_room(root)
     except spec_common.ConfigError as exc:
         raise RoomError(str(exc))
+
+
+def _distinct_reviewer(root):
+    """The resolved ``distinct_reviewer`` key (shipd-config
+    distinct-reviewer-key); a bad value is a :class:`RoomError`."""
+    try:
+        return spec_common.resolve_distinct_reviewer(root)
+    except spec_common.ConfigError as exc:
+        raise RoomError(str(exc))
+
+
+def distinct_reviewer_refusal(login, repo, number):
+    """The one refusal a reviewer on the author's account gets when
+    ``distinct_reviewer`` resolves true."""
+    return ("acting as @%s, who authored %s#%d; distinct_reviewer requires a "
+            "reviewer account other than the author's"
+            % (login, repo, number))
 
 
 def _agent_name(opts, parser, root):
@@ -752,10 +770,8 @@ def cmd_whoami(opts, parser, gh):
             raise RoomError("acting as @%s, but %s#%d was authored by @%s; "
                             "only the author may fix its findings"
                             % (login, repo, number, author))
-    elif is_author:
-        raise RoomError("acting as @%s, who authored %s#%d; an author "
-                        "cannot approve their own pull request"
-                        % (login, repo, number))
+    elif is_author and _distinct_reviewer(_root(opts)):
+        raise RoomError(distinct_reviewer_refusal(login, repo, number))
     _emit({"login": login, "author": author,
            "source": _credential_source(os.environ,
                                         _room_host(opts.pr, os.environ)),
@@ -1080,9 +1096,10 @@ def build_parser():
     p.set_defaults(func=cmd_list)
 
     p = sub.add_parser("whoami", parents=[common],
-                       help="the acting account, refused when it authored "
-                            "the pull request; with --author, refused "
-                            "unless it did")
+                       help="the acting account; may_approve false when "
+                            "it authored the pull request, refused then "
+                            "only under distinct_reviewer; with --author, "
+                            "refused unless it did")
     p.add_argument("pr", help="pull request number, URL, or branch")
     p.add_argument("--author", action="store_true",
                    help="check the acting account IS the author (exit 0 "

@@ -56,7 +56,8 @@ report the open tasks and stop.
 
 Before any approving or change-requesting review, run `shipd room whoami
 <pr>`; when it exits non-zero, relay its `Error:` line and stop without
-submitting the review.
+submitting the review. When it exits 0 with `may_approve` false, review
+anyway: the review posts as a comment with its status, never an approval.
 
 When a task addressed to you, as role `reviewer`, asks for a review or
 re-review: claim it `working`, run `shipd room whoami <pr>` (stop on non-zero),

@@ -440,7 +440,13 @@ class RepoPollTest(RepoTestBase):
                       "status", calls[0][0])
         self.assertEqual(calls[0][1], self.root)
 
+    def _require_distinct_reviewer(self):
+        with open(os.path.join(self.root, ".shipd-config.json"), "w",
+                  encoding="utf-8") as fh:
+            json.dump({"distinct_reviewer": True}, fh)
+
     def test_an_author_login_match_skips_the_pr(self):
+        self._require_distinct_reviewer()
         gh = FakeRepoGh(login=LOGIN)
         gh.add_pr(7, [waiting(10, to="rev-b")], author="REV-B-LOGIN")
         code, out, err = self.run_repo(gh, limit=3)
@@ -450,7 +456,18 @@ class RepoPollTest(RepoTestBase):
         self.assertEqual(gh.fakes[7].calls, [])
         self.assertEqual(err.count("#7"), 1, err)
 
+    def test_an_author_login_match_is_answered_by_default(self):
+        gh = FakeRepoGh(login=LOGIN)
+        gh.add_pr(7, [waiting(10, to="rev-b")], author="REV-B-LOGIN")
+        code, out, err = self.run_repo(gh, limit=1)
+        self.assertEqual(code, 130, err)
+        self.assertEqual(len(self.runner.calls), 1, err)
+        self.assertIn("https://github.com/o/r/pull/7",
+                      self.runner.calls[0][0])
+        self.assertNotIn("skipping #7", err)
+
     def test_a_bot_login_skips_the_apps_own_pr(self):
+        self._require_distinct_reviewer()
         gh = FakeRepoGh(login="shipd-factory[bot]")
         gh.add_pr(7, [waiting(10, to="rev-b")], author="app/shipd-factory")
         code, out, err = self.run_repo(gh, limit=3)

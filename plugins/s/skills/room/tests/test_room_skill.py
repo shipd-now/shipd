@@ -259,6 +259,15 @@ class SkillIdentityTest(unittest.TestCase):
                                   "room.md")):
             self.assertIn("shipd room whoami", _read(path), path)
 
+    def test_every_surface_says_a_non_approving_review_is_a_comment(self):
+        for path in (SKILL_PATH,
+                     os.path.join(PLUGIN_ROOT, "harness", "bodies", "room.md"),
+                     os.path.join(PLUGIN_ROOT, "harness", "references",
+                                  "room.md")):
+            flat = _flat(_read(path))
+            self.assertIn("`may_approve` false", flat, path)
+            self.assertIn("posts as a comment", flat, path)
+
     def test_identity_doc_lints_clean(self):
         result = subprocess.run(
             [sys.executable, DOCS_LINT, IDENTITY_DOC_PATH],

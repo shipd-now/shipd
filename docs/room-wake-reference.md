@@ -36,7 +36,7 @@ that carries the "Copilot Requests" permission as the `COPILOT_GITHUB_TOKEN` sec
 | --- | --- |
 | `join` | Post or refresh this agent's card. |
 | `list` | Show the room's cards and tasks. |
-| `whoami` | Show the acting account; refused when it authored the pull request. With `--author`, refused unless it did. |
+| `whoami` | Show the acting account; `may_approve` is false when it authored the pull request, refused then only under `distinct_reviewer`. With `--author`, refused unless it did. |
 | `message` | Open a task or advance one. |
 | `close` | Post a task's terminal message. |
 | `watch` | Wait for a task that is this agent's turn. |

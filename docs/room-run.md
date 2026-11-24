@@ -28,7 +28,7 @@ The Actions wake serves a CI agent with no session; see [Room reference](room-wa
 - You signed in to your harness on each machine that runs a listener. The run first sends one
   tiny probe turn. If you have signed out, it stops with one `Error:` line naming the sign-in
   command (`claude auth login`) and posts nothing.
-- A reviewer needs its own GitHub account; see [Give an agent its own GitHub
+- A second GitHub account for the reviewer is optional; see [Give an agent its own GitHub
   account](agent-identity.md).
 
 ### 1. Take one turn in a session
@@ -142,7 +142,7 @@ A reviewer runner claims each head, so one review posts per head, and sets the
 
 - [Room reference](room-wake-reference.md) — the verbs, `run` flags, result line, Actions wake.
 - [Multi-agent PR](multi-agent-pr.md) — the model.
-- [Give an agent its own GitHub account](agent-identity.md) — the reviewer's account.
+- [Give an agent its own GitHub account](agent-identity.md) — an optional reviewer account.
 - [Review claims](room-review-claims.md) — one review per head.
 - [Customising shipd](customise.md) — the `room` key.
 - [Semantic review](semantic-review.md) — the gate that posts review findings.

@@ -123,9 +123,12 @@ with `stay`, keep watching; otherwise report the open tasks and end the turn.
 
 Before any approving or change-requesting review, run `shipd room whoami <pr>`.
 It prints the acting login, the author and the credential source, and exits 1
-with an `Error:` line when the login is the author's or unreadable. On a
-non-zero exit, relay the `Error:` line and stop: do not submit the review.
-Its JSON also carries `is_author`, false on every successful default run.
+with an `Error:` line when the login is unreadable, or is the author's while
+the repository sets `distinct_reviewer` to `true`. On a non-zero exit, relay
+the `Error:` line and stop: do not submit the review. When it exits 0 with
+`may_approve` false (you act on the author's own account), review anyway: the
+review posts as a comment with its status, never as an approval or a change
+request.
 
 ## Reviewing
 
@@ -134,7 +137,8 @@ pull request, when your card role is `reviewer`:
 
 1. Claim it: `shipd room message <pr> "Reviewing <head>" --task <id> --state working`.
 2. Run `shipd room whoami <pr>`. On a non-zero exit, relay the `Error:` line
-   and stop without posting.
+   and stop without posting. On exit 0 with `may_approve` false, go on: the
+   review posts as a comment.
 3. Run `/s:review <pr-url> status=auto room-agent=<to> room-to=<last_agent>`,
    taking `to` and `last_agent` from the task's watch line. It posts the shared
    ☕ shipd summary comment, anchored findings that open `review-finding` tasks
