@@ -81,6 +81,8 @@ Paths in this skill (resolve `${CLAUDE_PLUGIN_ROOT}` to the real plugin root):
 - Emission guide: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/emission.md`
 - Authoring rules: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/authoring.md`
   (the plan-prose rules emission.md points at)
+- Enrichment mode: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/enrichment.md`
+  (loaded only when `locate` finds a `rejected` change)
 - Depth-path dialogue: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/dialogue.md`
   (loaded only when the depth gate selects the depth path)
 - Visualization idioms: `${CLAUDE_PLUGIN_ROOT}/skills/plan/references/visualization.md`
@@ -128,7 +130,7 @@ match:
   "shipd:plan v<version> — enriching the rejected change `<change>` located at
   `<root>`"), then operate on the **located root** for the rest of the session.
   The fresh-planning flow does **not** run: no investigation digest, no depth
-  gate, no emission. Follow the enrichment loop below instead.
+  gate, no emission. Follow the enrichment loop (`references/enrichment.md`) instead.
 - **Any other status** (`draft`/`ready`/`active`/`complete`/`verified`) →
   **report and stop.** Print the change's location (`root:` and `dir:`) and its
   status, and do nothing else. Never start a fresh plan under a colliding
@@ -137,69 +139,12 @@ match:
   **fall through to the normal planning flow unchanged** (the Codebase-first
   rule and the numbered Flow below).
 
-### The enrichment loop — diagnose the gaps
+### The enrichment loop
 
-The change is already installed; enrichment **edits it in place** in the located
-change directory (`<root>/<dir>`), never re-emitting through staging.
-
-1. **Read the artifacts through the engine.** Load the installed change with
-
-   ```
-   python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_status.py" --root <root> cat change <change>
-   ```
-
-   which prints `plan.md`, every delta spec, and `tasks.md`. The plan's
-   **`## Context insufficient`** section (written by the gate) is your work
-   agenda: **each of its dot-points is one finding to resolve.**
-
-2. **Resolve every codebase-answerable finding yourself, without asking.** The
-   Codebase-first rule holds in enrichment too — anything discoverable from the
-   repository you resolve by editing the installed artifacts directly:
-   - **Stale `base:` hash** — re-read the current master requirement (via
-     `spec_status.py cat verified <capability>`), update the delta's `base:`
-     hash to the master's current hash, and reconcile the delta's content
-     against what the master now says.
-   - **Dangling task file references** — correct the `tasks.md` path or symbol
-     to the real location in the tree.
-   - **Placeholder markers** (`TBD`, `???`, an undecided name) — replace them
-     with a decision grounded in the repository's existing patterns.
-
-3. **Put only the true gaps to the user.** A finding the repository genuinely
-   cannot answer — an undecided product choice encoded as a placeholder — is the
-   only thing you ask about. First route each true gap through the oracle rung
-   (see "The oracle rung" below); only the gaps it leaves open — `INSUFFICIENT`
-   verdicts and `Authority: advisory` answers — reach the typed round. Batch those under the **fast-path question contract** (a visible
-   context brief first, then a plain-text numbered typed round), and fold the
-   answers back into the artifacts. **Do not ask about anything discoverable
-   from the repository.** An enrichment-time consultation is ledgered like any
-   other: **append** its entry to the installed `plan.md`'s
-   `## Questions and answers` section — in place, like every other enrichment
-   edit — **continuing the existing numbering** from the highest `Q<n>` already
-   there (creating the section when the plan carries none yet).
-
-### Exit enrichment through the re-gate
-
-When the agenda is resolved, re-run the gate engine on the **located root** —
-the gate is the only exit to `ready`:
-
-```
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/build/scripts/spec_gate.py" <change> --root <root>
-```
-
-- **Exit 0** — the gate stripped the `## Context insufficient` section and
-  promoted the change to `ready`. Confirm the change now sits at `ready` and
-  hand off with the **motivation-led summary** (lead with the plan's
-  `### Motivation`, then a brief sense of the `## Implementation`), closing with
-  the `## Summary` heading and its one sentence, then a colon-terminated
-  sentence, a blank line, then `/s:build` alone on its own line — never inline
-  mid-sentence.
-- **Exit 2** — the gate re-wrote a new `## Context insufficient` section and
-  parked the change back at `rejected`. Present the remaining findings and
-  **continue the enrichment loop** with them as the new agenda — do not end.
-
-**Never** move an enrichment change out of `rejected` with
-`spec_status.py set-status` or `--force`. The gate's verdict is the only path
-to `ready`; a forced status is a protocol violation.
+On `rejected`, read
+`${CLAUDE_PLUGIN_ROOT}/skills/plan/references/enrichment.md` and follow it: the
+loop that resolves the plan's `## Context insufficient` findings in place, and
+the re-gate that is its only exit to `ready`.
 
 ## Video entry point
 
@@ -275,14 +220,11 @@ emission as usual.
 
 ## Codebase-first rule (non-negotiable)
 
-**Investigate before you ask.** Before putting a single question to the user,
-read the repository: existing capabilities (via `spec_status.py cat verified
-<capability>`, or under the resolved content directory's `verified/`), in-flight
-changes under its `planned/`, the relevant code, and the user's request
-itself. **Never ask the user anything whose answer is discoverable from the repo
-or the request** — the affected module, existing patterns, current behavior, and
-naming conventions are yours to find, not to ask about. A question you could have
-answered by reading is a failure of this skill.
+**Investigate before you ask.** The rule is `## Codebase first` in
+`${CLAUDE_PLUGIN_ROOT}/skills/ask/references/headless.md`; read it and follow it.
+Here it means: put no question to the user, in a typed round or an
+AskUserQuestion, about anything the repository or the request settles. Read
+capabilities through `spec_status.py cat verified <capability>`.
 
 ## Flow
 
@@ -784,7 +726,8 @@ that point is reached:
      started yet. Continue to step 2 and hand off.
    - **Exit 2** — the gate wrote a `## Context insufficient` section into
      `plan.md` and parked the change at `rejected`. Do **not** hand off:
-     enter "The enrichment loop — diagnose the gaps" above on the **located
+     enter "The enrichment loop — diagnose the gaps" in
+     `references/enrichment.md` on the **located
      root** you just installed into, working the gate's findings as the
      agenda, and exit only through its re-gate.
    Never move the change to `ready` with `spec_status.py set-status` or

@@ -186,13 +186,11 @@ one of those is a re-decomposition, not an amendment; say so and stop.
 
 ## Codebase-first rule (non-negotiable)
 
-**Investigate before you ask.** Before putting a single question to the user,
-read the repository: existing capabilities under `.shipd/verified/`, in-flight
-changes under `.shipd/planned/`, existing epics under `.shipd/epics/`, the relevant code,
-and the user's request itself. **Never ask the user anything whose answer is
-discoverable from the repo or the request** — the affected modules, existing
-patterns, current behavior, and naming conventions are yours to find, not to ask
-about. A question you could have answered by reading is a failure of this skill.
+**Investigate before you ask.** The rule is `## Codebase first` in
+`${CLAUDE_PLUGIN_ROOT}/skills/ask/references/headless.md`; read it and follow it.
+Here it means: put no question to the user about anything the repository or the
+request settles. Read capabilities under `.shipd/verified/`, in-flight changes
+under `.shipd/planned/`, and existing epics under `.shipd/epics/`.
 
 ## Flow
 

@@ -112,6 +112,46 @@ class ExternalLoaderManifestTest(unittest.TestCase):
                       "command", text)
         self.assertNotIn("Where you can run it", text)
 
+    def test_headless_codebase_first_is_engine_neutral(self):
+        path = os.path.join(PLUGIN, "skills", "ask", "references",
+                            "headless.md")
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertNotIn("```", text)
+        self.assertNotIn("~~~", text)
+        self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", text)
+
+    def test_headless_codebase_first_pins_the_merged_rule(self):
+        path = os.path.join(PLUGIN, "skills", "ask", "references",
+                            "headless.md")
+        with open(path, encoding="utf-8") as fh:
+            text = " ".join(fh.read().split())
+        self.assertIn("binds interactive sessions too", text)
+        self.assertIn("`/s:plan` loads it", text)
+        self.assertIn("Answer what the repository and the request settle",
+                      text)
+        self.assertIn("are facts to find, never to ask about", text)
+        self.assertIn("A question that reading could have answered is a "
+                      "failure", text)
+
+    def test_plan_enrichment_reference_exists_and_skill_points_at_it(self):
+        ref = os.path.join(PLUGIN, "skills", "plan", "references",
+                           "enrichment.md")
+        self.assertTrue(os.path.isfile(ref))
+        with open(ref, encoding="utf-8") as fh:
+            body = fh.read()
+        self.assertIn("The enrichment loop", body)
+        self.assertIn("Exit enrichment through the re-gate", body)
+        listed = {f["path"] for f in _load()["files"]}
+        self.assertNotIn("skills/plan/references/enrichment.md", listed)
+        with open(os.path.join(PLUGIN, "skills", "plan", "SKILL.md"),
+                  encoding="utf-8") as fh:
+            skill = fh.read()
+        self.assertIn(
+            "${CLAUDE_PLUGIN_ROOT}/skills/plan/references/enrichment.md",
+            skill)
+        self.assertNotIn("### The enrichment loop — diagnose the gaps", skill)
+
     def test_every_entry_is_well_formed(self):
         for entry in _load()["files"]:
             self.assertIsInstance(entry.get("path"), str)
