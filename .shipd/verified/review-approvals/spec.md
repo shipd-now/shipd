@@ -11,12 +11,22 @@ body only and no inline comments when no finding anchors. When the acting
 login (read once from `gh api user`) equals the pull request's author
 (`gh pr view --json author`, compared case-insensitively), or either login
 cannot be read, it SHALL NOT attempt an approval or change request: it SHALL
-submit a `COMMENT` review only when findings anchor, and print one line naming
-the login and saying GitHub rejects self-approval. If a decision review is
+submit exactly one `COMMENT` review, with a body only when no finding
+anchors, so that every post leaves a review that states its verdict. When the
+login is the author's, it SHALL print one line naming the login and saying
+GitHub rejects self-approval. If a decision review is
 rejected, the poster SHALL retry it once with no inline comments and the same
 event, and if that is rejected too, submit a body-only `COMMENT` review and
-print a line saying the decision was not recorded. The result object SHALL
-carry the `review_event` actually submitted, or `None`.
+print a line saying the decision was not recorded. If a `COMMENT` review with
+inline comments is rejected, the poster SHALL retry it once with no inline
+comments. The result object SHALL carry the `review_event` actually
+submitted, or `None`.
+
+`docs/semantic-review-reference.md` and the review skill's
+`references/posting.md` SHALL state that the author's account, or an
+unreadable login, submits one `COMMENT` review on every post, and neither
+SHALL say such a review is submitted only when findings anchor. The reference
+doc SHALL name the verdict line the review body carries.
 
 #### Scenario: A clean pass approves without findings
 - **WHEN** `post` publishes a `pass` verdict with no findings and the acting
@@ -39,15 +49,27 @@ carry the `review_event` actually submitted, or `None`.
 - **THEN** no `APPROVE` or `REQUEST_CHANGES` is submitted, findings that
   anchor go out as a `COMMENT` review, and one explanatory line is printed
 
+#### Scenario: The author's clean pass still posts a review
+- **WHEN** `post` publishes a `pass` verdict with no findings and the acting
+  login equals the pull request author
+- **THEN** one `COMMENT` review is submitted with a body and no inline
+  comments, and the result's `review_event` is `COMMENT`
+
 #### Scenario: An unreadable login falls back to a comment
 - **WHEN** `gh api user` or the author read fails
-- **THEN** the review is submitted as `COMMENT` or not at all, never as a
-  decision
+- **THEN** the review is submitted as `COMMENT`, never as a decision
 
 #### Scenario: A rejected decision retries then degrades
 - **WHEN** an `APPROVE` review is rejected twice
 - **THEN** a body-only `COMMENT` review is submitted and the output says the
   decision was not recorded
+
+#### Scenario: The docs state the new rule
+- **WHEN** `docs/semantic-review-reference.md` and
+  `plugins/s/skills/review/references/posting.md` are read
+- **THEN** neither contains "only when findings anchor", each says a
+  `COMMENT` review is submitted on every post from the author's account, and
+  `docs_lint.py docs/semantic-review-reference.md` exits `0`
 
 ### Requirement: Approval change ships docs, tests, and a version bump
 id: gate-approvals-docs-version

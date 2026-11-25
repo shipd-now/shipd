@@ -132,7 +132,8 @@ The flow:
    neither blocks. The review it
    submits follows that status: `APPROVE` on `success`, `REQUEST_CHANGES` on
    `failure`. An acting login equal to the pull request's author (or an
-   unreadable login) submits a `COMMENT` only, and only when findings anchor.
+   unreadable login) submits one `COMMENT` review on every post instead. It
+   always has a body, and carries no inline comments when no finding anchors.
    Before any of
    that, it computes the pull request's own merge base from `baseRefOid` and
    `headRefOid` and compares it with the payload's `endpoints.merge_base`; on
