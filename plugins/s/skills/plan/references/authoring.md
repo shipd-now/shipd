@@ -49,6 +49,7 @@ A lower-tier agent executes the tasks and does no architectural thinking. Write 
 - Keep each task small and single-purpose. Make one concrete change, and split a task that hides two.
 - Make each task independently executable. Order the list so working from top to bottom succeeds.
 - Name the concrete file or location each task changes, never a vague area such as somewhere in the command line code.
+- Cite each repository path in backticks, as the full path from the repository root. Write the word Create or Add directly before a path the task creates, with nothing between them. Never remove the backticks from a repository path to pass the gate, because later drift and overlap checks read them.
 - Leave no decision to the executor. Settle every question of approach, interface, or trade-off in the decisions and requirements first. A task that forces a choice means the plan was not ready. Resolve the choice and rewrite the task as a mechanical instruction.
 - Put the failing-test task before the implementation task that makes it pass, wherever the work has a testable surface. Documentation-only work, and other work with nothing to observe, is exempt. Do not invent a test for it.
 - Tie each task to the requirement ids it implements or verifies. The ids come only from this change's own requirements. A task that covers the whole change says so instead of naming ids.

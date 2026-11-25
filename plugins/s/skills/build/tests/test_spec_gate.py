@@ -473,7 +473,94 @@ class TaskFileReferenceCheckTest(SpecGateTestBase):
         self.assertEqual(r.returncode, 2, self.out(r))
         self.assertIn("src/ghost/nested/missing.py", self.out(r))
         self.assertIn("parent nor grandparent", self.out(r))
+        self.assertIn("full path from the repository root", self.out(r))
+        self.assertIn("declare a new file by writing Create directly before it",
+                      self.out(r))
         self.assertIn("Status: rejected", self.read_plan("feat"))
+
+    def _gate(self, tasks_body):
+        self.make_clean_change("feat", status="draft")
+        self.write_tasks("feat", "# Tasks\n\n" + tasks_body)
+        return self.cli("feat")
+
+    def test_tokens_that_are_not_repository_paths_are_skipped(self):
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Rebase on `origin/main`, send "
+            "`application/octet-stream`, import `firebase/app`, read "
+            "`orgs/x`.\n")
+        self.assertEqual(r.returncode, 0, self.out(r))
+
+    def test_extensionless_path_under_existing_directory_is_checked(self):
+        os.makedirs(os.path.join(self.root, "src"))
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Edit `src/ghost/nested/missing`.\n")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("src/ghost/nested/missing", self.out(r))
+
+    def test_extensionless_artefact_reference_is_checked(self):
+        r = self._gate("- [ ] 1.1 [req: widget] Read `artefacts/ghost`.\n")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("artefacts/ghost", self.out(r))
+
+    def test_dot_relative_token_keeps_its_resolution(self):
+        r = self._gate("- [ ] 1.1 [req: widget] Edit `./src/index.ts`.\n")
+        self.assertEqual(r.returncode, 0, self.out(r))
+
+    def test_declared_path_implies_dirs_for_dot_relative_citation(self):
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Create `new/a/b/c.py`.\n"
+            "- [ ] 1.2 [req: widget] Edit `./new/a/b/d.py`.\n")
+        self.assertEqual(r.returncode, 0, self.out(r))
+
+    def test_root_is_not_an_accepted_grandparent(self):
+        r = self._gate("- [ ] 1.1 [req: widget] Edit `dist/index.js`.\n")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("dist/index.js", self.out(r))
+
+
+class DeclaredNewPathTest(SpecGateTestBase):
+    def _gate(self, tasks_body):
+        self.make_clean_change("feat", status="draft")
+        self.write_tasks("feat", "# Tasks\n\n" + tasks_body)
+        return self.cli("feat")
+
+    def test_greenfield_tree_passes(self):
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Write `packages/rules/firestore.rules`.\n"
+            "- [ ] 1.2 [req: widget] Create `packages/rules/package.json`.\n")
+        self.assertEqual(r.returncode, 0, self.out(r))
+
+    def test_root_level_and_dot_directories_can_be_declared(self):
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Create `functions/package.json`.\n"
+            "- [ ] 1.2 [req: widget] Add `.github/workflows/ci.yml`.\n")
+        self.assertEqual(r.returncode, 0, self.out(r))
+
+    def test_line_wrap_keeps_the_declaration(self):
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Then create\n"
+            "  `new/a/b/c.py` with the code.\n")
+        self.assertEqual(r.returncode, 0, self.out(r))
+
+    def test_words_between_verb_and_path_declare_nothing(self):
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Add a test to `src/ghost/nested/missing.py`.\n")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("src/ghost/nested/missing.py", self.out(r))
+
+    def test_mistyped_sibling_of_declared_tree_is_a_finding(self):
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Create `new/a/b/c.py`.\n"
+            "- [ ] 1.2 [req: widget] Edit `nwe/a/b/d.py`.\n")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("nwe/a/b/d.py", self.out(r))
+        self.assertNotIn("new/a/b/c.py", self.out(r))
+
+    def test_path_outside_repository_declares_nothing(self):
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Create `../ghostdir-zq7x/a/b.py`.\n")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("../ghostdir-zq7x/a/b.py", self.out(r))
 
 
 class ArtefactReferenceResolutionTest(SpecGateTestBase):

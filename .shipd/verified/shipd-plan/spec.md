@@ -530,10 +530,13 @@ findings as the work agenda. It SHALL resolve every codebase-answerable
 finding directly by editing the installed artifacts in the located change
 directory — refreshing stale `base:` hashes against the current master
 requirement and reconciling the delta, correcting dangling task file
-references, and replacing placeholder markers with decisions grounded in the
-repository — and SHALL put to the user only findings the repository cannot
-answer, batched under the fast-path typed-round contract with a context brief.
-The skill SHALL NOT ask about anything discoverable from the repository.
+references or declaring the ones the task creates, and replacing placeholder
+markers with decisions grounded in the repository — and SHALL put to the user
+only findings the repository cannot answer, batched under the fast-path
+typed-round contract with a context brief. The skill SHALL NOT ask about
+anything discoverable from the repository. The skill SHALL NOT remove the
+backticks from a repository path, or create placeholder directories, to clear
+a file-reference finding.
 
 #### Scenario: Stale hash is refreshed without asking
 - **GIVEN** a rejected plan whose finding names a stale `base:` hash
@@ -547,6 +550,12 @@ The skill SHALL NOT ask about anything discoverable from the repository.
 - **WHEN** enrichment reaches it
 - **THEN** the skill asks the user in a typed round preceded by a context
   brief, and folds the answer into the artifacts
+
+#### Scenario: A new path is declared, not hidden
+- **WHEN** the dangling-reference bullets of `enrichment.md` and the harness
+  copy of the plan reference are read
+- **THEN** each says to declare a path the task creates with `Create` directly
+  before it, and forbids removing backticks or creating placeholder directories
 
 ### Requirement: Enrichment exits through the re-gate
 id: enrichment-regate
@@ -1350,3 +1359,16 @@ only `/s:plan` reads it.
 #### Scenario: The reference carries the loop and the re-gate
 - **WHEN** `enrichment.md` is read
 - **THEN** it has the loop that resolves the `## Context insufficient` findings and the re-gate exit
+
+### Requirement: Task path citation rules
+id: task-path-citation
+
+`authoring.md` SHALL state, under its Tasks heading, that a task cites each
+repository path in backticks as the full path from the repository root, that
+`Create` or `Add` goes directly before a path the task creates, and that
+backticks are never removed from a repository path to satisfy the gate.
+
+#### Scenario: The Tasks part carries the citation rules
+- **WHEN** the Tasks part of `authoring.md` is read
+- **THEN** it states the full-path rule, the `Create` or `Add` rule, and the
+  prohibition on removing backticks

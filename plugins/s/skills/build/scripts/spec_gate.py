@@ -27,7 +27,11 @@ The four context checks (see the context-gate capability):
   3. Task file references — every backticked, path-shaped token in ``tasks.md``
      containing ``/`` must resolve to an existing file or directory, or have an
      existing parent or grandparent directory (the new-file / one-new-directory
-     case, e.g. a new skill or test tree). The tokens come from the shared
+     case, e.g. a new skill or test tree). A path written directly after
+     ``Create`` or ``Add`` is declared new and passes, and its ancestor
+     directories count as existing; an extensionless token whose first
+     segment is neither an existing nor an implied directory is skipped as
+     not a repository path. The tokens come from the shared
      ``spec_common.cited_paths`` helper the drift verb also reads.
   4. Delta targets — every MODIFIED/REMOVED/RENAMED delta operation must target
      a capability whose master spec exists; ADDED-only new capabilities pass.
@@ -101,6 +105,29 @@ QMARK_MARKER = "???"
 # ``sc.cited_paths``); they are rebound here for existing callers.
 BACKTICK_RE = sc.BACKTICK_RE
 PATH_TOKEN_RE = sc.PATH_TOKEN_RE
+
+
+DECLARE_RE = re.compile(r"\b(?:create|add)\s+$", re.IGNORECASE)
+
+
+def declared_paths(text):
+    """Return the set of paths ``text`` declares new: a backticked,
+    path-shaped token with only ``Create`` or ``Add`` (any letter case) and
+    whitespace, including a line break, before it. One leading ``./`` is
+    stripped; an absolute token or one holding a ``..`` segment declares
+    nothing."""
+    out = set()
+    for m in BACKTICK_RE.finditer(text):
+        token = m.group(1).strip()
+        if not PATH_TOKEN_RE.match(token):
+            continue
+        if token.startswith("./"):
+            token = token[2:]
+        if token.startswith("/") or ".." in token.split("/"):
+            continue
+        if DECLARE_RE.search(text[max(0, m.start() - 40):m.start()]):
+            out.add(token)
+    return out
 
 
 class GateError(Exception):
@@ -367,14 +394,34 @@ def _check_placeholders(root, change):
 
 def _check_task_paths(root, change):
     """Check (3): every backticked, path-shaped token in tasks.md must resolve
-    to an existing file or directory, or have an existing parent or grandparent
-    directory (tolerating one new directory level)."""
+    to an existing file or directory, be declared new by ``Create`` or ``Add``
+    directly before it, or have a parent or grandparent directory that exists
+    or is implied by a declared path (tolerating one new directory level). The
+    repository root never counts as a parent or grandparent. An extensionless
+    token whose first segment is neither an existing nor an implied directory
+    is skipped as not a repository path. Each finding names its remedy."""
     findings = []
     tasks_path = _tasks_path(root, change)
     if not os.path.isfile(tasks_path):
         return findings
     text = _read(tasks_path)
+    declared = declared_paths(text)
+    implied = set()
+    for path in declared:
+        parts = path.split("/")
+        for i in range(1, len(parts)):
+            implied.add("/".join(parts[:i]))
+
+    def is_dir(rel):
+        # ``rel`` is as written (it may lead with ``./``): the on-disk test
+        # takes it verbatim, the implied lookup takes it ``./``-stripped.
+        bare = rel[2:] if rel.startswith("./") else rel
+        return bare in implied or os.path.isdir(os.path.join(root, rel))
+
     for token in sc.cited_paths(text):
+        norm = token[2:] if token.startswith("./") else token
+        if norm in declared:
+            continue
         full = os.path.join(root, token)
         if os.path.exists(full):
             continue
@@ -382,15 +429,20 @@ def _check_task_paths(root, change):
                 os.path.join(_planned_dir(root, change), token)):
             continue  # change-relative artefact reference
         parent = os.path.dirname(token)
-        if parent and os.path.isdir(os.path.join(root, parent)):
+        if parent and is_dir(parent):
             continue  # the new-file-in-an-existing-directory case
         grandparent = os.path.dirname(parent)
-        if grandparent and os.path.isdir(os.path.join(root, grandparent)):
+        if grandparent and is_dir(grandparent):
             continue  # one new directory deep: the new-skill / new-test-tree case
+        if ("." not in norm.rsplit("/", 1)[-1]
+                and not is_dir(norm.split("/", 1)[0])
+                and not norm.startswith("artefacts/")):
+            continue  # a branch, ratio, media type or name, not a path
         findings.append(
             "task file reference `%s` resolves to no existing file or "
-            "directory (neither its parent nor grandparent directory exists)"
-            % token)
+            "directory (neither its parent nor grandparent directory exists); "
+            "write the full path from the repository root, or declare a new "
+            "file by writing Create directly before it" % token)
     return findings
 
 

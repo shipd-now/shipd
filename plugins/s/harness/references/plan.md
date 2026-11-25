@@ -148,7 +148,10 @@ artifacts **in place** — it never re-emits through staging.
 
 - **Resolve everything the repository can answer, without asking.** A stale
   `base:` hash is re-read from the current master and reconciled. A dangling
-  task path is corrected to where the file really is. A placeholder (`TBD`,
+  task path is corrected to where the file really is. When the task creates
+  the path, write Create directly before it. Never remove the backticks from a
+  repository path, and never create placeholder directories, to clear the
+  finding. A placeholder (`TBD`,
   `???`, an undecided name) is replaced with a decision grounded in the
   repository's existing patterns.
 - **Put only the true gaps to the user** — an undecided product choice the
