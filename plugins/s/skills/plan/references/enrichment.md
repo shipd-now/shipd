@@ -29,7 +29,9 @@ change directory (`<root>/<dir>`), never re-emitting through staging.
      hash to the master's current hash. Reconcile the delta's content
      against what the master now says.
    - **Dangling task file references** — correct the `tasks.md` path or symbol
-     to the real location in the tree.
+     to the real location in the tree. When the task creates the path, write
+     Create directly before it. Never remove the backticks from a repository
+     path, and never create placeholder directories, to clear the finding.
    - **Placeholder markers** (`TBD`, `???`, an undecided name) — replace them
      with a decision grounded in the repository's existing patterns.
 

@@ -124,7 +124,9 @@ scenario must be refutable by exercising the real code.
 
 A flat markdown checklist. Each task names its files and its concrete change,
 and is small enough to execute without architectural judgement — the judgement
-lives in `plan.md`'s `## Implementation`.
+lives in `plan.md`'s `## Implementation`. Cite each repository path in
+backticks, as the full path from the repository root. Write Create or Add
+directly before a path the task creates.
 
 ```
 ## 1. <group title>
@@ -148,7 +150,10 @@ artifacts **in place** — it never re-emits through staging.
 
 - **Resolve everything the repository can answer, without asking.** A stale
   `base:` hash is re-read from the current master and reconciled. A dangling
-  task path is corrected to where the file really is. A placeholder (`TBD`,
+  task path is corrected to where the file really is. When the task creates
+  the path, write Create directly before it. Never remove the backticks from a
+  repository path, and never create placeholder directories, to clear the
+  finding. A placeholder (`TBD`,
   `???`, an undecided name) is replaced with a decision grounded in the
   repository's existing patterns.
 - **Put only the true gaps to the user** — an undecided product choice the

@@ -41,6 +41,30 @@ def _h2_headings(path):
     return headings
 
 
+def _collapsed(path):
+    with open(path, encoding="utf-8") as fh:
+        return " ".join(fh.read().split())
+
+
+class TaskPathGuidanceTest(unittest.TestCase):
+    def test_authoring_tasks_part_states_the_citation_rules(self):
+        path = os.path.join(PLUGIN, "skills", "plan", "references",
+                            "authoring.md")
+        text = _collapsed(path)
+        part = text.split("## Tasks", 1)[1].split("## Placeholders", 1)[0]
+        self.assertIn("full path from the repository root", part)
+        self.assertIn("directly before", part)
+        self.assertIn("Never remove the backticks", part)
+
+    def test_enrichment_guidance_declares_new_paths(self):
+        for rel in (("skills", "plan", "references", "enrichment.md"),
+                    ("harness", "references", "plan.md")):
+            text = _collapsed(os.path.join(PLUGIN, *rel))
+            for phrase in ("directly before", "Never remove the backticks",
+                           "placeholder directories"):
+                self.assertIn(phrase, text, "/".join(rel))
+
+
 class ExternalLoaderManifestTest(unittest.TestCase):
     def test_manifest_lists_the_headless_reference(self):
         paths = [f["path"] for f in _load()["files"]]
