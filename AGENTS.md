@@ -168,7 +168,8 @@ a cited research report an epic can link, `/s:workspace` to set up and inspect t
 workspace, `/s:initiative` to run workspace initiatives, `/s:room` to take an
 agent's turn in a pull request's room, `/s:pr` to write a pull request's
 title and body, `/s:ask` to
-query the oracle before interrupting the user, `/s:teach` to
+query the oracle before interrupting the user, `/s:help` to answer a how-to
+question about shipd, `/s:teach` to
 distill spec artifacts and answered queue entries into the workspace wiki,
 `/s:remember` to capture the user's durable preferences into the personal
 memory store, `/s:memory` to list the captured memories, `/s:forget` to

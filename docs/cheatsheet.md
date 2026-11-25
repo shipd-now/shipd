@@ -37,8 +37,8 @@ venn-beta
     text "Compounds"
 ```
 
-- **Spec, build, ship** — the pipeline, one change end to end: s:onboard,
-  s:doctor, s:init, s:duck, s:plan, s:fix, s:review, s:drive, s:demo, s:gate, s:status,
+- **Spec, build, ship** — the pipeline for one change: s:onboard,
+  s:help, s:doctor, s:init, s:duck, s:plan, s:fix, s:review, s:drive, s:demo, s:gate, s:status,
   s:document, s:worktree-hooks, s:pr
 - **Epics, driven** — orchestration across many changes: s:epic, s:prd,
   s:initiative, s:workspace, s:explain, s:epic-grill, s:plan-deep, s:room
@@ -69,6 +69,7 @@ venn-beta
 | `/s:fix` | Debug a reported problem against the spec library, then fix the drifted code. See [Fix a bug](fix.md). | `/s:fix The export command crashes on empty input` |
 | `/s:forget` | Remove a captured preference from the personal memory store. See [Personal memory](memory.md). | `/s:forget my vim preference` |
 | `/s:gate` | Install the semantic review gate in a repository end to end. See [Review gate](copilot-review.md). | `/s:gate` |
+| `/s:help <question>` | Answer a how-to question about shipd from its own skills. See [Ask shipd for help](help.md). | `/s:help How do I handle a mid-spec change?` |
 | `/s:initiative <new\|list\|review\|set> [args]` | Author, list, review, or attach workspace initiatives. See [Initiatives](initiatives.md). | `/s:initiative list` |
 | `/s:memory` | List the preferences captured in the personal memory store. See [Personal memory](memory.md). | `/s:memory` |
 | `/s:onboard [next\|back]` | Run the guided nine-step shipd tour. See [Guided tour](onboard.md). | `/s:onboard next` |
