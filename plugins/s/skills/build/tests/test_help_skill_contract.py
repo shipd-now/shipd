@@ -35,6 +35,7 @@ class HelpSkillContractTest(unittest.TestCase):
             self.assertIn("in the order to run them", text, path)
             self.assertIn("without invoking it", text, path)
             self.assertIn("Open a skill before you name its command", text, path)
+            self.assertIn("When the banner omits an operand or flag, take it from a skill you opened", text, path)
         self.assertNotIn("help of the matching verb", " ".join(_read(SKILL).split()))
 
     def test_skill_announces_version_and_is_dialog_free(self):

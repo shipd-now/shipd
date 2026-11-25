@@ -44,6 +44,8 @@ The only sources are the installed skills and the CLI help:
 Open a skill before you name its command, and copy the command's syntax from
 that file. Cite a skill only after you open it. Take a `shipd` verb's syntax
 from `shipd --help`.
+When the banner omits an operand or flag, take it from a skill you opened;
+when no skill gives it, state that gap.
 
 The installed plugin has no `docs/` folder, so skills are the source that
 matches the installed version. Do not fetch online docs or read repository

@@ -15,7 +15,9 @@ Never invent a command, flag, or workflow.
    references they name. Run `"$S/../../../bin/shipd" --help` — `shipd --help`
    — when a CLI verb may answer. Open a skill before you name its command, and
    copy the command's syntax from that file. Cite a skill only after you open it. Take a
-   `shipd` verb's syntax from `shipd --help`. Never answer from model memory,
+   `shipd` verb's syntax from `shipd --help`. When the banner omits an operand
+   or flag, take it from a skill you opened; when no skill gives it, state that
+   gap. Never answer from model memory,
    online docs, or repository state.
 3. **Answer.** Open with exactly one verdict: `Supported` (numbered steps in
    the order to run them, as many as the task needs, with exact commands),
