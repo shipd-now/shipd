@@ -1185,9 +1185,32 @@ class ReviewEventTest(unittest.TestCase):
 
     def test_rejected_body_only_comment_is_not_retried(self):
         gh = self._gh(pr_author="mikkel", review_fail_times=3)
-        result, _ = self._post(gh, _review(verdict="pass"))
-        self.assertEqual(self._events(gh), ["COMMENT", "COMMENT"])
+        result, lines = self._post(gh, _review(verdict="pass"))
+        self.assertEqual(self._events(gh), ["COMMENT"])
+        self.assertEqual(gh.review_posts[0]["comments"], [])
         self.assertIsNone(result["review_event"])
+        self.assertEqual(
+            [l for l in lines if "not recorded" in l],
+            ["review was not recorded; the comment review was rejected"])
+
+    def test_rejected_inline_comment_is_retried_once_body_only(self):
+        gh = self._gh(pr_author="mikkel", review_fail_times=3)
+        result, lines = self._post(gh, _review(
+            verdict="changes-requested", findings=self.FINDINGS))
+        self.assertEqual(self._events(gh), ["COMMENT", "COMMENT"])
+        self.assertTrue(gh.review_posts[0]["comments"])
+        self.assertEqual(gh.review_posts[1]["comments"], [])
+        self.assertIsNone(result["review_event"])
+        self.assertIn(
+            "review was not recorded; the comment review was rejected", lines)
+
+    def test_rejected_inline_comment_retry_can_succeed(self):
+        gh = self._gh(pr_author="mikkel", review_fail_times=1)
+        result, _ = self._post(gh, _review(
+            verdict="changes-requested", findings=self.FINDINGS))
+        self.assertEqual(self._events(gh), ["COMMENT", "COMMENT"])
+        self.assertEqual(gh.review_posts[1]["comments"], [])
+        self.assertEqual(result["review_event"], "COMMENT")
 
     def test_unreadable_login_falls_back_to_comment(self):
         gh = self._gh(user_fail=True)

@@ -1267,7 +1267,6 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
         out("review comment-only: %s is the pull request author and GitHub "
             "rejects self-approval" % login)
     submitted = None
-    fenced = False
     # Every post submits one review, so each run leaves its own entry stating
     # its verdict: a decision because a required approval needs a review
     # object, and a neutral COMMENT body-only when nothing anchors.
@@ -1282,7 +1281,6 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
         if room_agent else None)
     verdict = _verdict_line(review, sha, disposition)
     _room_claim_fence(gh, claim, posted=True)
-    fenced = True
     if _post_review(gh, repo, number, sha, anchored, event, login,
                     commentable, room=review_room, summary=body_summary,
                     verdict=verdict):
@@ -1302,9 +1300,11 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
         if room_agent and anchored:
             body_summary = _review_body_summary(render_summary(
                 review, findings, disposition, model, files))
-        if _post_review(gh, repo, number, sha, [], event, login,
-                        room=review_room, summary=body_summary,
-                        verdict=verdict):
+        # A neutral COMMENT that was already body-only is not re-sent: the
+        # retry would be identical. A decision event keeps its one retry.
+        if (anchored or event != NEUTRAL_EVENT) and _post_review(
+                gh, repo, number, sha, [], event, login,
+                room=review_room, summary=body_summary, verdict=verdict):
             submitted = event
         elif event != NEUTRAL_EVENT:
             if _post_review(gh, repo, number, sha, [], NEUTRAL_EVENT,
@@ -1316,10 +1316,10 @@ def post(pr, review, gh, out=_noop, disposition="all", model=None, git=None,
             else:
                 out("review decision %s was not recorded; the fallback "
                     "comment review was also rejected" % event)
+        else:
+            out("review was not recorded; the comment review was rejected")
 
     if claim is not None:
-        if not fenced:
-            _room_claim_fence(gh, claim, posted=True)
         import room_claim
         try:
             room_claim.mark_done(gh, claim)
