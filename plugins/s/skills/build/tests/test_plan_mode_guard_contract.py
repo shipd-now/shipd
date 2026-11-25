@@ -2,7 +2,7 @@
 """Shipped-text tests pinning the harness plan mode guard: the shared
 reference exists with its doc-type marker and part names, and every writing
 skill's SKILL.md carries the inline clause and the pointer. The roster is
-computed as every skill except the read-only five, so a new skill fails until
+computed as every skill except the read-only six, so a new skill fails until
 it adds the clause. The plan skill also names the case in its stop list."""
 
 import glob
@@ -13,7 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
 CLAUSE = "Harness plan mode never replaces this skill's output."
 POINTER = "skills/document/references/harness-plan-mode.md"
-READ_ONLY = {"duck", "drift", "explain", "memory", "review"}
+READ_ONLY = {"duck", "drift", "explain", "help", "memory", "review"}
 REFERENCE = os.path.join(PLUGIN, "skills", "document", "references", "harness-plan-mode.md")
 
 

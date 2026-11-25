@@ -837,7 +837,7 @@ carry exactly one relative link, to the command's main page:
   `duck.md`; `epic` and
   `explain` to `epics.md`; `epic-grill` to `epic-grill.md`; `fix` to
   `fix.md`; `forget`, `memory`, and `remember` to `memory.md`; `gate` to
-  `copilot-review.md`; `init` to `customise.md`; `initiative` to
+  `copilot-review.md`; `help` to `help.md`; `init` to `customise.md`; `initiative` to
   `initiatives.md`; `onboard` to `onboard.md`; `plan`, `plan-deep`,
   and `status` to `plan.md`; `pr` to `pr.md`; `prd` to `prd.md`; `research`
   to `research.md`; `review` to `semantic-review.md`; `room` to
