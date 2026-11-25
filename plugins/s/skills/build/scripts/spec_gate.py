@@ -107,15 +107,31 @@ BACKTICK_RE = sc.BACKTICK_RE
 PATH_TOKEN_RE = sc.PATH_TOKEN_RE
 
 
-DECLARE_RE = re.compile(r"\b(?:create|add)\s+$", re.IGNORECASE)
+def _declared_before(text, end):
+    """True when ``Create`` or ``Add`` (any letter case, a whole word) ends the
+    text before ``end`` with at least one whitespace character between them
+    and ``end``. Scans backward over the whitespace, so it is linear."""
+    i = end
+    while i > 0 and text[i - 1].isspace():
+        i -= 1
+    if i == end:
+        return False
+    for verb in ("create", "add"):
+        start = i - len(verb)
+        if start < 0 or text[start:i].lower() != verb:
+            continue
+        before = text[start - 1] if start > 0 else ""
+        if not (before.isalnum() or before == "_"):
+            return True
+    return False
 
 
 def declared_paths(text):
     """Return the set of paths ``text`` declares new: a backticked,
     path-shaped token with only ``Create`` or ``Add`` (any letter case) and
     whitespace, including a line break, before it. One leading ``./`` is
-    stripped; an absolute token or one holding a ``..`` segment declares
-    nothing."""
+    stripped; a token holding a ``..`` segment declares nothing, and an
+    absolute token is not path-shaped, so it declares nothing."""
     out = set()
     for m in BACKTICK_RE.finditer(text):
         token = m.group(1).strip()
@@ -123,9 +139,9 @@ def declared_paths(text):
             continue
         if token.startswith("./"):
             token = token[2:]
-        if token.startswith("/") or ".." in token.split("/"):
+        if ".." in token.split("/"):
             continue
-        if DECLARE_RE.search(text[max(0, m.start() - 40):m.start()]):
+        if _declared_before(text, m.start()):
             out.add(token)
     return out
 

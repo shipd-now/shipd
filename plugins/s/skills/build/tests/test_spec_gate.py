@@ -556,6 +556,46 @@ class DeclaredNewPathTest(SpecGateTestBase):
         self.assertIn("nwe/a/b/d.py", self.out(r))
         self.assertNotIn("new/a/b/c.py", self.out(r))
 
+    def test_verb_without_word_boundary_declares_nothing(self):
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Edit xcreate `src/ghost/nested/missing.py`.\n")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("src/ghost/nested/missing.py", self.out(r))
+
+    def test_declaration_survives_a_long_gap(self):
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Create" + " " * 45
+            + "`new/a/b/c.py`.\n")
+        self.assertEqual(r.returncode, 0, self.out(r))
+
+    def test_dot_relative_declaration_implies_directories(self):
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Create `./new/a/b/c.py`.\n"
+            "- [ ] 1.2 [req: widget] Edit `new/a/b/d.py`.\n")
+        self.assertEqual(r.returncode, 0, self.out(r))
+
+    def test_dot_relative_citation_of_declared_path_passes(self):
+        # Behavioural guard only: the ./ strip in the declared lookup is
+        # equivalent, since the implied-directory test passes the same token.
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Create `new/a/b/c.py`.\n"
+            "- [ ] 1.2 [req: widget] Edit `./new/a/b/c.py`.\n")
+        self.assertEqual(r.returncode, 0, self.out(r))
+
+    def test_extensionless_path_under_implied_directory_is_checked(self):
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Create `new/a.py`.\n"
+            "- [ ] 1.2 [req: widget] Read `new/b/c/d`.\n")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("new/b/c/d", self.out(r))
+
+    def test_absolute_token_declares_nothing(self):
+        r = self._gate(
+            "- [ ] 1.1 [req: widget] Create `/zq7x/a/b/c.py`.\n"
+            "- [ ] 1.2 [req: widget] Edit `zq7x/a/b/d.py`.\n")
+        self.assertEqual(r.returncode, 2, self.out(r))
+        self.assertIn("zq7x/a/b/d.py", self.out(r))
+
     def test_path_outside_repository_declares_nothing(self):
         r = self._gate(
             "- [ ] 1.1 [req: widget] Create `../ghostdir-zq7x/a/b.py`.\n")

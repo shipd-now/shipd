@@ -124,7 +124,9 @@ scenario must be refutable by exercising the real code.
 
 A flat markdown checklist. Each task names its files and its concrete change,
 and is small enough to execute without architectural judgement — the judgement
-lives in `plan.md`'s `## Implementation`.
+lives in `plan.md`'s `## Implementation`. Cite each repository path in
+backticks, as the full path from the repository root. Write Create or Add
+directly before a path the task creates.
 
 ```
 ## 1. <group title>
